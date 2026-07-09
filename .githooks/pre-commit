@@ -30,6 +30,7 @@ allowlisted() {
     docs/PLANNING.md) return 0 ;;
     docs/QUEUE.md) return 0 ;;
     docs/STATE.md) return 0 ;;
+    docs/SECURITY.md) return 0 ;;
     docs/SESSION-GUIDE.md) return 0 ;;
     docs/decisions/README.md) return 0 ;;
     docs/decisions/ADR-template.md) return 0 ;;
@@ -42,8 +43,8 @@ allowlisted() {
     return 0
   fi
 
-  # P-NNN-<slug>.md in history (NNN = one or more digits)
-  if [[ "$f" =~ ^docs/history/P-[0-9]+-[a-zA-Z0-9._-]+\.md$ ]]; then
+  # PHASE-NNN-<slug>.md (or legacy P-NNN-) in history
+  if [[ "$f" =~ ^docs/history/(PHASE|P)-[0-9]+-[a-zA-Z0-9._-]+\.md$ ]]; then
     return 0
   fi
 
@@ -71,7 +72,7 @@ for f in $new_files; do
     {
       echo ""
       echo "[pre-commit] Plan-doc home advisory"
-      echo "  The following new file(s) are outside the 6-homes allowlist:"
+      echo "  The following new file(s) are outside the canonical-homes allowlist:"
     } >&2
     flagged=1
   fi
