@@ -13,7 +13,7 @@ This **specializes** the canonical autonomous loop in `~/.claude/CLAUDE.md` § "
 
 - **After `gh pr create`** for any functional code change. This is the default PR gate.
 - **Skip** for docs / `docs/` state / config-only PRs (review adds nothing).
-- **Prereqs:** `gh auth status` green, checked out on the PR branch, CI gate runnable locally (command pinned in `CLAUDE.md § Quality Gates` — TBD until ADR-004).
+- **Prereqs:** `gh auth status` green, checked out on the PR branch, CI gate runnable locally (`pnpm lint && pnpm typecheck && pnpm test && pnpm build`).
 
 ## Three review surfaces — pick by risk/size
 
@@ -37,7 +37,7 @@ Each lane is a subagent with a tight charter. Spawn all 5 in parallel round 1; r
 | Performance (`PERFORMANCE`) | N+1 / unbounded queries / missing indexes, re-render storms / missing memo+keys, unvirtualized long lists, offline-sync waste, map-render cost, bundle bloat.                                                                                               | Micro-opts with no measurable impact (be skeptical), correctness |
 | Conventions (`CONVENTIONS`) | `CLAUDE.md` + `.claude/rules/` conventions, shared-package boundaries, schema-as-source-of-truth, import hygiene, error-handling + a11y patterns, dead code.                                                                                                | Subjective taste, anything another lane owns                     |
 
-_Lane charters get re-specialized by T-1.4 once ADR-004 locks the stack._
+_Stack is locked (ADR-004: Expo/RN + Hono/Drizzle/Postgres) — lane charters get their stack-specific deep-cuts alongside the P-3 scaffold's path rules._
 
 **Skepticism (every lane):** you have more context than a single lane. Only emit **blocking** for a real, in-scope defect. Nits → **advisory**. Push back (omit the finding) on: defensive code for cases that can't happen (framework guarantees, type-proven non-null, internal-only call sites), out-of-scope refactors, and conflicts with documented conventions. Bloated PRs come from lanes that fold on every theoretical.
 

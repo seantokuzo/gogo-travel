@@ -29,7 +29,7 @@ answered here.
 | [ADR-001](ADR-001-naming-convention.md) | Stable IDs (P/T/B/S) + canonical plan-doc homes | Accepted |
 | [ADR-002](ADR-002-status-enum-lock.md) | Status enum lock (`queued/in-progress/blocked/done/deferred/cancelled`) | Accepted |
 | [ADR-003](ADR-003-local-in-session-reviews.md) | PR reviews run local in-session on Max, not in CI | Accepted |
-| ADR-004 | Stack choice (pending S-1 + Sean's buy-in) | Pending |
+| [ADR-004](ADR-004-stack-expo-rn-hono-drizzle.md) | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | Accepted |
 
 ## See also
 

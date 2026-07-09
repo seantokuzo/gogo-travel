@@ -25,11 +25,12 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-1 — Workflow foundation (in progress)
+### P-1 — Workflow foundation (nearly done)
 
-- **Where we are:** Machinery ported from sibling repos; markers renamed
-  `BACH-*`/`GSD-*` → `GOGO-*`. CLAUDE.md + planning docs authored. Next:
-  commit/push (T-1.3), then stack decision (S-1) unblocks the rest.
+- **Where we are:** Machinery ported + rebranded (`GOGO-*`), CLAUDE.md + docs +
+  ADRs 1–4 authored, aggregator 31/31 tests green, engineer personas pinned to
+  the locked stack. Committed locally on `main`. **Remaining:** push to origin
+  (blocked on `gh auth login` — Sean), then P-1 closes.
 - **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
   pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
   (canonical GSD template: doc system, autonomous loop, naming ADRs),
@@ -40,16 +41,18 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## In-flight decisions
 
-- **S-1 — Stack choice (BLOCKS P-2 freeze):** mobile PWA (à la bartling-bachelor:
-  Vite + React + Express) vs Expo/React Native (à la the-bach: Expo + Hono +
-  Drizzle/Postgres + shared Zod package) vs Expo-with-web hybrid.
-  Options + recommendation going to Sean. Output → ADR-004.
-- **S-2 — Product research:** competitor features, booking-deeplink landscape
-  (flights/lodging/rentals), maps SDK choice, Splitwise/Venmo/Zelle integration
-  reality-check. Feeds the P-2 spec suite.
+- ~~S-1 stack~~ → **LOCKED 2026-07-09 as
+  [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md)**: Expo/RN +
+  Hono + Drizzle/Postgres monorepo, iOS-first, StyleSheet+tokens styling.
+  Extras all approved (live-trip, utilities, collab, recap).
+- **S-2 — Product research (in progress):** competitor features,
+  booking-deeplink landscape (flights/lodging/rentals/trains), Expo maps SDK
+  choice, Splitwise/Venmo/Zelle integration reality-check, AI provider plan.
+  Feeds the P-2 spec suite; maps/AI choices may spawn ADRs.
 
 ## Blockers / Waiting on Sean
 
-- S-1 stack decision.
-- Feature-set sign-off (including proposed extras in PLANNING.md § Overview)
-  before P-2 specs freeze.
+- **Push to origin blocked:** `gh` token invalid — run `gh auth login -h
+  github.com`, then `git push -u origin main` (2 commits waiting).
+- P-2 approval gates ahead: architecture/data model → per-feature specs →
+  frozen phase plan (each is a real stop per the Autonomy Contract).

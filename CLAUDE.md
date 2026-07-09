@@ -68,9 +68,19 @@ Everything reversible AND in-spec runs without asking.
 
 ## Tech stack
 
-**Pending ADR-004** (S-1 stack spike — PWA vs Expo/RN vs hybrid). T-1.4 pins
-this section, the engineer personas, path-scoped rules, the formatter hook, and
-the Quality Gate command once locked. Until then: no app scaffolding.
+Locked by [ADR-004](docs/decisions/ADR-004-stack-expo-rn-hono-drizzle.md).
+pnpm workspaces + Turborepo monorepo, TypeScript strict everywhere:
+
+| Workspace | Stack |
+|-----------|-------|
+| `apps/mobile` | Expo + React Native, `expo-router`, TanStack Query (server state), Zustand (client state), `StyleSheet` + design tokens (NO NativeWind unless a deliberate migration ADR says so) |
+| `apps/server` | Hono + `@hono/zod-validator`, Drizzle ORM, Postgres (Neon; `postgres-js` in tests) |
+| `packages/shared` | `@gogo/shared` — Zod schemas as single source of truth; all wire types are `z.infer` |
+
+iOS first (simulator-driven; XcodeBuildMCP available), Android verification
+pass pre-launch. Exact versions pinned at P-3 scaffold via `npm view` +
+`npx expo-doctor` — never from training data. Maps SDK + AI provider: S-2
+research → ADR if non-obvious.
 
 ## Git conventions
 
@@ -92,7 +102,8 @@ Full directive: `.agents/agents/orchestrator.md`.
 | `orchestrator.md` | Decomposition, wave dispatch, verification |
 | `researcher.md` | Read-only research, Context7-first, confidence-tagged |
 | `reviewer.md` | Single-lane review specialist (spawned by the pipeline) |
-| _engineers_ | Added by T-1.4 once the stack locks (TEMPLATE.md) |
+| `backend-engineer.md` | `apps/server` — Hono routes, Drizzle/Postgres, auth |
+| `mobile-engineer.md` | `apps/mobile` — Expo screens, maps, photos, offline, push |
 
 ## Planning convention
 
@@ -117,8 +128,8 @@ Configuration`.
 
 1. Code compiles/builds; 2. tests green (new logic ⇒ new tests); 3. no
 regressions; 4. conventions honored; 5. no secrets/PII in code or logs.
-**CI gate command:** _TBD — pinned by T-1.4 after ADR-004_ (lint + typecheck +
-test + build equivalent).
+**CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+(runnable once the P-3 scaffold lands).
 
 ## Autonomous loop ("spec and walk away")
 

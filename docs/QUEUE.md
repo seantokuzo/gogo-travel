@@ -9,23 +9,25 @@
 
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
-| T-1.1 | Port workflow machinery from sibling repos | in-progress | P0 | — |
-| T-1.2 | Author CLAUDE.md + planning docs + ADR-003 | in-progress | P0 | — |
-| S-1 | Spike: stack decision (PWA vs Expo/RN vs hybrid) → ADR-004 | in-progress | P0 | — |
+| S-2 | Spike: product + integration research (competitors, deeplinks, maps, payments, AI) | in-progress | P0 | — |
+
+## Blocked
+
+| ID | Title | Status | Priority | Blocker |
+|----|-------|--------|----------|---------|
+| T-1.3 | Push workflow foundation to origin | blocked | P0 | `gh auth login` needed (Sean) — 2 commits waiting on `main` |
 
 ## Up next
 
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
-| T-1.3 | Initial commit + push workflow foundation to origin | queued | P0 | T-1.1, T-1.2 |
-| T-1.4 | Pin stack-specific bits (CI gate command, engineer personas, path rules, formatter hook) | queued | P0 | S-1 |
-| S-2 | Spike: product + integration research (competitors, deeplinks, maps, payments) | queued | P0 | — |
-| P-2 | Phase: upfront spec suite (requirements/design/tasks per feature + feature ledger) | queued | P0 | S-1, S-2 |
-
-## Blocked
-
-_(none)_
+| P-2 | Phase: upfront spec suite (requirements/design/tasks per feature + feature ledger + frozen roadmap) | queued | P0 | S-2 |
 
 ## Recently done
 
-_(nothing merged yet)_
+| ID | Title | Done |
+|----|-------|------|
+| T-1.1 | Port workflow machinery from sibling repos | 2026-07-09 (70c0065) |
+| T-1.2 | Author CLAUDE.md + planning docs + ADRs 1–3 | 2026-07-09 (70c0065) |
+| S-1 | Stack decision → [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) (Expo/RN + Hono/Drizzle/Postgres, iOS-first) | 2026-07-09 |
+| T-1.4 | Pin stack-specifics (CI gate cmd, engineer personas; path rules land with P-3 scaffold) | 2026-07-09 |

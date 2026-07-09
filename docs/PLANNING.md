@@ -54,7 +54,7 @@ verbatim scope:
 - **Design system** — thoughtful, minimalistic, customizable (re-skinnable
   themes à la bartling-bachelor's ThemeProvider)
 
-**Proposed extras (need Sean's approval — not committed):**
+**Extras — APPROVED by Sean 2026-07-09, all four bundles committed:**
 - Packing lists (AI-generated from destination/weather/duration)
 - Weather forecast integrated into itinerary days
 - Travel-document vault (passport/visa/insurance reminders + expiry alerts)
@@ -84,19 +84,26 @@ DURING the trip — is the gap.
 
 ## Architecture
 
-**TBD — blocked on ADR-004 (stack, S-1).** Candidates under evaluation:
+**Stack locked — [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md).**
 
-| Option | Shape | Exemplar |
-|--------|-------|----------|
-| Mobile PWA | Vite + React + Tailwind v4 + Express/API + DB, installable PWA | `../bartling-bachelor` (proven, shipped) |
-| Native (Expo) | Expo/React Native + Hono + Drizzle/Postgres + shared Zod contract package | `../the-bach` (proven monorepo discipline) |
-| Hybrid | Expo + expo-router with web output | — |
+```
+┌───────────────────────┐        ┌──────────────────────┐      ┌──────────────┐
+│  apps/mobile          │  HTTP  │  apps/server         │      │  Postgres    │
+│  Expo / React Native  │───────▶│  Hono + zod-validator│─────▶│  (Neon)      │
+│  expo-router · TQ ·   │        │  Drizzle ORM         │      │              │
+│  Zustand · tokens     │        │  auth · jobs         │      └──────────────┘
+└──────────┬────────────┘        └──────────┬───────────┘
+           │      shared contract           │
+           └────────▶ packages/shared ◀─────┘
+                     (@gogo/shared — Zod schemas, z.infer types)
+```
 
-Decision criteria: native-map quality, camera/photo UX, offline mode, push,
-app-store friction, iteration speed, code-sharing with a possible web surface.
+- iOS first (simulator-driven dev), Android verification pass pre-launch.
+- Styling: `StyleSheet` + design-token package; re-skinnable themes.
+- Offline-first persistence pattern, maps SDK, AI provider: finalized in P-2
+  design (S-2 research feeds it).
 
-This section gets the real diagram, component map, API spec, and data model
-during P-2 (after ADR-004 locks).
+This section gets the full component map, API spec, and data model during P-2.
 
 ---
 
@@ -143,9 +150,10 @@ during P-2 (after ADR-004 locks).
   - [x] CLAUDE.md + docs + ADR-003 authored
   - [ ] Aggregator tests green (`node --test .github/scripts/`)
   - [ ] Pushed to `origin/main`
-  - [ ] ADR-004 (stack) locked with Sean's buy-in
-  - [ ] Stack-specific bits pinned (T-1.4: CI gate command, engineer personas,
-        path rules, formatter hook)
+  - [x] ADR-004 (stack) locked with Sean's buy-in — Expo/RN + Hono/Drizzle/
+        Postgres, iOS-first, all four extras bundles committed
+  - [x] Stack-specific bits pinned (T-1.4: CI gate command, engineer personas;
+        path-scoped rules + formatter hook land with the P-3 scaffold)
 - **Tasks:** T-1.1 port · T-1.2 author · T-1.3 commit/push · T-1.4 pin
   stack-specifics · S-1 stack spike
 - **Linked ADRs:** ADR-001, ADR-002, ADR-003, ADR-004 (pending)
@@ -204,4 +212,4 @@ during P-2 (after ADR-004 locks).
 | 2026-07-09 | ADR-001 | Stable IDs (P/T/B/S) + canonical doc homes (adopted from GSD template) | [ADR-001](decisions/ADR-001-naming-convention.md) | No |
 | 2026-07-09 | ADR-002 | Status enum lock: `queued/in-progress/blocked/done/deferred/cancelled` | [ADR-002](decisions/ADR-002-status-enum-lock.md) | No |
 | 2026-07-09 | ADR-003 | PR reviews run local in-session on Max — never GitHub Claude app / metered CI | [ADR-003](decisions/ADR-003-local-in-session-reviews.md) | No |
-| — | ADR-004 | Stack choice (pending S-1 + Sean) | — | — |
+| 2026-07-09 | ADR-004 | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) | No |

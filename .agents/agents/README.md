@@ -16,11 +16,12 @@ The main agent **coordinates** — it decomposes work, spawns specialists, verif
 | Persona               | Owns                                                        | Spawn when                                                                               |
 | --------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `orchestrator.md`     | Coordination, decomposition, waves, verification            | The session's driver. Not usually "spawned" — it's the main agent.                       |
-| `backend-engineer.md` | `apps/server` (Hono · Drizzle/Neon · Socket.io · BullMQ)    | API routes, DB schema/queries, real-time, workers, auth                                  |
-| `web-engineer.md`     | `apps/web` (React · TanStack Router/Query · Vite)           | Web UI, routes, data hooks, client auth                                                  |
-| `mobile-engineer.md`  | `apps/mobile` (Expo · RN · expo-router · NativeWind · MMKV) | Mobile screens, native UI, offline/sync, push                                            |
+| `backend-engineer.md` | `apps/server` (Hono · Drizzle/Postgres)                     | API routes, DB schema/queries, jobs, auth                                                |
+| `mobile-engineer.md`  | `apps/mobile` (Expo · RN · expo-router · tokens/StyleSheet) | Mobile screens, native UI, maps, photos, offline/sync, push                              |
 | `reviewer.md`         | One review lane on a PR diff                                | After a PR is opened — one reviewer per lane, in parallel (see pr-review-pipeline skill) |
 | `researcher.md`       | Read-only investigation, codebase mapping, feasibility      | A question must be answered _before_ implementation; spikes (`S-N`)                      |
+
+(No web app for now — ADR-004 is mobile-first. A web surface, if it ever comes, gets its own persona via `TEMPLATE.md`.)
 
 `packages/shared` (Zod schemas/hooks/utils, `@gogo/shared`) has no dedicated engineer — whichever engineer needs a schema change owns it for that task, but **shared is the contract**: change it deliberately and check every consumer.
 
@@ -35,6 +36,6 @@ The main agent **coordinates** — it decomposes work, spawns specialists, verif
 
 - Constitution & loop: `CLAUDE.md`
 - State / plan / queue: `docs/STATE.md`, `docs/PLANNING.md`, `docs/QUEUE.md`
-- Path-scoped conventions: `.claude/rules/{server,web,mobile}.md` (auto-load when you open matching files)
+- Path-scoped conventions: `.claude/rules/{server,mobile,shared}.md` (auto-load when you open matching files; land with the P-3 scaffold)
 - Procedures: `.agents/skills/pr-review-pipeline`
 - Library APIs: Context7 (never trust training data)
