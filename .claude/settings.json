@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__github__*",
+      "mcp__context7__*",
+      "Bash(pnpm *)",
+      "Bash(npm view *)",
+      "Bash(node *)",
+      "Bash(git *)",
+      "Bash(gh *)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Write|Edit|MultiEdit|Bash",
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-security.sh\"" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-format.sh\"" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-response-notify.sh\"" },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/autonomous-handoff.sh\"" }
+        ]
+      }
+    ]
+  }
+}

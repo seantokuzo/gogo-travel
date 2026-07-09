@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# pre-commit — Plan-doc home advisory
+#
+# PURPOSE
+#   Warn (do NOT block) when a new docs/*.md file is being committed outside
+#   the 6-homes allowlist defined in docs/decisions/ADR-001-naming-convention.md.
+#   Hard blocks would frustrate the "spec and walk away" UX — this is a nudge,
+#   not a gate. Exit code is always 0.
+#
+# ENABLE (one-time per clone)
+#   git config core.hooksPath .githooks
+#
+# BYPASS ONCE (if ever needed; this hook doesn't block, but for completeness)
+#   git commit --no-verify
+#
+# RATIONALE
+#   .claude/rules/planning-doc-homes.md (path-scoped rule for Claude)
+#   docs/decisions/ADR-001-naming-convention.md (locked decision, full context)
+
+set -u
+
+# Newly-added files (status A) — modifications are fine, only new docs raise the flag
+new_files=$(git diff --cached --name-only --diff-filter=A)
+
+[ -z "$new_files" ] && exit 0
+
+allowlisted() {
+  local f="$1"
+  case "$f" in
+    docs/PLANNING.md) return 0 ;;
+    docs/QUEUE.md) return 0 ;;
+    docs/STATE.md) return 0 ;;
+    docs/SESSION-GUIDE.md) return 0 ;;
+    docs/decisions/README.md) return 0 ;;
+    docs/decisions/ADR-template.md) return 0 ;;
+    docs/history/README.md) return 0 ;;
+    docs/history/PHASE-template.md) return 0 ;;
+  esac
+
+  # ADR-NNN-<slug>.md (NNN = three digits)
+  if [[ "$f" =~ ^docs/decisions/ADR-[0-9]{3}-[a-zA-Z0-9._-]+\.md$ ]]; then
+    return 0
+  fi
+
+  # P-NNN-<slug>.md in history (NNN = one or more digits)
+  if [[ "$f" =~ ^docs/history/P-[0-9]+-[a-zA-Z0-9._-]+\.md$ ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+flagged=0
+for f in $new_files; do
+  # Only consider markdown files inside docs/
+  case "$f" in
+    docs/*.md|docs/**/*.md) : ;;
+    *) continue ;;
+  esac
+
+  # Match docs/ markdown at any nesting depth
+  if [[ "$f" != docs/*.md ]] && [[ "$f" != docs/*/*.md ]] && [[ "$f" != docs/*/*/*.md ]]; then
+    continue
+  fi
+
+  if allowlisted "$f"; then
+    continue
+  fi
+
+  if [ "$flagged" -eq 0 ]; then
+    {
+      echo ""
+      echo "[pre-commit] Plan-doc home advisory"
+      echo "  The following new file(s) are outside the 6-homes allowlist:"
+    } >&2
+    flagged=1
+  fi
+
+  echo "    - $f" >&2
+done
+
+if [ "$flagged" -eq 1 ]; then
+  {
+    echo ""
+    echo "  Suggested actions (pick one):"
+    echo "    1. Fold the content into docs/PLANNING.md (roadmap / phase detail)"
+    echo "    2. Fold into docs/STATE.md (active context / in-flight decisions)"
+    echo "    3. Write a new ADR at docs/decisions/ADR-NNN-<slug>.md (locked decision)"
+    echo "    4. Override consciously — commit anyway if you have strong justification"
+    echo ""
+    echo "  References:"
+    echo "    - .claude/rules/planning-doc-homes.md (the 6-homes rule)"
+    echo "    - docs/decisions/ADR-001-naming-convention.md (full rationale)"
+    echo ""
+    echo "  This is an advisory, not a block. The commit will proceed."
+    echo ""
+  } >&2
+fi
+
+exit 0
