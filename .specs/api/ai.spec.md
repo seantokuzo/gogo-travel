@@ -830,7 +830,7 @@ highlight selection deterministic (same inputs → same ids).
 *Trace: every R-ai-N cites its design section inline; §3.8 endpoints list
 covered requirements. Markers: 2 new (per-feature ceiling numbers §2.1;
 tour-guide trigger timing §3.9.1) + 1 cross-spec resolution (packing cache
-policy §3.6.3) + 7 repeated verbatim from the canonical schema/contracts
+policy §3.6.3) + 8 repeated verbatim from the canonical schema/contracts
 specs (travel_style, recap persistence, capture_parse, locale, trip dates,
 destination input, status transitions, packing-list ownership — each cited
 at its home). Zero markers = approvable.*
