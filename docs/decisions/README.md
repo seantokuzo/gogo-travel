@@ -30,6 +30,7 @@ answered here.
 | [ADR-002](ADR-002-status-enum-lock.md) | Status enum lock (`queued/in-progress/blocked/done/deferred/cancelled`) | Accepted |
 | [ADR-003](ADR-003-local-in-session-reviews.md) | PR reviews run local in-session on Max, not in CI | Accepted |
 | [ADR-004](ADR-004-stack-expo-rn-hono-drizzle.md) | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | Accepted |
+| [ADR-005](ADR-005-free-v1-entitlement-seams.md) | Free v1 + entitlement seams; offline/collab/splitting free forever | Accepted |
 
 ## See also
 

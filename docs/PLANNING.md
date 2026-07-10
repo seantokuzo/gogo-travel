@@ -100,10 +100,103 @@ DURING the trip — is the gap.
 
 - iOS first (simulator-driven dev), Android verification pass pre-launch.
 - Styling: `StyleSheet` + design-token package; re-skinnable themes.
-- Offline-first persistence pattern, maps SDK, AI provider: finalized in P-2
-  design (S-2 research feeds it).
 
-This section gets the full component map, API spec, and data model during P-2.
+### Provider decisions (locked by S-2 research, 2026-07-09)
+
+| Concern | Choice | Why (evidence: `.specs/research/`) |
+|---------|--------|-----------------------------------|
+| Map SDK | **@rnmapbox/maps** | Only real offline (tile packs, $0 extra); 25k MAU free; Google ToS bans its content on non-Google maps |
+| Directions | Mapbox Directions (drive/walk/cycle) + Transitous (transit, degradable) | 100k free req/mo; Google Routes contractually unusable with Mapbox |
+| Places spine | Overture / FSQ OS open data → **our Postgres** | Legally storable forever, LLM-safe (Apache 2.0/CDLA); Google Places bans storage + AI use |
+| Place rich details | Foursquare hosted API (fetch-fresh, zero caching) | Only if premium fields warranted; ~$0–60/mo |
+| AI | Claude server-side (Haiku 4.5 default, Sonnet 5 for recs/recaps), Batch API for pre-gen | Structured outputs w/ Zod; grounded in our POI spine + Wikipedia — never invent venues |
+| AI policy | 30 calls/user/day, $50 alert / $100 kill-switch, entitlement-checked | Approved by Sean 2026-07-09 |
+| Booking capture | Share-sheet (expo-share-intent) + permanent forward address (CloudMailin→Hono webhook); schema.org JSON-LD first, LLM fallback; needs-review queue | Approved; skip OAuth inbox (CASA tax) |
+| Booking deeplinks | Kayak/Skyscanner (flights), Airbnb/Booking/Expedia/Vrbo (lodging), Trainline/Omio (trains), Kayak/Turo (cars); Viator + Ticketmaster APIs day one | All zero-approval; formats in research |
+| Settle-up | Own ledger (record-only) + per-user payment handles + deeplink handoff (Venmo/CashApp/PayPal links, Zelle copy) | Splitwise ToS bans competitors; formats live-probed |
+| Location | Foreground-only v1 (no background geofencing) | Approved; App Store friction avoided |
+
+### Component map
+
+```
+apps/mobile (Expo, expo-router)
+├── (auth)            sign-in (Apple + Google), onboarding
+├── (trips)           trip list, create/join
+└── [tripId]/         trip context
+    ├── today         live-trip surface (auto-default while trip active)
+    ├── itinerary     plan surface: day list + calendar-grid view
+    ├── map           saved places, itinerary pins, photo pins, offline packs
+    ├── money         budget, expenses, splits, settle-up
+    └── more          photos, packing, docs vault, members, trip settings
+
+apps/server (Hono)
+routers: auth · trips · members/invites · itinerary · bookings · capture
+         (email webhook + share parse) · places · expenses · settlements ·
+         photos · ai · notifications · entitlements
+jobs:    tour-guide pre-gen (Batch) · recap generation · leg-ETA refresh ·
+         AI usage rollup/kill-switch · document expiry reminders
+
+packages/shared   @gogo/shared — Zod schemas per domain (single source of truth)
+packages/tokens   design tokens + theme definitions (re-skinnable)
+```
+
+### Data model (entity level — column-exact spec lands in `.specs/database/`)
+
+**Identity & access:** `users` (profile, prefs, payment handles: venmo/cashtag/
+paypalme/zelle+name) · `entitlements` (per-user plan + caps; ADR-005) ·
+`push_tokens`.
+
+**Trips & collab:** `trips` (name, destination, dates, status
+planning/active/past, theme) · `trip_members` (role: owner/editor/viewer) ·
+`invites` (token, role, expiry).
+
+**Places:** `places` (source: overture/fsq_os/custom + source_id, name,
+lat/lng, category, wiki_ref — our open-data spine, LLM-safe) ·
+`saved_places` (trip_id, place_id, note).
+
+**Itinerary & bookings:** `bookings` (category: lodging/flight/train/
+car_rental/moped_rental/activity/restaurant/other; status: idea/planned/
+booked; per-category `details` JSONB; price_cents; confirmation; source:
+manual/email/share/deeplink_return) · `itinerary_items` (everything on the
+calendar: booking-ref | place-visit | custom; day, start/end, order) ·
+`travel_legs` (from→to item, mode, duration, distance — precomputed at sync
+for offline ETAs).
+
+**Money:** `expenses` (paid_by, amount_cents, currency, booking_id?) ·
+`expense_shares` (per-member share_cents) · `settlements` (from→to,
+amount_cents, method: venmo/cashapp/paypal/zelle/cash, recorded-only) ·
+`budgets` (category caps + AI estimate). **All money integer cents; expense +
+shares written atomically (transaction-capable driver only).**
+
+**Capture:** `capture_inbox` (source: email/share, raw ref, parse_status:
+pending/parsed/needs_review/failed, parsed JSONB) — the visible review queue.
+
+**Photos & memories:** `photos` (storage key, taken_at, lat/lng?, place_id?,
+itinerary_item_id?, **visibility: private/trip/public — default private, Law
+#3**, blurhash) · recaps generated post-trip (Batch).
+
+**AI:** `ai_usage` (per user/feature/day — caps + kill-switch) · `ai_cache`
+(destination-keyed responses, 14–30d TTL) · `tour_guide_bundles` (per
+trip+place, offline-downloadable).
+
+**Utilities:** `packing_lists` · `documents` (vault: kind, expiry, reminder) ·
+`weather_cache`.
+
+### Cross-cutting patterns
+
+- **Offline:** TanStack Query persist + MMKV/SQLite mutation queue (the-bach
+  pattern); active trip bundle = itinerary + bookings + saved places + tour
+  content + leg ETAs in SQLite; Mapbox tile pack per trip. Volatile data
+  (hours, transit ETAs) online-only, degrade gracefully.
+- **Collab sync v1:** REST + optimistic updates, refetch-on-focus,
+  push-notification invalidation. No sockets in v1 (last-write-wins is fine
+  for small groups); event-log seam kept so realtime can land later.
+- **Auth (proposed — Sean gate):** Sign in with Apple + Google via Expo
+  AuthSession; `jose` JWTs (short-lived access + refresh rotation). Apple
+  sign-in is App-Store-mandatory once any social login exists. Passkeys later.
+- **Capture pipeline:** webhook/share → `capture_inbox` → schema.org JSON-LD
+  parse → LLM fallback (Haiku, structured output) → proposed booking →
+  user confirms/edits → lands in trip. Failures visible, never silent.
 
 ---
 
@@ -213,3 +306,5 @@ This section gets the full component map, API spec, and data model during P-2.
 | 2026-07-09 | ADR-002 | Status enum lock: `queued/in-progress/blocked/done/deferred/cancelled` | [ADR-002](decisions/ADR-002-status-enum-lock.md) | No |
 | 2026-07-09 | ADR-003 | PR reviews run local in-session on Max — never GitHub Claude app / metered CI | [ADR-003](decisions/ADR-003-local-in-session-reviews.md) | No |
 | 2026-07-09 | ADR-004 | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) | No |
+| 2026-07-09 | ADR-005 | Free v1 + entitlement seams; offline/collab/splitting free forever | [ADR-005](decisions/ADR-005-free-v1-entitlement-seams.md) | No |
+| 2026-07-09 | — | Provider set locked from S-2 evidence (Mapbox, open-data POI spine, Claude, dual-path capture, record-only settle-up, foreground-only location) | § Architecture table | At scale |
