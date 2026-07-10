@@ -51,11 +51,40 @@ export function canonicalizeTravelStyles(tags: readonly TravelStyle[] | undefine
 
 const trimmedString = z.string().trim().min(1);
 
-/** Venmo `recipients=` takes bare usernames — leading `@` stripped on write. */
-export const VenmoUsernameWriteSchema = trimmedString.transform((v) => v.replace(/^@+/, ""));
+/**
+ * Post-normalization handle constraint. Handles exist to be interpolated
+ * into rail deeplinks (venmo/cashapp/paypal.me), so this write schema is the
+ * single chokepoint: 1–30 chars of `[A-Za-z0-9_.-]` — no `&`, `=`, `/`,
+ * `?`, `#`, whitespace, or full URLs can ever reach storage.
+ */
+const normalizedHandle = z
+  .string()
+  .min(1)
+  .max(30)
+  .regex(/^[A-Za-z0-9_.-]+$/, {
+    message: "handle may only contain letters, digits, '_', '.', and '-'",
+  });
 
-/** Cashtags are stored without `$`. */
-export const CashtagWriteSchema = trimmedString.transform((v) => v.replace(/^\$+/, ""));
+/**
+ * Venmo `recipients=` takes bare usernames — leading `@` is stripped FIRST,
+ * then the bare name is validated (normalize-then-validate: a lone `@`
+ * strips to empty and fails `min(1)`).
+ */
+export const VenmoUsernameWriteSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/^@+/, ""))
+  .pipe(normalizedHandle);
+
+/** Cashtags are stored without `$` — leading `$` stripped, THEN validated. */
+export const CashtagWriteSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/^\$+/, ""))
+  .pipe(normalizedHandle);
+
+/** PayPal.me slug — no prefix to strip; same charset chokepoint. */
+export const PaypalMeUsernameWriteSchema = z.string().trim().pipe(normalizedHandle);
 
 const E164_REGEX = /^\+[1-9]\d{1,14}$/;
 
@@ -92,15 +121,22 @@ export type PaymentHandles = z.infer<typeof PaymentHandlesSchema>;
 
 /**
  * Write shape: absent = untouched, `null` = clear (auth-users spec §3.4.2).
- * Normalization runs here — `@`/`$` prefixes are stripped before validation
- * and storage; Zelle handles must be email-or-E.164 with a display name in
- * the same payload.
+ * Rail handles normalize THEN validate: leading `@`/`$` prefixes are
+ * stripped first, and the stripped result must satisfy the 1–30-char
+ * `[A-Za-z0-9_.-]` charset — parameter-injection payloads (`&`, `=`, URLs,
+ * whitespace) are unrepresentable in storage. Zelle handles must be
+ * email-or-E.164 with a display name in the same payload.
+ *
+ * NOTE (server — AU-4): `zellePairRule` only sees THIS payload. A partial
+ * update like `{ zelle_display_name: null }` can strand a stored
+ * `zelle_handle` without a display name; the server must cross-check the
+ * MERGED row (stored state + patch) before persisting.
  */
 export const PaymentHandlesUpdateSchema = z
   .object({
     venmo_username: VenmoUsernameWriteSchema.nullable().optional(),
     cashtag: CashtagWriteSchema.nullable().optional(),
-    paypalme_username: trimmedString.nullable().optional(),
+    paypalme_username: PaypalMeUsernameWriteSchema.nullable().optional(),
     zelle_handle: ZelleHandleWriteSchema.nullable().optional(),
     zelle_display_name: trimmedString.nullable().optional(),
   })

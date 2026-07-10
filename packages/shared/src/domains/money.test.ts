@@ -55,11 +55,16 @@ describe("computeShares · equal", () => {
     expect(shares[0]?.share_cents).toBe(51);
   });
 
-  it("dedupes equal participants", () => {
-    expect(computeShares(100, { type: "equal", participants: [ALICE, ALICE, BOB] })).toEqual([
-      { user_id: ALICE, share_cents: 50 },
-      { user_id: BOB, share_cents: 50 },
-    ]);
+  it("throws on duplicate participants — exact AND case-insensitive (same semantics as the other split types)", () => {
+    expect(() => computeShares(100, { type: "equal", participants: ["A", "A"] })).toThrow(
+      /duplicate/,
+    );
+    expect(() => computeShares(100, { type: "equal", participants: [ALICE, ALICE, BOB] })).toThrow(
+      /duplicate/,
+    );
+    expect(() => computeShares(100, { type: "equal", participants: [ALICE, "Alice"] })).toThrow(
+      /duplicate/,
+    );
   });
 
   it("Σ = amount for adversarial amounts and party sizes (invariant sweep)", () => {
@@ -576,6 +581,66 @@ describe("simplifyDebts", () => {
       { from_user_id: ALICE, to_user_id: BOB, amount_cents: 100 },
       { from_user_id: ALICE, to_user_id: CARA, amount_cents: 100 },
     ]);
+  });
+
+  it("breaks DEBTOR-side magnitude ties by ascending user_id", () => {
+    // bob and cara tie at −100. The greedy loop must pick bob (ascending)
+    // first, pairing him with the largest creditor (alice, 150) — observable
+    // because the pick order changes WHICH debtor pays whom:
+    //   bob first  → bob→alice 100; cara→alice 50; cara→dave 50
+    //   cara first → cara→alice 100; bob→alice 50; bob→dave 50 (wrong)
+    const transfers = simplifyDebts([
+      { user_id: DAVE, net_cents: 50 },
+      { user_id: ALICE, net_cents: 150 },
+      { user_id: CARA, net_cents: -100 },
+      { user_id: BOB, net_cents: -100 },
+    ]);
+    expect(transfers).toEqual([
+      { from_user_id: BOB, to_user_id: ALICE, amount_cents: 100 },
+      { from_user_id: CARA, to_user_id: ALICE, amount_cents: 50 },
+      { from_user_id: CARA, to_user_id: DAVE, amount_cents: 50 },
+    ]);
+  });
+
+  it("seeded-PRNG sweep: 100 zero-sum vectors (2–10 members) preserve nets with ≤ nonzero−1 transfers, deterministically", () => {
+    // mulberry32 — tiny deterministic PRNG; fixed seed makes the sweep
+    // reproducible (zero-sum holds BY CONSTRUCTION: last member = −Σrest).
+    const mulberry32 = (seed: number) => (): number => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const rand = mulberry32(0x60060);
+
+    for (let run = 0; run < 100; run += 1) {
+      const n = 2 + Math.floor(rand() * 9); // 2–10 members
+      const nets: MemberNet[] = [];
+      let total = 0;
+      for (let i = 0; i < n - 1; i += 1) {
+        const net_cents = Math.floor(rand() * 200_001) - 100_000; // ±100000
+        nets.push({ user_id: `m${String(i).padStart(2, "0")}`, net_cents });
+        total += net_cents;
+      }
+      nets.push({ user_id: `m${String(n - 1).padStart(2, "0")}`, net_cents: -total });
+
+      const transfers = simplifyDebts(nets);
+      // determinism: a second run over the same input is identical
+      expect(simplifyDebts(nets)).toEqual(transfers);
+
+      const nonzero = nets.filter((m) => m.net_cents !== 0).length;
+      expect(transfers.length).toBeLessThanOrEqual(Math.max(nonzero - 1, 0));
+
+      const applied = new Map(nets.map((m) => [m.user_id, 0]));
+      for (const t of transfers) {
+        expect(t.amount_cents).toBeGreaterThan(0);
+        applied.set(t.from_user_id, (applied.get(t.from_user_id) ?? 0) - t.amount_cents);
+        applied.set(t.to_user_id, (applied.get(t.to_user_id) ?? 0) + t.amount_cents);
+      }
+      for (const m of nets) {
+        expect(applied.get(m.user_id)).toBe(m.net_cents);
+      }
+    }
   });
 
   it("is deterministic across input orderings", () => {

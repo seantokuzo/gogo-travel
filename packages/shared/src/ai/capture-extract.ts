@@ -11,7 +11,7 @@
 import { z } from "zod";
 import { BookingCategorySchema } from "../enums.js";
 import { CurrencyCodeSchema } from "../scalars.js";
-import { BookingDetailsSchema } from "../domains/booking.js";
+import { BookingDetailsSchema, type BookingDetails } from "../domains/booking.js";
 import { CaptureConfidenceSchema } from "../domains/capture.js";
 import { AiRefinementError } from "./refinement.js";
 
@@ -32,10 +32,41 @@ export const CaptureExtractionSchema = z.object({
 export type CaptureExtraction = z.infer<typeof CaptureExtractionSchema>;
 
 /**
+ * Minimal structural declaration of the WHATWG `URL` global: the package
+ * builds against `lib: ["ES2023"]` with no platform type packages
+ * (R-shared-9), which has no `URL` type. Runtime coverage is a non-issue —
+ * paired refiners run server-side (Node ships `URL` as a global), and every
+ * browser/RN-with-polyfill environment has it too.
+ */
+declare const URL: new (input: string) => { protocol: string };
+
+/**
+ * `external_url` sanitizer: the LLM runs over ATTACKER-CONTROLLED email/share
+ * input and the field ends up as a tappable link in the mobile UI
+ * (`Linking.openURL`), so the refiner DROPS it — sanitize-not-throw, matching
+ * the `refineRecommendations` drop precedent — unless it parses as a URL with
+ * an `http:`/`https:` scheme. `javascript:`/`file:`/app-deeplink schemes and
+ * unparseable garbage never survive.
+ */
+function sanitizeExternalUrl(details: BookingDetails): BookingDetails {
+  if (!("external_url" in details) || details.external_url === undefined) return details;
+  try {
+    const { protocol } = new URL(details.external_url);
+    if (protocol === "http:" || protocol === "https:") return details;
+  } catch {
+    // unparseable → drop below
+  }
+  const { external_url: _dropped, ...rest } = details;
+  return rest;
+}
+
+/**
  * Paired server-side refiner: `details.category` must match `category`
  * (cross-field), `price_cents ≥ 0` (numeric). Violations throw
  * `AiRefinementError` → the pipeline retries once, then routes the capture
- * to `needs_review`/`failed` (R-cap-14) — never silent.
+ * to `needs_review`/`failed` (R-cap-14) — never silent. Additionally,
+ * non-http(s) `details.external_url` is dropped (sanitized, not thrown —
+ * see `sanitizeExternalUrl`).
  */
 export function refineCaptureExtraction(output: CaptureExtraction): CaptureExtraction {
   const issues: string[] = [];
@@ -48,5 +79,6 @@ export function refineCaptureExtraction(output: CaptureExtraction): CaptureExtra
     issues.push("price_cents < 0");
   }
   if (issues.length > 0) throw new AiRefinementError(issues);
-  return output;
+  const details = sanitizeExternalUrl(output.details);
+  return details === output.details ? output : { ...output, details };
 }

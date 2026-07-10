@@ -1,10 +1,21 @@
 /**
  * Pure-TypeScript SHA-256 (FIPS 180-4) — dependency-free so `@gogo/shared`
- * stays platform-agnostic (R-shared-9: no `node:crypto`, no I/O). Used for
- * deterministic cache-key derivation, NOT for secrecy. Verified against NIST
- * test vectors in `cache-key.test.ts`.
+ * stays platform-agnostic (R-shared-9: no `node:crypto`, no I/O). Verified
+ * against NIST test vectors + node:crypto-pinned digests in
+ * `cache-key.test.ts`.
+ *
+ * NOT for secrecy — AI cache keys only. This is an unsalted, non-constant-
+ * time digest: never hash tokens, passwords, or anything security-sensitive
+ * with it (auth token hashing stays server-side, `node:crypto`). It is
+ * deliberately kept OFF the package barrel for exactly this reason.
+ *
+ * Lone-surrogate pinning — INTENTIONAL and PERMANENT: `utf8Bytes` encodes
+ * unpaired surrogates WTF-8-style (as 3-byte sequences), whereas
+ * `TextEncoder` substitutes U+FFFD — the two produce DIFFERENT digests for
+ * such inputs. Cache-key stability is a persistence contract (`ai_cache`
+ * PK): never swap in a native/TextEncoder-based encoder without an explicit
+ * cache migration.
  */
-
 
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,

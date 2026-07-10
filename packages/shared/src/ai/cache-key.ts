@@ -16,11 +16,25 @@ export const SEASONS = ["winter", "spring", "summer", "autumn", "unknown"] as co
 export type Season = (typeof SEASONS)[number];
 
 /**
+ * Non-whitespace control characters (`\p{Cc}` minus `\s`): whitespace
+ * controls (tab/newline/…) collapse to a single space in
+ * `canonicalizeDestination`; the rest — including the U+001F cache-key
+ * separator — are stripped outright.
+ */
+const NON_WHITESPACE_CONTROL_REGEX = /(?!\s)\p{Cc}/gu;
+
+/**
  * Destination segment pinning (ai spec §3.6.1): lowercased, trimmed,
- * internal whitespace collapsed — display-string keyed.
+ * internal whitespace collapsed, remaining control characters stripped —
+ * display-string keyed, and no control char can survive into the preimage
+ * (the separator-safety invariant `deriveAiCacheKey` relies on).
  */
 export function canonicalizeDestination(destination_name: string): string {
-  return destination_name.trim().toLowerCase().replace(/\s+/g, " ");
+  return destination_name
+    .replace(NON_WHITESPACE_CONTROL_REGEX, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 const NORTHERN_SEASONS: Record<number, Season> = {
@@ -78,7 +92,12 @@ export interface AiCacheKeyInput {
   schemaVersion: number;
 }
 
-/** Segment separator: US (unit separator) — cannot appear in any segment. */
+/**
+ * Segment separator: US (unit separator) — cannot appear in any segment:
+ * `canonicalizeDestination` strips control characters, and every other
+ * segment (feature, canonicalized travel styles, season, schema version)
+ * draws from a fixed control-char-free vocabulary.
+ */
 const SEPARATOR = "\u001f";
 
 export function deriveAiCacheKey(input: AiCacheKeyInput): string {

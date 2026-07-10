@@ -364,10 +364,12 @@ export function computeShares(amount_cents: number, split: SplitSpec): ShareAllo
 
   switch (split.type) {
     case "equal": {
-      const ids = [...new Set(split.participants.map((p) => p))];
-      assertUniqueUsers(ids);
-      if (ids.length === 0) throw new RangeError("at least one participant is required");
-      const sorted = [...ids].sort(canonicalCompare);
+      if (split.participants.length === 0)
+        throw new RangeError("at least one participant is required");
+      // Exact duplicates throw exactly like case-insensitive ones do — the
+      // same duplicate semantics as the other three split types.
+      assertUniqueUsers(split.participants);
+      const sorted = [...split.participants].sort(canonicalCompare);
       const n = BigInt(sorted.length);
       return allocateLargestRemainder(
         A,

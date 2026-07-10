@@ -62,6 +62,43 @@ describe("PaymentHandlesUpdate normalization (R-user-5)", () => {
     expect(parsed.cashtag).toBe("seant");
   });
 
+  it("normalizes THEN validates: a lone prefix strips to empty and rejects", () => {
+    expect(PaymentHandlesUpdateSchema.safeParse({ venmo_username: "@" }).success).toBe(false);
+    expect(PaymentHandlesUpdateSchema.safeParse({ venmo_username: "@@@" }).success).toBe(false);
+    expect(PaymentHandlesUpdateSchema.safeParse({ cashtag: "$" }).success).toBe(false);
+    expect(PaymentHandlesUpdateSchema.parse({ venmo_username: "@validname" }).venmo_username).toBe(
+      "validname",
+    );
+  });
+
+  it("rejects deeplink parameter-injection payloads (charset chokepoint)", () => {
+    for (const field of ["venmo_username", "cashtag", "paypalme_username"] as const) {
+      expect(PaymentHandlesUpdateSchema.safeParse({ [field]: "evil&amount=5000" }).success).toBe(
+        false,
+      );
+      expect(PaymentHandlesUpdateSchema.safeParse({ [field]: "a?note=paid#x" }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects internal whitespace and full URLs", () => {
+    expect(PaymentHandlesUpdateSchema.safeParse({ venmo_username: "sean t" }).success).toBe(false);
+    expect(
+      PaymentHandlesUpdateSchema.safeParse({ paypalme_username: "https://paypal.me/sean" }).success,
+    ).toBe(false);
+    expect(PaymentHandlesUpdateSchema.safeParse({ cashtag: "$evil/transfer" }).success).toBe(false);
+  });
+
+  it("caps handles at 30 chars post-normalization", () => {
+    expect(
+      PaymentHandlesUpdateSchema.parse({ venmo_username: "@" + "a".repeat(30) }).venmo_username,
+    ).toBe("a".repeat(30));
+    expect(PaymentHandlesUpdateSchema.safeParse({ venmo_username: "a".repeat(31) }).success).toBe(
+      false,
+    );
+  });
+
   it("null clears; absent leaves untouched", () => {
     const parsed = PaymentHandlesUpdateSchema.parse({ venmo_username: null });
     expect(parsed.venmo_username).toBeNull();

@@ -215,4 +215,45 @@ describe("refineCaptureExtraction — LLM fallback (capture spec stage 2)", () =
       }).confidence,
     ).toBe("low");
   });
+
+  describe("external_url sanitization (attacker-controlled email/share input)", () => {
+    const withUrl = (external_url: string) =>
+      CaptureExtractionSchema.parse({
+        category: "activity",
+        details: { category: "activity", venue_name: "Ghibli Museum", external_url },
+        confidence: "medium",
+      });
+
+    it("drops javascript:/file:/custom-scheme URLs (sanitize, not throw)", () => {
+      for (const url of [
+        "javascript:alert(1)",
+        "file:///etc/passwd",
+        "myapp://phish/settle-up",
+        "intent://evil#Intent;end",
+      ]) {
+        const refined = refineCaptureExtraction(withUrl(url));
+        expect(refined.details).not.toHaveProperty("external_url");
+        // the rest of the details survive the drop
+        expect(refined.details).toMatchObject({
+          category: "activity",
+          venue_name: "Ghibli Museum",
+        });
+      }
+    });
+
+    it("keeps http(s) URLs", () => {
+      const https = withUrl("https://tickets.example.com/order/123");
+      expect(refineCaptureExtraction(https)).toEqual(https);
+      const http = withUrl("http://legacy.example.com/x");
+      expect(refineCaptureExtraction(http).details).toMatchObject({
+        external_url: "http://legacy.example.com/x",
+      });
+    });
+
+    it("drops garbage that does not parse as a URL", () => {
+      for (const url of ["not a url", "https://", "%%%", "  "]) {
+        expect(refineCaptureExtraction(withUrl(url)).details).not.toHaveProperty("external_url");
+      }
+    });
+  });
 });

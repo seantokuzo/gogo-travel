@@ -26,11 +26,33 @@ describe("sha256Hex (NIST FIPS 180-4 vectors)", () => {
       "77710aedc74ecfa33685e33a6c7df5cc83004da1bdcef7fb280f5c2b2e97e0a5",
     );
   });
-  it("boundary lengths around the 64-byte block (55/56/64 chars)", () => {
-    // Cross-checked against node:crypto at authoring time; pins padding edges.
-    expect(sha256Hex("a".repeat(55))).toBe(sha256Hex("a".repeat(55)));
-    expect(sha256Hex("a".repeat(55))).not.toBe(sha256Hex("a".repeat(56)));
-    expect(sha256Hex("a".repeat(64))).toHaveLength(64);
+  it("padding boundaries around the 64-byte block (55/56/64/65 chars — pinned digests)", () => {
+    // Digests computed with node:crypto `createHash('sha256')` — real
+    // cross-implementation vectors pinning the padding edge cases.
+    expect(sha256Hex("a".repeat(55))).toBe(
+      "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318",
+    );
+    expect(sha256Hex("a".repeat(56))).toBe(
+      "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a",
+    );
+    expect(sha256Hex("a".repeat(64))).toBe(
+      "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb",
+    );
+    expect(sha256Hex("a".repeat(65))).toBe(
+      "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0",
+    );
+  });
+
+  it("2-byte UTF-8 branch ('Zürich' — accented destinations; node:crypto digest)", () => {
+    expect(sha256Hex("Zürich")).toBe(
+      "4251685e06cab635578c72b1f5f221e9840a05ac4d8f2404be4177aa87f9907d",
+    );
+  });
+
+  it("4-byte UTF-8 branch (non-BMP emoji; node:crypto digest)", () => {
+    expect(sha256Hex("Tokyo 🗼🧳")).toBe(
+      "dfb623357e26aeb2f8de54290a992ae541e5e7abd4b480871b5cf453438eb0e2",
+    );
   });
 });
 
@@ -38,6 +60,13 @@ describe("canonicalizeDestination (ai spec §3.6.1)", () => {
   it("lowercases, trims, collapses whitespace", () => {
     expect(canonicalizeDestination("  Tokyo,   Japan ")).toBe("tokyo, japan");
     expect(canonicalizeDestination("Tokyo, Japan")).toBe(canonicalizeDestination("TOKYO, JAPAN"));
+  });
+
+  it("strips non-whitespace control characters (the separator-safety invariant)", () => {
+    expect(canonicalizeDestination("Tok\u001Fyo")).toBe("tokyo");
+    expect(canonicalizeDestination("Tokyo\u0000, Japan\u007F")).toBe("tokyo, japan");
+    // whitespace controls still collapse to a single space, not to nothing
+    expect(canonicalizeDestination("Tokyo,\tJapan")).toBe("tokyo, japan");
   });
 });
 
@@ -102,6 +131,12 @@ describe("deriveAiCacheKey (R-db-10 / R-shared-8)", () => {
   it("unset travel style keys as 'any'", () => {
     expect(deriveAiCacheKey({ ...input, travelStyle: undefined })).toBe(
       deriveAiCacheKey({ ...input, travelStyle: [] }),
+    );
+  });
+
+  it("a control char in the destination cannot fork the key (stripped pre-preimage)", () => {
+    expect(deriveAiCacheKey({ ...input, destination: "Tokyo\u001F, Japan" })).toBe(
+      deriveAiCacheKey(input),
     );
   });
 

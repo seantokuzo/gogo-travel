@@ -42,8 +42,17 @@ function walk(dir: string): string[] {
   return files;
 }
 
+/**
+ * Catches every way a module specifier can enter a file: static
+ * `import … from` / `export … from`, bare side-effect `import "x"` (the
+ * classic RN polyfill form), dynamic `import("x")`, and CommonJS
+ * `require("x")`. Exactly one capture group matches per hit.
+ */
 const IMPORT_REGEX =
-  /(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)/g;
+  /(?:^|\n)\s*(?:import|export)\s[^;]*?from\s+["']([^"']+)["']|(?:^|\n)\s*import\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\brequire\(\s*["']([^"']+)["']\s*\)/g;
+
+const specifierOf = (match: RegExpMatchArray): string | undefined =>
+  match[1] ?? match[2] ?? match[3] ?? match[4];
 
 describe("platform-agnostic package (R-shared-9)", () => {
   const sources = walk(SRC_ROOT);
@@ -52,12 +61,30 @@ describe("platform-agnostic package (R-shared-9)", () => {
     expect(sources.length).toBeGreaterThan(20);
   });
 
+  it("IMPORT_REGEX catches every import form (scanner self-test)", () => {
+    const sample = [
+      'import { a } from "static-from";',
+      'export { b } from "reexport-from";',
+      'import "bare-side-effect";',
+      'const dyn = await import("dynamic-import");',
+      'const req = require("commonjs-require");',
+    ].join("\n");
+    const specifiers = [...sample.matchAll(IMPORT_REGEX)].map(specifierOf);
+    expect(specifiers).toEqual([
+      "static-from",
+      "reexport-from",
+      "bare-side-effect",
+      "dynamic-import",
+      "commonjs-require",
+    ]);
+  });
+
   it("no shipped module imports react/react-native/expo/node builtins/I-O clients", () => {
     const violations: string[] = [];
     for (const file of sources) {
       const content = readFileSync(file, "utf8");
       for (const match of content.matchAll(IMPORT_REGEX)) {
-        const specifier = match[1] ?? match[2];
+        const specifier = specifierOf(match);
         if (!specifier || specifier.startsWith(".")) continue;
         for (const [label, pattern] of FORBIDDEN_PATTERNS) {
           if (pattern.test(specifier)) {
@@ -74,7 +101,7 @@ describe("platform-agnostic package (R-shared-9)", () => {
     for (const file of sources) {
       const content = readFileSync(file, "utf8");
       for (const match of content.matchAll(IMPORT_REGEX)) {
-        const specifier = match[1] ?? match[2];
+        const specifier = specifierOf(match);
         if (specifier && !specifier.startsWith(".")) external.add(specifier);
       }
     }

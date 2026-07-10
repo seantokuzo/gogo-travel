@@ -31,7 +31,10 @@ export * from "./domains/notification.js";
 export * from "./domains/offline.js";
 export * from "./ai/refinement.js";
 export * from "./ai/cache-key.js";
-export { sha256Hex } from "./ai/sha256.js";
+// ai/sha256 is deliberately NOT re-exported here: it is an AI-cache-key
+// implementation detail, NOT a general-purpose (let alone security-grade)
+// hash. `deriveAiCacheKey` is the supported surface; anything else that
+// truly needs it must import the module path and read its doc first.
 // Feature modules each export their own SCHEMA_VERSION (§3.7 rule 3), so the
 // barrel exposes them as namespaces; subpath imports stay flat.
 export * as aiRecommendations from "./ai/recommendations.js";
