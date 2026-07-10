@@ -20,22 +20,14 @@
 
 ## 1. Requirements (EARS)
 
-### Where the queue lives (blocking dependency — repeated verbatim)
+### Where the queue lives
 
-This spec's screens need a home in the IA. The navigation spec owns that
-decision and holds it open; repeated verbatim from
-`.specs/client/navigation.spec.md § Open questions`:
-
-[NEEDS CLARIFICATION: Where does the capture needs-review queue surface?
-Research demands a "visible needs-review queue" but the component map
-doesn't place it. Options: (a) row in each trip's More tab, (b)
-trips-level inbox reachable from the trip list header with a badge, (c)
-both. Captures aren't always trip-scoped at parse time, which argues for
-(b) or (c).]
-
-All routes below are written relative to a placeholder home `capture/` and
-re-anchor wherever that marker resolves; nothing else in this spec depends on
-the answer.
+Resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09):
+**trips-level inbox** reachable from the trip-list header with a badge
+(captures can precede trip assignment), **plus a per-trip filtered view**.
+The routes below anchor at the trips-level inbox home the navigation
+spec's registry defines; the per-trip view is the same queue filtered by
+assigned/guessed trip.
 
 ### Share-intent ingestion
 
@@ -73,10 +65,10 @@ the answer.
 - **R-capc-7:** WHEN the queue is empty THE SYSTEM SHALL render the empty
   state as capture onboarding entry ("Forward bookings to your GoGo address
   or share them from any app") with a button into the onboarding screen.
-- **R-capc-8:** WHERE the queue surfaces with a badge (pends the marker
-  above) THE badge count SHALL equal the number of actionable rows —
-  `needs_review` + `failed` + unlanded `parsed` (derived client-side from
-  the `open` list; no dedicated count endpoint).
+- **R-capc-8:** WHERE the queue surfaces with a badge (trip-list header
+  inbox entry — resolved Gate 2) THE badge count SHALL equal the number of
+  actionable rows — `needs_review` + `failed` + unlanded `parsed` (derived
+  client-side from the `open` list; no dedicated count endpoint).
 
 ### Proposed-booking review card
 
@@ -114,19 +106,20 @@ the answer.
   an expired signed URL is refetched transparently once before surfacing an
   error.
 - **R-capc-16 (auto-file visibility):** WHEN a capture was auto-filed THE
-  SYSTEM SHALL render it in landed history as "Filed to *<trip>*" linking to
-  the booking — auto-filing is never invisible in-app. Whether auto-file
-  exists at all pends the companion spec's marker, repeated verbatim from
-  `.specs/api/capture.spec.md` R-cap-13:
-  [NEEDS CLARIFICATION: auto-file vs always-confirm — this spec auto-creates
-  the booking when confidence is high AND exactly one trip matches by date
-  overlap (the TripIt trust model; T-2.3 direction), notifying via the
-  parse-reply email and keeping the capture visible as queue history.
-  PLANNING § Cross-cutting patterns reads "proposed booking → user
-  confirms/edits → lands in trip", which can be read as every capture
-  requiring a confirm tap. Which is it? User-visible either way: bookings
-  appearing in trips without a tap, vs an extra confirmation step on every
-  forwarded email.]
+  SYSTEM SHALL render it in landed history as "Filed to *<trip>*" linking
+  to the booking — auto-filing is never invisible in-app. Auto-file is
+  decided behavior — Resolved at `.specs/api/capture.spec.md`:§R-cap-13
+  (Gate 2, 2026-07-09): high-confidence parses auto-file + push
+  notification with one-tap undo; medium/low-confidence parses route to
+  this review queue.
+- **R-capc-23 (auto-file undo):** WHEN the auto-file push's one-tap Undo
+  action fires (or the Undo action on an auto-filed landed row's overflow
+  is tapped) THE SYSTEM SHALL call `POST /capture/:id/undo`; on success
+  the capture returns to the queue as `needs_review` for normal review
+  (R-capc-9 flow), and the booking disappears from the trip; on 409 (the
+  booking was since edited/deleted, or the capture was manually confirmed)
+  THE SYSTEM SHALL show an explanatory toast and refresh the row.
+  (Resolved 2026-07-09, Gate 2)
 
 ### Capture onboarding
 
@@ -166,9 +159,9 @@ the answer.
 
 ### 2.1 Screens & presentation (navigation §2.6 conventions)
 
-| Screen | Route (placeholder home pends the queue-surface marker) | Presentation |
+| Screen | Route (anchored at the trips-level inbox home — nav registry, resolved Gate 2) | Presentation |
 |---|---|---|
-| `capture-queue` | `capture/index` | list surface at wherever the marker lands (More-tab row / trips-level inbox / both) |
+| `capture-queue` | `capture/index` | trips-level inbox (trip-list header entry + badge) with a per-trip filtered view |
 | `capture-review` | `capture/[captureId]` | **PUSH** (drill into an on-screen entity) |
 | `capture-onboarding` | `capture/onboarding` | **MODAL — form** (self-contained teach flow, explicit done) |
 | raw viewer | within `capture-review` | **PUSH** (full-bleed viewer) |
@@ -217,6 +210,7 @@ Screen roots: `capture-queue-screen`, `capture-review-screen`,
 | Review: category picker | `capture-review-picker-category` |
 | Review: trip assign + sheet rows | `capture-review-button-assign-trip`, `capture-review-sheet-trip`, `capture-review-list-item-trip-{tripId}` |
 | Review: primary actions | `capture-review-button-confirm`, `capture-review-button-reject` (ConfirmDialog derives `-confirm`/`-cancel`), `capture-review-button-retry`, `capture-review-button-add-manually`, `capture-review-button-view-original` |
+| Auto-filed row undo (landed history overflow) | `capture-queue-button-undo-{captureId}` |
 | Onboarding | `capture-onboarding-button-copy-address`, `capture-onboarding-button-done`, `capture-onboarding-button-retry` (address provisioning failure) |
 
 Dynamic qualifiers are stable entity ids, never render indexes (§2.7 rule).
@@ -229,7 +223,7 @@ Dynamic qualifiers are stable entity ids, never render indexes (§2.7 rule).
 | Upload network failure | synthetic row + ErrorBanner | retry (R-capc-3); discard via ConfirmDialog (R-capc-4) |
 | Upload 413 / 400 / 429 | synthetic row with reason ("Too large — max 10 MB" / "Can't read this type" / "Slow down a moment") | 429: retry; 413/400: discard or share something else |
 | Parse `failed` | review screen failure mode | retry / add-manually / reject (R-capc-14) |
-| Parse `needs_review` — `ai_unavailable` | needs-review card + notice "AI parsing unavailable — review manually" (server R-cap-16; cap-accounting marker cited there, not repeated) | edit + confirm manually, or retry later |
+| Parse `needs_review` — `ai_unavailable` | needs-review card + notice "AI parsing unavailable — review manually" (server R-cap-16; capture is cap-exempt with its own 20/day ceiling — resolved Gate 2) | edit + confirm manually, or retry later |
 | Confirm 400 | inline field errors | fix + resubmit (R-capc-11) |
 | Confirm 409 (landed elsewhere) | row refreshes to landed | none needed |
 | Raw URL expired | transparent single refetch | error toast if refetch fails (R-capc-15) |
@@ -262,7 +256,7 @@ capture API (CAP-1..4), design-system Sheet/ConfirmDialog/ListItem.
 |---|---|---|
 | CAPC-1 | Share-intent ingestion: expo-share-intent v8 wiring (config plugin, dev client), payload classification, upload call, pending-upload store + synthetic rows, stash/resume path. | R-capc-1..4 |
 | CAPC-2 | Queue screen: list + segments + row states + poll loop + badge derivation + empty state. | R-capc-5..8 |
-| CAPC-3 | Review screen: proposal card, edit fields with shared-schema validation, trip picker sheet, confirm/reject/retry/add-manually/view-original flows, landed history rendering. | R-capc-9..16 |
+| CAPC-3 | Review screen: proposal card, edit fields with shared-schema validation, trip picker sheet, confirm/reject/retry/add-manually/view-original flows, landed history rendering, auto-file undo (push action + landed-row overflow). | R-capc-9..16, R-capc-23 |
 | CAPC-4 | Onboarding screen: address provisioning, copy affordance, forward + share teaching content, R-nav-18 entry hook, persistent reachability. | R-capc-17..20 |
 
 testIDs (R-capc-21) land with each screen's task; NAV-7 lint enforces them.
@@ -276,13 +270,15 @@ testIDs (R-capc-21) land with each screen's task; NAV-7 lint enforces them.
 - [ ] Trip picker excludes viewer-role trips; trip_guess preselected (CAPC-3)
 - [ ] Reject shows deletion warning, deletes, removes row (CAPC-3)
 - [ ] Failed capture shows error + all three recovery actions; retry returns row to processing (CAPC-3)
+- [ ] Auto-filed row shows "Filed to <trip>"; undo returns it to needs_review and removes the booking; 409 undo shows toast + refresh (CAPC-3)
 - [ ] Onboarding provisions address once, copy button copies, provisioning failure shows retry (CAPC-4)
 - [ ] Every interactive element carries its §2.4 testID (NAV-7 lint green)
 
 ---
 
-*Trace: R-capc-N ↔ §2 sections inline. Markers in this file: two verbatim
-repeats — the navigation spec's queue-surface marker (§1 head; canonical home
-`.specs/client/navigation.spec.md`) and the companion API spec's auto-file
-marker (R-capc-16; canonical home `.specs/api/capture.spec.md` R-cap-13).
-Zero markers = approvable.*
+*Trace: R-capc-N ↔ §2 sections inline. Both repeated markers resolved at
+their canonical homes at Gate 2 (2026-07-09): queue surface → trips-level
+inbox + per-trip filtered view (navigation spec §1); auto-file →
+high-confidence auto-file + push with one-tap undo, medium/low → review
+queue (capture API R-cap-13/28 — client undo flow added as R-capc-23).
+Zero markers remain.*

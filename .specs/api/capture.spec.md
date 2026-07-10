@@ -37,7 +37,9 @@ notifications, Siri/Calendar donation.
 webhook/share → capture_inbox (pending) → schema.org JSON-LD parse
              → LLM fallback (Haiku, structured output) → ProposedBooking
              → confidence routing → auto-file by date-overlap  → bookings row
+                                  |    (high confidence; push + one-tap undo)
                                   ↘ needs_review queue → user confirm/edit → bookings row
+                                       (medium/low confidence)
 Failures visible, never silent (R-db-7).
 ```
 
@@ -64,15 +66,18 @@ Failures visible, never silent (R-db-7).
   the SMTP `From` address does not match a registered sender address for that
   user THE SYSTEM SHALL reject the delivery (CloudMailin bounce to sender —
   the failure is visible to the forwarder, never silent) and create no
-  capture row. v1 registered-sender set: the account email
-  (`lower(users.email)`) only, pending the marker below.
-  [NEEDS CLARIFICATION: registered sender addresses — is From-matching against
-  the account email alone sufficient for v1? Apple-sign-in users have
-  private-relay account emails but forward from their real mailbox, so their
-  forwards would always bounce; the fix is a "verified additional sender
-  addresses" list, which is a new table (entity-list addition per schema spec
-  conventions) plus a verification flow. User-visible and a schema change —
-  Sean's call.]
+  capture row. Registered-sender set: the account email
+  (`lower(users.email)`) plus the user's **verified additional sender
+  addresses** — the approved `capture_senders` table (entity addition,
+  approved Gate 2; schema spec owns the table). Apple private-relay account
+  emails made account-email-only matching untenable. (Resolved 2026-07-09,
+  Gate 2)
+- **R-cap-27 (verified additional senders):** WHEN a user adds an additional
+  sender address THE SYSTEM SHALL send a verification email to that address
+  containing a confirmation link/code; the address SHALL count as registered
+  for R-cap-3 only after verification succeeds. Unverified and removed
+  addresses never match. Addresses are stored lowercased; per-user count is
+  capped (config, default 5). (Resolved 2026-07-09, Gate 2)
 - **R-cap-4 (durable ingest):** WHEN an inbound capture (email or share) is
   accepted THE SYSTEM SHALL persist the raw payload to object storage
   (`raw_ref`) and insert the `capture_inbox` row with `parse_status
@@ -131,22 +136,25 @@ Failures visible, never silent (R-db-7).
   and `[start_date − 1 day, end_date + 1 day]` overlaps the proposal's date
   range — and SHALL set `ProposedBooking.trip_guess` iff exactly one
   candidate exists (0 or 2+ candidates → no guess; user assigns at review).
-- **R-cap-13 (auto-file):** WHEN a capture reaches `parse_status 'parsed'`
-  AND `trip_guess` is set THE SYSTEM SHALL create the booking automatically
-  in the same transaction — via the same internal booking-creation path as
-  the bookings API (so itinerary-item side effects live in one place) — with
-  `source` = the capture's source, `status 'booked'`, `capture_id` linked,
-  `created_by` = the capture's owner; `parsed` captures without a guess wait
-  in the queue for trip assignment.
-  [NEEDS CLARIFICATION: auto-file vs always-confirm — this spec auto-creates
-  the booking when confidence is high AND exactly one trip matches by date
-  overlap (the TripIt trust model; T-2.3 direction), notifying via the
-  parse-reply email and keeping the capture visible as queue history.
-  PLANNING § Cross-cutting patterns reads "proposed booking → user
-  confirms/edits → lands in trip", which can be read as every capture
-  requiring a confirm tap. Which is it? User-visible either way: bookings
-  appearing in trips without a tap, vs an extra confirmation step on every
-  forwarded email.]
+- **R-cap-13 (auto-file — decided):** WHEN a capture reaches `parse_status
+  'parsed'` (JSON-LD or high-confidence LLM, R-cap-11) AND `trip_guess` is
+  set THE SYSTEM SHALL create the booking automatically in the same
+  transaction — via the same internal booking-creation path as the bookings
+  API (so itinerary-item side effects live in one place) — with `source` =
+  the capture's source, `status 'booked'`, `capture_id` linked,
+  `created_by` = the capture's owner, AND SHALL send the owner a push
+  notification announcing the auto-file with a **one-tap undo** action
+  (R-cap-28); medium/low-confidence parses route to the review queue
+  (`needs_review`), never auto-file. `parsed` captures without a guess wait
+  in the queue for trip assignment. (The TripIt "magic" depends on
+  auto-file; the undo keeps it trustworthy.) (Resolved 2026-07-09, Gate 2)
+- **R-cap-28 (auto-file undo):** WHEN the owner invokes undo on an
+  auto-filed capture THE SYSTEM SHALL, in one transaction, delete the
+  auto-created booking through the booking service (its itinerary items go
+  with it) and return the capture to the queue as `needs_review` awaiting
+  explicit confirm/reject; undo of a capture that was not auto-filed, or
+  whose booking has since been edited or deleted, SHALL return 409
+  `CONFLICT`. (Resolved 2026-07-09, Gate 2)
 - **R-cap-14 (failures are visible, never silent):** WHEN any pipeline stage
   fails (unparseable payload, LLM error, refinement rejection, cap/kill-switch
   block) THE SYSTEM SHALL persist the row as `'failed'` or `'needs_review'`
@@ -158,22 +166,19 @@ Failures visible, never silent (R-db-7).
   outcome — filed ("Added to *Tokyo* — Park Hyatt, May 3–7" + deep link to
   the booking), needs review ("We couldn't read everything — review it in
   GoGo" + deep link to the queue), or failed (reason + queue link). Links go
-  through the deep-link registry (navigation spec §2.3; universal-link domain
-  has an open marker there — this spec takes the registry as given).
+  through the deep-link registry (navigation spec §2.3; universal-link
+  domain resolved at navigation spec §1, Gate 2 — Sean is purchasing it;
+  this spec takes the registry as given).
 - **R-cap-16 (LLM budget enforcement):** WHEN the global AI kill-switch is
-  tripped (`AI_DISABLED` state) or the user's applicable cap is exhausted THE
-  SYSTEM SHALL still run the JSON-LD stage, SHALL skip the LLM stage, and
-  SHALL route JSON-LD misses to `'needs_review'` with error
-  `'ai_unavailable'` — degraded, visible, never silent. Whether capture
-  parsing draws down the user's 30/day cap pends the canonical marker,
-  repeated verbatim from schema spec §3.2 (`ai_feature`):
-  [NEEDS CLARIFICATION: does the capture-pipeline LLM fallback count against
-  the user's 30/day AI cap (i.e., is `capture_parse` an `ai_feature` value
-  tracked in `ai_usage`)? It costs money per the kill-switch policy either
-  way, but charging it to the user cap is user-visible — a heavy
-  email-forwarder could exhaust their recommendations quota.]
-  Regardless of the cap answer, every capture LLM call SHALL record token
-  usage for the $50-alert/$100-kill-switch rollup.
+  tripped (`AI_DISABLED` state) or the user's capture ceiling is exhausted
+  THE SYSTEM SHALL still run the JSON-LD stage, SHALL skip the LLM stage,
+  and SHALL route JSON-LD misses to `'needs_review'` with error
+  `'ai_unavailable'` — degraded, visible, never silent. Resolved at
+  `.specs/database/schema.spec.md`:§3.2 `ai_feature` (Gate 2, 2026-07-09):
+  capture parsing does NOT count against the user's 30/day AI cap; it has
+  its own **structural ceiling of 20 captures/day per user**, enforced by
+  this pipeline. Every capture LLM call SHALL record token usage for the
+  $50-alert/$100-kill-switch rollup.
 
 ### Queue API
 
@@ -207,9 +212,10 @@ Failures visible, never silent (R-db-7).
   and raw email/file are removed.
 - **R-cap-22 (reparse):** WHEN the owner requests a reparse of a
   `needs_review` or `failed` capture THE SYSTEM SHALL re-run the full
-  pipeline from the retained raw payload (retention marker below governs how
-  long this stays possible); reparse LLM usage is accounted identically to
-  first-parse usage (R-cap-16) and the endpoint is rate-limited.
+  pipeline from the retained raw payload (possible while the raw object is
+  retained — until confirm or the 30-day sweep, R-cap-26); reparse LLM
+  usage is accounted identically to first-parse usage (R-cap-16) and the
+  endpoint is rate-limited.
 - **R-cap-23 (raw access):** WHEN the owner requests the original payload THE
   SYSTEM SHALL return a short-lived (≤ 5 min) signed URL to the raw object;
   raw payloads SHALL never be served to any other principal or embedded in
@@ -227,16 +233,15 @@ Failures visible, never silent (R-db-7).
   redirect), cap redirects (≤ 3), response size (≤ 5 MB), and time (≤ 10 s);
   fetch failure or an auth-walled page routes the capture to `needs_review`
   with the URL preserved as the raw payload.
-- **R-cap-26 (retention — canonical marker):** Raw payload retention is
-  governed by the schema spec's open marker, repeated verbatim from
-  §3.3.16 `capture_inbox`:
-  [NEEDS CLARIFICATION: raw capture retention — forwarded emails are
-  PII-heavy (names, loyalty numbers, sometimes payment tails). Delete
-  `raw_ref` object after successful landing? After N days? Keep indefinitely
-  for re-parse? Privacy-policy disclosure (already flagged in research)
-  depends on this answer.]
-  Until resolved, this spec adds no retention job; R-cap-21 (reject) is the
-  only deletion path.
+- **R-cap-26 (retention):** Resolved at
+  `.specs/database/schema.spec.md`:§3.3.16 `capture_inbox` (Gate 2,
+  2026-07-09): delete the raw payload on confirm or after 30 days,
+  whichever comes first. WHEN a capture is confirmed (R-cap-19) THE SYSTEM
+  SHALL delete its raw object; a daily retention job SHALL delete raw
+  objects older than 30 days (auto-filed captures, having no explicit
+  confirm, fall to this sweep — which also preserves the undo/review
+  window). R-cap-21 (reject) remains the immediate user-initiated deletion
+  path.
 
 ---
 
@@ -408,6 +413,49 @@ landed.
 
 ---
 
+#### POST /capture/:captureId/undo
+
+Undo an auto-file (R-cap-28): deletes the auto-created booking via the
+booking service and returns the capture to `needs_review` for explicit
+confirm/reject. Reached by the one-tap undo action on the auto-file push.
+**Auth**: Required (owner).
+
+**Response 200**: `CaptureItem` (`parse_status 'needs_review'`,
+`booking_id` null).
+
+**Errors**: 401; 404; 409 `CONFLICT` — capture was not auto-filed, or its
+booking was since edited/deleted.
+
+**Requirements covered**: R-cap-28, R-cap-17
+
+**Tests required**:
+- [ ] Undo deletes booking + derived items and reverts capture to `needs_review` in one transaction
+- [ ] Undo on a manually confirmed capture → 409; on an edited auto-filed booking → 409
+- [ ] Other user → 404
+
+---
+
+#### GET /capture/senders · POST /capture/senders · POST /capture/senders/:senderId/verify · DELETE /capture/senders/:senderId
+
+Verified-additional-sender management (R-cap-27; `capture_senders` table
+approved Gate 2, schema spec owns it). POST sends the verification email;
+verify consumes the emailed code/token; only verified rows participate in
+R-cap-3 matching. **Auth**: Required (owner-scoped).
+
+**Errors**: 401; 400 `VALIDATION_FAILED` — malformed address / bad code;
+404 — sender row absent or not owned; 409 `CONFLICT` — duplicate address;
+429 `RATE_LIMITED` — verification-email abuse guard.
+
+**Requirements covered**: R-cap-27, R-cap-3
+
+**Tests required**:
+- [ ] Add → unverified row + verification email sent; From-match still bounces until verified
+- [ ] Verify with correct code → registered; R-cap-3 accepts that sender
+- [ ] Delete → sender no longer matches; per-user cap enforced
+- [ ] Other user's sender id → 404
+
+---
+
 #### POST /capture/:captureId/reparse
 
 Re-run the pipeline on a `needs_review` or `failed` capture. **Auth**:
@@ -455,7 +503,8 @@ Reject/dismiss — hard-deletes row + raw object (R-cap-21). **Auth**: Required
           - map fields → per-category BookingDetails shape
           - success → ProposedBooking{parser:'jsonld', confidence:'high'}
 [stage 2] LLM fallback (JSON-LD miss, or PDF/image payload)
-          - guard: kill-switch + cap check (R-cap-16; cap question pends marker)
+          - guard: kill-switch + 20/day capture ceiling (R-cap-16; user AI
+            cap NOT drawn — resolved Gate 2)
           - input: subject + stripped body text, or the PDF/image content
             (PDFs > 25 pages → needs_review 'unsupported_document'; booking
             confirmations are 1–3 pages)
@@ -464,7 +513,8 @@ Reject/dismiss — hard-deletes row + raw object (R-cap-21). **Auth**: Required
           - server-side refine step (numeric/cross-field rules — R-shared-7)
 [stage 3] heuristic gate + confidence routing (R-cap-11) → parsed | needs_review
 [stage 4] trip inference by date overlap (R-cap-12) → trip_guess?
-[stage 5] auto-file when parsed + trip_guess (R-cap-13; marker pending)
+[stage 5] auto-file when parsed + trip_guess (R-cap-13) + push w/ one-tap
+          undo (R-cap-28)
 [stage 6] parse-reply email for source='email' (R-cap-15)
 [error]   any stage → parse_status 'failed'/'needs_review' + error (R-cap-14)
 ```
@@ -491,7 +541,7 @@ Reject/dismiss — hard-deletes row + raw object (R-cap-21). **Auth**: Required
 
 Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
 
-### 3.4 Auto-file semantics (pending R-cap-13 marker)
+### 3.4 Auto-file semantics (resolved Gate 2, 2026-07-09)
 
 - Auto-filed bookings: `status 'booked'`, `source` = capture source,
   `created_by` = capture owner, `trip_id` = the single date-overlap candidate,
@@ -502,9 +552,11 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
   itinerary-item creation and `starts_at`/`ends_at` denormalization stay a
   single code path.
 - The capture row stays `parsed` and becomes queue *history* (landed) via the
-  reverse FK — auto-file is never invisible: parse-reply email (email source)
-  + the landed row in the queue. Wrong-trip corrections are booking edits
-  (bookings domain), not capture operations.
+  reverse FK — auto-file is never invisible: push notification with one-tap
+  undo (R-cap-13/28; notifications spec owns transport), parse-reply email
+  (email source), and the landed row in the queue. Undo is the one-tap
+  correction path (reverts to the queue); wrong-trip corrections after that
+  window are booking edits (bookings domain), not capture operations.
 
 ### 3.5 Parse-reply email (R-cap-15)
 
@@ -527,12 +579,13 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
 ### 3.6 LLM cap accounting
 
 - Every capture LLM call records `input_tokens`/`output_tokens` for the
-  kill-switch rollup (ai-architecture: $50 alert / $100 hard stop). Whether it
-  increments the user's daily `ai_usage` cap pends the R-cap-16 marker
-  (canonical home: schema spec §3.2 `ai_feature`); if yes, the feature value
-  is `capture_parse` and cap-exhausted behavior is R-cap-16's degraded path
-  (JSON-LD only, misses → `needs_review 'ai_unavailable'`) — never a dropped
-  capture, never an opaque failure.
+  kill-switch rollup (ai-architecture: $50 alert / $100 hard stop).
+  Resolved at `.specs/database/schema.spec.md`:§3.2 `ai_feature` (Gate 2,
+  2026-07-09): capture parsing does NOT increment the user's daily
+  `ai_usage` cap — it has a separate structural ceiling of 20 captures/day
+  per user. Ceiling-exhausted behavior is R-cap-16's degraded path
+  (JSON-LD only, misses → `needs_review 'ai_unavailable'`) — never a
+  dropped capture, never an opaque failure.
 - Cost expectation from research: ~$0.005/email on the Haiku path; JSON-LD
   path is free.
 
@@ -543,8 +596,9 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
   for parsing. Research flags this disclosure as required; it must land in
   the privacy policy before the capture feature ships. Tracked here so the
   launch checklist can trace it to a spec.
-- Raw payload retention pends the R-cap-26 marker (schema spec §3.3.16 is
-  the canonical home). No retention/cleanup job is specced until it resolves.
+- Raw payload retention (R-cap-26, resolved Gate 2): raw objects are
+  deleted on confirm or after 30 days, whichever first — a daily retention
+  job runs the sweep; disclose the retention window in the privacy policy.
 - Logging: R-cap-24. Signed-URL raw access: R-cap-23. Sender bounce policy
   keeps failure visibility outside the app (R-cap-3) without leaking whether
   a slug exists beyond what the bounce itself implies — acceptable: slugs
@@ -557,9 +611,10 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
 - `ai/capture-extract.ts`: extraction schema (reuses the flat
   `BookingDetails` shapes — the reason they stay flat), `SCHEMA_VERSION`,
   paired refiner.
-- `config/ai-pricing.ts`: `capture_parse → claude-haiku-4-5` mapping (feature
-  key lands regardless of the cap marker; the marker only decides `ai_usage`
-  attribution).
+- `config/ai-pricing.ts`: `capture_parse → claude-haiku-4-5` mapping
+  (feature key exists for model routing + cost rollup; `capture_parse` is
+  NOT tracked in the user's `ai_usage` cap — resolved Gate 2, schema spec
+  §3.2).
 
 ### 3.9 Out of scope (explicit)
 
@@ -583,16 +638,18 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
 
 Each sized to one agent session; queued as `T-N.M` rows at build time.
 **Depends on:** SH-1 (shared capture/ai modules) and DB-1 (schema) landing
-first or in the same PR; blocked on markers resolving (P-2 interview).
+first or in the same PR. All markers resolved at Gate 2 (2026-07-09).
 
-### CAP-1 — Forward address + CloudMailin webhook ingest
+### CAP-1 — Forward address + CloudMailin webhook ingest + sender management
 
-**Covers:** R-cap-1..6, R-cap-4, R-cap-24.
+**Covers:** R-cap-1..6, R-cap-4, R-cap-24, R-cap-27.
 
 - [ ] `POST /capture/address` (idempotent slug provisioning)
 - [ ] `POST /capture/inbound-email`: credential/signature verify (mechanism
-      pinned from CloudMailin docs), slug routing, sender policy, size cap,
-      Message-ID dedupe, raw MIME → object storage, pending row
+      pinned from CloudMailin docs), slug routing, sender policy (account
+      email + verified `capture_senders`), size cap, Message-ID dedupe,
+      raw MIME → object storage, pending row
+- [ ] Sender management endpoints + verification-email flow (R-cap-27)
 - [ ] Structured logs with zero PII
 
 **Tests required**: all listed under the two endpoints in §3.1.
@@ -616,7 +673,8 @@ tests (private/link-local/metadata targets rejected; redirect re-check).
       `zodOutputFormat`, capture-extract schema, refine step) with
       kill-switch/cap guard
 - [ ] Confidence routing (R-cap-11 threshold), heuristic gate, trip
-      inference (R-cap-12), auto-file transaction (R-cap-13)
+      inference (R-cap-12), auto-file transaction + push-with-undo hook
+      (R-cap-13/28)
 - [ ] Failure writes (`failed`/`needs_review` + `error`) for every stage
 
 **Tests required**:
@@ -629,12 +687,15 @@ tests (private/link-local/metadata targets rejected; redirect re-check).
 - [ ] Kill-switch/cap on: JSON-LD still runs; miss → needs_review `ai_unavailable`
 - [ ] Token usage recorded per LLM call
 
-### CAP-4 — Queue API + parse-reply email
+### CAP-4 — Queue API + parse-reply email + retention job
 
-**Covers:** R-cap-15, R-cap-17..23, R-cap-26 (marker-gated: no retention job).
+**Covers:** R-cap-15, R-cap-17..23, R-cap-26, R-cap-28.
 
 - [ ] `GET /capture`, `GET /capture/:id` (+ signed raw URL),
-      `POST /:id/confirm`, `POST /:id/reparse`, `DELETE /:id`
+      `POST /:id/confirm`, `POST /:id/undo`, `POST /:id/reparse`,
+      `DELETE /:id`
+- [ ] Raw-payload retention: delete on confirm + daily 30-day sweep
+      (R-cap-26)
 - [ ] Parse-reply templates (filed / needs-review / failed) + 60 s p95 send
       (transport provider escalated at build)
 
@@ -645,9 +706,9 @@ tests (private/link-local/metadata targets rejected; redirect re-check).
 
 ---
 
-*Trace: every R-cap-N cites its endpoint/stage inline. Markers in this file:
-three canonical repeats (schema §3.2 `ai_feature` in R-cap-16; schema §3.3.16
-retention in R-cap-26; the navigation queue-surface marker is repeated in the
-companion client spec, which owns that dependency) and two new ones (R-cap-3
-registered senders; R-cap-13 auto-file vs always-confirm). Zero markers =
-approvable.*
+*Trace: every R-cap-N cites its endpoint/stage inline. All markers resolved
+at Gate 2 (2026-07-09): canonical repeats — `ai_feature` (capture outside
+the AI cap; 20/day structural ceiling), raw retention (delete on confirm or
+30 days); owned here — registered senders (verified `capture_senders` table
+approved → R-cap-27), auto-file (high-confidence auto-file + push with
+one-tap undo → R-cap-13/28). Zero markers remain.*

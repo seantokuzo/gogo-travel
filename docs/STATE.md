@@ -27,13 +27,21 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ### P-2 — Upfront spec suite (in progress; P-1 done except the push)
 
-- **Where we are:** S-2 research done + banked. Sean sign-offs landed
-  2026-07-09: **free v1 + entitlement seams (ADR-005)**, dual-path booking
-  capture, accounts bundle (Anthropic+caps, Mapbox, CloudMailin), foreground-
-  only location. Architecture + entity-level data model + provider table
-  written into PLANNING.md § Architecture. **At Gate 1: Sean approves
-  architecture/data model + auth choice → then per-feature specs fan out.**
+- **Where we are:** Gates 1 AND 2 passed 2026-07-09. Full spec suite written
+  (18 files, ~280 EARS requirements) by 11 parallel spec agents; all 59
+  punch-list questions approved wholesale (see `.specs/OPEN-QUESTIONS.md` —
+  now the decision record); both resolution agents ran — **zero markers
+  remain**. Cross-agent sync items applied (push_tokens.timezone, packing
+  live-uncached, map search bar). Judgment calls flagged by resolvers are
+  logged in their reports; notable: editors can only edit/delete their OWN
+  expenses (per approved permission matrix), sole-owner account deletion →
+  409 transfer-first.
+- **Remaining in P-2:** Sean picks a palette (artifact:
+  claude.ai/code/artifact/229f853e-c9d3-49a9-b439-96a0c27f914f) →
+  T-2.4 feature-ledger.json + frozen phase roadmap → **Gate 3** → build.
 - P-1 remainder: push to origin (gh auth), then archive P-1 to history.
+- Sean's open action items: gh auth login · palette pick · (later) buy
+  universal-link domain.
 - **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
   pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
   (canonical GSD template: doc system, autonomous loop, naming ADRs),

@@ -32,11 +32,11 @@
   actual spend (from `GET /budgets`) plus a progress indicator; WHEN actual ≥
   80% of cap THE SYSTEM SHALL style the row as warning; WHEN actual > 100%
   THE SYSTEM SHALL style it as over-budget — thresholds rendered via semantic
-  tokens, never hardcoded colors (R-ds-7).
-  [NEEDS CLARIFICATION: is there an overall trip budget cap in addition to per-category caps? If yes: extra `budgets` row with a `total` pseudo-category vs a `trips.budget_cap_cents` column — pick after the product answer. User-visible.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.15 — decides
-  whether the overview gets an editable total header row or a computed-only
-  total.)*
+  tokens, never hardcoded colors (R-ds-7). Resolved at
+  `.specs/database/schema.spec.md`:§3.3.15 (Gate 2, 2026-07-09): an
+  optional overall trip cap exists alongside per-category caps — the
+  overview header row is an **editable total cap** (editor+), with
+  computed total spend beside it.
 - **R-cmoney-3 (AI estimate CTA):** WHEN the budget segment renders for an
   editor+ THE SYSTEM SHALL offer an "Estimate with AI" action whose states
   are: enabled (trip has dates, online) · disabled with "add trip dates"
@@ -48,25 +48,27 @@
   server wrote `budgets`), refetch, and display `ai_estimated_at`.
 - **R-cmoney-4 (category taxonomy):** WHEN any category picker or budget row
   renders THE SYSTEM SHALL derive the category list from the shared
-  `expense_category` enum — never a local list.
-  [NEEDS CLARIFICATION: budget/expense category taxonomy — is this fixed set right, and are categories a fixed enum or user-definable? PLANNING names "food, transport, etc." for AI estimation but never enumerates. User-visible in budget UI and AI estimates.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.2; resolves
-  there.)*
+  `expense_category` enum — never a local list. Resolved at
+  `.specs/database/schema.spec.md`:§3.2 (Gate 2, 2026-07-09): fixed enum
+  v1 — lodging, transport, food, activities, shopping, other; not
+  user-definable.
 - **R-cmoney-5 (expense list):** WHEN the expenses segment renders THE SYSTEM
   SHALL list expenses newest-first (`spent_at`) with description, category,
   payer, amount in its logged currency, and per-item "your share"; SHALL
   offer member + category filters in a Sheet (nav §2.6 "filters"); and SHALL
-  show the add-expense FAB for editor+ (role marker: api money spec
-  R-money-26).
+  show the add-expense FAB for **every member including viewers** (api
+  money spec R-money-26, resolved Gate 2 — viewers log expenses too).
 - **R-cmoney-6 (balances view):** WHEN the balances segment renders THE
   SYSTEM SHALL show (a) the caller's headline position ("you're owed" /
-  "you owe" / settled), (b) per-member net chips, and (c) the transfer list
-  from the API's `simplified` array — each row actionable: rows where the
-  caller is debtor open the settle screen; rows where the caller is creditor
-  open the send-the-bill flow.
-  [NEEDS CLARIFICATION: debt simplification default — the navigation spec's screen inventory shows balances as "who-owes-who, simplified", but simplification changes who pays whom (you can be told to pay someone who never fronted money for you — Splitwise makes it an opt-in group setting for exactly this trust reason). Is simplified always-on, a per-trip setting, or a per-view toggle defaulting to pairwise? User-visible.]
-  *(Repeated verbatim from `.specs/api/money.spec.md` R-money-10 — the API
-  returns both shapes either way; only this display decision pends.)*
+  "you owe" / settled), (b) per-member net chips, and (c) the transfer
+  list rendered **pairwise by default** with a one-tap "Simplify debts"
+  view toggle (`money-toggle-simplify`) that switches to the API's
+  `simplified` array — simplification is off by default (Splitwise trust
+  precedent: it changes who pays whom); the toggle is a per-view control,
+  not a persisted setting. Each row is actionable: rows where the caller
+  is debtor open the settle screen; rows where the caller is creditor open
+  the send-the-bill flow. (Resolved 2026-07-09, Gate 2 — api money spec
+  R-money-10)
 
 ### Add-expense flow (`expense-new` — modal)
 
@@ -90,34 +92,39 @@
   `computeShares` algorithm (api money spec §3.3), and SHALL block save
   unless the resolved shares sum to the amount exactly (mirror of R-money-2;
   the server re-validates regardless).
-- **R-cmoney-10 (currency gate):** WHILE the multi-currency marker is
-  unresolved THE SYSTEM SHALL lock the currency field to the trip's base
-  currency (a non-base expense cannot yet carry a trustworthy rate — api
-  money spec R-money-6).
-  [NEEDS CLARIFICATION: multi-currency policy — when an expense's currency ≠ trip base currency, where does `fx_rate` come from (live rate API at entry time? manual entry? both with manual override?) and is it ever re-fetched? Balances shown always in trip base currency? Affects whether an FX-rate provider becomes a new external dependency (Autonomy Contract §3).]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.12 — this
-  is what unlocks PLANNING's "spend-in-local-currency logging" extra.)*
+- **R-cmoney-10 (multi-currency entry):** WHEN the user picks a currency ≠
+  trip base THE SYSTEM SHALL auto-fetch the FX rate when online (free FX
+  API — approved dependency; provider picked at build), prefill the
+  converted base amount, and always allow manual override of the rate;
+  WHEN offline (or the FX source fails) THE SYSTEM SHALL require manual
+  rate entry before save. The rate is captured at entry and never
+  re-fetched; balances render in trip base currency. Resolved at
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09) — this
+  unlocks PLANNING's "spend-in-local-currency logging" extra.
 - **R-cmoney-11 (booking link):** WHEN the user links a booking THE SYSTEM
   SHALL offer the trip's bookings in a picker and prefill amount
   (`price_cents`), description (title), and category via the fixed mapping
   §2.3 — prefills editable, link removable.
 - **R-cmoney-12 (edit mode):** WHEN opened with `?expenseId=` THE SYSTEM
-  SHALL prefill all fields from the expense (split editor opens in `exact`
-  mode showing current shares — original split type is not persisted, pends
-  the split-metadata marker) and submit via PATCH with full shares
-  replacement.
-  [NEEDS CLARIFICATION: split-type persistence — `expense_shares` stores resolved cents only (schema spec §3.3.13); should the chosen split method + inputs (equal / percent 50-25-25 / shares 2-1-1) persist so expense detail and edit re-open in the original mode ("split equally"), or is derive-on-read acceptable (equal is detectable within remainder tolerance; percent/shares are not)? Persisting = schema addition (e.g. `expenses.split_meta jsonb`). User-visible in expense detail + edit.]
-  *(Repeated verbatim from `.specs/api/money.spec.md` R-money-29.)*
+  SHALL prefill all fields from the expense and open the split editor in
+  `exact` mode showing current shares (equal splits detectable within
+  remainder tolerance may display "split equally"), submitting via PATCH
+  with full shares replacement. Resolved at
+  `.specs/api/money.spec.md`:§R-money-29 (Gate 2, 2026-07-09): resolved
+  cents only persist in v1 — no `split_meta`; derive-on-read is the
+  decided UX.
 
 ### Expense detail (`expense-detail` — push)
 
 - **R-cmoney-13 (detail):** WHEN an expense detail renders THE SYSTEM SHALL
   show amount/currency, payer, date, category, the full shares breakdown per
   member, the linked booking (tappable through to its detail) when present,
-  and edit/delete actions per role; delete SHALL require a ConfirmDialog
-  (R-ds-18) — delete semantics pend:
-  [NEEDS CLARIFICATION: expense deletion — hard delete, or soft delete with a visible audit trail ("Sean deleted 'Dinner ¥12,000'"), Splitwise-style? Group money + trust says audit; schema would gain `deleted_at`/`deleted_by` and balance queries would filter. User-visible.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.12.)*
+  and edit/delete actions (expense creator or trip owner — R-money-26,
+  resolved Gate 2); delete SHALL require a ConfirmDialog (R-ds-18) and is a
+  **soft delete with a visible audit trail** — the deletion renders as an
+  audit entry ("Sean deleted 'Dinner ¥12,000'") in the expense history and
+  balances exclude the deleted expense. Resolved at
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09).
 
 ### Settle-up screen (`settle` — push, per research §Recommended v1 #3)
 
@@ -185,10 +192,11 @@
   prefilled from the displayed balance, editable) and open the iOS share
   sheet with the returned GoGo universal link
   (`https://<domain>/t/<tripId>/request/<requestId>`, per navigation spec
-  §2.3) plus message text carrying amount + trip name.
-  [NEEDS CLARIFICATION: Universal-link domain — what domain do we own for `https://` links (gogo.travel? gogotravel.app?)? Needed for AASA / assetlinks and the link formats below. Custom scheme `gogo://` is assumed as the fallback either way.]
-  *(Repeated verbatim from `.specs/client/navigation.spec.md` §1 Open
-  questions; "the link formats below" refers to that spec's registry.)*
+  §2.3) plus message text carrying amount + trip name. Universal-link
+  domain — Resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2,
+  2026-07-09): Sean picks/buys the domain (gogo.travel / gogotravel.app /
+  seantokuzo.dev subdomain); the link format is domain-agnostic and
+  `gogo://` remains the fallback scheme.
 - **R-cmoney-26 (recipient screen):** WHEN a settle-request link opens the
   app (R-nav-13) THE SYSTEM SHALL render the request screen inside the
   trip's money context with: requester + trip name, amount owed, the same
@@ -199,11 +207,11 @@
   render an EmptyState with a path back to the money tab (navigation
   registry: "missing/settled request → request screen's resolved/empty
   state").
-- **R-cmoney-27 (non-member recipients):**
-  [NEEDS CLARIFICATION: Settle-up request links opened by someone who isn't a member of the trip (bills sent to friends outside the app is part of the brief). Does the link require membership (R-nav-15 applies), or is there a lightweight recipient view / web fallback page for non-members and non-users? Determines whether R-nav-13 needs an unauthenticated branch.]
-  *(Repeated verbatim from `.specs/client/navigation.spec.md` §1 Open
-  questions — until resolved, this screen assumes members only and
-  non-members get the R-nav-15 no-access state.)*
+- **R-cmoney-27 (non-member recipients):** Resolved at
+  `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09): settle-up
+  request links require app install + an account in v1 (no web surface
+  exists; revisit with any web phase) — this screen is members-only and
+  non-member openers get the R-nav-15 no-access state.
 - **R-cmoney-28 (Venmo charge — gated enhancement):** WHEN (and only when)
   device test D1 (§3 checklist) passes THE SYSTEM MAY additionally offer
   "Request via Venmo" using `txn=charge` on the same URL grammar; until then
@@ -257,12 +265,12 @@ already exists in the nav grammar).
 
 ### 2.2 Money tab segments
 
-**Budget** — header: total spent vs total caps/estimates (editable total cap
-pends the R-cmoney-2 marker); rows per category (full taxonomy from `GET
-/budgets`): category name, progress bar (spent vs cap, warning ≥80%, over
->100%), `cap` (tap → inline cents input, editor+), `AI est.` column with
-`ai_estimated_at` timestamp; footer: "Estimate with AI" Button (R-cmoney-3
-states; loading per R-ds-14).
+**Budget** — header: total spent vs the editable overall trip cap
+(R-cmoney-2, resolved Gate 2; editor+ edits it like any cap); rows per
+category (full taxonomy from `GET /budgets`): category name, progress bar
+(spent vs cap, warning ≥80%, over >100%), `cap` (tap → inline cents input,
+editor+), `AI est.` column with `ai_estimated_at` timestamp; footer:
+"Estimate with AI" Button (R-cmoney-3 states; loading per R-ds-14).
 
 **Expenses** — ListItem rows: description, category Badge, "Paid by
 {name}", `spent_at`, amount (logged currency), subdued "your share" line;
@@ -270,15 +278,17 @@ filter button opens Sheet (member picker + category picker + clear); FAB →
 `expense-new`. Infinite scroll on the `Paginated` cursor.
 
 **Balances** — headline Card (caller's net position); member chips row
-(net per member, signed color tokens); transfer list (from API `simplified`
-— display default pends R-cmoney-6 marker): "{A} → {B} {amount}"; rows
-involving the caller carry the action chevron (debtor → settle screen,
-creditor → request flow). "All settled up" EmptyState when no transfers.
+(net per member, signed color tokens); transfer list — pairwise by
+default with the "Simplify debts" toggle switching to the API
+`simplified` array (R-cmoney-6, resolved Gate 2): "{A} → {B} {amount}";
+rows involving the caller carry the action chevron (debtor → settle
+screen, creditor → request flow). "All settled up" EmptyState when no
+transfers.
 
 ### 2.3 Booking → expense prefill mapping (R-cmoney-11)
 
-Deterministic mapping, defined once in `@gogo/shared` config (pends the
-category-taxonomy marker for the right-hand values):
+Deterministic mapping, defined once in `@gogo/shared` config (right-hand
+values are the fixed Gate-2 taxonomy):
 
 | `booking_category` | `expense_category` |
 |---|---|
@@ -364,8 +374,8 @@ Screen roots: `money-screen`, `expense-new-screen`, `expense-detail-screen`,
 
 | Surface | testIDs |
 |---|---|
-| Money tab | `money-segment-budget` · `money-segment-expenses` · `money-segment-balances` · `money-fab-add-expense` · `money-button-ai-estimate` · `money-budget-list-item-{category}` · `money-input-cap-{category}` · `money-expense-list` · `money-expense-list-item-{expenseId}` · `money-button-filter` · `money-sheet-filter` · `money-balance-list-item-{userId}` · `money-transfer-list-item-{fromUserId}-{toUserId}` |
-| Add/edit expense | `expense-new-input-amount` · `expense-new-input-description` · `expense-new-picker-currency` · `expense-new-picker-category` · `expense-new-picker-payer` · `expense-new-input-date` · `expense-new-toggle-participant-{userId}` · `expense-new-segment-split-equal` / `-exact` / `-percent` / `-shares` · `expense-new-input-share-{userId}` · `expense-new-input-percent-{userId}` · `expense-new-stepper-weight-{userId}` · `expense-new-button-booking-link` · `expense-new-button-save` |
+| Money tab | `money-segment-budget` · `money-segment-expenses` · `money-segment-balances` · `money-fab-add-expense` · `money-button-ai-estimate` · `money-toggle-simplify` · `money-input-cap-total` · `money-budget-list-item-{category}` · `money-input-cap-{category}` · `money-expense-list` · `money-expense-list-item-{expenseId}` · `money-button-filter` · `money-sheet-filter` · `money-balance-list-item-{userId}` · `money-transfer-list-item-{fromUserId}-{toUserId}` |
+| Add/edit expense | `expense-new-input-amount` · `expense-new-input-description` · `expense-new-picker-currency` · `expense-new-input-fx-rate` · `expense-new-input-base-amount` · `expense-new-picker-category` · `expense-new-picker-payer` · `expense-new-input-date` · `expense-new-toggle-participant-{userId}` · `expense-new-segment-split-equal` / `-exact` / `-percent` / `-shares` · `expense-new-input-share-{userId}` · `expense-new-input-percent-{userId}` · `expense-new-stepper-weight-{userId}` · `expense-new-button-booking-link` · `expense-new-button-save` |
 | Expense detail | `expense-detail-list-item-share-{userId}` · `expense-detail-button-booking` · `expense-detail-button-edit` · `expense-detail-button-delete` (ConfirmDialog derives `-confirm`/`-cancel`) |
 | Settle | `settle-button-settle-up` · `settle-input-amount` · `settle-sheet-handoff` · `settle-button-venmo` · `settle-button-cashapp` · `settle-button-paypal` · `settle-button-zelle-copy` · `settle-button-mark-settled` · `settle-picker-method` · `settle-sheet-return` (+ `-confirm`/`-cancel`) · `settle-button-request` |
 | Settle request | `settle-request-button-venmo` · `-cashapp` · `-paypal` · `-zelle-copy` · `settle-request-button-mark-settled` · `settle-request-button-back` |
@@ -387,7 +397,7 @@ spec §2.7 — kept identical.)
 | Settle | rail open failure | non-blocking error; screen stays usable (R-cmoney-22) |
 | Request | settled / cancelled / resolved | resolved state, no pay buttons (R-cmoney-26) |
 | Request | unknown id | EmptyState + back to money tab |
-| Request | non-member opener | pends R-cmoney-27 marker (R-nav-15 no-access meanwhile) |
+| Request | non-member opener | R-nav-15 no-access state (members-only v1 — R-cmoney-27, resolved Gate 2) |
 | All | query error | ErrorBanner + retry (R-ds-17) |
 | All | offline, active trip | segments mount from cache (nav §2.8 note); mutations while offline are the offline spec's queue — out of scope here |
 
@@ -400,8 +410,8 @@ spec §2.7 — kept identical.)
 - Offline mutation queueing for money writes — offline/sync spec.
 - Push notifications ("Alex added an expense", "request received") —
   notifications spec.
-- Currency converter surface (PLANNING extra) — pends the FX marker; not a
-  money-tab v1 feature.
+- Currency converter surface (PLANNING extra) — not a money-tab v1
+  feature (the Gate-2 FX resolution powers expense entry only).
 - Apple Cash — dead end per research (no third-party write path); not
   rendered even as a handle type.
 - Zelle QR rendering — unofficial format, LOW stability (research); v1 is
@@ -430,6 +440,11 @@ Depends on: MON-* API tasks, NAV-5 (deep-link registry), DS components
       rejects `"25.505"`; no float appears in the pipeline (Law #2)
 - [ ] Split preview parity: client preview === shared `computeShares` output
       for all four types (property test over random inputs)
+- [ ] Simplify toggle: pairwise renders by default; toggle switches to
+      simplified and back; toggle state not persisted across mounts
+- [ ] Multi-currency entry: online → rate prefetched + base prefilled,
+      manual override respected; offline/FX-failure → manual rate required
+      before save
 - [ ] Save blocked until exact-sum; percent ≠ 100% and exact-remainder ≠ 0
       block with visible readouts
 - [ ] Link builder: each rail's URL matches §2.5 verbatim for fixture
@@ -464,8 +479,11 @@ results recorded in the feature ledger before store submission):**
 
 ---
 
-*Trace: R-cmoney-N ↔ §2 sections inline. Markers: 8 repeated verbatim
-(overall cap, taxonomy, FX, expense deletion — schema spec; simplification
-default + split metadata — api money spec; universal-link domain +
-non-member recipients — navigation spec), 0 new. Every marker is a P-2
-interview question for Sean. Zero markers = approvable.*
+*Trace: R-cmoney-N ↔ §2 sections inline. All 8 repeated markers resolved
+at their canonical homes at Gate 2 (2026-07-09): overall cap (yes,
+optional), taxonomy (fixed 6-value enum), FX (entry-time rate + manual
+override), expense deletion (soft-delete + audit) — schema spec;
+simplification (off by default, one-tap toggle) + split metadata (resolved
+cents only) — api money spec; universal-link domain (Sean purchasing) +
+non-member recipients (app + account required) — navigation spec. Zero
+markers remain.*

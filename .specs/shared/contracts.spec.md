@@ -101,8 +101,8 @@ design tokens (that's `packages/tokens`).
 
 ```
 packages/shared/src/
-├── enums.ts              # ALL const tuples + z.enum schemas (schema spec §3.2)
-├── scalars.ts            # Cents, CurrencyCode, ISODate, ISODateTime, Uuid, Lat, Lng
+├── enums.ts              # ALL const tuples + z.enum schemas (schema spec §3.2 + wire-only tuples, §3.2 note)
+├── scalars.ts            # Cents, CurrencyCode, ISODate, ISODateTime, ISOTime, Uuid, Lat, Lng
 ├── api/
 │   ├── envelope.ts       # ApiError, ErrorCode, Paginated<T>
 │   └── descriptor.ts     # EndpointDescriptor + helper types (§3.6)
@@ -111,7 +111,9 @@ packages/shared/src/
 │   └── ai-pricing.ts     # feature→model map + per-model token pricing (kill-switch math)
 ├── domains/
 │   ├── user.ts           # User, UserProfile (public view), UserPrefs, PaymentHandles
-│   ├── entitlement.ts    # Entitlement, EntitlementOverrides
+│   ├── auth.ts           # AppleSignInRequest, GoogleSignInRequest, RefreshRequest,
+│   │                     #   SignInResponse, AuthTokens, LogoutRequest, AuthSessionInfo
+│   ├── entitlement.ts    # Entitlement, EntitlementOverrides, EffectiveEntitlements
 │   ├── trip.ts           # Trip, TripCreate/Update
 │   ├── member.ts         # TripMember, Invite, InviteCreate/Accept
 │   ├── place.ts          # Place, SavedPlace
@@ -122,7 +124,9 @@ packages/shared/src/
 │   ├── photo.ts          # Photo, PhotoVisibility rules helpers
 │   ├── packing.ts        # PackingList, PackingItem
 │   ├── document.ts       # TravelDocument
-│   └── weather.ts        # WeatherForecast
+│   ├── weather.ts        # WeatherForecast
+│   ├── notification.ts   # NotificationPayload union (per NotificationCategory)
+│   └── offline.ts        # OfflineMutation (offline queue entry)
 └── ai/
     ├── constraints.md    # the §3.7 rules, colocated for implementers
     ├── cache-key.ts      # deriveAiCacheKey(feature, destination, travelStyle, season, schemaVersion)
@@ -156,10 +160,14 @@ export type BookingCategory = z.infer<typeof BookingCategorySchema>
 export const bookingCategory = pgEnum('booking_category', BOOKING_CATEGORIES)
 ```
 
-Canonical value lists live in schema spec §3.2 — including its two open enum
-markers (`expense_category` taxonomy; `ai_feature` ± `capture_parse`), which
-resolve there and flow here automatically. Enum tuples are append-only
-(Postgres constraint; also keeps old clients parsing).
+Canonical value lists live in schema spec §3.2 — its Gate-2 enum questions
+are resolved there and flow here automatically: `expense_category` is a
+fixed six-value taxonomy, `ai_feature` includes `capture_parse`, and
+`request_status` joined with the `settlement_requests` entity. **Wire-only
+enums** with no DB column (`NotificationCategory` — notifications spec §3.2;
+`TRAVEL_STYLES` — §3.4 below) use the same tuple pattern minus the pgEnum
+mirror. Enum tuples are append-only (Postgres constraint; also keeps old
+clients parsing).
 
 ### 3.3 Scalar conventions (`scalars.ts`)
 
@@ -170,6 +178,7 @@ resolve there and flow here automatically. Enum tuples are append-only
 | `CurrencyCode` | `z.string().length(3).regex(/^[A-Z]{3}$/)` | ISO-4217 |
 | `ISODate` | `z.string().date()` | `YYYY-MM-DD` (calendar days: `itinerary_items.day`, `expenses.spent_at`) |
 | `ISODateTime` | `z.string().datetime({ offset: true })` | Instants; serialized UTC by the server |
+| `ISOTime` | `z.string()` + `HH:MM` 24-hour regex | Wall-clock times of day (`itinerary_items.start_time`/`end_time` cross the wire as strings — added per itinerary-bookings spec §3.7). (Added 2026-07-09, Gate 2 sync) |
 | `Uuid` | `z.string().uuid()` | All ids |
 | `Lat` / `Lng` | number with range refinement (±90 / ±180) | Range refinements are server-side only when the schema is reused for AI output (§3.7) |
 
@@ -184,14 +193,19 @@ contract-specific notes listed here:
   buttons from them). `PaymentHandles` groups `venmo_username?`, `cashtag?`,
   `paypalme_username?`, `zelle_handle?`, `zelle_display_name?` with
   normalization refinements (strip `@`/`$`, E.164-or-email for Zelle).
-  `UserPrefs`: `{ travel_style?, home_currency?: CurrencyCode, units?:
-  'metric' | 'imperial' }`.
-  [NEEDS CLARIFICATION: `travel_style` taxonomy — the AI cache key and
-  recommendation prompts depend on it (research: key =
-  hash(destination, travel_style, season, schema_version)). What are the
-  values (e.g. budget/comfort/luxury? solo/family? adventure/culture/food)?
-  Single choice or multi-tag? User-visible in profile UI and it shapes every
-  AI recommendation.]
+  `UserPrefs`: `{ travel_style?: TravelStyle[], home_currency?: CurrencyCode,
+  units?: 'metric' | 'imperial', notifications?:
+  Partial<Record<NotificationCategory, boolean>> }` — an absent
+  `notifications` key means enabled (notifications spec §3.2; field added
+  2026-07-09, Gate 2 sync). Also gains `UserUpdate`,
+  `PaymentHandlesUpdate`, `AvatarUploadRequest`/`AvatarUploadTicket`,
+  `PushTokenCreate`/`PushToken` (auth-users spec §3.7).
+  `travel_style` is **multi-tag** from the fixed, append-only wire-only tuple
+  `TRAVEL_STYLES = ['budget', 'comfort', 'luxury', 'foodie', 'adventure',
+  'culture', 'nightlife', 'family', 'relaxation']` (lives in prefs JSONB —
+  no pgEnum). As an AI cache-key input it is canonicalized: sorted unique
+  tags joined with `+`, empty → `'any'` — so tag order can never fork the
+  cache. (Resolved 2026-07-09, Gate 2)
 - **`booking.ts`** — `BookingDetailsSchema` =
   `z.discriminatedUnion('category', […8 shapes])` per schema spec §3.4.1;
   `BookingSchema` refines that `details.category` matches the row `category`.
@@ -211,6 +225,27 @@ contract-specific notes listed here:
   UI can't drift.
 - **`weather.ts` / `packing.ts` / `document.ts`** — direct mirrors of schema
   spec §3.4.4/§3.4.5 and the `documents` table.
+- **`auth.ts`** — `AppleSignInRequest`, `GoogleSignInRequest`,
+  `RefreshRequest`, `SignInResponse`, `AuthTokens`, `LogoutRequest`,
+  `AuthSessionInfo` + this domain's endpoint descriptors (shapes per
+  auth-users spec §3.4/§3.7). Server-only material (JWT claims, token
+  hashes, ciphertext) never gets a shared schema — it never crosses the
+  wire. `entitlement.ts` gains `EffectiveEntitlements` (the
+  `resolveEntitlements` return type, R-shared-12).
+  (Added 2026-07-09, Gate 2 sync)
+- **`notification.ts`** — `NotificationPayload`: discriminated union on
+  `NotificationCategory` (wire-only enum tuple in `enums.ts`:
+  `itinerary_change`, `daily_digest`, `leave_by`, `document_expiry`,
+  `settle_up`, `flight_status` — append-only, no pgEnum). Common fields
+  `{ category, title, body, route, trip_id? }` + per-category extras per
+  notifications spec §3.3 (canonical for payload semantics).
+  (Added 2026-07-09, Gate 2 sync)
+- **`offline.ts`** — `OfflineMutation` queue entry: `{ id: Uuid, trip_id:
+  Uuid, descriptor_key: string, params: object, payload: object, queued_at:
+  ISODateTime, attempts: int, status: 'pending' | 'failed' }` (today spec
+  §2.7 owns enqueue/drain/conflict semantics; entries replay through the
+  standard descriptor-addressed `ApiClient`, §3.6).
+  (Added 2026-07-09, Gate 2 sync)
 
 ### 3.5 API envelope conventions (`api/envelope.ts`)
 
@@ -238,7 +273,10 @@ resources hidden by visibility, indistinguishable from absent, Law #3),
 `VALIDATION_FAILED` (400), `CONFLICT` (409 — e.g. duplicate saved place),
 `RATE_LIMITED` (429), `AI_CAP_EXCEEDED` (429 — user daily cap, ADR-005 seam),
 `AI_DISABLED` (503 — global kill-switch tripped), `PAYLOAD_TOO_LARGE` (413),
-`INTERNAL` (500).
+`INTERNAL` (500), `AI_UPSTREAM` (503 — Anthropic upstream failure / invalid
+structured output after retry; transient and retryable, distinct from the
+policy-stop `AI_DISABLED` — appended per ai spec §3.4, honoring the
+append-only rule. Added 2026-07-09, Gate 2 sync).
 
 Status↔code mapping is fixed by this table; handlers pick codes, the shared
 Hono error middleware (server-side, typed against `ApiError`) owns
@@ -299,8 +337,8 @@ spec fixes their contracts):
 | `recommendations.ts` | ranked `Array<{ place_id, category, pitch, fit_reasons[] }>` | ai_cache, destination-keyed |
 | `expense-estimate.ts` | per-`expense_category` `Array<{ category, low_cents, high_cents, basis }>` (ints; ranges validated server-side) | ai_cache |
 | `tour-guide.ts` | `TourGuideBundle` (schema spec §3.4.3) — cite-or-retract source refs | tour_guide_bundles |
-| `packing-list.ts` | `Array<PackingItem>` minus `checked` | ai_cache |
-| `recap.ts` | recap content — persistence home has an open marker (schema spec §3.7 recaps) | — |
+| `packing-list.ts` | `Array<PackingItem>` minus `checked` | live / uncached (Gate 2, H2) |
+| `recap.ts` | `Recap` (schema spec §3.4.8: narrative sections + server-computed stats/trace/highlights) | `recaps` table (schema spec §3.3.26) |
 | `capture-extract.ts` | `ProposedBooking` (reuses `BookingDetails` shapes — flat by design) | never cached (per-email) |
 
 `config/ai-pricing.ts`: feature→model mapping + per-model token prices —
@@ -312,10 +350,10 @@ schema spec §3.3.18) and the 30/day default cap constant (ADR-005 →
 
 - Route inventory + authz rules per endpoint — `.specs/api/` specs (they
   import these envelope/descriptor conventions).
-- Offline mutation-queue envelope + conflict semantics — offline/sync spec
-  (cross-cutting; will define its queue-entry schema IN shared when specced).
-- Push notification payload schemas — notifications spec (same pattern:
-  shared module added under `domains/`).
+- Offline mutation-queue drain/conflict semantics — today/offline spec; its
+  queue-entry schema landed here as `domains/offline.ts` (§3.4).
+- Push notification triggers, audiences, and templates — notifications spec;
+  its payload shapes landed here as `domains/notification.ts` (§3.4).
 - "Send the bill" universal-link payload — expenses/settle-up API spec.
 - Design tokens/theming — `packages/tokens`.
 - Exact package versions — pinned at P-3 scaffold (R-shared-13).
@@ -345,7 +383,8 @@ Checklist:
       infer helpers
 - [ ] `config/entitlements.ts` (PLAN_DEFAULTS + resolver) and
       `config/ai-pricing.ts`
-- [ ] `domains/*` — all 13 modules mirroring schema spec §3.3/§3.4,
+- [ ] `domains/*` — all 16 modules mirroring schema spec §3.3/§3.4
+      (incl. `auth`, `notification`, `offline` — Gate-2 sync additions),
       incl. `BookingDetails` discriminated union and `canViewPhoto`
 - [ ] `ai/*` — output schemas + `SCHEMA_VERSION`s + paired server-side
       refiners + `deriveAiCacheKey`
@@ -372,6 +411,6 @@ Checklist:
 
 ---
 
-*Trace: R-shared-N ↔ §3 sections inline. One open marker (`travel_style`
-taxonomy); enum-content markers resolve in the DB spec and flow here via
-§3.2.*
+*Trace: R-shared-N ↔ §3 sections inline. Zero open markers — the
+`travel_style` taxonomy resolved 2026-07-09 (Gate 2); enum-content values
+remain canonical in the DB spec and flow here via §3.2.*

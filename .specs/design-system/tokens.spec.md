@@ -31,6 +31,10 @@
 - **R-ds-6**: WHEN the active accent theme changes at runtime THE SYSTEM
   SHALL re-render all mounted screens with the new accent-derived tokens
   immediately.
+- **R-ds-22**: WHEN a trip has a `theme` set THE SYSTEM SHALL apply it only
+  to trip-scoped accent surfaces (trip card / trip header tint) — never a
+  whole-app re-skin; the app-wide accent theme SHALL remain a user-level
+  preference regardless of trip context. (Resolved 2026-07-09, Gate 2)
 
 ### Token consumption
 
@@ -85,26 +89,26 @@
   only — never on scroll, never on navigation push/pop, at most one haptic per
   user action.
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2)
 
-- [NEEDS CLARIFICATION: What is GoGo's default brand accent palette? No brand
-  identity (logo/color) exists anywhere in the repo — bartling's crimson/gold
-  is that project's identity, not ours. Need a base accent hue (or "pick one,
-  show me 3 options") before the default theme can be defined.]
-- [NEEDS CLARIFICATION: Which accent themes ship in v1, and how many? The
-  bartling pattern shipped named themes (nightFire, aDayInCapri). Proposal:
-  1 default + 3–4 destination-flavored accents (e.g. coastal, forest, desert,
-  city-night) — confirm count and naming direction.]
-- [NEEDS CLARIFICATION: Theme scope — the data model gives `trips.theme` a
-  column. Does a trip's theme re-skin the entire app while inside that trip's
-  context ([tripId]/* routes), with a separate user-level default accent
-  outside trip context? Or is trip theme cosmetic-only (card/header tint) and
-  the accent theme purely a user preference?]
-- [NEEDS CLARIFICATION: Typography — bundle a custom font pair via expo-font
-  (e.g. Inter + a display face, à la bartling) or ship system fonts (SF Pro /
-  Roboto) for v1? System is zero-cost and fastest; custom is stronger brand.]
-- [NEEDS CLARIFICATION: Do we expose an in-app "haptics on/off" toggle in
-  settings, or rely solely on the OS-level system-haptics setting?]
+- **Brand accent palette** — Default palette: PENDING Sean's pick from the
+  three proposed directions — placeholder ramp values remain until then. The
+  token architecture is deliberately palette-agnostic (ramps are pure data,
+  R-ds-5), so the pick swaps hex values only — zero component or mapping
+  changes. (Resolved 2026-07-09, Gate 2 — decision protocol approved;
+  palette pick itself outstanding.)
+- **Accent theme count** — v1 ships **3 accent themes: default + 2** named
+  alternates, proving the re-skin seam without palette-sprawl; naming
+  direction lands with the palette pick. (Resolved 2026-07-09, Gate 2)
+- **Theme scope** — the accent theme is a **user-level preference**;
+  `trips.theme` colors small trip-scoped accents only (card/header tint) and
+  never re-skins the app in v1 (R-ds-22). (Resolved 2026-07-09, Gate 2)
+- **Typography** — **system fonts v1** (SF Pro on iOS / Roboto on Android):
+  zero bundle cost, fastest ship; a custom font pair is a later theme
+  upgrade through the existing `TypeStyle.fontFamily` seam.
+  (Resolved 2026-07-09, Gate 2)
+- **Haptics toggle** — no in-app toggle v1; the OS-level system-haptics
+  setting is the only control. (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -233,8 +237,10 @@ interface TypeStyle {
 | mono | 13/18 | 500 | 2.0 | confirmation codes, amounts alignment |
 
 A `Text` primitive (`<AppText role="body" color="secondary">`) carries these;
-it is the foundation the § 2.9 components build on. Font family pends the
-typography clarification above.
+it is the foundation the § 2.9 components build on. Font family: the system
+stack v1 — SF Pro (iOS) / Roboto (Android), i.e. the platform default; a
+custom pair is a later, additive upgrade through this same `fontFamily` seam.
+(Resolved 2026-07-09, Gate 2)
 
 ### 2.4 Spacing, radius, touch
 
@@ -314,7 +320,8 @@ interface ThemeContextValue {
   appearancePref: AppearancePref;
   setAppearancePref(p: AppearancePref): void; // persists (R-ds-2)
   accentName: string;
-  setAccentName(name: string): void;          // persists; scope pends trip-theme clarification
+  setAccentName(name: string): void;          // persists; user-level preference —
+                                              //   trip theme never re-skins the app (R-ds-22)
 }
 useTheme(): ThemeContextValue
 ```
@@ -432,6 +439,22 @@ receives router state/navigation. Active tint `accent.solid`, inactive
 `text.muted`, bar `bg.surface` + `border.subtle` top hairline, safe-area
 aware, `selection` haptic, per-item testID `tab-bar-{key}`.
 
+**SegmentedControl** (added 2026-07-09, Gate 2 — flagged by the client money
+spec §2.1 for its budget · expenses · balances segments)
+```ts
+interface SegmentedControlProps {
+  segments: Array<{ key: string; label: string }>;
+  selectedKey: string;
+  onChange(key: string): void;
+  testID: string;                // per-segment children derive `{testID}-{key}`
+                                 //   (nav grammar's `segment` element noun)
+}
+```
+Equal-width segments on a `bg.inset` track; active segment `bg.surface` +
+`text.primary` (inactive `text.secondary`), radius `md`, track height ≥ 44 pt
+(R-ds-9). Fires the `selection` haptic (§ 2.8 — already conventioned).
+Each segment exposes `accessibilityRole` with selected state (R-ds-12).
+
 **PageHeader** — `title: string`, `subtitle?: string`, `large?: boolean`
 (title role vs heading), `leading?: 'back' | ReactNode` (back auto-wires
 router), `trailing?: Array<{ icon: IconName; label: string; onPress(): void;
@@ -485,7 +508,7 @@ Traceable to requirement IDs; each sized to one agent session. These become
 | DS-6 | Haptics convention module wrapping expo-haptics. | R-ds-13, R-ds-21 |
 | DS-7 | Components batch 1: Button, Card, Badge, ListItem, Skeleton. | R-ds-9, R-ds-13..15, R-ds-20 |
 | DS-8 | Components batch 2: Input, EmptyState, ErrorBanner. | R-ds-16, R-ds-17, R-ds-20 |
-| DS-9 | Components batch 3: ConfirmDialog, Sheet, PageHeader, TabNav. | R-ds-18, R-ds-19, R-ds-20 |
+| DS-9 | Components batch 3: ConfirmDialog, Sheet, PageHeader, TabNav, SegmentedControl. | R-ds-18, R-ds-19, R-ds-20 |
 | DS-10 | Dev-only Gallery screen rendering every component × variant × scheme × accent — the visual verification surface (Law #7 evidence) + reduce-motion audit. | R-ds-11, all component reqs |
 
 **Tests required (minimum):**

@@ -74,12 +74,13 @@ schemas (notifications spec — this spec fixes only the domain event list,
 - **R-trips-6 (conflict detection):** WHEN an update carries
   `expect_updated_at` and it differs from the row's current `updated_at`
   THE SYSTEM SHALL respond `CONFLICT` and write nothing.
-- **R-trips-7 (status derivation) [PROVISIONAL]:** WHEN the §3.4 derived-
-  status rule yields a status different from the stored `trips.status` THE
-  SYSTEM SHALL reconcile them via the mechanism pinned by the schema spec's
-  status marker (repeated in §3.4) — daily job, on-read, and/or manual
-  override are the candidate mechanisms; this requirement finalizes with
-  that marker.
+- **R-trips-7 (status derivation):** WHEN the §3.4 derived-status rule
+  yields a status different from the stored `trips.status` AND no manual
+  override is in effect THE SYSTEM SHALL reconcile the stored status to the
+  derived value; WHEN a manual override is set THE SYSTEM SHALL honor the
+  override until it is cleared, after which the derived status applies
+  (schema spec §3.3.4 owns the storage mechanism). (Resolved 2026-07-09,
+  Gate 2)
 - **R-trips-8 (delete):** WHEN a trip is deleted THE SYSTEM SHALL require
   role `owner`, cascade per schema spec §3.6, and emit `trip.deleted`
   (§3.5) to all other members captured before the delete.
@@ -91,18 +92,19 @@ schemas (notifications spec — this spec fixes only the domain event list,
   schema's partial unique index (R-db-8), at-least-one server-side. The
   role-change endpoint SHALL NOT grant or revoke `owner` — ownership moves
   only through the transfer endpoint.
-- **R-trips-10 (ownership transfer) [PROVISIONAL]:** WHEN ownership is
-  transferred THE SYSTEM SHALL demote the current owner to `editor` and
-  promote the (already-member) target to `owner` in a single transaction,
-  then emit `ownership.transferred`. Allowed flows pend the schema marker
-  repeated in §3.3.4.
+- **R-trips-10 (ownership transfer):** WHEN ownership is transferred THE
+  SYSTEM SHALL demote the current owner to `editor` and promote the
+  (already-member) target to `owner` in a single transaction, then emit
+  `ownership.transferred`. Owners may transfer at will; leaving a trip with
+  other members requires transfer first (schema spec §3.3.5, resolved
+  Gate 2, 2026-07-09).
 - **R-trips-11 (removal & leave):** WHEN a member is removed THE SYSTEM
   SHALL require the caller be the owner (removing a non-owner member) or
   the member themself (leave); WHEN the owner attempts to leave while other
   members exist THE SYSTEM SHALL reject with `CONFLICT` (transfer first —
-  pends the §3.3.4 marker). A removed member loses access on their next
-  request (per-request gate, R-trips-1) and receives the eviction push
-  (§3.5).
+  schema spec §3.3.5, resolved Gate 2). A removed member loses access on
+  their next request (per-request gate, R-trips-1) and receives the
+  eviction push (§3.5).
 - **R-trips-12 (financial history survives):** WHEN a member is removed or
   leaves THE SYSTEM SHALL NOT delete or reassign their expenses, expense
   shares, or settlements (R-db-16); attribution-only references detach per
@@ -148,9 +150,27 @@ schemas (notifications spec — this spec fixes only the domain event list,
 
 - **R-trips-20 (settings authz):** WHEN trip settings are changed THE
   SYSTEM SHALL enforce §3.2 per field: `name`/`destination_*`/`start_date`/
-  `end_date`/`theme` require editor+; `base_currency` requires owner
-  (change semantics marker, §3.6); `status` requires owner
-  [PROVISIONAL, §3.4].
+  `end_date`/`theme` require editor+; `base_currency` requires owner (and
+  locks per R-trips-22); `status` (manual override) requires owner (§3.4,
+  resolved Gate 2).
+
+### Viewer participation & base-currency lock
+
+- **R-trips-21 (viewer participation):** WHEN a `viewer` logs an expense,
+  edits/deletes their own-logged expense, uploads a photo, records a
+  settlement they are party to, or manages their own captures/documents/
+  personal packing THE SYSTEM SHALL allow it — viewer means plan-read-only,
+  not excluded-from-the-group. WHEN a `viewer` attempts to edit itinerary,
+  bookings, saved places, budgets, invites, or trip settings THE SYSTEM
+  SHALL respond `FORBIDDEN`. The money and photos specs inherit this rule.
+  (Resolved 2026-07-09, Gate 2)
+- **R-trips-22 (base-currency lock):** WHEN a `base_currency` change is
+  attempted on a trip that has ≥ 1 expense row THE SYSTEM SHALL reject with
+  `CONFLICT` — base currency locks once the first expense exists. Before
+  that point the owner may change it; the change updates any existing
+  budget rows' currency in the same transaction (amounts unchanged),
+  preserving the `budgets.currency == trips.base_currency` invariant
+  (schema §3.3.15). (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -164,13 +184,12 @@ Three roles (`trip_member_role`, schema spec §3.2 — locked):
 |---|---|
 | `owner` | Full control: everything an editor can, plus membership management, ownership transfer, destructive ops (delete trip), and owner-only settings. Exactly one per trip (R-db-8). |
 | `editor` | Edits trip **content** (itinerary, bookings, places, budgets, shared packing) and can invite; cannot manage membership or destroy the trip. |
-| `viewer` | Reads the plan. Participates **personally** where participation isn't plan-editing (settling their own debts; provisionally logging expenses and uploading photos — see P¹ marker below). |
+| `viewer` | Reads the plan. Participates **personally** where participation isn't plan-editing: logs expenses, uploads photos, settles their own debts (R-trips-21, resolved Gate 2). |
 
 ### 3.2 Permission matrix — THE authz source of truth
 
 Legend: ✓ allowed · ✗ denied · **own** = only rows they created/own ·
-**self** = only when they are the acting party · **P¹** = provisional,
-pending the viewer-participation marker below. Domain specs cite rows as
+**self** = only when they are the acting party. Domain specs cite rows as
 `trips.spec §3.2 "<capability>"`.
 
 | Capability | owner | editor | viewer | Notes / canonical cites |
@@ -179,8 +198,8 @@ pending the viewer-participation marker below. Domain specs cite rows as
 | View trip detail (all tabs) | ✓ | ✓ | ✓ | R-trips-1 gate first |
 | Edit name / destination / dates | ✓ | ✓ | ✗ | R-trips-20 |
 | Change trip theme | ✓ | ✓ | ✗ | Theme is trip-level display, content-adjacent |
-| Change base currency | ✓ | ✗ | ✗ | Financial semantics; change-semantics marker §3.6 |
-| Manual status override ("archive") | ✓ | ✗ | ✗ | PROVISIONAL — §3.4 marker |
+| Change base currency | ✓ | ✗ | ✗ | Locks once the first expense exists (R-trips-22, resolved Gate 2) |
+| Manual status override ("archive") | ✓ | ✗ | ✗ | Override wins until cleared (§3.4, resolved Gate 2) |
 | Delete trip | ✓ | ✗ | ✗ | Cascade per schema §3.6; R-trips-8 |
 | Download offline pack | ✓ | ✓ | ✓ | Free forever (ADR-005) |
 | **Members & invites** | | | | |
@@ -190,8 +209,8 @@ pending the viewer-participation marker below. Domain specs cite rows as
 | Revoke invite | ✓ any | ✓ own | ✗ | R-trips-17 |
 | Change member role (editor ↔ viewer) | ✓ | ✗ | ✗ | Never grants/revokes `owner` (R-trips-9) |
 | Remove member (non-owner) | ✓ | ✗ | ✗ | R-trips-11 |
-| Leave trip | ✗* | self | self | *owner transfers first — §3.3.4 marker |
-| Transfer ownership | ✓ | ✗ | ✗ | R-trips-10, PROVISIONAL |
+| Leave trip | ✗* | self | self | *owner transfers first (R-trips-11, resolved Gate 2) |
+| Transfer ownership | ✓ | ✗ | ✗ | R-trips-10 |
 | **Itinerary** (cited by itinerary spec) | | | | |
 | View itinerary / calendar | ✓ | ✓ | ✓ | |
 | Create / edit / delete / reorder items | ✓ | ✓ | ✗ | |
@@ -206,18 +225,18 @@ pending the viewer-participation marker below. Domain specs cite rows as
 | View budgets / expenses / balances | ✓ | ✓ | ✓ | |
 | Set / edit budget caps | ✓ | ✓ | ✗ | |
 | Run AI expense estimate | ✓ | ✓ | ✗ | Debits the **caller's** AI cap (ADR-005) |
-| Log an expense; edit/delete own-logged | ✓ | ✓ | P¹ | Payer may be any member |
-| Edit / delete any expense | ✓ | ✗ | ✗ | Owner as dispute-breaker; audit-trail question is the schema §3.3.12 deletion marker (money spec inherits) |
-| Record settlement (self as from/to party) | self | self | self | Either party may record (schema §3.3.14); viewers owe money regardless of P¹ |
+| Log an expense; edit/delete own-logged | ✓ | ✓ | ✓ | Payer may be any member (R-trips-21, resolved Gate 2) |
+| Edit / delete any expense | ✓ | ✗ | ✗ | Owner as dispute-breaker; deletion is soft-delete with visible audit trail (schema §3.3.12, resolved Gate 2; money spec inherits) |
+| Record settlement (self as from/to party) | self | self | self | Either party may record (schema §3.3.14); viewers owe money regardless of role |
 | Send settle-up request link | self | self | self | Money spec owns the payload |
 | **Photos** (cited by photos spec) | | | | |
 | View trip photos (visibility-filtered — Law #3, `canViewPhoto`) | ✓ | ✓ | ✓ | contracts §3.4 `photo.ts` |
-| Upload photos | ✓ | ✓ | P¹ | |
+| Upload photos | ✓ | ✓ | ✓ | R-trips-21, resolved Gate 2 |
 | Set visibility / delete — own photo | own | own | own | Uploader controls their photo at any role |
 | Delete any photo (moderation) | ✓ | ✗ | ✗ | |
 | **Packing** (cited by packing/utilities spec) | | | | |
 | View lists | ✓ | ✓ | ✓ | |
-| Edit shared trip list | ✓ | ✓ | ✗ | Shared-vs-personal model pends schema §3.3.21 marker |
+| Edit shared trip list | ✓ | ✓ | ✗ | Packing lists are shared per trip v1 (schema §3.3.21, resolved Gate 2) |
 | Edit own personal list | own | own | own | |
 | **Documents** | | | | |
 | Vault access | own | own | own | Role-irrelevant; trip association grants ZERO visibility (R-db-18, Law #3) |
@@ -227,13 +246,10 @@ pending the viewer-participation marker below. Domain specs cite rows as
 | Read pre-generated content (tour bundles, recs, estimates) | ✓ | ✓ | ✓ | |
 | Trigger trip-scoped generation/regeneration | ✓ | ✓ | ✗ | Debits caller's cap |
 
-- [NEEDS CLARIFICATION: viewer participation boundary (the P¹ cells) — can
-  a `viewer` log expenses and upload photos? Recommended YES: "viewer"
-  should mean plan-read-only, not excluded-from-the-group — a viewer friend
-  still pays for dinner and takes photos; excluding them forces everyone to
-  be an editor and guts the role. But it is user-visible authz policy, so
-  it needs Sean's call. Resolving this marker flips P¹ cells to ✓ or ✗ and
-  the money + photos specs inherit the answer.]
+- Viewer participation boundary: resolved — viewers CAN log expenses and
+  upload photos (they're travelers, not spectators); they CANNOT edit
+  itinerary, bookings, or settings (R-trips-21). The money + photos specs
+  inherit this rule. (Resolved 2026-07-09, Gate 2)
 
 Enforcement shape: one middleware resolves `(trip_id, caller)` →
 membership + role once per request (R-trips-1), handlers assert §3.2
@@ -254,11 +270,14 @@ spec adds to those modules: `TripListItem`, `TripUpdate.expect_updated_at`,
 Create a trip; creator becomes owner in the same transaction. **Auth**: Required
 
 **Request** — `TripCreate`:
-`{ name, destination_name, destination_lat?, destination_lng?, start_date?,
-end_date?, base_currency?, theme? }`
+`{ name, destination_name, destination_lat, destination_lng, start_date,
+end_date, base_currency?, theme? }`
 (`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
-from `UserPrefs.home_currency` — client spec. Dates/destination
-structure pend the §3.3.4-repeated markers in §3.6.)
+from `UserPrefs.home_currency` — client spec. Dates are required at
+creation and destination is structured — picked from the Overture-backed
+place search, so `destination_lat/lng` are always present at the API layer
+even though the columns stay nullable (schema §3.3.4, resolved Gate 2,
+2026-07-09).)
 
 **Response 201** — `Trip & { role: 'owner' }`
 
@@ -270,6 +289,7 @@ structure pend the §3.3.4-repeated markers in §3.6.)
 - [ ] Happy path: trip + owner membership row exist after one call; role returned
 - [ ] Transactionality: forced membership-insert failure rolls back the trip row
 - [ ] `start_date > end_date` rejected
+- [ ] Missing dates or missing `destination_lat/lng` → 400 (required at creation, resolved Gate 2)
 - [ ] Unauthenticated → 401
 
 ---
@@ -319,9 +339,10 @@ Update trip fields (partial). **Auth**: Required (per-field per §3.2)
 `{ name?, destination_name?, destination_lat?, destination_lng?,
 start_date?, end_date?, theme?, base_currency?, status?,
 expect_updated_at? }`
-— `base_currency` owner-only (§3.6 marker); `status` owner-only
-PROVISIONAL (§3.4 marker); `expect_updated_at` is the optional §3.5
-(rule 2) conflict precondition.
+— `base_currency` owner-only, rejected with 409 once the first expense
+exists (R-trips-22); `status` owner-only manual override (§3.4, resolved
+Gate 2); `expect_updated_at` is the optional §3.5 (rule 2) conflict
+precondition.
 
 **Response 200** — full updated `Trip` (R-trips-19)
 
@@ -332,7 +353,8 @@ PROVISIONAL (§3.4 marker); `expect_updated_at` is the optional §3.5
 
 **Tests required**:
 - [ ] Editor updates name/dates/theme; viewer → 403
-- [ ] Editor touching `base_currency` → 403; owner succeeds
+- [ ] Editor touching `base_currency` → 403; owner succeeds (no expenses yet)
+- [ ] Owner touching `base_currency` with ≥ 1 expense → 409 (R-trips-22); pre-expense change updates budget rows' currency
 - [ ] Stale `expect_updated_at` → 409, row unchanged
 - [ ] Omitted `expect_updated_at` → plain LWW applies
 - [ ] `updated_at` bumped; full row returned
@@ -405,9 +427,9 @@ others; any member for self)
 
 **Errors**: 404 non-member caller / unknown target; 403 non-owner removing
 someone else; 409 `CONFLICT` — owner self-removal while other members
-exist (transfer first; sole-member owner path pends the §3.3.4 marker —
-PROVISIONAL: sole owner leaving is equivalent to trip deletion and is
-rejected in favor of explicit DELETE /trips/:tripId).
+exist (transfer first, R-trips-11, resolved Gate 2). Sole-member owner
+leaving is equivalent to trip deletion and is rejected in favor of
+explicit DELETE /trips/:tripId.
 
 **Requirements covered**: R-trips-11, R-trips-12
 
@@ -423,8 +445,9 @@ rejected in favor of explicit DELETE /trips/:tripId).
 
 #### POST /trips/:tripId/transfer-ownership
 
-Hand ownership to another member. **Auth**: Required (owner) —
-**PROVISIONAL pending the §3.3.4 ownership marker.**
+Hand ownership to another member. **Auth**: Required (owner). (Ownership
+transfer confirmed: owner may transfer; leaving requires transfer first —
+schema spec §3.3.5, resolved Gate 2, 2026-07-09.)
 
 **Request** — `{ to_user_id: Uuid }`
 
@@ -447,13 +470,16 @@ Hand ownership to another member. **Auth**: Required (owner) —
 Create an invite link. **Auth**: Required (owner/editor per §3.2)
 
 **Request** — `InviteCreate`: `{ role: 'editor' | 'viewer', expires_at?,
-max_uses? }` — defaults for `expires_at`/`max_uses` pend the §3.6-repeated
-invite marker.
+max_uses? }` — invites are shareable multi-use links by default:
+`expires_at` defaults to now + 7 days, `max_uses` defaults to unlimited
+(nullable); both remain settable, and invites are revocable (schema §3.3.6,
+resolved Gate 2, 2026-07-09).
 
 **Response 201** — `Invite & { url: string }` — `url` =
 `https://<domain>/invite/<token>` per the nav deep-link registry; domain
-pends the nav marker repeated in §3.6. Token: ≥128-bit entropy, URL-safe,
-unique (R-db-9).
+is the universal-link domain Sean is purchasing (navigation spec §1,
+resolved Gate 2 — format is domain-agnostic, `gogo://` fallback holds).
+Token: ≥128-bit entropy, URL-safe, unique (R-db-9).
 
 **Errors**: 404 non-member; 403 viewer; 403 editor granting above own role
 (cannot occur with the current two grantable roles — guard exists for enum
@@ -572,22 +598,15 @@ user's tz (nav §2.5); the server MUST use the same `@gogo/shared` helper
 with an explicit `today` input so the two surfaces agree on the boundary
 day.
 
-**The storage/override mechanism is unresolved.** Repeating the canonical
-marker verbatim (schema spec §3.3.4, `trips.status` row):
-
-[NEEDS CLARIFICATION: `status` transitions — PLANNING implies automatic
-(`today` view "auto-default while trip active"). Is status purely derived
-from dates by a daily job/on-read (planning→active on start_date,
-active→past after end_date), or can users manually override (e.g. mark a
-trip past early)? Manual override is user-visible.]
+Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
+2026-07-09): status is date-derived, with manual owner override allowed —
+the override wins until cleared, then derivation resumes (R-trips-7).
 
 Bundle-scope note: T-2.3 names an "archive" operation. `trip_status` is
 locked at `planning / active / past` (schema §3.2; enum values append-only)
 — there is no `archived` value. **"Archive" in this spec = the manual
-override to `'past'`** (owner-only per §3.2), which exists iff the marker
-above resolves to allow manual overrides. If the marker resolves to
-derived-only, archive-as-an-action is dropped and `PATCH /trips/:tripId`
-rejects `status` outright.
+override to `'past'`** (owner-only per §3.2), confirmed by the Gate-2
+resolution above.
 
 ### 3.5 Collab consistency rules (inherited by every trip-scoped domain)
 
@@ -641,58 +660,39 @@ Settings surface (client: trip-settings screen) maps to `PATCH
 
 - **Theme** — `trips.theme`: key into `packages/tokens` themes; null = app
   default (schema §3.3.4). Owner + editor. Emits `trip.updated`.
-- **Base currency** — `trips.base_currency`: owner-only.
-  [NEEDS CLARIFICATION: base-currency change semantics once money exists —
-  changing `base_currency` after expenses/budgets are written invalidates
-  `expenses.base_amount_cents` conversions and the `budgets.currency ==
-  trips.base_currency` invariant (schema §3.3.12/§3.3.15). Options:
-  (a) freeze base currency once the first expense or budget row exists
-  (simplest, recommended); (b) allow change + recompute all conversions
-  (needs an FX source — compounds the schema §3.3.12 FX marker); (c) allow
-  change, keep historical rows in old base (balances become mixed —
-  probably unacceptable). User-visible money behavior → Sean's call; the
-  money spec inherits the answer.]
-- **Visibility** — [NEEDS CLARIFICATION: T-2.3 bundle scope names a trip
-  "visibility" setting, but the canonical schema has NO `trips.visibility`
-  column (schema §3.3.4) and PLANNING's data model defines visibility only
-  for photos (`private/trip/public`, Law #3). Is trip-level visibility a
-  real v1 concept (e.g. public read-only trip pages)? If yes, that is an
-  entity-model addition requiring a schema-spec change + Sean's nod
-  (Autonomy Contract §6 scope change). If "visibility" meant photo
-  visibility, it is already owned by the photos domain and this row is
-  dropped. This spec assumes NO trip-level visibility until resolved.]
+- **Base currency** — `trips.base_currency`: owner-only, and **locks once
+  the first expense exists** (R-trips-22). Changing it before any expense
+  is allowed; the change updates existing budget rows' currency in the
+  same transaction (amounts unchanged), preserving the `budgets.currency
+  == trips.base_currency` invariant (schema §3.3.12/§3.3.15). The money
+  spec inherits this rule. (Resolved 2026-07-09, Gate 2)
+- **Visibility** — dropped from v1: there is no trip-level visibility
+  concept — trips are member-private, and only photos carry a visibility
+  setting (`private/trip/public`, Law #3, owned by the photos domain). No
+  `trips.visibility` column exists or is added. (Resolved 2026-07-09,
+  Gate 2)
 - **Dates / destination / name** — editor+; same fields as create; date
-  and destination markers repeated below.
+  and destination rules resolved below.
 
-Upstream markers this section depends on (verbatim, from schema spec
-§3.3.4 and §3.3.6):
+Upstream resolutions this section depends on (canonical homes):
 
-[NEEDS CLARIFICATION: are trip dates required at creation, or are date-less
-trips allowed (dates added later)? Columns are nullable to keep both
-options open; the create-trip UX decides.]
-
-[NEEDS CLARIFICATION: destination input — picked from place/geocoder search
-(structured; lat/lng always present) or free text (lat/lng optional)?
-Affects nullability of `destination_lat/lng` and whether weather/AI
-grounding can be guaranteed for every trip.]
-
-[NEEDS CLARIFICATION: ownership transfer — can an owner hand off ownership
-(owner demotes self + promotes another in one transaction), and can an
-owner leave a trip that still has members? Schema supports transfer as-is;
-the allowed flows are user-visible.]
-
-[NEEDS CLARIFICATION: invite links — single-use per invitee or shareable
-multi-use group links (Splitwise-style "anyone with the link joins")? Both
-are supported by `max_uses`; which is the product default, and is there a
-default expiry (e.g. 7 days)?]
-
-And from the navigation spec (§1 Open questions) — the invite `url` field
-depends on it:
-
-[NEEDS CLARIFICATION: Universal-link domain — what domain do we own for
-`https://` links (gogo.travel? gogotravel.app?)? Needed for AASA /
-assetlinks and the link formats below. Custom scheme `gogo://` is assumed
-as the fallback either way.]
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
+  2026-07-09): trip dates are required at creation v1; date-less trips are
+  deferred.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
+  2026-07-09): destination input is structured — search against the
+  Overture city/locality subset — so `destination_lat/lng` are always
+  present.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.5 (Gate 2, 2026-07-09):
+  owner may transfer ownership; leaving a trip with other members requires
+  transfer first.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.6 (Gate 2, 2026-07-09):
+  invites are shareable multi-use links, 7-day default expiry, revocable,
+  optional `max_uses`.
+- Resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09):
+  universal-link domain — Sean picks/buys (gogo.travel / gogotravel.app /
+  seantokuzo.dev subdomain); `gogo://` remains the fallback scheme, and
+  invite URL formats are domain-agnostic until purchase.
 
 ### 3.7 Out of scope (explicit)
 
@@ -704,9 +704,10 @@ as the fallback either way.]
 - Offline bundle contents + mutation-queue envelope (offline spec; note:
   invites and membership writes are online-only — no queued membership
   mutations in v1).
-- Account deletion interplay with membership (schema R-db-16 marker owns
-  it; member *removal* here never deletes user rows).
-- Trip-level visibility (pends §3.6 marker — assumed nonexistent).
+- Account deletion interplay with membership (schema R-db-16 owns it —
+  soft-delete + PII scrub, resolved Gate 2; member *removal* here never
+  deletes user rows).
+- Trip-level visibility (dropped from v1 — §3.6, resolved Gate 2).
 
 ---
 
@@ -717,13 +718,15 @@ Depends on: SH-1 (shared contracts) + DB-1 (schema) landed.
 
 ### API-TRIPS-1 — Trip CRUD + settings + status seam
 
-**Covers:** R-trips-1..8, R-trips-19, R-trips-20
+**Covers:** R-trips-1..8, R-trips-19, R-trips-20, R-trips-22 (R-trips-21
+is enforced at the money/photos endpoints that cite §3.2)
 
 - [ ] `trips` Hono router: POST/GET/GET:id/PATCH/DELETE per §3.3
 - [ ] Membership-gate middleware (resolve role once; 404-for-non-member)
 - [ ] `expect_updated_at` precondition helper (reusable across domains)
 - [ ] `derived_status` helper in `@gogo/shared` + reconciliation seam
-      (mechanism pends §3.4 marker — build the helper, stub the trigger)
+      (derived + owner override, override wins until cleared — §3.4,
+      resolved Gate 2)
 - [ ] Tests: every endpoint's "Tests required" block above
 
 ### API-TRIPS-2 — Members: roles, removal, leave, ownership transfer
@@ -758,7 +761,9 @@ Depends on: SH-1 (shared contracts) + DB-1 (schema) landed.
 
 ---
 
-*Trace: every R-trips-N cites its endpoint/section inline. Markers: 3 new
-(§3.2 viewer participation; §3.6 base-currency change; §3.6 trip
-visibility), 6 repeated verbatim from schema spec §3.3.4/§3.3.6 and nav
-spec §1. Zero markers = approvable.*
+*Trace: every R-trips-N cites its endpoint/section inline. All 9 markers
+resolved at Gate 2 (2026-07-09): 3 owned here (viewer participation →
+R-trips-21; base-currency lock → R-trips-22; trip visibility → dropped),
+6 at their canonical homes (dates required; structured destination; status
+derived + override; ownership transfer; multi-use invites; universal-link
+domain). Zero markers remain.*

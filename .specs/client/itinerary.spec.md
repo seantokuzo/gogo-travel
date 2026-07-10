@@ -167,31 +167,39 @@
   testIDs per the navigation-spec §2.7 grammar on its root and every
   interactive element, per the §2.9 inventory.
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2, 2026-07-09)
 
-- Repeated verbatim from `.specs/database/schema.spec.md` §3.3.10 — it
-  decides how lodging renders in both list and grid (§2.5/§2.6 map the
-  branches):
-  [NEEDS CLARIFICATION: multi-day bookings (lodging check-in→check-out) on the calendar — one spanning item (`end_day` used, rendered across days) or two point items (check-in item + check-out item)? Affects whether `end_day` stays; user-visible calendar rendering.]
-- Repeated verbatim from `.specs/database/schema.spec.md` §3.3.4 — a
-  date-less trip has no day range to section or grid until items exist:
-  [NEEDS CLARIFICATION: are trip dates required at creation, or are date-less trips allowed (dates added later)? Columns are nullable to keep both options open; the create-trip UX decides.]
-- [NEEDS CLARIFICATION: party size for deeplink-out URLs — Skyscanner
-  `adultsv2`, Airbnb `adults`, Booking `group_adults`, Expedia/Vrbo `adults`
-  all take a traveler count, but no traveler-count field exists anywhere
-  (`trip_members` counts collaborators, not travelers — a solo planner books
-  for a family of four). Options: (a) default to member count, editable
-  inline in the add flow; (b) a per-trip `travelers` column — an entity
-  change needing Sean's nod per the schema spec; (c) always ask inline and
-  remember the last answer per trip locally. User-visible in every lodging
-  and flight handoff.]
-- [NEEDS CLARIFICATION: persistent map in plan mode — competitor evidence
-  crowns "map-beside-itinerary with travel times" the category's
-  most-praised pattern (competitors.md § loves #3, call #4), but our IA
-  gives maps a dedicated tab (navigation spec §2.1). Should the plan-mode
-  list embed a collapsible mini-map strip (day-scoped pins, tap → map tab),
-  or does the map tab alone carry the pattern? Affects itinerary screen
-  layout and adds a Mapbox surface to this tab.]
+- Multi-day bookings — Resolved at
+  `.specs/database/schema.spec.md`:§3.3.10 `itinerary_items` (Gate 2,
+  2026-07-09): ONE spanning item (`end_day` stays), rendered as a
+  **spanning all-day lane on the grid** and **check-in/check-out point
+  rows on the day list** — §2.6 holds the decided rendering; see
+  R-itin-31.
+- Trip dates — Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips`
+  (Gate 2, 2026-07-09): dates are required at creation v1 — every trip has
+  a day range to section and grid from birth.
+- **Party size for deeplink-out URLs — decided:** default `adults` = the
+  trip's member count, editable inline in the add flow per search (no
+  schema change; a solo planner booking for four just edits the field).
+  See R-itin-32. (Resolved 2026-07-09, Gate 2)
+- **Persistent mini-map in plan mode — decided: deferred to the polish
+  phase.** The map tab alone carries the map-beside-itinerary pattern in
+  v1, with strong linkage from itinerary surfaces (place rows → map tab);
+  a collapsible mini-map strip is a polish-phase enhancement, not v1
+  layout. (Resolved 2026-07-09, Gate 2)
+
+- **R-itin-31 (multi-day rendering):** WHEN a lodging (or other spanning)
+  booking covers multiple days THE SYSTEM SHALL render it in grid mode as
+  a spanning lane in the all-day lane across its covered day columns, and
+  in list mode as synthesized check-in and check-out point rows on their
+  respective days (derived from the single spanning item — no extra data
+  rows); nights between render nothing in the list. (Resolved 2026-07-09,
+  Gate 2)
+- **R-itin-32 (deeplink party size):** WHEN a deeplink-out URL takes a
+  traveler count THE SYSTEM SHALL default it to the trip's current member
+  count and offer an inline, per-search editable adults field in the add
+  flow; the edited value applies to that search's constructed URL.
+  (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -289,20 +297,23 @@ The differentiator claim (competitors § call #4: "the calendar-grid view
 NOBODY has — HN users explicitly ask for gap/overlap exposure") is honored
 by rendering, not by nagging.
 
-### 2.6 Multi-day rendering (blocked on the §1 marker)
+### 2.6 Multi-day rendering (resolved — Gate 2, 2026-07-09)
 
-- **Branch A (spanning item):** lodging renders in list mode as a banner
-  row pinned under each covered day's header ("Park Hyatt Tokyo · night 2
-  of 4"); in grid mode as a slim full-height background band behind the
-  day's column (never occluding timed blocks), labeled at check-in/check-out
-  edges. Cross-midnight flights render one block clipped at midnight with a
-  "+1" tail on the arrival day.
-- **Branch B (two point items):** check-in and check-out render as ordinary
-  point items on their days; nights between show nothing (acceptable —
-  lodging is ambient); cross-midnight flights render on the departure day
-  with a "+1" chip.
+Decided (R-itin-31; data model = one spanning item, `end_day` stays —
+schema §3.3.10):
 
-No implementation of lodging rendering starts until the marker resolves.
+- **Grid mode:** the spanning booking renders as a lane in the all-day
+  lane (R-itin-16's strip), spanning across its covered day columns and
+  labeled at the check-in/check-out edges ("Park Hyatt Tokyo") — never a
+  full-height band, never occluding timed blocks.
+- **List mode:** the client synthesizes **check-in and check-out point
+  rows** from the spanning item — a check-in row on the `day` date and a
+  check-out row on the `end_day` date, each with time and category icon;
+  nights between show nothing (lodging is ambient). Both rows route to the
+  same `booking-detail`.
+- **Cross-midnight flights** (`end_day` = arrival wall-date): grid renders
+  one block clipped at midnight with a "+1" tail on the arrival day; list
+  renders on the departure day with a "+1" chip.
 
 ### 2.7 Deeplink-out URL construction (exact — every row cites research)
 
@@ -311,8 +322,9 @@ deeplink formats; **only research-verified formats ship** — anything
 unverified degrades to the partner's plain domain link. Builders are pure
 functions in `apps/mobile` feature code (no server involvement; nothing for
 `@gogo/shared`). Every interpolation is URL-encoded; date formats are
-per-partner as shown. `{adults}` pends the party-size marker (§1). Builders
-accept an optional affiliate-params config, dormant until Sean's affiliate
+per-partner as shown. `{adults}` defaults to the trip's member count,
+editable inline per search (R-itin-32, resolved Gate 2). Builders accept
+an optional affiliate-params config, dormant until Sean's affiliate
 signups (research § Escalations — Viator `?pid={P00X}&mcid={id}&medium=link`
 is the documented shape when it activates).
 
@@ -392,7 +404,8 @@ convention (tokens §2.9).
 - **Today tab** — separate bundle (leave-by, next-event, day-of leg
   refresh).
 - **Map tab screens** and place-detail — maps/places spec (this spec only
-  links into them); the mini-map question is a §1 marker, not silent scope.
+  links into them); the plan-mode mini-map is deferred to the polish phase
+  (§1, resolved Gate 2), not silent scope.
 - **Weather strip in day headers** — weather bundle (slot reserved, §2.2).
 - **Capture review queue + landing UX** — capture spec (R-itin-22's prompt
   actions route there).
@@ -421,9 +434,9 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 | IT-3 | Travel-time chips + mode sheet + directions handoff + absent-leg states. | R-itin-4..R-itin-6 |
 | IT-4 | Conflict surfacing: overlap chips, sort-by-time affordance, form conflict notice. | R-itin-7, R-itin-20 |
 | IT-5 | Ideas bucket: section, grouping, add-to-day scheduling flow, needs-a-day + cancelled visibility. | R-itin-10..R-itin-12 |
-| IT-6 | Calendar grid: hour axis, day paging, timed blocks, overlap split, all-day lane, gap-tap prefill. | R-itin-13..R-itin-17 |
+| IT-6 | Calendar grid: hour axis, day paging, timed blocks, overlap split, all-day lane incl. spanning-lodging lane, gap-tap prefill; list-mode check-in/check-out synthesis. | R-itin-13..R-itin-17, R-itin-31 |
 | IT-7 | Add/edit flows: add sheet, per-type forms (10 types), save routing (bucket vs scheduled), place picker. | R-itin-18, R-itin-19, R-itin-23 |
-| IT-8 | Deeplink-out: URL builders per §2.7 (+ device-verify pass for Airbnb/Turo caveats), button enablement, tap recording, return-prompt "add manually" landing. | R-itin-21, R-itin-22 |
+| IT-8 | Deeplink-out: URL builders per §2.7 (+ device-verify pass for Airbnb/Turo caveats), adults default + inline edit, button enablement, tap recording, return-prompt "add manually" landing. | R-itin-21, R-itin-22, R-itin-32 |
 | IT-9 | Booking detail screen: per-category layouts, status actions, copy affordance, seams (place/expenses/schedule rows), cancel/delete confirms. | R-itin-24..R-itin-26 |
 | IT-10 | Item detail (place_visit/custom) + booking-item routing + offline degradation of this tab. | R-itin-27, R-itin-29 |
 
@@ -434,7 +447,8 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 - [ ] Overlap: both list chips and grid side-by-side render for the same data (IT-4, IT-6)
 - [ ] Idea → "Add to day" → appears in day with `planned` badge (IT-5)
 - [ ] Grid gap tap opens prefilled add form (day + rounded time) (IT-6)
-- [ ] Each deeplink button builds its exact §2.7 URL (snapshot per partner) and disables on missing fields (IT-8)
+- [ ] Multi-day lodging: grid all-day spanning lane across covered columns; list shows check-in + check-out rows only, both routing to the same detail (IT-6)
+- [ ] Each deeplink button builds its exact §2.7 URL (snapshot per partner) and disables on missing fields; adults defaults to member count and inline edit flows into the URL (IT-8)
 - [ ] Deeplink tap records return-prompt state; "add manually" creates with `source: 'deeplink_return'` (IT-8)
 - [ ] Cancel flow: confirm → booking off calendar, visible under show-cancelled (IT-9)
 - [ ] Every screen root + interactive element exposes its §2.9 testID (all)
@@ -442,6 +456,9 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 ---
 
 *Trace: every R-itin-N cites its design section inline; §2.7 rows each trace
-to `.specs/research/booking-integrations.md` § Key deeplink formats. Markers:
-four — two repeated verbatim from the schema spec, two native (party size,
-persistent map).*
+to `.specs/research/booking-integrations.md` § Key deeplink formats. All
+four markers resolved at Gate 2 (2026-07-09): two at the schema spec
+(multi-day → spanning item with lane/point-row rendering → R-itin-31;
+dates required), two owned here (party size → member-count default,
+inline-editable → R-itin-32; plan-mode mini-map → deferred to polish).
+Zero markers remain.*

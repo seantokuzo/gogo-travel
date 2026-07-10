@@ -155,32 +155,27 @@ future recap's raw material.
   testIDs per the navigation spec §2.7 grammar on its root and every
   interactive element (§3.8 inventory) — R-nav-22 applies.
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2, 2026-07-09)
 
-Repeated verbatim from the canonical schema spec
-(`.specs/database/schema.spec.md §3.3.17`) — they gate this spec's caption
-UI and any non-member surface:
+Inherited from the canonical schema spec:
 
-- [NEEDS CLARIFICATION: PLANNING says public photos let others "see
-  experiences/reviews" — is a photo + caption the whole v1 review surface,
-  or are ratings/review text a separate concept? Determines whether
-  `caption` suffices or a review entity must be specced (none exists in
-  PLANNING's entity list).]
-- [NEEDS CLARIFICATION: where do public photos surface for non-members —
-  browsing a place's detail view, a destination gallery, both? Affects API
-  authz spec and whether the partial index above needs `taken_at` for
-  ordering. Schema keeps the minimal partial index until the surface is
-  defined.]
+- Resolved at `.specs/database/schema.spec.md`:§3.3.17 (Gate 2,
+  2026-07-09): photo + caption IS the whole v1 review surface — no
+  separate review/rating entity; the caption input carries that product
+  meaning.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.17 (Gate 2,
+  2026-07-09): public photos surface for non-members on the **place detail
+  sheet only** in v1 (destination gallery later) — that surface is
+  rendered by the maps/places client spec's place detail, consuming the
+  photos API's public-by-place endpoint.
 
-Repeated verbatim from the companion API spec (`.specs/api/photos.spec.md`
-§2) — it decides what the priming flow (§3.5) actually asks:
+Inherited from the companion API spec:
 
-- [NEEDS CLARIFICATION: location-consent posture — is EXIF GPS extraction
-  (R-photo-3) per-upload opt-in via the priming flow (privacy-max, Law #3
-  aligned — recommended), a one-time global opt-in stored in `users.prefs`,
-  or default-on with priming? Auto-association (the headline pin-to-place
-  feature) only works when location is extracted, so the default materially
-  shapes the product.]
+- Resolved at `.specs/api/photos.spec.md`:§2 Resolved questions (Gate 2,
+  2026-07-09): location consent is **per-upload opt-in via the priming
+  flow**, with the choice remembered as the default toggle state after the
+  first consent (still per-upload, always flippable) — this is what §3.5's
+  location prime implements.
 
 ---
 
@@ -273,7 +268,7 @@ not-now), three instances:
 |---|---|---|---|
 | Camera | first camera use | capture straight into the trip album | camera entry shows settings-link explainer; library unaffected (R-cphoto-2) |
 | Photo library | first library pick (where the OS/picker requires an app-level grant; out-of-process pickers may need none — build-time verification via Context7) | pick trip photos; app never scans the whole library | library entry explains + settings link; camera unaffected |
-| Location metadata | first upload (posture pends the §2 marker) | photo GPS is used only to suggest place/itinerary pins; photos' location never leaves the visibility the user sets (Law #3) | uploads proceed with `extract_location: false`; manual pinning intact (R-cphoto-3/4) |
+| Location metadata | first upload (per-upload opt-in; after first consent the choice becomes the remembered default toggle state — §2, resolved Gate 2) | photo GPS is used only to suggest place/itinerary pins; photos' location never leaves the visibility the user sets (Law #3) | uploads proceed with `extract_location: false`; manual pinning intact (R-cphoto-3/4) |
 
 Priming screens are app UI (skippable, re-triggerable from the blocked
 entry), never a replacement for OS dialogs.
@@ -288,11 +283,11 @@ entry), never a replacement for OS dialogs.
   this place". Current level checked; tapping a narrower level applies
   immediately (R-cphoto-19).
 - **Widening to public:** selecting `public` opens a ConfirmDialog:
-  title "Make this photo public?", body states who can see it (per the
-  place-surface wording — final copy pends the §2 where-public-surfaces
-  marker), that the photo's caption is included, and that retracting later
-  can't recall what others already saw (R-cphoto-18). Confirm is never the
-  default-focused action.
+  title "Make this photo public?", body states who can see it ("anyone
+  using GoGo who views this place" — the place detail sheet is the only
+  v1 public surface, resolved Gate 2), that the photo's caption is
+  included, and that retracting later can't recall what others already saw
+  (R-cphoto-18). Confirm is never the default-focused action.
 - **Trip-level widening** (`private → trip`) applies from the sheet without
   a dialog — members-only exposure, still an explicit user act.
 - Optimistic update + rollback with ErrorBanner on failure. Visibility
@@ -341,17 +336,17 @@ spec's screen list and examples).
 
 ### 3.9 Out of scope (explicit)
 
-- **Non-member public gallery UI** — pends both public-surface markers
-  (§2); when resolved it lands in the maps/places (place detail) or a new
-  spec, not by widening this one silently (scope-change rule,
-  `.specs/README.md`).
-- **Caption-as-review semantics** — pends the reviews-surface marker; the
-  caption input ships as a plain caption until then.
+- **Non-member public gallery UI** — resolved Gate 2: place detail sheet
+  only v1, rendered by the maps/places client spec's place detail (not by
+  widening this spec silently — scope-change rule, `.specs/README.md`).
+- **Caption-as-review semantics** — resolved Gate 2: photo + caption IS
+  the v1 review surface; the caption input ships with that meaning, no
+  separate review UI.
 - **Map pin rendering/clustering** — maps/places client spec (§3.7 is the
   contract).
 - **Post-trip recap UI (MEMORIES beyond the album)** — recap persistence
-  has an open marker (API spec §3.10 repeats it from schema spec §3.7);
-  recap UX is unspeccable until it resolves.
+  resolved Gate 2 (`recaps` table approved, schema spec §3.7); recap UX is
+  the AI spec's endpoint + a later client surface, not this spec's.
 - **Photo export/share-out, save-to-library of others' photos, print** —
   future scope change.
 - **Video capture/playback** — out of scope v1 (API spec §3.10).
@@ -372,7 +367,7 @@ Depends on PH-1..3 (API), NAV-1 route skeleton, DS-7..9 components.
 | PHC-2 | Capture + upload: source Sheet, camera/library flows, selection validation, persisted upload queue with batch pipeline, progress/retry/cancel tiles, suggestion chips. | R-cphoto-5..11 |
 | PHC-3 | Viewer: full-bleed image, owner vs non-owner control sets, pin editor Sheet w/ suggestions, caption edit, delete w/ ConfirmDialog. | R-cphoto-17, R-cphoto-20 |
 | PHC-4 | Visibility control: iconography, control Sheet, public ConfirmDialog, optimistic transitions w/ rollback. **Sensitive path — photo visibility auto-escalates review (PLANNING § Review Pipeline).** | R-cphoto-18, R-cphoto-19 |
-| PHC-5 | Permission priming trio + consent plumbing (`extract_location` flag, denial degradations). **Gated on the consent-posture marker.** | R-cphoto-1..4 |
+| PHC-5 | Permission priming trio + consent plumbing (`extract_location` per-upload flag with remembered default — resolved Gate 2 — plus denial degradations). | R-cphoto-1..4 |
 | PHC-6 | Map-pin data contract: visibility-safe pin feed + pin-tap → filtered album navigation (joint task with the map spec's owner). | R-cphoto-21 |
 
 **Tests required (minimum):**
@@ -399,7 +394,8 @@ Depends on PH-1..3 (API), NAV-1 route skeleton, DS-7..9 components.
 
 ---
 
-*Requirements → design trace inline. Three markers in this file — two
-repeated verbatim from schema spec §3.3.17, one repeated verbatim from the
-companion API spec (consent posture) — all P-2 interview questions for
-Sean. Zero markers = approvable.*
+*Requirements → design trace inline. All three markers resolved at their
+canonical homes at Gate 2 (2026-07-09): caption is the v1 review surface +
+public photos surface on the place detail sheet only (schema spec
+§3.3.17); location consent is per-upload opt-in with a remembered default
+(photos API spec). Zero markers remain.*

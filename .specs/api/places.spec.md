@@ -108,8 +108,8 @@ Out of scope: §3.6.
 - **R-places-12 (entitlement seam):** WHEN a request asks for premium
   details THE SYSTEM SHALL check
   `resolveEntitlements(user).premium_place_details` before any Foursquare
-  call (ADR-005 seam; everyone passes in free v1 *if the feature ships* —
-  MVP marker below).
+  call (ADR-005 seam; premium details are deferred from MVP — resolved
+  Gate 2, §2 Resolved questions — so this seam is dormant in v1).
 - **R-places-13 (fresh degrade):** WHEN the Foursquare call fails, times
   out (budget: 3s), or the place has no FSQ id THE SYSTEM SHALL still return
   200 with full spine data and the `fresh` block omitted — the premium fetch
@@ -143,34 +143,30 @@ Out of scope: §3.6.
   verified against each provider's current policy at implementation — never
   from training data.
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2, 2026-07-09)
 
-- Repeated verbatim from `.specs/database/schema.spec.md` §3.3.4 (`trips`) —
-  it gates R-places-1's trigger (no coordinates ⇒ no region to ingest):
-  [NEEDS CLARIFICATION: destination input — picked from place/geocoder search
-  (structured; lat/lng always present) or free text (lat/lng optional)?
-  Affects nullability of `destination_lat/lng` and whether weather/AI
-  grounding can be guaranteed for every trip.]
-- [NEEDS CLARIFICATION: v1 ingestion source set — Overture only, FSQ OS
-  only, or both with cross-source dedup (R-places-3)? Research says "and/or"
-  (`.specs/research/maps-places.md § Places`); the schema enum supports both.
-  Affects POI coverage/quality (user-visible in search), Neon storage size,
-  ingest-job runtime, and which attribution strings ship. If one: which is
-  primary? If both: recommended priority is fsq_os > overture for POI-shaped
-  records (FSQ OS is places-only and carries the FSQ id that unlocks
-  fetch-fresh premium details for free).]
-- [NEEDS CLARIFICATION: `place_ingest_regions` table (§3.1.2) + the
-  `places-ingest` job are additions to the canonical entity list
-  (schema.spec.md) and PLANNING's jobs list — same precedent as the schema
-  spec's recaps marker. On approval, the table folds into schema.spec.md +
-  migration (Law #6) and the job joins PLANNING § Component map. Needs
-  Sean's nod as an entity-list change.]
-- [NEEDS CLARIFICATION: do Foursquare premium fresh details ship in MVP?
-  Research escalation: "Foursquare developer account IF premium detail
-  fields make MVP (else defer)" — a new external account + metered billing
-  (~$0–60/mo; Autonomy Contract trigger #3). If deferred, R-places-11..14
-  land as a dormant seam (`fresh` never requested; endpoint shape unchanged)
-  and detail views are spine-only.]
+- Destination input — Resolved at `.specs/database/schema.spec.md`:§3.3.4
+  `trips` (Gate 2, 2026-07-09): structured search against the Overture
+  city/locality subset; lat/lng always present — R-places-1's trigger fires
+  for every trip (the coordinates-present guard stays as robustness only).
+- **v1 ingestion source set — decided: BOTH Overture + FSQ OS, with
+  cross-source dedup (R-places-3); Overture wins dedup priority**
+  (`overture > fsq_os`). Both attribution strings ship. (Resolved
+  2026-07-09, Gate 2)
+- **`place_ingest_regions` table (§3.1.2) + the `places-ingest` job —
+  APPROVED** as entity-list additions: the table folds into schema.spec.md
+  + migration (Law #6; schema spec is picking it up) and the job joins
+  PLANNING § Component map. (Resolved 2026-07-09, Gate 2)
+- **Foursquare premium fresh details — DEFERRED from MVP** (revisit
+  post-launch): MVP is spine-data-only ($0) — no Foursquare developer
+  account, no metered billing. R-places-11..14 land as a dormant seam
+  (`fresh` never requested in v1; endpoint shape unchanged) and detail
+  views are spine-only. (Resolved 2026-07-09, Gate 2)
+
+- **R-places-18 (source set):** WHEN a region is ingested THE SYSTEM SHALL
+  ingest both the Overture and FSQ OS snapshots for it, applying
+  cross-source dedup (R-places-3) with deterministic priority
+  `overture > fsq_os`. (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -185,11 +181,11 @@ Out of scope: §3.6.
 | **Region-scoped, on demand (trip-driven)** | **CHOSEN** | Storage/ingest cost proportional to real trips (a few metros ≈ 10⁴–10⁵ rows each); first ingest per destination runs async in minutes; Neon stays small; no standing jobs. |
 | Global preload (75–100M+ POIs) | Rejected | Tens of GB in Neon before the first user; hours-long import; ~all rows never queried; violates the keep-spend-proportional posture for zero user-visible gain (search still works per region either way). |
 
-Not marked `[NEEDS CLARIFICATION]`: given Neon + the no-idle-spend posture
-there is one sane answer; the genuinely open parts (source set, region table
-approval, trigger inputs) carry the markers above.
+Never marked `[NEEDS CLARIFICATION]`: given Neon + the no-idle-spend
+posture there is one sane answer; the formerly open parts (source set,
+region table approval, trigger inputs) are resolved in §2.
 
-#### 3.1.2 Region tracking — `place_ingest_regions` (proposed table; marker above)
+#### 3.1.2 Region tracking — `place_ingest_regions` (approved table — Gate 2, 2026-07-09)
 
 | Column | Type | Notes |
 |---|---|---|
@@ -201,8 +197,8 @@ approval, trigger inputs) carry the markers above.
 | `ingested_at` | `timestamptz` NULL | Last success — drives the 90-day refresh window (R-places-5) |
 | `row_count` | `integer` NULL | Observability |
 
-Follows every schema-spec convention (§1 there); lands there verbatim on
-approval.
+Follows every schema-spec convention (§1 there); approved Gate 2 — the
+schema spec is folding it in verbatim with its migration.
 
 #### 3.1.3 Triggers & region definition
 
@@ -237,9 +233,9 @@ approval.
 5. Cross-source dedup (R-places-3), only when ingesting a lower-priority
    source: candidate is a duplicate when an existing higher-priority-source
    place lies within **50 m** AND normalized-name trigram similarity ≥
-   **0.6** (both config in `@gogo/shared`; PROVISIONAL until tuned on real
-   regions) → skip insert. Deterministic priority order comes from the
-   source-set marker.
+   **0.6** (both config in `@gogo/shared`; thresholds tunable on real
+   regions) → skip insert. Deterministic priority order:
+   `overture > fsq_os` (R-places-18, resolved Gate 2).
 6. Mark region row `ready` + `ingested_at = now()` + `row_count`; on error
    mark `failed` + `error`, retry with backoff (max 3), leave data intact
    (R-places-4).
@@ -473,6 +469,9 @@ Unsave. **Auth**: Required (owner/editor)
 
 ### 3.4 Foursquare integration notes
 
+- **MVP posture (resolved Gate 2, 2026-07-09): premium fresh details are
+  deferred** — no FSQ developer account in MVP; the contract below is the
+  dormant seam, implemented when the feature is revisited post-launch.
 - Server-side only — the FSQ API key never ships in the client bundle.
 - Only `fsq_os`-sourced places have an FSQ id (`source_id`) to query;
   Overture/custom places return `fresh_unavailable_reason: 'no_fsq_id'`.
@@ -493,8 +492,8 @@ about what "the destination area" means).
 
 ### 3.6 Out of scope (explicit)
 
-- **Destination geocoding at trip creation** — trips spec (pends the
-  destination-input marker repeated above).
+- **Destination geocoding at trip creation** — trips spec (structured
+  Overture-backed destination search, resolved Gate 2).
 - **Travel legs / directions** — itinerary spec (Mapbox Directions +
   Transitous; `travel_legs` contract in schema §3.3.11).
 - **Tour-guide content generation/serving** — AI spec (grounds in this
@@ -517,9 +516,9 @@ Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
 | ID | Task | Covers |
 |---|---|---|
-| PL-1 | `place_ingest_regions` migration (post-nod) + region grid in shared + ingest job (GeoParquet read → normalize → batch upsert → dedup → region bookkeeping) + trip-create/search-miss triggers with throttle. | R-places-1..5, R-places-7 (enqueue half) |
+| PL-1 | `place_ingest_regions` migration (approved Gate 2) + region grid in shared + ingest job for both sources, `overture > fsq_os` dedup (GeoParquet read → normalize → batch upsert → dedup → region bookkeeping) + trip-create/search-miss triggers with throttle. | R-places-1..5, R-places-7 (enqueue half), R-places-18 |
 | PL-2 | Search endpoint (text/geo/blend, custom-place visibility, pagination) + custom place create/patch/delete + coarse-category mapping in shared. | R-places-6..10 |
-| PL-3 | Details endpoint: spine read + FSQ fetch-fresh client (no-store, degrade, entitlement check, per-user/global guards) + attribution registry in shared. | R-places-11..14, R-places-17 |
+| PL-3 | Details endpoint: spine read + attribution registry in shared. FSQ fetch-fresh client (no-store, degrade, entitlement check, per-user/global guards) is DEFERRED with the premium feature (Gate 2) — ship the spine read + `fresh_unavailable_reason` plumbing only. | R-places-11..14 (dormant seam), R-places-17 |
 | PL-4 | Saved-places CRUD (4 routes) with role authz + 404 posture + conflict semantics. | R-places-15, R-places-16 |
 
 **Tests required** roll up from each endpoint's checklist plus:
@@ -530,6 +529,8 @@ Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
 ---
 
-*Trace: every R-places-N cites its section/endpoint inline. Markers: 1
-repeated (trips destination input, cited), 3 new (source set; region-table
-entity addition; FSQ-premium-in-MVP). Zero markers = approvable.*
+*Trace: every R-places-N cites its section/endpoint inline. All 4 markers
+resolved at Gate 2 (2026-07-09): destination input (structured, canonical
+at schema spec) · source set (both, `overture > fsq_os` → R-places-18) ·
+`place_ingest_regions` (approved) · FSQ premium (deferred from MVP). Zero
+markers remain.*

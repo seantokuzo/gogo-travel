@@ -165,38 +165,40 @@ Screen-level; every requirement names its testIDs (grammar: navigation spec
   select that pin, center the camera on it, and open its sheet — the map
   tab's own stack state is otherwise preserved.
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2, 2026-07-09)
 
-- Repeated verbatim from `.specs/database/schema.spec.md` §3.3.4 (`trips`)
-  — it defines R-map-18's trigger ("becomes active"):
-  [NEEDS CLARIFICATION: `status` transitions — PLANNING implies automatic
-  (`today` view "auto-default while trip active"). Is status purely derived
-  from dates by a daily job/on-read (planning→active on start_date,
-  active→past after end_date), or can users manually override (e.g. mark a
-  trip past early)? Manual override is user-visible.]
-- Repeated verbatim from `.specs/database/schema.spec.md` §3.3.4 (`trips`)
-  — the tile region and default camera need destination coordinates:
-  [NEEDS CLARIFICATION: destination input — picked from place/geocoder
-  search (structured; lat/lng always present) or free text (lat/lng
-  optional)? Affects nullability of `destination_lat/lng` and whether
-  weather/AI grounding can be guaranteed for every trip.]
-- [NEEDS CLARIFICATION: place discovery on the map — how does a user find
-  and save a NEW place from the map screen? The navigation spec's map
-  inventory (saved/itinerary/photo pins, day filter, pill, sheet, nav
-  handoff) has no discovery affordance, yet `place-detail` specs
-  save/unsave, implying unsaved places are reachable. Options: (a) map
-  search bar querying `GET /places/search` with results as temporary pins
-  (adds a nav-spec scope change); (b) tap Mapbox basemap POI labels →
-  match against our spine by proximity+name → sheet (zero new chrome,
-  fuzzy matches possible); (c) v1 discovery only via the itinerary
-  add-item place picker (map stays pins-only). User-visible; (b)+(a) both
-  compose later.]
+- R-map-18's "becomes active" trigger — Resolved at
+  `.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
+  2026-07-09): status is date-derived with manual owner override (override
+  wins until cleared); the auto-download trigger follows the effective
+  status.
+- Destination coordinates — Resolved at
+  `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2, 2026-07-09):
+  destination input is structured (Overture-backed search), so
+  `destination_lat/lng` are always present — the tile region and default
+  camera are always derivable.
+- **Place discovery on the map — decided: option (a), a search bar on the
+  map tab** querying `GET /places/search` (spine-backed) with results as
+  temporary pins; no basemap-POI tap-through in v1 (option b composes
+  later). The navigation spec's map inventory gains the search bar
+  (companion scope note — that spec's owner is syncing). See R-map-25.
+  (Resolved 2026-07-09, Gate 2)
 
-Related, deliberately NOT re-marked here: the schema spec's public-photos
-surface marker (schema.spec.md §3.3.17) names the place detail view as a
-candidate surface for OTHER users' public photos — that surface is out of
-scope for this spec (§2.9) until that marker resolves; R-map-5/14 cover
-only this-trip, viewer-visible photos.
+- **R-map-25 (map search):** WHEN the map search bar (`map-search-input`)
+  receives ≥ 2 characters THE SYSTEM SHALL query `GET /places/search`
+  (debounced, geo-biased to the current viewport) and render results as
+  temporary pins (`map-pin-search-{placeId}`) + a result list; tapping a
+  result opens the standard place sheet (save/add-to-day work as on any
+  pin); clearing the search removes temporary pins. Offline, the search
+  entry degrades with an offline notice (R-map-22 rule). (Resolved
+  2026-07-09, Gate 2)
+
+Related: the schema spec's public-photos surface question resolved Gate 2
+(place detail sheet only v1) — the place detail surface here gains a
+public-photos strip fed by the photos API's public-by-place endpoint
+(redacted `PublicPlacePhoto` shape; a small additive block on
+`place-detail`); R-map-5/14 still cover only this-trip, viewer-visible
+photos.
 
 ---
 
@@ -283,10 +285,11 @@ only this-trip, viewer-visible photos.
   `any → failed(error)` with retry (R-map-21). State derives from
   `offlineManager` queries + a small MMKV record — the SDK is the source
   of truth, MMKV is the annotation (trip ↔ pack mapping, completed_at).
-- **Triggers:** (1) auto at activation on wifi (R-map-18; "activation"
-  pends the status-transitions marker above); (2) manual from management
-  UI (R-map-19); (3) refresh action re-downloads with the same id
-  (replaces — packs never auto-refresh; research).
+- **Triggers:** (1) auto at activation on wifi (R-map-18; "activation" =
+  effective status flips to `active` — derived + override, resolved
+  Gate 2); (2) manual from management UI (R-map-19); (3) refresh action
+  re-downloads with the same id (replaces — packs never auto-refresh;
+  research).
 - **Hygiene (R-map-20):** delete pack on trip delete/leave (hooked to
   those mutations); prompt on `active → past`; before any new download,
   enumerate regions and purge past-trip packs oldest-first if count nears
@@ -325,6 +328,7 @@ only this-trip, viewer-visible photos.
 | Surface | testIDs |
 |---|---|
 | Map root | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state` |
+| Search (R-map-25) | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear` |
 | Day filter | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}` |
 | Pins/clusters | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index) |
 | Place sheet | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details` |
@@ -335,12 +339,14 @@ only this-trip, viewer-visible photos.
 
 - **Route polylines / turn-by-turn** — `travel_legs` carry no geometry in
   v1 (schema §3.3.11); external nav handoff only (R-map-8).
-- **Public photos from non-members at a place** — pends the schema
-  §3.3.17 surface marker (noted in §1); photos spec owns it when resolved.
+- **Public-photos strip content rules** — the photos specs own visibility
+  law and the redacted shape; this spec only renders the strip on place
+  detail (surface resolved Gate 2: place detail sheet only v1, schema
+  §3.3.17).
 - **Tour-guide content rendering & audio** — AI spec; this spec ships the
   entry-point hook only (R-map-13).
-- **Place search UI on the map** — pends the discovery marker; the search
-  endpoint's v1 consumers (itinerary add-item picker) live in their specs.
+- **Basemap-POI tap-through discovery** — not v1 (discovery resolved
+  Gate 2 as the R-map-25 search bar; tap-through composes later).
 - **Trip-bundle offline data sync** (SQLite/mutation queue) — offline/sync
   spec; this spec consumes the cached bundle and owns only tile packs.
 - **Android map behaviors** — Android verification pass, pre-launch
@@ -360,7 +366,7 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 | ID | Task | Covers |
 |---|---|---|
 | MAP-1 | Map screen shell: MapView + themed styles, camera logic, attribution placement, ShapeSource layers + clustering for the three pin families, day filter. | R-map-1..3, R-map-6, R-map-7 |
-| MAP-2 | Pin selection + place sheet + photo-pin routing + external nav handoff + photo-visibility filtering. | R-map-4, R-map-5, R-map-8 |
+| MAP-2 | Pin selection + place sheet + photo-pin routing + external nav handoff + photo-visibility filtering + map search bar with temporary result pins. | R-map-4, R-map-5, R-map-8, R-map-25 |
 | MAP-3 | Place detail screen: spine view, fresh block w/ non-persistence contract, save/unsave, add-to-day, note editor, linked content, tour-guide hook, attribution. | R-map-9..14 |
 | MAP-4 | Foreground location: puck, lazy permission flow, locate-me, plist audit. | R-map-15..17 |
 | MAP-5 | Offline packs: state machine, activation auto-download (wifi-gated), management UI in trip settings, hygiene/ceiling purge, failure/retry, offline degrade states. | R-map-18..22 |
@@ -369,6 +375,7 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 **Tests required (minimum — component/E2E per testIDs above):**
 
 - [ ] Pins render per family from fixture trip data; cluster tap expands, never sheets (MAP-1/2)
+- [ ] Search: ≥ 2 chars queries spine, temporary pins + list render, result tap opens sheet, clear removes pins; offline shows notice (MAP-2)
 - [ ] Day filter shows only that day's itinerary pins; chips match `mapDayColors` (MAP-1)
 - [ ] Another member's private photo absent from map + detail strip (`canViewPhoto` truth table drives fixtures) (MAP-2/3)
 - [ ] Fresh details render when stubbed, vanish silently when stub errors; TQ persister snapshot contains no `place-fresh` entry after use (R-map-9/10) (MAP-3)
@@ -380,7 +387,9 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 
 ---
 
-*Trace: every R-map-N cites its design section inline. Markers: 2 repeated
-(trips status transitions; destination input — both cited to schema spec
-§3.3.4), 1 new (map place-discovery flow); the schema public-photos marker
-is cited, not re-opened. Zero markers = approvable.*
+*Trace: every R-map-N cites its design section inline. All 3 markers
+resolved at Gate 2 (2026-07-09): 2 at the schema spec (status derived +
+override; destination structured with guaranteed coords), 1 owned here
+(map discovery → spine-backed search bar, R-map-25); the public-photos
+surface resolved at the schema spec (place detail sheet only, photos spec
+renders it). Zero markers remain.*

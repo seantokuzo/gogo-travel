@@ -67,17 +67,14 @@ Out of scope: see §3.8.
   `display_name` seeds from the provider name fields when present (Apple
   sends them only on first authorization — client MUST forward them), else
   from the email local part; the user edits it at onboarding.
-- **R-auth-6 (email collision — BLOCKED):** WHEN a verified token's `sub` is
-  unknown AND `lower(email)` matches an existing account THE SYSTEM SHALL
-  apply the identity-linking policy.
-  [NEEDS CLARIFICATION: identity linking — if a user signs in with Google
-  using the same email as an existing Apple-created account, do we auto-link
-  to one account, prompt to link, or create a separate account? User-visible;
-  affects whether `email` uniqueness can be relied on for merging.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.1 `users`,
-  line 233 — resolves there; this spec's sign-in branch consumes the answer.)*
-  Until resolved, this branch is unimplementable — build tasks touching it
-  are blocked, not improvised (Autonomy Contract #1).
+- **R-auth-6 (email collision — auto-link):** WHEN a verified token's `sub`
+  is unknown AND `lower(email)` matches an existing account THE SYSTEM SHALL
+  auto-link the new provider identity to that account (set the missing
+  `apple_sub`/`google_sub` on the existing `users` row) and sign the user in
+  — provided the incoming email is verified (Google: `email_verified` claim
+  true; Apple: verified by construction). Unverified email → 401, no link.
+  Resolved at `.specs/database/schema.spec.md`:§3.3.1 `users` (Gate 2,
+  2026-07-09): auto-link on verified matching email.
 - **R-auth-7 (Apple revocation credential):** WHEN Apple sign-in completes
   THE SYSTEM SHALL exchange the request's `authorization_code` with Apple's
   token endpoint and store the returned Apple refresh token encrypted
@@ -173,22 +170,19 @@ Out of scope: see §3.8.
   and bump `last_seen_at`; re-registration on app foreground is the
   keep-alive. Deletion by id is restricted to the owning user (foreign id →
   404).
-- **R-user-9 (account deletion — endpoint fixed, strategy BLOCKED):**
+- **R-user-9 (account deletion):**
   THE SYSTEM SHALL expose `DELETE /users/me` (App Store requires account
-  deletion to exist). WHEN invoked THE SYSTEM SHALL — regardless of the data
-  strategy — immediately: revoke all of the user's sessions and refresh
-  tokens, delete all their push tokens, and revoke their Apple refresh token
-  via Apple's REST revocation endpoint (consuming `apple_credentials`,
-  R-auth-7). Disposition of user data is blocked on:
-  [NEEDS CLARIFICATION: account deletion strategy — hard delete with cascade,
-  or soft-delete + PII scrub (keeping expense/settlement ledger integrity for
-  other trip members)? App Store requires account deletion to exist; the
-  ledger-integrity question is user-visible for the surviving group.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` R-db-16, lines
-  117–120 — resolves there; do not resolve here.)* Deletion of an owner of a
-  trip that still has other members additionally interacts with the
-  ownership-transfer marker (schema spec §3.3.5, line 296) and the R-db-16
-  RESTRICT matrix — sequencing lands with the strategy answer.
+  deletion to exist). WHEN invoked THE SYSTEM SHALL immediately: revoke all
+  of the user's sessions and refresh tokens, delete all their push tokens,
+  and revoke their Apple refresh token via Apple's REST revocation endpoint
+  (consuming `apple_credentials`, R-auth-7). Data disposition — Resolved at
+  `.specs/database/schema.spec.md`:§R-db-16 (Gate 2, 2026-07-09):
+  soft-delete + PII scrub; expense/settlement ledger rows survive, surfaced
+  to other members as "Deleted user". Deletion of an owner of a trip that
+  still has other members follows the ownership-transfer rule (schema spec
+  §3.3.5, resolved Gate 2: owner may transfer; leaving requires transfer
+  first) — the owner must transfer ownership before the account can be
+  deleted.
 
 ### 2.4 Entitlements (R-ent)
 
@@ -252,37 +246,31 @@ POST /auth/{apple|google}  ────▶ verify JWT: JWKS sig, iss,
                                  ├─ found        → sign in (R-auth-4)
                                  ├─ new email    → create user +
                                  │                 entitlements txn (R-auth-5)
-                                 └─ email collides → BLOCKED (R-auth-6 marker)
+                                 └─ email collides → auto-link verified
+                                                     email (R-auth-6)
                                  [Apple] exchange authorization_code,
                                    store encrypted refresh token (R-auth-7)
                                  create auth_session + refresh token
 ◀ { user, tokens, is_new_user }  sign ES256 access (jose)
 ```
 
-- Client mechanism note: PLANNING's Gate-1 line reads "Sign in with Apple +
-  Google via Expo AuthSession". For Google, AuthSession (auth code + PKCE →
-  ID token) is standard. For Apple on iOS, the native
-  `expo-apple-authentication` module (ASAuthorization) is the
-  App-Review-preferred presentation of the same credential; both produce the
-  identical identity token this server contract consumes, so the server is
-  mechanism-agnostic.
-  [NEEDS CLARIFICATION: Apple sign-in client mechanism — Gate-1 wording says
-  "via Expo AuthSession" for both providers, but on iOS the native
-  `expo-apple-authentication` flow is the standard, App-Review-favored way
-  to present Sign in with Apple (same identity token either way; server
-  contract unaffected). Confirm the native module is an acceptable reading
-  of the Gate-1 lock, or lock the web-based AuthSession flow deliberately.]
+- Client mechanism: Apple sign-in uses the native
+  `expo-apple-authentication` module (ASAuthorization) on iOS — the
+  App-Review-favored presentation, accepted as a valid reading of the
+  Gate-1 lock; Google uses Expo AuthSession (auth code + PKCE → ID token).
+  Both produce the identical identity token this server contract consumes,
+  so the server is mechanism-agnostic. (Resolved 2026-07-09, Gate 2)
 - Provider JWKS are fetched via `jose`'s remote JWK set with caching;
   unknown `kid` triggers one refetch (key-rotation tolerance) then fails.
 - Replay posture: nonce binding (R-auth-3) ties each provider token to one
   sign-in attempt; residual replay of a stolen token+nonce pair is bounded
   by the provider token's own `exp` (≤ 10 min) and TLS everywhere.
 - `is_new_user` drives the client's first-run onboarding branch (navigation
-  spec §2.2 `firstRun`); onboarding completion is client-tracked. What
-  onboarding collects pends the navigation spec's onboarding-contents marker
-  (`.specs/client/navigation.spec.md` §1, lines 104–107) — every candidate
-  field it names (display name/avatar, home currency, payment handles) is
-  writable via this spec's endpoints, so that marker doesn't block this one.
+  spec §2.2 `firstRun`); onboarding completion is client-tracked. Onboarding
+  contents resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2,
+  2026-07-09): name/avatar → home currency → payment handles (skippable) →
+  notification priming, with `travel_style` as an optional prompt — every
+  field it collects is writable via this spec's endpoints.
 
 ### 3.2 Token model
 
@@ -378,7 +366,7 @@ expires_in: number }` (seconds, = `ACCESS_TOKEN_TTL`)
 
 **Errors**: 400 `VALIDATION_FAILED` — malformed body; 401 `UNAUTHENTICATED`
 — signature/iss/aud/exp/nonce failure (undifferentiated, R-auth-1); 429
-`RATE_LIMITED`. Email-collision branch: blocked on the R-auth-6 marker.
+`RATE_LIMITED`.
 
 **Requirements covered**: R-auth-1, R-auth-3, R-auth-4, R-auth-5, R-auth-6,
 R-auth-7, R-auth-8, R-auth-14, R-auth-15
@@ -386,6 +374,7 @@ R-auth-7, R-auth-8, R-auth-14, R-auth-15
 **Tests required**:
 - [ ] Happy path: new user → user + entitlements row in one txn, `is_new_user: true`, valid ES256 access token with `sub`/`sid`, refresh stored hashed
 - [ ] Happy path: returning `apple_sub` → same user id, `is_new_user: false`, new session created
+- [ ] Happy path: unknown `apple_sub`, email matches existing Google-created account → linked (`apple_sub` set on the existing row), signed in, no second account (R-auth-6)
 - [ ] Error: tampered signature, wrong `aud`, expired token, nonce mismatch → all 401, indistinguishable bodies
 - [ ] Error: Apple code-exchange failure → sign-in still succeeds (R-auth-7), failure logged
 - [ ] Authz: none (public endpoint) — but rate limit fires 429 at threshold
@@ -404,14 +393,16 @@ platform: 'ios' | 'android' } }`
 **Response 200** `SignInResponse` (as above)
 
 **Errors**: 400 `VALIDATION_FAILED`; 401 `UNAUTHENTICATED` (verification
-failure); 429 `RATE_LIMITED`. Email-collision branch: blocked on R-auth-6
-marker.
+failure, incl. email collision with `email_verified` false — no link);
+429 `RATE_LIMITED`.
 
 **Requirements covered**: R-auth-2, R-auth-3, R-auth-4, R-auth-5, R-auth-6,
 R-auth-8, R-auth-14, R-auth-15
 
 **Tests required**:
 - [ ] Happy path: new + returning user (as Apple tests, keyed on `google_sub`)
+- [ ] Happy path: unknown `google_sub`, verified email matches existing Apple-created account → linked, signed in (R-auth-6)
+- [ ] Error: email collision with `email_verified: false` → 401, no link, no new account (R-auth-6)
 - [ ] Error: wrong `iss`/`aud`, expired, nonce mismatch → 401
 - [ ] Authz: rate limit 429 at threshold
 
@@ -500,13 +491,10 @@ revoked, or not owned by the caller (indistinguishable, R-auth-13)
 - [ ] Error: unknown session id → 404
 - [ ] Authz: user B's session id → 404, session untouched
 
-*Scope note:* [NEEDS CLARIFICATION: does v1 ship a session/device management
-UI (list + revoke other devices)? The endpoints above are cheap and
-security-positive, but their only UI home is the unresolved profile-surface
-marker (`.specs/client/navigation.spec.md` §1, lines 108–112). Keep
-endpoints + UI, keep endpoints only (logout still uses session revocation
-internally), or cut `GET /auth/sessions` + `DELETE /auth/sessions/:id` from
-v1?]
+*Scope note:* v1 ships both the endpoints and a minimal session list/revoke
+screen in settings (the profile surface lives off the trips-list header
+avatar button — navigation spec §1). `GET /auth/sessions` +
+`DELETE /auth/sessions/:id` stay in v1. (Resolved 2026-07-09, Gate 2)
 
 #### 3.4.2 Users & profile
 
@@ -558,15 +546,11 @@ foreign/never-issued/missing-object `avatar_key`; 401 `UNAUTHENTICATED`
 - [ ] Error: attempt to write `email` / `apple_sub` / `forward_email_slug` → stripped or 400 (unknown-key policy), never persisted
 - [ ] Authz: user A's PATCH can never mutate user B
 
-Note on `travel_style` (writable via `prefs`): its value set is unresolved —
-[NEEDS CLARIFICATION: `travel_style` taxonomy — the AI cache key and
-recommendation prompts depend on it (research: key = hash(destination,
-travel_style, season, schema_version)). What are the values (e.g.
-budget/comfort/luxury? solo/family? adventure/culture/food)? Single choice
-or multi-tag? User-visible in profile UI and it shapes every AI
-recommendation.] *(Repeated verbatim from `.specs/shared/contracts.spec.md`
-§3.4 `user.ts`, lines 189–194 — resolves there; until then `travel_style`
-validates as a bounded string and the profile UI can't ship its picker.)*
+Note on `travel_style` (writable via `prefs`): Resolved at
+`.specs/shared/contracts.spec.md`:§3.4 `user.ts` (Gate 2, 2026-07-09):
+multi-tag from the fixed set budget, comfort, luxury, foodie, adventure,
+culture, nightlife, family, relaxation — the shared schema there is the
+validator.
 
 `home_currency` is stored here; its consumption (proposed: default
 `base_currency` for new trips) is the trips spec's to pin.
@@ -711,28 +695,27 @@ another user (indistinguishable)
 Delete the caller's account (App-Store-mandated surface). **Auth**: Required
 (rate-limited)
 
-**Response 204** (no body) — PROVISIONAL: final response semantics (e.g. a
-grace-period notice) land with the strategy marker in R-user-9.
+**Response 204** (no body)
 
-**Fixed effects regardless of strategy** (R-user-9): all sessions +
-refresh tokens revoked; all push tokens deleted; Apple refresh token revoked
-via Apple's REST API (`apple_credentials` consumed); the device is signed
-out. Data disposition (hard delete vs soft-delete + PII scrub) is **blocked**
-on the R-db-16 marker quoted in R-user-9 — build task AU-8 ships the endpoint
-shell + fixed effects only; the disposition body is unimplementable until
-the marker resolves (Autonomy Contract #1).
+**Effects** (R-user-9): all sessions + refresh tokens revoked; all push
+tokens deleted; Apple refresh token revoked via Apple's REST API
+(`apple_credentials` consumed); the device is signed out. Data disposition
+— Resolved at `.specs/database/schema.spec.md`:§R-db-16 (Gate 2,
+2026-07-09): soft-delete + PII scrub; ledger rows survive as "Deleted
+user".
 
-**Errors**: 401 `UNAUTHENTICATED`; 429 `RATE_LIMITED`; conflict semantics
-for sole-owner-of-populated-trip pend the same marker (R-db-16 RESTRICT
-matrix + ownership-transfer marker, schema spec §3.3.5 line 296)
+**Errors**: 401 `UNAUTHENTICATED`; 429 `RATE_LIMITED`; 409 `CONFLICT` —
+caller still owns a trip with other members (ownership transfer required
+first, R-user-9 / schema spec §3.3.5)
 
 **Requirements covered**: R-user-9, R-auth-7, R-auth-13
 
 **Tests required**:
 - [ ] Happy path: fixed effects all fire (sessions revoked, push tokens gone, Apple revocation called — mocked)
+- [ ] Happy path: disposition — user row soft-deleted + PII scrubbed; surviving trip members still see ledger rows attributed to "Deleted user"
 - [ ] Error: unauthenticated → 401
+- [ ] Error: caller owns a trip with other members → 409, nothing revoked or scrubbed
 - [ ] Authz: deletes exactly the token's `sub`; no parameterization
-- [ ] (Disposition tests land with the marker resolution)
 
 #### 3.4.3 Entitlements
 
@@ -776,16 +759,12 @@ middleware must satisfy and other specs reference by name.
 - Order fixed by R-authz-4: `requireAuth → validation → resource authz →
   handler`; all failures serialize as `ApiError` via the shared error
   middleware.
-- Whether `capture_parse` runs through `requireAiQuota` (vs kill-switch-only
-  accounting) is unresolved upstream:
-  [NEEDS CLARIFICATION: does the capture-pipeline LLM fallback count against
-  the user's 30/day AI cap (i.e., is `capture_parse` an `ai_feature` value
-  tracked in `ai_usage`)? It costs money per the kill-switch policy either
-  way, but charging it to the user cap is user-visible — a heavy
-  email-forwarder could exhaust their recommendations quota.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.2
-  `ai_feature`, line 197 — resolves there; the middleware signature above is
-  unaffected either way, only the capture spec's call sites are.)*
+- `capture_parse` vs the AI cap — Resolved at
+  `.specs/database/schema.spec.md`:§3.2 `ai_feature` (Gate 2, 2026-07-09):
+  capture parsing does NOT count against the user's AI cap; it has its own
+  structural ceiling (20 captures/day). Capture call sites skip
+  `requireAiQuota` (kill-switch check still applies); the middleware
+  signature above is unaffected.
 - Usage increment (`ai_usage` upsert) happens after a successful model call
   — the AI spec owns increment semantics; this spec owns the gate.
 
@@ -810,19 +789,15 @@ middleware must satisfy and other specs reference by name.
 
 #### 3.6.2 Apple identity-linking policy
 
-Blocked on the canonical marker, repeated verbatim in R-auth-6 from
-`.specs/database/schema.spec.md` §3.3.1 (line 233):
-*identity linking — if a user signs in with Google using the same email as
-an existing Apple-created account, do we auto-link to one account, prompt to
-link, or create a separate account?* Design constraints that hold under any
-answer: Apple private-relay addresses make email an unreliable join key
-(the same human can present different emails), auto-linking on email alone
-is an account-takeover vector if either provider's email is unverified
-(Google tokens carry `email_verified`; Apple emails are verified by
-construction), and `users.email` uniqueness (schema spec) forbids two
-accounts sharing an email — so "create a separate account" would also need
-the email-collision UX defined. Resolve at the schema spec; this spec's
-R-auth-6 branch implements the answer.
+Resolved at `.specs/database/schema.spec.md`:§3.3.1 `users` (Gate 2,
+2026-07-09): auto-link on verified matching email — implemented by this
+spec's R-auth-6 branch. Security constraints that shaped the rule still
+bind the implementation: linking requires the incoming email to be verified
+(Google tokens carry `email_verified` — require it true; Apple emails are
+verified by construction), because auto-linking on an unverified email is
+an account-takeover vector. Apple private-relay addresses mean the same
+human can still present different emails and end up with two accounts —
+accepted v1 behavior; `users.email` uniqueness holds.
 
 #### 3.6.3 Rate limits on auth surfaces (R-auth-14)
 
@@ -898,14 +873,14 @@ tables) landing first.
 
 | ID | Task | Covers | Blocked by markers? |
 |---|---|---|---|
-| AU-1 | `@gogo/shared` auth additions: `domains/auth.ts`, user/entitlement schema additions, endpoint descriptors (§3.7) | R-shared-14 pattern; all request/response shapes | `travel_style` values pend (string-typed until resolved) |
+| AU-1 | `@gogo/shared` auth additions: `domains/auth.ts`, user/entitlement schema additions, endpoint descriptors (§3.7) | R-shared-14 pattern; all request/response shapes | no (`travel_style` enum resolved at contracts spec §3.4) |
 | AU-2 | Auth tables + migration: `auth_sessions`, `refresh_tokens`, `apple_credentials` (§3.3), prune job | R-auth-9, R-auth-11 structure, R-auth-7 storage | no |
-| AU-3 | Provider verification + sign-in endpoints: JWKS verify, nonce binding, find-or-create + entitlements txn, Apple code exchange | R-auth-1..7, R-auth-15 | **R-auth-6 email-collision branch blocked** (identity-linking marker) — ship known-sub + new-email paths; collision returns 500 `INTERNAL` + log until resolved |
-| AU-4 | Token issuance/rotation: ES256 signing, `/auth/refresh` rotation + reuse revocation, `/auth/logout`, sessions list/revoke | R-auth-8..13 | session-UI scope marker affects list/revoke inclusion only |
-| AU-5 | Middleware trio + error mapping + rate limiting: `requireAuth`, `requireTripMember`, `requireAiQuota`, shared `ApiError` serializer, limit table | R-authz-1..4, R-ent-2, R-auth-14 | `capture_parse` marker affects a future call site, not the middleware |
+| AU-3 | Provider verification + sign-in endpoints: JWKS verify, nonce binding, find-or-create + entitlements txn, auto-link on verified email collision, Apple code exchange | R-auth-1..7, R-auth-15 | no (identity linking resolved Gate 2) |
+| AU-4 | Token issuance/rotation: ES256 signing, `/auth/refresh` rotation + reuse revocation, `/auth/logout`, sessions list/revoke | R-auth-8..13 | no (session list/revoke confirmed in v1, Gate 2) |
+| AU-5 | Middleware trio + error mapping + rate limiting: `requireAuth`, `requireTripMember`, `requireAiQuota`, shared `ApiError` serializer, limit table | R-authz-1..4, R-ent-2, R-auth-14 | no (`capture_parse` excluded from the AI cap, Gate 2) |
 | AU-6 | Profile endpoints: `/users/me` GET/PATCH, avatar presign + commit validation, payment handles (HEAD validation, fail-open), push tokens, `/users/:userId` shared-trip guard | R-user-1..8 | no |
 | AU-7 | Entitlements read endpoint wired to shared resolver | R-ent-1, R-ent-3 | no |
-| AU-8 | Account deletion: endpoint shell + fixed effects (session/push/Apple revocation) | R-user-9 | **disposition body blocked** (R-db-16 marker) |
+| AU-8 | Account deletion: fixed effects (session/push/Apple revocation) + soft-delete/PII-scrub disposition, owner-transfer guard | R-user-9 | no (disposition resolved Gate 2: soft-delete + PII scrub) |
 
 **Cross-cutting tests required** (beyond the per-endpoint lists):
 
@@ -918,8 +893,9 @@ tables) landing first.
 ---
 
 *Trace: every R-auth/R-user/R-ent/R-authz cites its design section and
-endpoints inline. Six markers total — four repeated verbatim from their
-canonical homes (identity linking, account deletion, `travel_style`,
-`capture_parse`), two owned by this spec (Apple client mechanism vs Gate-1
-wording; session-management UI scope). Zero markers = approvable; canonical
-markers resolve in their home specs and flow here.*
+endpoints inline. All six markers resolved at Gate 2 (2026-07-09) — four at
+their canonical homes (identity linking → auto-link on verified email;
+account deletion → soft-delete + PII scrub; `travel_style` → fixed
+multi-tag set; `capture_parse` → outside the AI cap), two owned here (Apple
+client mechanism → native module; session-management UI → endpoints + UI
+ship in v1). Zero markers remain.*

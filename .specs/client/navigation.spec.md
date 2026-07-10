@@ -46,6 +46,12 @@
 - **R-nav-10**: WHEN the user switches tabs and returns THE SYSTEM SHALL
   preserve each tab's own navigation stack and scroll position (per-tab
   stacks).
+- **R-nav-23**: WHEN an authenticated user cold-launches the app and two or
+  more trips are active THE SYSTEM SHALL land on the **most-recently-viewed**
+  active trip's today tab (falling back to the trip list when none of them
+  has ever been viewed), and the trip header SHALL offer a trip-switcher
+  affordance for moving between active trips without returning to the list.
+  (Resolved 2026-07-09, Gate 2)
 
 ### Deep links (gogo universal links + custom scheme)
 
@@ -80,6 +86,12 @@
 - **R-nav-19**: WHEN content arrives via the iOS share sheet
   (`expo-share-intent`) THE SYSTEM SHALL route into the capture review flow
   with the shared payload, on both warm and cold start, after auth gating.
+- **R-nav-24**: WHEN captures exist needing review THE SYSTEM SHALL surface
+  them in a **trips-level capture inbox** (`(trips)/capture`) reachable from
+  the trip-list header with a needs-review count badge — captures can
+  precede trip assignment, so the inbox lives outside trip context — AND in
+  a per-trip filtered view of the same queue reached from that trip's More
+  tab. (Resolved 2026-07-09, Gate 2)
 
 ### Membership & structure
 
@@ -95,35 +107,38 @@
   (mobile-engineer landmine: a screen without testIDs can never be E2E
   covered).
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2)
 
-- [NEEDS CLARIFICATION: Universal-link domain — what domain do we own for
-  `https://` links (gogo.travel? gogotravel.app?)? Needed for AASA /
-  assetlinks and the link formats below. Custom scheme `gogo://` is assumed
-  as the fallback either way.]
-- [NEEDS CLARIFICATION: Onboarding contents — what does `(auth)/onboarding`
-  collect on first sign-in? Candidates: display name/avatar, home currency,
-  payment handles (Venmo/CashApp/PayPal/Zelle — the settle-up spine),
-  notification permission priming. Which are v1, and which are skippable?]
-- [NEEDS CLARIFICATION: Where does the user's own profile/app-settings
-  surface live? The component map has no home for it ((trips) is list/create/
-  join; more/* is per-trip). Proposal: avatar button in the trip-list header
-  → pushed profile screen (profile edit, payment handles, appearance/theme,
-  sign-out). Confirm or redirect.]
-- [NEEDS CLARIFICATION: Where does the capture needs-review queue surface?
-  Research demands a "visible needs-review queue" but the component map
-  doesn't place it. Options: (a) row in each trip's More tab, (b)
-  trips-level inbox reachable from the trip list header with a badge, (c)
-  both. Captures aren't always trip-scoped at parse time, which argues for
-  (b) or (c).]
-- [NEEDS CLARIFICATION: Multiple concurrently-active trips on launch —
-  R-nav-6 covers exactly one. With 2+ active (rare but possible), land on
-  the trip list, or on the most-recently-viewed active trip's today tab?]
-- [NEEDS CLARIFICATION: Settle-up request links opened by someone who isn't
-  a member of the trip (bills sent to friends outside the app is part of the
-  brief). Does the link require membership (R-nav-15 applies), or is there a
-  lightweight recipient view / web fallback page for non-members and
-  non-users? Determines whether R-nav-13 needs an unauthenticated branch.]
+- **Universal-link domain** — spec against the placeholder
+  `links.gogotravel.example`; the real domain is Sean's pre-launch pick. All
+  link formats, AASA/assetlinks references, and the §2.3 registry consume a
+  single shared config constant (`LINK_DOMAIN` in `@gogo/shared` config), so
+  the swap is a one-config change with zero spec/code churn. Custom scheme
+  `gogo://` remains the fallback either way.
+  (Resolved 2026-07-09, Gate 2 — domain pick itself outstanding.)
+- **Onboarding contents** — `(auth)/onboarding` collects, in order: display
+  name/avatar → home currency → payment handles (Venmo/CashApp/PayPal/Zelle
+  — the settle-up spine; skippable) → notification permission priming, plus
+  an optional `travel_style` prompt (skippable). Everything after name is
+  skippable and editable later via the profile screen.
+  (Resolved 2026-07-09, Gate 2)
+- **Profile/app-settings home** — avatar button in the trip-list header
+  (outside trip context) → pushed `(trips)/profile` screen: profile edit,
+  payment handles, appearance/accent theme, session list/revoke, sign-out.
+  (Resolved 2026-07-09, Gate 2)
+- **Capture needs-review queue** — both surfaces (R-nav-24): a trips-level
+  inbox at `(trips)/capture`, reachable from the trip-list header with a
+  badge (captures can precede trip assignment), plus a per-trip filtered
+  view of the same queue from the More tab.
+  (Resolved 2026-07-09, Gate 2)
+- **Multiple concurrently-active trips on launch** — land on the
+  most-recently-viewed active trip's today tab; header trip switcher between
+  active trips (R-nav-23). (Resolved 2026-07-09, Gate 2)
+- **Settle-up request links for non-members** — require app install +
+  account in v1; membership required, so R-nav-15 applies unchanged and
+  R-nav-13 has **no** unauthenticated branch (no web surface exists to fall
+  back to). Revisit with any future web phase.
+  (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -142,12 +157,17 @@ apps/mobile/app/
 ├── (auth)/
 │   ├── _layout.tsx                 # redirects authed users out
 │   ├── sign-in.tsx                 # Apple + Google (AuthSession)
-│   └── onboarding.tsx              # first-run profile setup [pends clarification]
+│   └── onboarding.tsx              # first-run profile setup (contents: § Resolved questions)
 ├── (trips)/
 │   ├── _layout.tsx                 # Stack
-│   ├── index.tsx                   # trip list
+│   ├── index.tsx                   # trip list (header: profile avatar + capture-inbox badge)
 │   ├── new.tsx                     # create trip — MODAL
-│   └── join/[token].tsx            # invite accept — deep-link target
+│   ├── join/[token].tsx            # invite accept — deep-link target
+│   ├── profile.tsx                 # PUSH — profile & app settings (Gate-2 E6)
+│   └── capture/
+│       ├── index.tsx               # capture inbox — trips-level queue (R-nav-24)
+│       ├── [captureId].tsx         # PUSH — capture review (client capture spec)
+│       └── onboarding.tsx          # MODAL — forward-address teach flow
 └── [tripId]/
     ├── _layout.tsx                 # Tabs (design-system TabNav) + trip context
     │                               #   provider + membership guard (R-nav-20)
@@ -158,7 +178,10 @@ apps/mobile/app/
     │   ├── _layout.tsx             # tab-local Stack (pattern repeats per tab)
     │   ├── index.tsx
     │   ├── item/[itemId].tsx       # PUSH
-    │   └── item/new.tsx            # MODAL (also handles edit via ?itemId=)
+    │   ├── item/new.tsx            # MODAL (also handles edit via ?itemId= / ?bookingId=)
+    │   └── booking/[bookingId].tsx # PUSH — booking detail per category (added
+    │                               #   2026-07-09, Gate 2 sync — client itinerary
+    │                               #   spec §2.1: ideas have no itemId to route by)
     ├── map/
     │   ├── index.tsx
     │   └── place/[placeId].tsx     # Sheet over map (small) / PUSH (full detail)
@@ -186,8 +209,9 @@ Layout responsibilities:
   presentation group.
 - **`[tripId]/_layout`** owns the Tabs navigator, fetches/validates
   membership before rendering children (R-nav-20), resolves the initial tab
-  (R-nav-7/8) from trip status, and provides trip context (id, role, dates,
-  theme) to all tabs.
+  (R-nav-7/8) from trip status, provides trip context (id, role, dates,
+  theme) to all tabs, and hosts the header trip-switcher affordance when 2+
+  trips are active (R-nav-23).
 - **Each tab directory** is its own Stack → per-tab history (R-nav-10).
 
 ### 2.2 Auth gate & session flow
@@ -206,25 +230,33 @@ Entry redirect (`app/index.tsx`):
 
 ```
 activeTrips = trips where status == 'active'
-if (activeTrips.length == 1) → /[tripId]/today            (R-nav-6)
-else                         → /(trips)                    (R-nav-5; 2+ case pends clarification)
+if (activeTrips.length == 1) → /[tripId]/today                     (R-nav-6)
+if (activeTrips.length >= 2) → most-recently-viewed active trip's
+                               today tab; none viewed → /(trips)    (R-nav-23)
+else                         → /(trips)                             (R-nav-5)
 ```
+
+Most-recently-viewed tracking: `[tripId]/_layout` mount stamps the trip id +
+timestamp into MMKV (`gogo.lastViewedTrip`); the entry redirect reads it
+synchronously at boot (same no-flash posture as R-nav-3).
 
 Sign-out: clear session store + query cache + stashes, `router.replace` to
 sign-in with reset state (R-nav-4).
 
 ### 2.3 Deep-link registry
 
-Transport: universal links on the owned domain (pends clarification) +
-`gogo://` scheme mirroring the same paths. All links flow through one
-registry (single source of truth for parse → target → guard):
+Transport: universal links on `links.gogotravel.example` (placeholder — the
+real domain swaps in via the single `LINK_DOMAIN` config constant, see
+§ Resolved questions) + `gogo://` scheme mirroring the same paths. All links
+flow through one registry (single source of truth for parse → target →
+guard):
 
 | Link | Target route | Auth | Guard / failure |
 |---|---|---|---|
 | `/invite/[token]` | `/(trips)/join/[token]` | required (stash+resume) | invalid/expired token → in-screen error + "Back to trips" (R-nav-11) |
 | `/t/[tripId]` | `/[tripId]` (default tab) | required | non-member → no-access (R-nav-15) |
-| `/t/[tripId]/request/[requestId]` | `/[tripId]/money/request/[requestId]` | required (non-member branch pends clarification) | missing/settled request → request screen's resolved/empty state |
-| share-sheet intent (`expo-share-intent`) | capture review flow (home pends clarification) | required | parse failure → capture entry with raw payload visible (never dropped) |
+| `/t/[tripId]/request/[requestId]` | `/[tripId]/money/request/[requestId]` | required — membership too (app + account v1; non-member → R-nav-15, no unauthenticated branch) | missing/settled request → request screen's resolved/empty state |
+| share-sheet intent (`expo-share-intent`) | `/(trips)/capture` inbox → review (R-nav-24) | required | parse failure → capture entry with raw payload visible (never dropped) |
 | anything else | `/(trips)` + toast | — | R-nav-17 |
 
 Mechanics: expo-router linking config handles warm links; cold start resolves
@@ -243,16 +275,26 @@ category) / dismiss.
 
 **(auth)**
 - `sign-in` — Apple/Google sign-in; legal links; error banner on failure.
-- `onboarding` — first-run setup (contents pend clarification); skippable
-  steps → trip list.
+- `onboarding` — first-run setup: name/avatar → home currency → payment
+  handles (skippable) → notification priming; optional travel_style prompt
+  (§ Resolved questions); skippable steps → trip list.
 
 **(trips)**
 - `trip-list` — trips grouped active/upcoming/past; tap → trip; create + join
-  entries; profile avatar in header (pends clarification).
+  entries; header: profile avatar → `profile`, capture-inbox icon with
+  needs-review badge → `capture-queue` (R-nav-24).
 - `trip-new` (modal) — name, destination, dates; create → land in new trip
   (itinerary tab per R-nav-8).
 - `invite-join` — trip preview + inviter + role; accept/decline; error state
   for dead tokens.
+- `profile` (push) — profile edit (name/avatar), payment handles,
+  appearance/accent theme, session list/revoke, sign-out. (Added 2026-07-09,
+  Gate 2.)
+- `capture-queue` — trips-level capture inbox: all captures across trips
+  with status rows; content owned by the client capture spec. (Added
+  2026-07-09, Gate 2.)
+- `capture-review` (push) — proposal review/edit, trip picker Sheet, confirm
+  → booking lands; content owned by the client capture spec.
 
 **[tripId]/today** (live-trip surface — TripIt-style what's-next timeline)
 - `today` — chronological timeline of today's items; next-event card with
@@ -264,15 +306,22 @@ category) / dismiss.
 - `itinerary` — day-sectioned list, drag-to-reorder, inline travel times
   between consecutive items; view toggle → calendar-grid (gaps/overlaps
   exposed — the differentiator nobody has); day tap → jump; FAB → add item.
-- `itinerary-item` (push) — detail for booking/place-visit/custom: times,
-  place link → map, booking details + confirmation, expenses link, edit/delete.
+- `itinerary-item` (push) — detail for place-visit/custom items: times,
+  place link → map, expenses link, edit/delete; `booking`-kind items replace
+  themselves with `booking-detail`.
 - `itinerary-item-new` (modal) — add/edit item; category picker; place search;
-  time set; conflicts surfaced inline.
+  time set; conflicts surfaced inline (`?itemId=` / `?bookingId=` edit).
+- `booking-detail` (push) — per-category booking detail: details + confirmation
+  code, schedule/"add to day", linked expenses, edit/delete. Routes ideas too —
+  they have no itinerary item to route by (client itinerary spec §2.1). (Added
+  2026-07-09, Gate 2 sync.)
 
 **[tripId]/map**
 - `map` — persistent trip map: saved places, itinerary pins (day-colored),
-  photo pins; day filter; offline-pack status pill; pin tap → place sheet;
-  one-tap external nav handoff (Google/Apple Maps — never replace the nav app).
+  photo pins; **spine-backed place search bar** (Gate 2, F4 — see map spec
+  R-map-25; `map-search` testID); day filter; offline-pack status pill; pin
+  tap → place sheet; one-tap external nav handoff (Google/Apple Maps — never
+  replace the nav app).
 - `place-detail` — place info (our POI spine + FSQ fresh details), visit
   notes, linked itinerary items/photos; save/unsave; "add to day".
 
@@ -288,12 +337,13 @@ category) / dismiss.
   (Venmo/CashApp/PayPal deeplink, Zelle copy) + unconditional "Mark as
   settled"; on return from payment app → "Did you complete it?" confirm.
 - `settle-request` — recipient view of a settle-up request link: share owed,
-  pay options, mark-settled (deep-link target; non-member branch pends
-  clarification).
+  pay options, mark-settled (deep-link target; membership required — app +
+  account v1, § Resolved questions).
 
 **[tripId]/more**
-- `more` — hub of ListItem rows: Photos, Packing, Documents, Members, Trip
-  settings (+ capture queue pending clarification); offline-pack status.
+- `more` — hub of ListItem rows: Photos, Packing, Documents, Members,
+  Capture inbox (opens the trips-level queue filtered to this trip —
+  R-nav-24), Trip settings; offline-pack status.
 - `photos` — album grid; visibility badges; upload; tap → viewer.
 - `photo-viewer` (push) — full-bleed photo, place/itinerary pin links,
   visibility control (private/trip/public — explicit check, Law #3), delete.
@@ -341,9 +391,10 @@ Grammar — kebab-case, screen-prefixed:
 ```
 
 - `<screen>` — route basename in kebab: `sign-in`, `trip-list`, `trip-new`,
-  `invite-join`, `today`, `itinerary`, `itinerary-item`, `map`,
-  `place-detail`, `money`, `expense-new`, `settle`, `more`, `photos`,
-  `packing`, `documents`, `members`, `trip-settings`.
+  `invite-join`, `profile`, `capture-queue`, `capture-review`, `today`,
+  `itinerary`, `itinerary-item`, `booking-detail`, `map`, `place-detail`,
+  `money`, `expense-new`, `settle`, `more`, `photos`, `packing`,
+  `documents`, `members`, `trip-settings`.
 - `<element>` — role noun: `button`, `input`, `list`, `list-item`, `tab`,
   `fab`, `toggle`, `segment`, `sheet`, `back`, `retry`.
 - `<qualifier>` — static discriminator (`-apple`, `-confirm`) or, for
@@ -395,15 +446,16 @@ Traceable to requirement IDs; each sized to one agent session. These become
 |---|---|---|
 | NAV-1 | Route skeleton: full file tree with placeholder screens, tab-local Stacks, TabNav wiring, root modal group. | R-nav-10, R-nav-21 |
 | NAV-2 | Session store + root auth gate: hydration splash, redirect, stash/resume, first-run onboarding branch, sign-out reset. | R-nav-1..4 |
-| NAV-3 | Entry redirect + trip default-tab resolution + in-session tab memory. | R-nav-5..9 |
+| NAV-3 | Entry redirect + trip default-tab resolution + in-session tab memory + most-recently-viewed multi-active landing (MMKV stamp) + header trip switcher. | R-nav-5..9, R-nav-23 |
 | NAV-4 | `[tripId]` membership guard + trip context provider + no-access state. | R-nav-15, R-nav-20 |
-| NAV-5 | Deep-link registry: scheme + universal-link config (AASA/assetlinks), invite + trip + settle-request routes, cold/warm parity, malformed fallback. | R-nav-11..17 |
-| NAV-6 | Capture entries: share-intent routing + deeplink-out return prompt. | R-nav-18, R-nav-19 |
+| NAV-5 | Deep-link registry: scheme + universal-link config (AASA/assetlinks against the `LINK_DOMAIN` placeholder), invite + trip + settle-request routes, cold/warm parity, malformed fallback. | R-nav-11..17 |
+| NAV-6 | Capture entries: share-intent routing + deeplink-out return prompt + inbox surfaces (trips-level queue + badge + per-trip filtered view). | R-nav-18, R-nav-19, R-nav-24 |
 | NAV-7 | testID audit tooling: convention doc in `.claude/rules/mobile.md` + lint/check that flags interactive elements missing testIDs. | R-nav-22 |
 
 **Tests required (minimum):**
 - [ ] Unauthed access to `(trips)` and `[tripId]/*` redirects to sign-in; destination resumes post-auth (NAV-2)
 - [ ] Active trip → today default; planning/past trip → itinerary; manual choice sticky in session, reset on relaunch (NAV-3)
+- [ ] 2+ active trips → most-recently-viewed active trip's today tab; never-viewed fallback → trip list (NAV-3)
 - [ ] Non-member tripId deep link renders no-access with zero trip data fetched into UI (NAV-4, NAV-5)
 - [ ] Invite link: valid (cold + warm), expired, and unauthenticated-then-resumed paths (NAV-5)
 - [ ] Malformed link lands on trip list without crash (NAV-5)

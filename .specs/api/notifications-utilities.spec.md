@@ -43,7 +43,7 @@ Server + client contract for five things:
 **Non-goals:** AI generation endpoints (`/ai/packing-list` — the AI spec owns
 them; this spec consumes their output), the settle-up request entity and
 "send the bill" flow (money spec — this spec only defines its push), the
-flight-status data integration (open marker, §3.4.6), notification
+flight-status data integration (deferred to v2 — R-notif-6), notification
 tap-routing UX (today spec §2.8, routed through the navigation deep-link
 registry), provider choices for weather and object storage (escalations,
 §3.10).
@@ -72,8 +72,8 @@ registry), provider choices for weather and object storage (escalations,
   notification toggle), preceded by an in-app priming screen; a cold OS
   permission prompt at first launch SHALL NOT occur. WHEN permission is
   denied THE SYSTEM SHALL degrade silently (no nagging) and expose a
-  settings deep link to re-enable. (Interacts with the onboarding marker,
-  repeated in §2.6.)
+  settings deep link to re-enable. (Onboarding includes the priming step —
+  resolved Gate 2, §2.6.)
 - **R-push-4 (preferences):** WHEN any server send point executes THE SYSTEM
   SHALL check the recipient's per-category preference before sending, and
   WHEN any device-local scheduling point executes THE SYSTEM SHALL check the
@@ -118,11 +118,14 @@ registry), provider choices for weather and object storage (escalations,
   mutation.
 - **R-notif-2 (day-ahead digest):** WHEN a trip is `active` (or becomes
   active tomorrow) THE SYSTEM SHALL send each member with the pref enabled
-  one digest per trip day, the evening before, summarizing tomorrow:
-  item count, first event title + start time, leave-by for the first event
-  with a leg, and tomorrow's forecast from `weather_cache` (template,
-  R-push-9). At most one digest per (user, trip, day) — job-side dedup.
-  Delivery timing has an open marker (§2.6).
+  one digest per trip day, at **20:00 the evening before in the trip
+  destination's timezone** (derived server-side from destination
+  coordinates — tz-lookup table, no external API), falling back to the
+  user's most-recent device timezone when coordinates are absent,
+  summarizing tomorrow: item count, first event title + start time,
+  leave-by for the first event with a leg, and tomorrow's forecast from
+  `weather_cache` (template, R-push-9). At most one digest per
+  (user, trip, day) — job-side dedup. (Resolved 2026-07-09, Gate 2)
 - **R-notif-3 (leave-by alerts):** WHEN the active-trip offline bundle
   contains an itinerary item with a scheduled start and a preceding
   `travel_legs` row THE SYSTEM SHALL schedule a **device-local**
@@ -145,18 +148,13 @@ registry), provider choices for weather and object storage (escalations,
   push to the debtor with a route to the request detail
   (`/t/[tripId]/request/[requestId]` per the navigation deep-link
   registry §2.3). Amount rendered from integer cents (Law #2).
-- **R-notif-6 (flight status):**
-  [NEEDS CLARIFICATION: flight-status / delay notifications — no
-  flight-status data provider was researched in S-2 (competitors research
-  only benchmarks TripIt Pro's alerts as the thing users pay for; the
-  provider table in PLANNING § Architecture has no flight-data row).
-  Options: (a) FlightAware AeroAPI — established, paid tiers, new billable
-  external dependency (Autonomy Contract trigger #3); (b) AeroDataBox —
-  cheaper, marketplace-brokered, same trigger; (c) defer flight-status to
-  v2 — ship the `flight_status` category value + pref toggle as a reserved
-  stub, integrate later additively. Recommendation: **defer (c)** — nothing
-  else in this bundle depends on it, and it's the only catalog entry
-  requiring a paid provider. Not decided here — Sean picks.]
+- **R-notif-6 (flight status — DEFERRED to v2):** Flight-status / delay
+  notifications are explicitly deferred to v2: no flight-data provider was
+  researched (alerts are TripIt's paid moat — do it right later, with a
+  proper provider evaluation and Autonomy Contract §3 escalation). v1
+  ships the `flight_status` category value + pref toggle as a reserved
+  stub; integration is later and additive. Nothing else in this bundle
+  depends on it. (Resolved 2026-07-09, Gate 2)
 - **R-notif-7 (delivery hygiene):** WHEN a notification is sent THE SYSTEM
   SHALL fan out to all of the recipient's `push_tokens` rows, log failures
   with a request id, and never retry more than the Expo-recommended
@@ -185,8 +183,9 @@ registry), provider choices for weather and object storage (escalations,
   spec names a provider.
 - **R-wx-4 (coordless trips):** WHEN the trip has no destination
   coordinates THE SYSTEM SHALL return `forecast: null` with
-  `reason: 'no_destination_coords'`. Depends on the destination-input
-  marker, repeated verbatim in §2.6.
+  `reason: 'no_destination_coords'` — a rare robustness branch, since
+  destination input is structured with guaranteed coords (§2.6, resolved
+  Gate 2).
 
 ### 2.4 Documents vault
 
@@ -244,63 +243,44 @@ registry), provider choices for weather and object storage (escalations,
   (AI spec owns the endpoint) THE SYSTEM SHALL persist it with
   `ai_generated = true`; user edits keep the flag (provenance, not state).
 
-### 2.6 Markers repeated from canonical specs (verbatim + cite)
+### 2.6 Upstream resolutions inherited from canonical specs
 
-These existing markers are load-bearing for this spec and are repeated
-verbatim; they resolve in their home specs and flow here.
+All formerly repeated markers are resolved at their homes (Gate 2,
+2026-07-09):
 
-From `.specs/database/schema.spec.md` §3.3.21 (`packing_lists`) — decides
-R-pack-1's uniqueness and the packing UX:
+- Resolved at `.specs/database/schema.spec.md`:§3.3.21 `packing_lists`
+  (Gate 2, 2026-07-09): one **shared list per trip** in v1 (uniqueness
+  `unique(trip_id)`); per-member personal lists are a later phase.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
+  2026-07-09): destination input is structured (Overture-backed search;
+  lat/lng always present) — R-wx-4's null branch is rare robustness, not a
+  common path.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips.status`
+  (Gate 2, 2026-07-09): status is date-derived with manual owner override
+  (override wins until cleared) — the digest job honors the stored/derived
+  status per that rule.
+- Resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09):
+  onboarding collects name/avatar → home currency → payment handles
+  (skippable) → **notification priming** — R-push-3's priming screen lives
+  there, with the deferred OS prompt still fired at a moment of
+  demonstrated value.
 
-> [NEEDS CLARIFICATION: packing lists — one shared list per trip, per-member
-> personal lists, or both? Column shape above supports all three; the product
-> answer sets uniqueness (`unique(trip_id)` vs `unique(trip_id, user_id)`)
-> and the UX.]
+### 2.7 Decisions owned by this spec (formerly new markers)
 
-From `.specs/database/schema.spec.md` §3.3.4 (`trips`) — decides whether
-R-wx-4's null branch is common or rare:
-
-> [NEEDS CLARIFICATION: destination input — picked from place/geocoder search
-> (structured; lat/lng always present) or free text (lat/lng optional)?
-> Affects nullability of `destination_lat/lng` and whether weather/AI
-> grounding can be guaranteed for every trip.]
-
-From `.specs/database/schema.spec.md` §3.3.4 (`trips`) — decides when the
-digest job considers a trip "active":
-
-> [NEEDS CLARIFICATION: `status` transitions — PLANNING implies automatic
-> (`today` view "auto-default while trip active"). Is status purely derived
-> from dates by a daily job/on-read (planning→active on start_date,
-> active→past after end_date), or can users manually override (e.g. mark a
-> trip past early)? Manual override is user-visible.]
-
-From `.specs/client/navigation.spec.md` §1 Open questions — decides where
-R-push-3's priming lives:
-
-> [NEEDS CLARIFICATION: Onboarding contents — what does `(auth)/onboarding`
-> collect on first sign-in? Candidates: display name/avatar, home currency,
-> payment handles (Venmo/CashApp/PayPal/Zelle — the settle-up spine),
-> notification permission priming. Which are v1, and which are skippable?]
-
-### 2.7 New markers owned by this spec
-
-- Flight-status provider — see R-notif-6 (§2.2).
-- [NEEDS CLARIFICATION: day-ahead digest delivery time — proposal: 19:00 the
-  evening before, in the trip destination's timezone (derived server-side
-  from destination coordinates — no external API; a tz-lookup table). When
-  coordinates are absent there is no destination timezone: fall back to the
-  user's most-recent device timezone (would require capturing device tz at
-  push-token registration — one added column or payload field) or skip the
-  digest for that trip? Both the hour and the fallback are user-visible.]
-- [NEEDS CLARIFICATION: offline availability of document scans — PLANNING's
-  active-trip offline bundle (itinerary + bookings + saved places + tour
-  content + leg ETAs) deliberately excludes the vault, but a passport/visa
-  scan is most needed exactly when offline at a border or check-in desk.
-  Options: (a) exclude from offline entirely (simplest, weakest UX); (b)
-  opt-in per-document encrypted local cache (encrypted file + key in
-  secure storage); (c) cache all of the user's active-trip-associated
-  documents by default. Security-model relevant (Autonomy Contract
-  trigger #4 — device-at-rest exposure of passport scans) and user-visible.]
+- Flight-status — deferred to v2; see R-notif-6 (§2.2). (Resolved
+  2026-07-09, Gate 2)
+- Day-ahead digest delivery time — decided: **20:00 the evening before, in
+  the trip destination's timezone** (server-side tz-lookup table from
+  destination coordinates; no external API); coordinates absent → fall back
+  to the user's most-recent device timezone, captured as an optional
+  `timezone` (IANA) field on push-token registration (one-column companion
+  addition to schema §3.3.3, flagged for the schema spec). See R-notif-2.
+  (Resolved 2026-07-09, Gate 2)
+- Offline availability of document scans — decided: **no offline document
+  scans in v1** (option a — security > convenience; a passport scan cached
+  on-device is the highest-value at-rest target). The vault stays excluded
+  from the active-trip offline bundle; revisit with an encrypted
+  per-document opt-in design post-v1. (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -382,7 +362,7 @@ Per-category extras:
 | `leave_by` | `item_id: Uuid`, `leave_at: ISODateTime` | **Local-only** — never crosses the wire; same schema for uniformity |
 | `document_expiry` | `document_id: Uuid` | |
 | `settle_up` | `request_id: Uuid` | Entity owned by money spec |
-| `flight_status` | reserved | Pending R-notif-6 marker |
+| `flight_status` | reserved | Deferred to v2 (R-notif-6, resolved Gate 2) |
 
 ### 3.4 Notification catalog (summary table)
 
@@ -393,7 +373,7 @@ Per-category extras:
 | 3.4.3 | `leave_by` | scheduled locally from bundle legs + item starts | this device | **device-local** | ≤ 48 h rolling window; rescheduled on refresh (R-notif-3) | today tab, hero focused on `item_id` |
 | 3.4.4 | `document_expiry` | daily job: `today ≥ expires_at − remind_days_before` | document owner | server push | `last_reminded_at` (one reminder v1) | documents vault (`more/documents`) |
 | 3.4.5 | `settle_up` | settle-up request created (money spec) | debtor | server push | one per request | `/t/[tripId]/money/request/[requestId]` |
-| 3.4.6 | `flight_status` | — deferred pending R-notif-6 marker | — | — | — | reserved |
+| 3.4.6 | `flight_status` | — deferred to v2 (R-notif-6, resolved Gate 2) | — | — | — | reserved |
 
 Content templates (deterministic, R-push-9; PII posture R-push-10) live
 beside the sender in `apps/server`; exact copy is an implementation detail,
@@ -586,8 +566,9 @@ Delete row; storage object cleaned by reconciliation job.
 
 #### GET /trips/:tripId/packing-lists
 
-Lists for the trip visible to the caller (visibility pending the §2.6
-packing marker — shared vs personal).
+Lists for the trip — one shared list per trip in v1 (§2.6, resolved
+Gate 2), so `items` has at most one element; the array shape is kept for
+forward compatibility with per-member lists.
 
 **Response 200** `{ items: PackingList[] }`
 
@@ -598,16 +579,20 @@ packing marker — shared vs personal).
 
 #### POST /trips/:tripId/packing-lists
 
-Create a list (manual, or persisting an `/ai/packing-list` result —
-`ai_generated` set by the server based on provenance flag in request).
+Create the trip's shared list (manual, or persisting an `/ai/packing-list`
+result — `ai_generated` set by the server based on provenance flag in
+request). One per trip (`unique(trip_id)`, resolved Gate 2).
 
 **Request** `{ title?: string, items?: PackingItem[], ai_generated?: boolean }`
 **Response 201** `PackingList`
+
+**Errors**: 409 `CONFLICT` — the trip already has its shared list.
 
 **Requirements covered**: R-pack-1, R-pack-4
 
 **Tests required**:
 - [ ] Create with/without items; viewer role rejected (403)
+- [ ] Second create for the same trip → 409
 
 #### PATCH /trips/:tripId/packing-lists/:listId
 
@@ -644,7 +629,7 @@ scaffold; contracts here:
 
 | Job | Cadence | Contract |
 |---|---|---|
-| `notification-digest` | hourly tick | For each active trip (status marker §2.6 applies) and member with `daily_digest` on: when destination-local time crosses the send hour for tomorrow's trip day and no digest sent for (user, trip, day) → build template from itinerary + legs + `weather_cache`, send (R-notif-2; timing marker §2.7) |
+| `notification-digest` | hourly tick | For each active trip (status = derived + override, §2.6 resolved Gate 2) and member with `daily_digest` on: when destination-local time (fallback: device tz) crosses 20:00 for tomorrow's trip day and no digest sent for (user, trip, day) → build template from itinerary + legs + `weather_cache`, send (R-notif-2, resolved Gate 2) |
 | `document-expiry` | daily | Scan partial `(expires_at)` index; threshold rows without `last_reminded_at` → send + stamp (R-notif-4) |
 | `push-token-prune` | daily | Delete rows `last_seen_at < now() − 90d` (R-push-6) |
 | `push-receipt-poll` | minutes after each batch | Fetch Expo receipts; `DeviceNotRegistered` → delete token (R-push-6) |
@@ -673,7 +658,8 @@ no notification job for leave-by exists.
   stale-URL reuse across replaced scans.
 - Deleting a document (or its owning user cascade) leaves the object for
   the reconciliation job — same lifecycle note as photos (schema §3.3.17).
-- Offline caching of scans: open marker (§2.7).
+- Offline caching of scans: excluded from v1 (§2.7, resolved Gate 2 —
+  security > convenience).
 
 ### 3.9 Packing design notes
 
@@ -687,8 +673,8 @@ no notification job for leave-by exists.
 
 ### 3.10 Out of scope (explicit)
 
-- **Flight-status data integration** — R-notif-6 marker; category value
-  reserved.
+- **Flight-status data integration** — deferred to v2 (R-notif-6, resolved
+  Gate 2); category value reserved.
 - **Settle-up request entity + endpoints** — money spec; only the push
   (R-notif-5) lives here.
 - **AI endpoints** (`/ai/packing-list` etc.) — AI spec.
@@ -790,5 +776,8 @@ R-push-8, R-push-9, R-push-10; jobs §3.6
 ---
 
 *Trace: every R-push/R-notif/R-wx/R-docs/R-pack cites its design section
-inline; §2.6 markers resolve in their home specs; §2.7 markers (+ R-notif-6)
-are this spec's P-2 interview questions for Sean. Zero markers = approvable.*
+inline. All markers resolved at Gate 2 (2026-07-09): §2.6 inherited
+(packing = shared per trip; destination structured; status derived +
+override; onboarding includes priming); §2.7 owned here (flight status →
+deferred to v2; digest → 20:00 destination-local, device-tz fallback;
+offline doc scans → excluded from v1). Zero markers remain.*

@@ -170,23 +170,23 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   `404 NOT_FOUND`, indistinguishable from absent); write endpoints SHALL
   additionally require role `editor` or `owner` (`viewer` → `403 FORBIDDEN`).
 
-### Open markers (blocking approval)
+### Upstream resolutions (formerly blocking)
 
-Repeated verbatim from the canonical schema spec — they bind this API's
-behavior and must resolve there first:
+Both canonical markers this spec repeated are resolved:
 
-- From `.specs/database/schema.spec.md` §3.3.10 (`itinerary_items`):
-  [NEEDS CLARIFICATION: multi-day bookings (lodging check-in→check-out) on the calendar — one spanning item (`end_day` used, rendered across days) or two point items (check-in item + check-out item)? Affects whether `end_day` stays; user-visible calendar rendering.]
-  Consequences for this API are mapped in §3.6 — lodging auto-item derivation
-  (R-ib-5) cannot be finalized until this resolves. The same choice governs
-  cross-midnight point events (red-eye flights: arrival wall-date >
-  departure wall-date).
-- From `.specs/database/schema.spec.md` §3.3.4 (`trips`):
-  [NEEDS CLARIFICATION: are trip dates required at creation, or are date-less trips allowed (dates added later)? Columns are nullable to keep both options open; the create-trip UX decides.]
-  This API is engineered to tolerate either answer: the itinerary read's
-  default range is trip dates when set, else the min→max of existing item
-  days (§3.4 `GET /trips/:tripId/itinerary`), and no endpoint restricts
-  `day` to the trip's date range (pre-trip flights are legal).
+- Resolved at `.specs/database/schema.spec.md`:§3.3.10 `itinerary_items`
+  (Gate 2, 2026-07-09): multi-day bookings use ONE spanning item (`end_day`
+  stays; §3.6 Branch A) — rendered as a spanning all-day lane on the
+  calendar grid, with check-in/check-out point rows synthesized by the
+  client on the day list (client itinerary spec). Lodging auto-item
+  derivation (R-ib-5) is finalized in §3.3; cross-midnight point events set
+  `end_day` = arrival wall-date.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
+  2026-07-09): trip dates are required at creation v1; date-less trips
+  deferred. The itinerary read's default range (trip dates unioned with
+  min→max of existing item days, §3.4) stays as specified — it covers
+  pre/post-trip items; no endpoint restricts `day` to the trip's date range
+  (pre-trip flights are legal).
 
 ---
 
@@ -246,7 +246,7 @@ schemas so server and client agree):
 |---|---|---|---|
 | `flight` | `departs_at` | `arrives_at` | 1 item on departure wall-date |
 | `train` | `departs_at` | `arrives_at` | 1 item on departure wall-date |
-| `lodging` | `check_in` | `check_out` | pends the multi-day marker (§3.6) |
+| `lodging` | `check_in` | `check_out` | 1 spanning item: `day` = check-in wall-date, `end_day` = check-out wall-date (§3.6 Branch A, resolved Gate 2) |
 | `car_rental` | `pickup_at` | `dropoff_at` | 2 point items: pickup event + dropoff event (each `booking`-kind; schema §3.3.9 "row(s)" anticipates plurality). Dropoff item exists only when `dropoff_at` is set. |
 | `moped_rental` | `pickup_at` | `dropoff_at` | same as `car_rental` |
 | `activity` | `starts_at` | `ends_at` | 1 item |
@@ -255,8 +255,8 @@ schemas so server and client agree):
 
 - Item `day` = wall-date component of the primary-start ISO string (offset
   dropped — no tz database needed); `start_time`/`end_time` = wall-time
-  components. Cross-midnight ends (arrival wall-date > `day`) pend the
-  multi-day marker (§3.6).
+  components. Cross-midnight ends (arrival wall-date > `day`) set
+  `end_day` = arrival wall-date (§3.6 Branch A, resolved Gate 2).
 - Auto-item `sort_order` placement: inserted after the last item on that day
   whose `start_time ≤` the new item's (midpoint value); untimed → appended.
 
@@ -414,8 +414,9 @@ above), not this bounded composite.
 **Auth**: Required — member (any role).
 
 **Request** (query): `from?`/`to?` (ISODate). Default range: trip
-`start_date…end_date` unioned with the min→max of existing item days (also
-covers date-less trips — §2 marker).
+`start_date…end_date` unioned with the min→max of existing item days
+(covers pre/post-trip items; dates are required at creation per the §2
+resolution, so the union rule's date-less arm is a robustness fallback).
 
 **Response 200**: `{ items: ItineraryItem[], legs: TravelLeg[] }` — items
 ordered `(day, sort_order)`; legs limited to pairs with both endpoints in
@@ -427,7 +428,7 @@ range.
 
 **Tests required**:
 - [ ] Ordering is `(day, sort_order)`; range filtering of items and legs
-- [ ] Default range covers items outside trip dates and date-less trips
+- [ ] Default range covers items outside trip dates
 - [ ] Authz: non-member 404
 
 ---
@@ -584,27 +585,25 @@ writer: the leg-computation job. Contract:
    24 h) for `active` trips and trips starting within 7 days. Day-of,
    traffic-aware cadence belongs to the today bundle — out of scope here.
 
-### 3.6 Multi-day bookings on the calendar (blocked on marker)
+### 3.6 Multi-day bookings on the calendar (resolved — Branch A)
 
-The schema marker repeated in §2 governs lodging (and cross-midnight
-arrivals). API consequences of each branch, pre-mapped so resolution is a
-small diff:
+Resolved at `.specs/database/schema.spec.md`:§3.3.10 (Gate 2, 2026-07-09):
+**Branch A — one spanning item** is the decided behavior:
 
-- **Branch A — one spanning item:** lodging auto-item = single row,
-  `day = check_in` wall-date, `end_day = check_out` wall-date, times =
-  check-in/check-out wall times. `end_day` column stays. Cross-midnight
-  flights set `end_day = arrival wall-date`. Legs treat the spanning item as
-  located at its single place for both days' chains (it participates in the
-  `day` chain by `sort_order`; calendar rendering handles the span).
-- **Branch B — two point items:** lodging auto-items = check-in item on
-  `check_in` date + check-out item on `check_out` date (the `car_rental`
-  §3.3 pattern generalizes); `end_day` is dropped from the schema (its own
-  migration note there). Cross-midnight flights stay one item on the
-  departure date; the client renders a "+1" day affordance.
+- Lodging auto-item = single row, `day = check_in` wall-date,
+  `end_day = check_out` wall-date, times = check-in/check-out wall times.
+  `end_day` column stays. Cross-midnight flights set
+  `end_day = arrival wall-date`. Legs treat the spanning item as located at
+  its single place for both days' chains (it participates in the `day`
+  chain by `sort_order`).
+- Rendering split (client itinerary spec): the calendar grid renders the
+  span as an all-day lane; the day list synthesizes check-in and check-out
+  point rows from the one spanning item — a pure client-render concern, no
+  extra rows in the data model.
 
-Everything else in this spec is branch-independent. Implementation of
-lodging auto-items and `end_day` handling MUST NOT start until the marker
-resolves.
+Branch B (two point items, `end_day` dropped) is rejected. Everything else
+in this spec was branch-independent; lodging auto-items and `end_day`
+handling are unblocked.
 
 ### 3.7 Shared schema additions (`@gogo/shared`)
 
@@ -678,6 +677,7 @@ Sized one agent session each; queued as `T-N.M` rows at build time.
 
 ---
 
-*Trace: every R-ib-N cites its enforcing section/endpoint inline. Markers:
-two, both repeated verbatim from the canonical schema spec (§2) — they
-resolve there and unblock §3.3/§3.6 here. Zero native markers.*
+*Trace: every R-ib-N cites its enforcing section/endpoint inline. Both
+repeated markers resolved at their canonical home (schema spec) at Gate 2,
+2026-07-09 — multi-day bookings → one spanning item (Branch A); trip dates
+→ required at creation. Zero markers remain.*

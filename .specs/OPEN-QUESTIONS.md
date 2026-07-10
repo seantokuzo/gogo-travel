@@ -1,11 +1,14 @@
-# Gate 2 Punch List — Open Questions from the Spec Suite
+# Gate 2 Punch List — ✅ RESOLVED 2026-07-09
 
-> Every unique `[NEEDS CLARIFICATION]` marker across the 18 spec files, deduped
-> (verbatim repeats resolve at their canonical home), grouped by theme, each
-> with a recommendation. **Decision protocol:** Sean approves wholesale or
-> flags items; each answer gets written back into the canonical spec and the
-> marker removed. Items marked ⚠️ have NO sensible default — Sean must supply.
-> Rec = my recommendation.
+> **Status: Sean approved ALL recommendations wholesale (Gate 2, 2026-07-09).**
+> Every answer has been folded back into its canonical spec and all
+> `[NEEDS CLARIFICATION]` markers removed (verified zero remaining). The "Rec"
+> column below is now the DECIDED answer — this file is the decision record.
+>
+> Still-open action items (not spec gaps): **A1** — Sean picks a palette from
+> the three proposed directions (artifact delivered); **A3** — Sean buys the
+> universal-link domain before TestFlight (spec uses `links.gogotravel.example`
+> placeholder, one-config swap).
 
 ## A. Identity & brand
 

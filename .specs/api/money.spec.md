@@ -76,22 +76,23 @@ Conventions inherited wholesale (not restated per endpoint):
 - **R-money-5 (participants are members):** WHEN an expense is written THE
   SYSTEM SHALL verify `paid_by` and every `shares[].user_id` are current
   members of the trip, rejecting otherwise with `VALIDATION_FAILED`
-  (ex-members remain in historical rows — see R-money-8 and the removal
-  marker below).
+  (ex-members remain in historical rows — see R-money-8 and R-money-28).
 - **R-money-6 (FX gate):** WHEN an expense's `currency` differs from the
   trip's `base_currency` THE SYSTEM SHALL require `fx_rate` and
-  `base_amount_cents` to be present and consistent; WHILE the multi-currency
-  marker below is unresolved THE SYSTEM SHALL reject non-base-currency
-  expenses with `VALIDATION_FAILED` (a non-base expense without a trustworthy
-  rate would corrupt balance math).
-  [NEEDS CLARIFICATION: multi-currency policy — when an expense's currency ≠ trip base currency, where does `fx_rate` come from (live rate API at entry time? manual entry? both with manual override?) and is it ever re-fetched? Balances shown always in trip base currency? Affects whether an FX-rate provider becomes a new external dependency (Autonomy Contract §3).]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.12.)*
+  `base_amount_cents` to be present and consistent, rejecting otherwise
+  with `VALIDATION_FAILED`. Resolved at
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09): store
+  original cents + base cents + the rate captured at entry; the rate is
+  auto-fetched when online (free FX API — approved new dependency,
+  candidates picked at build) with manual override always available; rates
+  are never re-fetched after entry, and balances are always shown in trip
+  base currency.
 - **R-money-7 (category taxonomy):** WHEN an expense or budget is written THE
   SYSTEM SHALL validate `category` against the shared `expense_category`
-  enum.
-  [NEEDS CLARIFICATION: budget/expense category taxonomy — is this fixed set right, and are categories a fixed enum or user-definable? PLANNING names "food, transport, etc." for AI estimation but never enumerates. User-visible in budget UI and AI estimates.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.2
-  `expense_category`; that spec resolves it, this spec inherits.)*
+  enum. Resolved at `.specs/database/schema.spec.md`:§3.2
+  `expense_category` (Gate 2, 2026-07-09): fixed enum v1 — lodging,
+  transport, food, activities, shopping, other (aligned with booking
+  categories); not user-definable.
 
 ### Balances
 
@@ -109,8 +110,12 @@ Conventions inherited wholesale (not restated per endpoint):
 - **R-money-10 (simplification):** WHEN simplified transfers are requested
   THE SYSTEM SHALL produce them with the deterministic greedy algorithm in
   §3.5: at most `members − 1` transfers, preserving every member's net
-  position exactly, identical output for identical inputs.
-  [NEEDS CLARIFICATION: debt simplification default — the navigation spec's screen inventory shows balances as "who-owes-who, simplified", but simplification changes who pays whom (you can be told to pay someone who never fronted money for you — Splitwise makes it an opt-in group setting for exactly this trust reason). Is simplified always-on, a per-trip setting, or a per-view toggle defaulting to pairwise? User-visible.]
+  position exactly, identical output for identical inputs. Display default
+  — decided: simplification is **off by default**; the balances screen
+  shows pairwise who-owes-who with a one-tap "simplify debts" view toggle
+  (Splitwise trust precedent — simplification changes who pays whom). The
+  API always returns both; the toggle is client-side (client money spec).
+  (Resolved 2026-07-09, Gate 2)
 
 ### Settlements
 
@@ -129,8 +134,13 @@ Conventions inherited wholesale (not restated per endpoint):
 - **R-money-14 (immediate effect):** WHEN a settlement write commits THE
   SYSTEM SHALL reflect it in any subsequent balance read (no async
   settlement pipeline exists to wait on).
-- **R-money-15 (correction path):**
-  [NEEDS CLARIFICATION: settlement correction — settlements are immutable ledger entries (schema spec §3.3.14, no `updated_at`); when one is mis-recorded (fat-fingered amount, wrong direction), may either party hard-delete it, or does group-money trust require a visible audit trail (a void entry / "Sean removed a $25.50 settlement")? Pairs with the expense-deletion marker below. User-visible.]
+- **R-money-15 (correction path):** WHEN the recorder of a settlement
+  (`created_by = caller`) deletes it within 24 hours of `created_at` THE
+  SYSTEM SHALL hard-delete the row (fat-finger window); WHEN 24 hours have
+  passed, or the caller is not the recorder, THE SYSTEM SHALL reject with
+  `FORBIDDEN` — the correction path after the window is a counter-entry
+  (record a settlement in the opposite direction), preserving the visible
+  ledger. (Resolved 2026-07-09, Gate 2)
 
 ### Settle-up requests ("send the bill")
 
@@ -153,21 +163,28 @@ Conventions inherited wholesale (not restated per endpoint):
   the pairwise debt from → to has reached zero by any other path THE SYSTEM
   SHALL report it as resolved (derived flag) even if `status` is still
   `'open'`.
-- **R-money-19 (entity pends approval):**
-  [NEEDS CLARIFICATION: settle-up requests are an entity-list addition — the navigation spec deep-links to `/t/[tripId]/request/[requestId]` (R-nav-13) and §3.6 designs a `settlement_requests` table, but PLANNING's data model and the canonical schema spec have no such table (same situation as the recaps marker, schema spec §3.7). Approve the entity (its table then lands in `.specs/database/schema.spec.md` §3.3 per the one-source rule), or should requests be stateless links encoding pair + amount (no persisted settled/resolved state — weaker UX at the nav spec's "missing/settled request" states)? Needs Sean's nod.]
-- Non-member recipients of request links: owned by the navigation spec's
-  marker, repeated in the client money spec §1 — this API's request-detail
-  endpoint requires membership until that marker resolves.
+- **R-money-19 (entity approved):** The `settlement_requests` table is an
+  **approved** entity-list addition — the §3.6 design lands verbatim in
+  `.specs/database/schema.spec.md` §3.3 with its migration (one-source
+  rule; the schema spec is folding it in). Persisted requests (not
+  stateless links) are the decided shape, powering the nav spec's
+  "missing/settled request" states. (Resolved 2026-07-09, Gate 2)
+- Non-member recipients of request links — Resolved at
+  `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09): v1 requires
+  app install + an account (no web surface exists); this API's
+  request-detail endpoint requires trip membership.
 
 ### Budgets
 
-- **R-money-20 (per-category caps):** WHEN a budget cap is set THE SYSTEM
-  SHALL upsert the `(trip_id, category)` row (schema spec §3.3.15 unique) with
-  `cap_cents ≥ 0` or `null` (= no cap, estimate only), `currency =
-  trip.base_currency`; actual spend per category SHALL be computed on read
-  from expenses (effective base amounts), never stored.
-  [NEEDS CLARIFICATION: is there an overall trip budget cap in addition to per-category caps? If yes: extra `budgets` row with a `total` pseudo-category vs a `trips.budget_cap_cents` column — pick after the product answer. User-visible.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.15.)*
+- **R-money-20 (per-category caps + overall cap):** WHEN a budget cap is
+  set THE SYSTEM SHALL upsert the `(trip_id, category)` row (schema spec
+  §3.3.15 unique) with `cap_cents ≥ 0` or `null` (= no cap, estimate only),
+  `currency = trip.base_currency`; actual spend per category SHALL be
+  computed on read from expenses (effective base amounts), never stored.
+  Resolved at `.specs/database/schema.spec.md`:§3.3.15 (Gate 2,
+  2026-07-09): an optional **overall trip cap** exists alongside the
+  per-category caps — it rides the same read/write surface as the `total`
+  block (storage mechanism is the schema spec's canonical call).
 
 ### AI expense estimation
 
@@ -193,31 +210,45 @@ Conventions inherited wholesale (not restated per endpoint):
   a write of unvalidated JSONB (schema spec R-db-17).
 - **R-money-24 (style input):** WHEN deriving the cache key THE SYSTEM SHALL
   use the caller's `UserPrefs.travel_style` (fallback key segment `default`
-  when unset).
-  [NEEDS CLARIFICATION: `travel_style` taxonomy — the AI cache key and recommendation prompts depend on it (research: key = hash(destination, travel_style, season, schema_version)). What are the values (e.g. budget/comfort/luxury? solo/family? adventure/culture/food)? Single choice or multi-tag? User-visible in profile UI and it shapes every AI recommendation.]
-  *(Repeated verbatim from `.specs/shared/contracts.spec.md` §3.4 `user.ts`;
-  resolves there, inherited here.)*
+  when unset). Resolved at `.specs/shared/contracts.spec.md`:§3.4 `user.ts`
+  (Gate 2, 2026-07-09): multi-tag from the fixed set budget, comfort,
+  luxury, foodie, adventure, culture, nightlife, family, relaxation — the
+  key segment is the sorted tag list (canonical serialization per the
+  contracts spec).
 
 ### Authz & deletion
 
 - **R-money-25 (read scope):** WHEN any money read executes THE SYSTEM SHALL
   require current trip membership (any role); non-members receive `NOT_FOUND`
   indistinguishable from absence (contracts spec §3.5; R-nav-15 posture).
-- **R-money-26 (write roles):** WHEN expense or budget writes execute THE
-  SYSTEM SHALL require role `owner` or `editor` (provisional pending the
-  marker below); settlements and settle-up requests follow the party rules
-  (R-money-12/16) regardless of role — a viewer must always be able to settle
-  their own debts.
-  [NEEDS CLARIFICATION: money-domain role semantics — can `viewer`-role members create expenses they paid for (and edit/delete their own), or are expense/budget writes editor+ only? Splitwise has no read-only members, so our viewer role makes group-money logging ambiguous. Provisional here: editor+ for expense/budget writes; settlement recording and settle-requests exempt (parties always may). User-visible.]
+- **R-money-26 (write roles):** WHEN an expense is created THE SYSTEM SHALL
+  allow any current member **including `viewer`** (viewers are travelers,
+  not spectators — trips spec §3.2 / R-trips-21); WHEN an expense is edited
+  or deleted THE SYSTEM SHALL require the caller to be its creator
+  (`created_by`) or the trip `owner` (dispute-breaker — trips spec §3.2
+  "Edit / delete any expense"); WHEN a budget write executes THE SYSTEM
+  SHALL require role `owner` or `editor`. Settlements and settle-up
+  requests follow the party rules (R-money-12/16) regardless of role — a
+  viewer must always be able to settle their own debts. (Resolved
+  2026-07-09, Gate 2)
 - **R-money-27 (expense deletion):** WHEN an expense is deleted THE SYSTEM
-  SHALL remove its shares in the same transaction (DB cascade; R-money-1
-  applies) — deletion semantics pend the marker:
-  [NEEDS CLARIFICATION: expense deletion — hard delete, or soft delete with a visible audit trail ("Sean deleted 'Dinner ¥12,000'"), Splitwise-style? Group money + trust says audit; schema would gain `deleted_at`/`deleted_by` and balance queries would filter. User-visible.]
-  *(Repeated verbatim from `.specs/database/schema.spec.md` §3.3.12.)*
-- **R-money-28 (member removal):**
-  [NEEDS CLARIFICATION: member removal with a nonzero balance — R-money-8 keeps ex-members in balance math (their rows persist), but can an owner remove a member, or a member leave, while owing/owed money? Splitwise blocks it until settled. The allowed membership flow is the trips/members spec's to own; flagged here because balance integrity is the reason to block. User-visible.]
-- **R-money-29 (split metadata):**
-  [NEEDS CLARIFICATION: split-type persistence — `expense_shares` stores resolved cents only (schema spec §3.3.13); should the chosen split method + inputs (equal / percent 50-25-25 / shares 2-1-1) persist so expense detail and edit re-open in the original mode ("split equally"), or is derive-on-read acceptable (equal is detectable within remainder tolerance; percent/shares are not)? Persisting = schema addition (e.g. `expenses.split_meta jsonb`). User-visible in expense detail + edit.]
+  SHALL **soft-delete** it — set `deleted_at`/`deleted_by` (schema spec
+  §3.3.12 owns the columns), exclude it and its shares from balance math
+  and default lists, and keep a visible audit-trail entry ("Sean deleted
+  'Dinner ¥12,000'") in the expense history. Resolved at
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09):
+  soft-delete with visible audit trail.
+- **R-money-28 (member removal):** WHEN a member with a nonzero balance is
+  removed or leaves THE SYSTEM SHALL allow it — removal is never blocked on
+  balances; their expense/share/settlement rows survive (R-db-16 posture,
+  R-money-8) and balances involving the departed member remain computed and
+  shown to remaining members. (Resolved 2026-07-09, Gate 2)
+- **R-money-29 (split metadata):** Decided: persist **resolved cents only**
+  in v1 (schema spec §3.3.13 stands unchanged; no `split_meta` column) —
+  expense detail/edit derives display mode on read (equal is detectable
+  within remainder tolerance; percent/shares re-open as exact). Revisit
+  `split_meta` only if re-edit demand materializes. (Resolved 2026-07-09,
+  Gate 2)
 
 ---
 
@@ -229,17 +260,17 @@ All routes trip-scoped; `Auth: Required` throughout (JWT — Gate-1 auth lock).
 
 | # | Method + path | Purpose | Role |
 |---|---|---|---|
-| E1 | `POST /trips/:tripId/expenses` | Create expense + shares (atomic) | editor+ (R-money-26 marker) |
+| E1 | `POST /trips/:tripId/expenses` | Create expense + shares (atomic) | member incl. viewer (R-money-26) |
 | E2 | `GET /trips/:tripId/expenses` | List/filter expenses | member |
 | E3 | `GET /trips/:tripId/expenses/:expenseId` | Expense detail + shares | member |
-| E4 | `PATCH /trips/:tripId/expenses/:expenseId` | Update expense/split (atomic) | editor+ |
-| E5 | `DELETE /trips/:tripId/expenses/:expenseId` | Delete expense (provisional hard delete — R-money-27 marker) | editor+ |
+| E4 | `PATCH /trips/:tripId/expenses/:expenseId` | Update expense/split (atomic) | creator or owner (R-money-26) |
+| E5 | `DELETE /trips/:tripId/expenses/:expenseId` | Soft-delete expense (audit trail — R-money-27) | creator or owner (R-money-26) |
 | B1 | `GET /trips/:tripId/balances` | Pairwise nets + simplified transfers | member |
 | S1 | `POST /trips/:tripId/settlements` | Record a settlement | party (R-money-12) |
 | S2 | `GET /trips/:tripId/settlements` | List settlements | member |
-| S3 | `DELETE /trips/:tripId/settlements/:settlementId` | **Pends R-money-15 marker — not built until resolved** | — |
+| S3 | `DELETE /trips/:tripId/settlements/:settlementId` | Delete own settlement ≤ 24 h (R-money-15) | recorder only |
 | Q1 | `POST /trips/:tripId/settle-requests` | Create request + link | creditor (R-money-16) |
-| Q2 | `GET /trips/:tripId/settle-requests/:requestId` | Request detail (deep-link data) | member (non-member branch pends nav marker) |
+| Q2 | `GET /trips/:tripId/settle-requests/:requestId` | Request detail (deep-link data) | member (v1 — resolved Gate 2) |
 | Q3 | `DELETE /trips/:tripId/settle-requests/:requestId` | Cancel request (`status = 'cancelled'`) | request creator |
 | G1 | `GET /trips/:tripId/budgets` | Budget rows + computed spend | member |
 | G2 | `PUT /trips/:tripId/budgets/:category` | Upsert category cap | editor+ |
@@ -256,14 +287,17 @@ Shapes reference `@gogo/shared` names; field-exact Zod lives there
 
 #### POST /trips/:tripId/expenses
 
-Create an expense with its shares atomically. **Auth**: Required (editor+).
+Create an expense with its shares atomically. **Auth**: Required (any
+member incl. viewer — R-money-26, resolved Gate 2).
 
 **Request** — `ExpenseCreate`:
 
 ```
 { description: string, category: expense_category, paid_by: Uuid,
   amount_cents: PositiveCents, currency: CurrencyCode,
-  fx_rate?: string, base_amount_cents?: PositiveCents,   // pend FX marker; rejected while unresolved
+  fx_rate?: string, base_amount_cents?: PositiveCents,   // REQUIRED pair when currency ≠ base; rate
+                                                          //   auto-fetched client-side when online,
+                                                          //   manual override always (R-money-6)
   booking_id?: Uuid, spent_at?: ISODate,                  // default: server CURRENT_DATE
   shares: Array<{ user_id: Uuid, share_cents: Cents }> }  // resolved cents; SUM == amount_cents
 ```
@@ -276,9 +310,9 @@ covered someone entirely); participants not in `shares` simply owe nothing.
 **Response 201** — `Expense` (row + `shares[]` + `effective_base_cents`).
 
 **Errors**: 400 `VALIDATION_FAILED` — sum mismatch, non-member participant,
-non-base currency (while FX marker open), unknown category, `booking_id` not
-in this trip; 404 `NOT_FOUND` — non-member caller or missing trip;
-403 `FORBIDDEN` — viewer role (pending R-money-26 marker).
+non-base currency without the `fx_rate` + `base_amount_cents` pair
+(R-money-6), unknown category, `booking_id` not in this trip; 404
+`NOT_FOUND` — non-member caller or missing trip.
 
 **Requirements covered**: R-money-1..7, R-money-25/26
 
@@ -286,8 +320,8 @@ in this trip; 404 `NOT_FOUND` — non-member caller or missing trip;
 - [ ] Happy path: expense + N shares committed atomically; sum invariant holds
 - [ ] Sum mismatch by 1 cent → 400, zero rows written (transaction rollback)
 - [ ] Share user not a member → 400; booking from another trip → 400
-- [ ] Non-base currency → 400 while FX marker unresolved
-- [ ] Authz: non-member → 404; viewer → 403 (provisional)
+- [ ] Non-base currency without fx pair → 400; with pair → 201 (R-money-6)
+- [ ] Authz: non-member → 404; viewer CAN create (R-money-26)
 - [ ] Mid-transaction failure injection leaves zero orphan rows (R-money-1)
 
 #### GET /trips/:tripId/expenses
@@ -312,7 +346,8 @@ created_at DESC` (matches `(trip_id, spent_at)` index, schema spec §3.5).
 
 #### GET /trips/:tripId/expenses/:expenseId · PATCH · DELETE
 
-Detail / update / delete. **Auth**: Required (member read; editor+ write).
+Detail / update / delete. **Auth**: Required (member read; write = expense
+creator or trip owner — R-money-26, resolved Gate 2).
 
 **PATCH request** — `ExpenseUpdate`: any `ExpenseCreate` field optional, with
 the coupling rule: a body containing `amount_cents` MUST contain `shares`;
@@ -320,19 +355,23 @@ the coupling rule: a body containing `amount_cents` MUST contain `shares`;
 shares payload **replaces** the full share set in one transaction
 (R-money-1/2 re-run in full).
 
-**DELETE**: provisional hard delete (row + shares via cascade) behind a
-client-side ConfirmDialog; semantics pend the R-money-27 marker.
+**DELETE**: soft-delete (sets `deleted_at`/`deleted_by`; shares excluded
+from balance math with the expense) behind a client-side ConfirmDialog;
+the deletion appears as a visible audit-trail entry (R-money-27, resolved
+Gate 2).
 
 **Errors**: 404 (missing id, or non-member — indistinguishable); 400 sum/
-coupling violations; 403 role.
+coupling violations; 403 — caller is neither creator nor owner.
 
 **Requirements covered**: R-money-1/2/5, R-money-26/27
 
 **Tests required**:
 - [ ] PATCH amount without shares → 400; shares-only summing to stored
       amount → 200; stale share set fully replaced (no orphans)
-- [ ] DELETE removes shares with expense; balances recompute accordingly
-- [ ] Authz: wrong trip's expenseId → 404
+- [ ] DELETE soft-deletes; balances + default lists exclude it; audit entry
+      visible; row survives in DB (R-money-27)
+- [ ] Authz: creator (any role) edits/deletes own; owner edits/deletes any;
+      editor on another's expense → 403; wrong trip's expenseId → 404
 
 #### GET /trips/:tripId/balances
 
@@ -351,9 +390,9 @@ Computed balances document. **Auth**: Required (member).
 ```
 
 Zero-net pairs omitted from `pairwise`; ex-members appear wherever history
-references them (R-money-8). Whether clients render `simplified` or
-`pairwise` by default pends the R-money-10 marker — the API always returns
-both.
+references them (R-money-8). Clients render `pairwise` by default with a
+one-tap simplify toggle (R-money-10, resolved Gate 2) — the API always
+returns both.
 
 **Requirements covered**: R-money-8/9/10
 
@@ -403,11 +442,29 @@ but that request is not `open` or is between a different pair.
 **Requirements covered**: R-money-25.
 **Tests required**: [ ] list + pagination; [ ] authz non-member → 404.
 
+#### DELETE /trips/:tripId/settlements/:settlementId
+
+Fat-finger correction window (R-money-15, resolved Gate 2). **Auth**:
+Required (recorder only, ≤ 24 h after `created_at`).
+
+**Response 204** — hard delete; any linked settle-request reverts to
+`status = 'open'` (`settlement_id` cleared) in the same transaction.
+
+**Errors**: 403 `FORBIDDEN` — caller is not the recorder, or the 24-hour
+window has passed (correction path: counter-entry); 404 non-member/missing.
+
+**Requirements covered**: R-money-15
+
+**Tests required**:
+- [ ] Recorder deletes within 24 h → 204; balances recompute; linked request reopens
+- [ ] Recorder after 24 h → 403; other party any time → 403
+- [ ] Authz: non-member → 404
+
 #### POST /trips/:tripId/settle-requests · GET :requestId · DELETE :requestId
 
-"Send the bill." **Auth**: Required (create: creditor = caller; read: member
-— non-member branch pends the navigation marker repeated in the client spec;
-cancel: request creator).
+"Send the bill." **Auth**: Required (create: creditor = caller; read:
+member — non-member recipients require app install + account v1, resolved
+Gate 2 at the navigation spec; cancel: request creator).
 
 **Create request** — `SettleRequestCreate`:
 
@@ -423,7 +480,8 @@ cancel: request creator).
 { id, trip_id, from_user_id, to_user_id, amount_cents, currency,   // trip base
   note?, status: 'open' | 'settled' | 'cancelled', resolved: boolean,  // derived (R-money-18)
   settlement_id?: Uuid, created_by, created_at,
-  link: string }    // https://<domain>/t/<tripId>/request/<requestId> — domain pends nav marker
+  link: string }    // https://<domain>/t/<tripId>/request/<requestId> — domain resolved at nav
+                    //   spec §1 (Gate 2: Sean purchasing; format domain-agnostic)
 ```
 
 **GET Response 200** — `SettleRequest` plus requester `UserProfile`
@@ -455,7 +513,7 @@ editor+ write).
 { items: Array<{ category: expense_category, cap_cents: Cents | null,
                  ai_estimate_cents: Cents | null, ai_estimated_at: ISODateTime | null,
                  currency: CurrencyCode, spent_cents: Cents }>,   // computed: Σ effective base per category
-  total: { cap_cents: null,            // pends the overall-cap marker (R-money-20)
+  total: { cap_cents: Cents | null,    // optional overall trip cap (R-money-20, resolved Gate 2)
            spent_cents: Cents, ai_estimate_cents: Cents | null } }
 ```
 
@@ -464,6 +522,8 @@ synthesized with nulls) so the client renders the full taxonomy.
 
 **PUT Request**: `{ cap_cents: Cents | null }` — upsert on
 `(trip_id, category)`; `null` clears the cap, preserving any AI estimate.
+The overall cap rides the same verb with the `total` pseudo-category path
+segment (storage mechanism per schema spec §3.3.15, resolved Gate 2).
 
 **Errors**: 400 unknown category / negative cap; 403 viewer; 404 non-member.
 
@@ -471,6 +531,7 @@ synthesized with nulls) so the client renders the full taxonomy.
 
 **Tests required**:
 - [ ] Upsert create-then-update; null clears cap, estimate survives
+- [ ] Overall (`total`) cap set/cleared; returned in the `total` block
 - [ ] `spent_cents` matches expense fixtures incl. FX-allocated ones
 - [ ] Unknown category → 400; authz both verbs
 
@@ -488,7 +549,8 @@ party size = current member count, caller's `travel_style` (R-money-24).
 
 ```
 { currency: 'USD',            // v1: cached estimates are USD (cache key has no currency
-                              //   input per R-db-10); non-USD base trips pend the FX marker (R-money-6)
+                              //   input per R-db-10); non-USD base trips convert at write
+                              //   time via the R-money-6 FX source (resolved Gate 2, §3.7)
   party_size: int, days: int, nights: int,
   estimates: Array<{ category: expense_category,
                      basis: 'per_person_per_day' | 'per_person_per_night' | 'per_person_total',
@@ -585,10 +647,10 @@ count (that matching problem is NP-hard) — same trade-off Splitwise ships.
 Simplification is **display/suggestion only**: settlements are always
 recorded against the real pair that pays (record-only ledger unaffected).
 
-### 3.6 Settle-up request entity (pends R-money-19 marker)
+### 3.6 Settle-up request entity (approved — Gate 2, 2026-07-09)
 
-Proposed table — moves verbatim into `.specs/database/schema.spec.md` §3.3
-upon approval (one-source rule; schema spec stays canonical):
+Approved table — moves verbatim into `.specs/database/schema.spec.md` §3.3
+(one-source rule; schema spec stays canonical and is folding it in):
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
@@ -604,10 +666,11 @@ upon approval (one-source rule; schema spec stays canonical):
 
 - **Indexes:** `(trip_id, status)` — open-requests list; FK indexes.
 - Follows all schema-spec §1 conventions (`created_at`/`updated_at`, uuid PK).
-- Token entropy note: `requestId` is a uuid in a member-guarded route — it is
-  authz-checked (R-money-25), not a bearer secret like `invites.token`; if
-  the non-member marker resolves toward a public recipient view, the id must
-  be replaced by a ≥128-bit token per R-db-9's precedent. Flagged for the
+- Token entropy note: `requestId` is a uuid in a member-guarded route — it
+  is authz-checked (R-money-25), not a bearer secret like `invites.token`.
+  Non-member links resolved Gate 2 as app-install + account required (no
+  public recipient view v1); if a web phase ever adds one, the id must be
+  replaced by a ≥128-bit token per R-db-9's precedent. Flagged for the
   threat model.
 
 ### 3.7 AI estimation pipeline
@@ -630,7 +693,7 @@ auth → membership → dates gate → deriveAiCacheKey → [hit → payload]
   deliberately **not** key inputs (R-db-10 fixes the input list) — which
   forces per-person/per-day bases in the cached payload.
 - **Prompt contract:** estimates requested per category of the shared
-  taxonomy (R-money-7 marker), in USD, per the §3.2 basis enum, with explicit
+  taxonomy (R-money-7, resolved Gate 2), in USD, per the §3.2 basis enum, with explicit
   permission to omit categories it can't estimate (anti-hallucination:
   permission to not know; omitted categories return `null` estimates, they
   don't invent).
@@ -642,9 +705,11 @@ auth → membership → dates gate → deriveAiCacheKey → [hit → payload]
   `ai_estimated_at = now()` for every estimated category, in one transaction.
 - **Currency:** cached payloads are USD (key has no currency dimension).
   Trips with `base_currency = 'USD'` (the default) write directly; non-USD
-  base trips depend on the FX marker (R-money-6) — until resolved the
-  endpoint returns `VALIDATION_FAILED` for non-USD-base trips with a
-  client-facing message, rather than writing mixed-currency budget rows.
+  base trips convert the midpoint USD→base at estimate time via the FX
+  source resolved in R-money-6 (Gate 2 — free FX API, rate captured at
+  conversion time), then floor to integer cents — budget rows stay in trip
+  base currency, never mixed. FX-source unavailable → `VALIDATION_FAILED`
+  with a client-facing message rather than a mixed-currency write.
 - **Re-estimation** is allowed any time (cache makes repeats ~free); the
   budget upsert overwrites prior estimates.
 
@@ -653,7 +718,10 @@ auth → membership → dates gate → deriveAiCacheKey → [hit → payload]
 | Action | owner | editor | viewer | non-member |
 |---|---|---|---|---|
 | Read expenses / balances / settlements / budgets / requests | ✓ | ✓ | ✓ | 404 |
-| Create / edit / delete expense | ✓ | ✓ | ✗ (pends R-money-26 marker) | 404 |
+| Create expense | ✓ | ✓ | ✓ (R-money-26, resolved Gate 2) | 404 |
+| Edit / delete own-created expense | ✓ | ✓ | ✓ | 404 |
+| Edit / delete any expense | ✓ (dispute-breaker) | ✗ | ✗ | 404 |
+| Delete own settlement ≤ 24 h | recorder-only | recorder-only | recorder-only | 404 |
 | Record settlement | party-only | party-only | party-only | 404 |
 | Create settle-request | creditor-only | creditor-only | creditor-only | 404 |
 | Cancel settle-request | creator-only | creator-only | creator-only | 404 |
@@ -667,10 +735,11 @@ contracts spec §3.4) — no additional read surface added here.
 
 - **Client UX** — `.specs/client/money.spec.md` (deeplink handoff, return
   prompts, device-test checklist live there).
-- **FX-rate provider selection** — pends the R-money-6 marker (new external
-  dependency ⇒ Autonomy Contract §3 escalation).
-- **Member add/remove flows** (incl. the leave-with-balance rule,
-  R-money-28 marker) — trips/members spec.
+- **FX-rate provider selection** — the free FX API is an approved new
+  dependency (R-money-6, resolved Gate 2); the specific provider is picked
+  at build time (Autonomy Contract §3 escalation already surfaced).
+- **Member add/remove flows** — trips/members spec (removal with nonzero
+  balance is allowed — R-money-28, resolved Gate 2).
 - **Booking→expense creation UX** ("add expense from booking") — bookings
   spec owns the booking side; this API only validates `booking_id`.
 - **Offline mutation queue semantics** for money writes — offline/sync spec
@@ -691,10 +760,10 @@ Depends on DB-1 + SH-1 (schema + shared) having landed.
 | ID | Task | Covers |
 |---|---|---|
 | MON-1 | Shared money math: `computeShares` (4 types, largest-remainder), `computeBalances`, `simplifyDebts`, base-allocation — pure functions + exhaustive property tests (`@gogo/shared/domains/money`). | R-money-3/8/9/10 |
-| MON-2 | Expenses CRUD (E1–E5): atomic writes, exact-sum enforcement, filters, authz. | R-money-1/2/4/5/6/7, 25/26/27 |
+| MON-2 | Expenses CRUD (E1–E5): atomic writes, exact-sum enforcement, FX pair validation, soft-delete + audit trail, filters, creator-or-owner authz. | R-money-1/2/4/5/6/7, 25/26/27 |
 | MON-3 | Balances endpoint (B1) over MON-1 functions; fixtures incl. FX allocation + ex-members. | R-money-8/9/10 |
-| MON-4 | Settlements (S1, S2): party rule, base-currency rule, request linking. | R-money-11..14, 18 |
-| MON-5 | Settle-requests (Q1–Q3) + `settlement_requests` migration (blocked on R-money-19 marker) + link construction (blocked on nav domain marker). | R-money-16..19 |
+| MON-4 | Settlements (S1–S3): party rule, base-currency rule, request linking, 24 h recorder-delete window. | R-money-11..15, 18 |
+| MON-5 | Settle-requests (Q1–Q3) + `settlement_requests` migration (entity approved Gate 2) + link construction (domain-agnostic format; universal-link domain pending Sean's purchase). | R-money-16..19 |
 | MON-6 | Budgets (G1, G2): upsert + computed spend + full-taxonomy synthesis. | R-money-20 |
 | MON-7 | AI estimate (A1): gate order, cache, refinement, totals, budget write, `ai_usage` accounting. | R-money-21..24 |
 
@@ -714,8 +783,12 @@ Depends on DB-1 + SH-1 (schema + shared) having landed.
 
 ---
 
-*Trace: R-money-N ↔ §3 sections inline. Markers: 5 repeated verbatim from
-canonical specs (FX, taxonomy, overall cap, expense deletion — schema spec;
-travel_style — contracts spec), 6 new (simplification default, settlement
-correction, request entity, role semantics, member removal, split metadata).
-Every marker is a P-2 interview question for Sean. Zero markers = approvable.*
+*Trace: R-money-N ↔ §3 sections inline. All 11 markers resolved at Gate 2
+(2026-07-09): 5 at canonical homes (FX = entry-time rate + manual override;
+taxonomy = fixed 6-value enum; overall cap = yes, optional; expense
+deletion = soft-delete + audit; travel_style = fixed multi-tag set), 6
+owned here (simplification off-by-default with one-tap toggle; settlement
+correction = recorder delete ≤ 24 h then counter-entry;
+`settlement_requests` entity approved; viewer participation per trips
+§3.2; member removal allowed with nonzero balance; split metadata =
+resolved cents only). Zero markers remain.*

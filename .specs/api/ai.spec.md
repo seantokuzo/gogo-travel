@@ -70,17 +70,15 @@ Anthropic client (R-ai-2).
   ADR-005 / approved policy) THE SYSTEM SHALL reject with 429
   `AI_CAP_EXCEEDED` before any model call, with
   `details: { feature, cap, resets_at }`.
-- **R-ai-5 (per-feature ceilings):** WHEN a feature's own daily ceiling
-  (§3.3 table) is reached THE SYSTEM SHALL reject with 429 `AI_CAP_EXCEEDED`
-  even if the global cap has headroom. Ceilings are shared config
-  (`config/entitlements.ts`), not migrations.
-  [NEEDS CLARIFICATION: per-feature ceiling numbers — the 30/day global cap
-  is approved, but research only says "per-feature ceilings" without values.
-  Proposed defaults (within the 30): `recommendations` 10/day,
-  `expense_estimate` 10/day, `packing_list` 5/day; `tour_guide` and `recap`
-  are system-initiated (cap-exempt per R-ai-6) with structural caps instead —
-  proposed `TOUR_GUIDE_MAX_PLACES_PER_TRIP = 50` and one recap per trip.
-  User-visible: these decide when a user sees "daily AI limit reached".]
+- **R-ai-5 (per-feature ceilings):** WHEN a feature's own daily ceiling is
+  reached THE SYSTEM SHALL reject with 429 `AI_CAP_EXCEEDED` even if the
+  global cap has headroom. Ceilings are shared config
+  (`config/entitlements.ts`), not migrations. Approved values (within the
+  30/day global cap): `recommendations` 10/day, `expense_estimate` 10/day,
+  `packing_list` 5/day; `tour_guide` and `recap` are system-initiated
+  (cap-exempt per R-ai-6) with structural caps instead —
+  `TOUR_GUIDE_MAX_PLACES_PER_TRIP = 50` and one recap per trip. (Resolved
+  2026-07-09, Gate 2)
 - **R-ai-6 (usage accounting):** WHEN a model call completes (live) or a
   batch result is reconciled THE SYSTEM SHALL record it in `ai_usage` via a
   single upsert-increment on PK `(user_id, feature, day)` — `calls + 1`,
@@ -188,8 +186,9 @@ Anthropic client (R-ai-2).
 
 ### 2.5 Tour guide
 
-- **R-ai-23 (batch pre-gen at activation):** WHEN a trip activates (§3.9.1
-  trigger) THE SYSTEM SHALL enqueue one Anthropic Batch request
+- **R-ai-23 (batch pre-gen at T-3):** WHEN the tour-guide pre-gen trigger
+  fires (§3.9.1: 3 days before trip start, or the manual "Prepare offline
+  tour guide" action) THE SYSTEM SHALL enqueue one Anthropic Batch request
   (`claude-haiku-4-5`) per eligible place — the union of the trip's
   `saved_places` and itinerary `place_visit` places, up to
   `TOUR_GUIDE_MAX_PLACES_PER_TRIP` — creating `tour_guide_bundles` rows
@@ -278,12 +277,12 @@ anti-hallucination test suite).
 Verified 2026-07-09 (claude-api skill + research; re-verify at P-3 via the
 Models API — never from training data, R-shared-13):
 
-| Feature | Model id | Mode | Cap treatment |
+| Feature | Model id | Mode | Cap treatment (ceilings resolved Gate 2) |
 |---|---|---|---|
-| `recommendations` | `claude-sonnet-5` | live, `ai_cache` | counted |
-| `expense_estimate` | `claude-haiku-4-5` | live, `ai_cache` | counted (money spec owns endpoint) |
-| `tour_guide` | `claude-haiku-4-5` | **Batch** at activation | cap-exempt; per-trip structural cap |
-| `packing_list` | `claude-haiku-4-5` | live (cache: open marker §3.6.3) | counted |
+| `recommendations` | `claude-sonnet-5` | live, `ai_cache` | counted; 10/day ceiling |
+| `expense_estimate` | `claude-haiku-4-5` | live, `ai_cache` | counted; 10/day ceiling (money spec owns endpoint) |
+| `tour_guide` | `claude-haiku-4-5` | **Batch** at T-3 pre-gen (§3.9.1) | cap-exempt; structural cap 50 places/trip |
+| `packing_list` | `claude-haiku-4-5` | live, **uncached** (§3.6.3, resolved Gate 2) | counted; 5/day ceiling |
 | `recap` | `claude-sonnet-5` | **Batch** overnight post-trip | cap-exempt; once per trip |
 
 Price constants are integers in **cents per million tokens**:
@@ -313,16 +312,13 @@ Batch jobs run gates 3–4's equivalents at submission time: kill-switch gate
 plus structural caps (bundle count per trip; one recap per trip). Cap-exempt
 does not mean gate-exempt — a tripped kill-switch stops batch submission too.
 
-**`capture_parse` and the cap** — the schema spec's open enum marker governs
-whether the capture LLM fallback is charged to the user cap; repeated
-verbatim from schema spec §3.2 (`ai_feature`):
-
-[NEEDS CLARIFICATION: does the capture-pipeline LLM fallback count against the user's 30/day AI cap (i.e., is `capture_parse` an `ai_feature` value tracked in `ai_usage`)? It costs money per the kill-switch policy either way, but charging it to the user cap is user-visible — a heavy email-forwarder could exhaust their recommendations quota.]
-
-Design note for that decision: the kill-switch requirement means capture
-tokens must be recorded in `ai_usage` regardless (the rollup is the only
-spend ledger), so `capture_parse` needs the enum value either way; the open
-question is only cap-charged vs cap-exempt (like `tour_guide`).
+**`capture_parse` and the cap** — Resolved at
+`.specs/database/schema.spec.md`:§3.2 `ai_feature` (Gate 2, 2026-07-09):
+capture parsing does NOT count against the user's 30/day AI cap; it has a
+separate structural ceiling of 20 captures/day (capture spec enforces it).
+The kill-switch requirement still means capture tokens are recorded in
+`ai_usage` (the rollup is the only spend ledger), so `capture_parse` keeps
+its enum value — cap-exempt, like `tour_guide`.
 
 ### 3.4 Typed errors (contracts spec §3.5 + one append)
 
@@ -368,59 +364,46 @@ Segment pinning (deterministic + testable):
 - `destination` = `lower(trim(trips.destination_name))` — display-string
   keyed; coords are used for candidate selection, not the key.
 - `travel_style` = the caller's `UserPrefs.travel_style`, or the literal
-  `"none"` when unset. Its taxonomy is an open marker — repeated verbatim
-  from contracts spec §3.4 (`user.ts`):
-
-[NEEDS CLARIFICATION: `travel_style` taxonomy — the AI cache key and
-recommendation prompts depend on it (research: key =
-hash(destination, travel_style, season, schema_version)). What are the
-values (e.g. budget/comfort/luxury? solo/family? adventure/culture/food)?
-Single choice or multi-tag? User-visible in profile UI and it shapes every
-AI recommendation.]
-
+  `"none"` when unset. Resolved at `.specs/shared/contracts.spec.md`:§3.4
+  `user.ts` (Gate 2, 2026-07-09): multi-tag from the fixed set budget,
+  comfort, luxury, foodie, adventure, culture, nightlife, family,
+  relaxation — the key segment serializes the sorted tag list (canonical
+  serialization pinned with the shared derivation).
 - `season` — see §3.6.2.
 - TTLs (config, research range 14–30d): `recommendations` 14d,
-  `expense_estimate` 14d, `packing_list` (pending §3.6.3) 30d.
+  `expense_estimate` 14d. (`packing_list` is live/uncached — §3.6.3,
+  resolved Gate 2 — so it has no TTL row.)
 
 Cache rows carry no user/trip id (R-db-10) — `travel_style` is a coarse
 taxonomy value, not PII, which is what makes cross-user sharing legitimate.
 
-**Locale** joins the key only if v1 localizes AI content — open marker
-repeated verbatim from schema spec §3.3.19:
-
-[NEEDS CLARIFICATION: is AI-generated content (recommendations, tour guide, packing) English-only for v1? If localized, `locale` must join the cache-key inputs and the key derivation — cheap now, a cache-buster later. User-visible.]
-
-Prompts in this spec are written English-only pending that answer.
+**Locale** — Resolved at `.specs/database/schema.spec.md`:§3.3.19 (Gate 2,
+2026-07-09): AI content is English-only v1; `locale` does NOT join the
+cache key yet (it becomes a cache-buster key input if localization ever
+ships). Prompts in this spec are written English-only.
 
 #### 3.6.2 Season derivation (deterministic)
 
 `season(destination_lat, start_date, end_date)`: meteorological season of
 the trip midpoint month, hemisphere-flipped when `destination_lat < 0`;
-`"unknown"` when dates are absent. Depends on two open trips markers,
-repeated verbatim from schema spec §3.3.4:
-
-[NEEDS CLARIFICATION: are trip dates required at creation, or are date-less trips allowed (dates added later)? Columns are nullable to keep both options open; the create-trip UX decides.]
-
-[NEEDS CLARIFICATION: destination input — picked from place/geocoder search (structured; lat/lng always present) or free text (lat/lng optional)? Affects nullability of `destination_lat/lng` and whether weather/AI grounding can be guaranteed for every trip.]
-
-Fallbacks pending those answers: null lat → northern hemisphere assumed for
-season; null coords → recommendations and tour guide return 400
+`"unknown"` when dates are absent. Both upstream trips questions are
+resolved at `.specs/database/schema.spec.md`:§3.3.4 (Gate 2, 2026-07-09):
+trip dates are required at creation, and destination input is structured
+(Overture-backed search; lat/lng always present) — so season and grounding
+are guaranteed derivable for every trip created through the v1 flow. The
+fallbacks stay as robustness only: null lat → northern hemisphere assumed;
+null coords → recommendations and tour guide return 400
 `VALIDATION_FAILED` ("set a destination on the map to enable AI features"),
 packing proceeds name-only without weather (R-ai-27).
 
-#### 3.6.3 Packing-list cache policy (open — cross-spec conflict)
+#### 3.6.3 Packing-list cache policy (resolved — Gate 2, 2026-07-09)
 
-[NEEDS CLARIFICATION: packing-list caching — the research table lists
-packing as "live" (uncached) while the contracts spec §3.7 table annotates
-`packing-list.ts` as `ai_cache`; and the canonical cache-key formula
-(schema spec R-db-10: hash(feature, destination, travel_style, season,
-schema_version)) has no slot for trip duration, which materially changes a
-packing list (2-day vs 3-week). Options: (a) live/uncached — matches
-research, ~$0.005/call on Haiku so caching saves almost nothing at our
-scale, zero spec amendments (recommended); (b) cache with a duration bucket
-folded into the key — requires amending R-db-10's canonical formula and the
-shared derivation signature. Pick (a) unless Sean disagrees; either way the
-losing spec table row gets a one-line companion correction.]
+Decided: **live/uncached** (option a) — packing lists are personal and
+cheap on Haiku (~$0.005/call); caching saves almost nothing at our scale
+and duration has no slot in the canonical R-db-10 key formula, which stays
+unamended. The contracts spec §3.7 table row annotating `packing-list.ts`
+as `ai_cache` gets the one-line companion correction (that spec's owner is
+applying it). (Resolved 2026-07-09, Gate 2)
 
 ### 3.7 Prompt construction (the anti-hallucination contract)
 
@@ -563,10 +546,9 @@ generation is allowed; `weather_used: false` signals the degrade.)
 - [ ] Caps/kill-switch/upstream typed errors as in 3.8.1
 - [ ] Nothing written to `packing_lists` by this endpoint
 
-The persistence UX target depends on the packing-lists ownership marker,
-repeated verbatim from schema spec §3.3.21:
-
-[NEEDS CLARIFICATION: packing lists — one shared list per trip, per-member personal lists, or both? Column shape above supports all three; the product answer sets uniqueness (`unique(trip_id)` vs `unique(trip_id, user_id)`) and the UX.]
+Persistence UX target — Resolved at
+`.specs/database/schema.spec.md`:§3.3.21 (Gate 2, 2026-07-09): one shared
+packing list per trip in v1 (simplest useful; uniqueness `unique(trip_id)`).
 
 #### 3.8.4 GET `/trips/:trip_id/recap`
 
@@ -599,27 +581,23 @@ row exists.
 
 Eligible places = union of `saved_places.place_id` and itinerary
 `place_visit.place_id`, capped (R-ai-23). Bundles are generated per
-trip+place at **trip activation**, plus a **daily incremental sweep** over
-`active` trips that batches any eligible place still missing a bundle
-(covers places saved mid-trip; idempotent via the `(trip_id, place_id)`
-unique). Note: schema spec §3.3.20's prose says "at trip creation" —
-superseded here deliberately: at creation a trip has no saved/itinerary
-places to generate for. Exact trigger timing is open:
+trip+place at the **T-3 trigger** (below), plus a **daily incremental
+sweep** over `active` trips that batches any eligible place still missing
+a bundle (covers places saved mid-trip; idempotent via the
+`(trip_id, place_id)` unique). Note: schema spec §3.3.20's prose says "at
+trip creation" — superseded here deliberately: at creation a trip has no
+saved/itinerary places to generate for.
 
-[NEEDS CLARIFICATION: tour-guide pre-gen trigger timing — "activation" needs
-a concrete definition, and it interacts with the open trips `status`
-transitions marker (repeated below). Options: (a) status flip planning →
-active (automatic on start_date — but then bundles may finish only hours
-into day 1, and the wifi pre-download window is missed); (b) T-N days before
-start_date (proposed: N=3 — batch latency ≤ 24 h plus a home-wifi download
-window); (c) explicit user action ("Prepare offline tour guide" button —
-most predictable, one more tap). Recommendation: (b) with (c) as a manual
-fallback. User-visible: determines whether tour content is on-device before
-departure.]
+**Trigger timing — decided: T-3 days before `start_date`** (batch latency
+≤ 24 h plus a home-wifi download window), **plus a manual "Prepare offline
+tour guide" button** as the explicit fallback/early path. (Resolved
+2026-07-09, Gate 2)
 
-The dependent trips marker, repeated verbatim from schema spec §3.3.4:
-
-[NEEDS CLARIFICATION: `status` transitions — PLANNING implies automatic (`today` view "auto-default while trip active"). Is status purely derived from dates by a daily job/on-read (planning→active on start_date, active→past after end_date), or can users manually override (e.g. mark a trip past early)? Manual override is user-visible.]
+The dependent trips question — Resolved at
+`.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
+2026-07-09): status is date-derived with manual owner override allowed
+(override wins until cleared) — the T-3 trigger keys off `start_date`
+directly, so it is independent of override state.
 
 #### 3.9.2 Batch mechanics
 
@@ -658,23 +636,14 @@ geofencing is explicitly out (v1 lock).
 
 #### 3.10.1 Trigger + persistence
 
-Enqueued when a trip transitions to `past` (same open transitions marker as
-§3.9.1), overnight batch, exactly once per trip. Where the generated recap
-lives is the schema spec's open entity question — repeated verbatim from
-schema spec §3.7:
-
-[NEEDS CLARIFICATION: PLANNING says
-"recaps generated post-trip (Batch)" but lists no `recaps` table in the
-entity model. Where does a generated recap live — a new `recaps` table
-(trip-scoped, jsonb content + status like tour bundles), or reuse
-`ai_cache` (wrong fit: trip-scoped and permanent, not destination-keyed
-TTL)? A new table is the obvious design but it's an entity-list addition —
-needs Sean's nod.]
-
-This spec's endpoint (§3.8.4) and EARS are written against an abstract
-"recap store" and hold under either answer; the `recaps`-table option would
-mirror `tour_guide_bundles` (status + jsonb + batch_id) and is the
-recommended shape.
+Enqueued when a trip transitions to `past` (date-derived, manual override
+honored — schema spec §3.3.4, resolved Gate 2), overnight batch, exactly
+once per trip. Recap persistence — Resolved at
+`.specs/database/schema.spec.md`:§3.7 (Gate 2, 2026-07-09): the new
+`recaps` table is APPROVED (entity-list addition; the schema spec is
+folding it in). It mirrors `tour_guide_bundles` — trip-scoped, status +
+jsonb content + `batch_id` — exactly the shape this spec's endpoint
+(§3.8.4) and EARS were written against.
 
 #### 3.10.2 Content assembly (what the LLM does and doesn't do)
 
@@ -722,7 +691,8 @@ itinerary, bookings, money, photos) have zero AI dependencies (R-ai-19).
 
 - `expense_estimate` endpoint contract — budgets/money spec (platform rules
   here still bind it).
-- Capture LLM fallback contract — capture spec (ditto; cap marker §3.3).
+- Capture LLM fallback contract — capture spec (ditto; cap-exempt with its
+  own 20/day ceiling, resolved Gate 2 — §3.3).
 - Packing-list CRUD/persistence — utilities spec (this spec only generates).
 - Recap regeneration / re-run after new photos; recap sharing/export outside
   the trip.
@@ -793,9 +763,10 @@ candidate-selection unit tests (radius, wiki_ref preference, quotas, cap 20,
 
 **Covers:** R-ai-23..25 + §3.8.2, §3.9.1–3.9.3.
 
-- [ ] Activation batch + daily incremental sweep (idempotent); structural
-      cap; CoVe verification pass; reconciliation job (`custom_id` mapping,
-      any-order results); bundles endpoint
+- [ ] T-3 trigger + manual "Prepare offline" action + daily incremental
+      sweep (idempotent); structural cap; CoVe verification pass;
+      reconciliation job (`custom_id` mapping, any-order results); bundles
+      endpoint
 
 **Tests required:** §3.8.2 list, plus: duplicate-place idempotency; failed
 batch item → `failed` row (never silent); kill-switch blocks submission;
@@ -812,13 +783,12 @@ tour screen backgrounded (foreground-only lock).
 ### AI-6 — Packing-list endpoint
 
 **Covers:** R-ai-27, R-ai-28 + §3.8.3 (checklist + tests = §3.8.3 list).
-Blocked on §3.6.3 cache-policy marker only for the cache branch; the live
-path is buildable regardless.
+Live/uncached (§3.6.3, resolved Gate 2) — no cache branch to build.
 
 ### AI-7 — Recap job + endpoint
 
-**Covers:** R-ai-29..31 + §3.8.4, §3.10. **Blocked on** the recap-
-persistence marker (§3.10.1) for the storage shape.
+**Covers:** R-ai-29..31 + §3.8.4, §3.10. Storage shape resolved Gate 2:
+the approved `recaps` table (§3.10.1), mirroring `tour_guide_bundles`.
 
 **Tests required:** §3.8.4 list, plus: trigger idempotency (one recap per
 trip); prompt snapshot contains only computed facts (no photo content, no
@@ -828,9 +798,12 @@ highlight selection deterministic (same inputs → same ids).
 ---
 
 *Trace: every R-ai-N cites its design section inline; §3.8 endpoints list
-covered requirements. Markers: 2 new (per-feature ceiling numbers §2.1;
-tour-guide trigger timing §3.9.1) + 1 cross-spec resolution (packing cache
-policy §3.6.3) + 8 repeated verbatim from the canonical schema/contracts
-specs (travel_style, recap persistence, capture_parse, locale, trip dates,
-destination input, status transitions, packing-list ownership — each cited
-at its home). Zero markers = approvable.*
+covered requirements. All 11 markers resolved at Gate 2 (2026-07-09): owned
+here — per-feature ceilings (approved as proposed, §2.1), tour-guide
+trigger (T-3 days + manual button, §3.9.1), packing cache policy
+(live/uncached, §3.6.3); repeated — travel_style (fixed multi-tag set),
+recap persistence (`recaps` table approved), capture_parse (cap-exempt,
+20/day ceiling), locale (English-only v1), trip dates (required),
+destination input (structured), status transitions (derived + override),
+packing-list ownership (shared per trip) — each resolved at its cited home.
+Zero markers remain.*

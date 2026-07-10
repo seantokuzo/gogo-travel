@@ -74,15 +74,17 @@
 - **R-today-11 (post-trip state):** WHEN the today tab is opened for a past
   trip THE SYSTEM SHALL show a trip-ended state pointing to photos/memories —
   never today's (empty) timeline.
-- **R-today-12 (collaborator-activity ticker):** WHEN recent collaborator
-  activity exists THE SYSTEM SHALL show a compact activity ticker (e.g.
-  "Alex added Dinner at Ichiran · 2 h ago") — data source has an open
-  marker (§1.4).
+- **R-today-12 (collaborator-activity ticker) — DEFERRED to v2:** the
+  activity feed is deferred; the v1 today view ships WITHOUT the ticker
+  (itinerary-change pushes carry collaborator awareness alone). The
+  requirement number is retained as a tombstone — do not rebuild without
+  a v2 activity-feed decision (no activity/event-log entity exists in v1).
+  (Resolved 2026-07-09, Gate 2)
 - **R-today-13 (spanning stays):** WHEN a lodging booking spans today
   (checked in, not yet checked out) THE SYSTEM SHALL represent it on the
-  today surface without treating it as a timed event (e.g. a passive
-  "Staying at Park Hyatt" context row, not a hero/countdown candidate) —
-  exact rendering pends the multi-day marker (§1.4).
+  today surface as a passive "Staying at Park Hyatt" context row derived
+  from the single spanning item (schema §3.3.10, resolved Gate 2) — never
+  a timed event, never a hero/countdown candidate.
 
 ### 1.2 Offline behavior & sync orchestration
 
@@ -160,46 +162,29 @@
   notification's `item_id` (scroll/highlight), falling back to the plain
   today tab when the item no longer exists.
 
-### 1.4 Markers repeated from canonical specs (verbatim + cite)
+### 1.4 Upstream resolutions inherited from canonical specs
 
-From `.specs/client/navigation.spec.md` §1 Open questions — the landing
-behavior this surface participates in (navigation spec is CANONICAL for
-landing; repeated here because the 2+-active case decides which trip's
-today tab wins):
+All resolved at Gate 2 (2026-07-09):
 
-> [NEEDS CLARIFICATION: Multiple concurrently-active trips on launch —
-> R-nav-6 covers exactly one. With 2+ active (rare but possible), land on
-> the trip list, or on the most-recently-viewed active trip's today tab?]
+- Resolved at `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09):
+  with 2+ concurrently active trips, launch lands on the
+  **most-recently-viewed active trip** (its today tab per R-nav-6), with a
+  trip switcher in the header.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips.status`
+  (Gate 2, 2026-07-09): status is date-derived with manual owner override
+  (override wins until cleared) — "active" for R-today-1/10/11 and the
+  R-sync-4 bundle trigger means the effective status.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.10 `itinerary_items`
+  (Gate 2, 2026-07-09): multi-day bookings are ONE spanning item
+  (`end_day` stays) — R-today-13's context row derives from it.
 
-From `.specs/database/schema.spec.md` §3.3.4 (`trips`) — decides what
-"active" means for R-today-1/10/11 and the bundle trigger R-sync-4:
+### 1.5 Decisions owned by this spec (formerly new markers)
 
-> [NEEDS CLARIFICATION: `status` transitions — PLANNING implies automatic
-> (`today` view "auto-default while trip active"). Is status purely derived
-> from dates by a daily job/on-read (planning→active on start_date,
-> active→past after end_date), or can users manually override (e.g. mark a
-> trip past early)? Manual override is user-visible.]
-
-From `.specs/database/schema.spec.md` §3.3.10 (`itinerary_items`) — decides
-R-today-13's rendering:
-
-> [NEEDS CLARIFICATION: multi-day bookings (lodging check-in→check-out) on
-> the calendar — one spanning item (`end_day` used, rendered across days) or
-> two point items (check-in item + check-out item)? Affects whether
-> `end_day` stays; user-visible calendar rendering.]
-
-### 1.5 New markers owned by this spec
-
-- [NEEDS CLARIFICATION: collaborator-activity ticker data source — the v1
-  data model has no activity/event-log entity (PLANNING keeps the event-log
-  seam for later; collab sync v1 is REST + refetch + push invalidation).
-  Options: (a) derive a best-effort ticker from `created_at`/`created_by`
-  (+ `updated_at`) on recent trip-scoped rows — cheap, no schema change,
-  can't attribute edits/deletes precisely; (b) add a `trip_activity` table —
-  proper feed, but an entity-list addition needing Sean's nod (same class as
-  the schema spec's recaps marker); (c) drop the ticker from the v1 today
-  view and lean on itinerary-change pushes alone. User-visible; R-today-12
-  is unbuildable until answered.]
+- Collaborator-activity ticker — decided: **dropped from the v1 today
+  view; activity feed deferred to v2** (option c — no activity/event-log
+  entity in v1; itinerary-change pushes carry awareness). R-today-12 is a
+  deferred tombstone; its ticker layout slot, testID, and task are
+  removed. (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -221,8 +206,6 @@ R-today-13's rendering:
 ├──────────────────────────────────────────┤
 │ quick actions: map · add expense ·       │  (R-today-8)
 │                add photo                 │
-├──────────────────────────────────────────┤
-│ activity ticker (single row, tappable)   │  (R-today-12 — pends marker)
 ├──────────────────────────────────────────┤
 │ timeline (FlashList/FlatList —           │  (R-today-1/4; mobile landmine:
 │  virtualized):                           │   long lists virtualize)
@@ -284,15 +267,14 @@ with the last response persisted into the bundle snapshot (R-sync-3);
 offline renders the snapshot + fetched-at age (R-sync-2). Units per
 `UserPrefs.units` — conversion is presentation (schema §3.4.5).
 
-### 2.5 Quick actions & ticker
+### 2.5 Quick actions
 
 - Quick actions are navigation calls only — no logic: map tab switch,
   `money/expense/new` modal, photo add flow (photos spec owns capture
   mechanics). All function offline: expense/photo writes enqueue per
   R-sync-5.
-- Ticker (pending §1.5 marker): single compact row, newest event, tap →
-  fuller activity view or the touched entity — unresolved until the data
-  source is picked.
+- (Activity ticker removed — deferred to v2 with the activity feed, §1.5,
+  resolved Gate 2.)
 
 ### 2.6 Offline bundle contract (device SQLite)
 
@@ -383,9 +365,9 @@ reserved the seam). Guards: R-route-2.
 | `itinerary_change` (coalesced) | `/[tripId]` default tab | — |
 | `daily_digest` | `/[tripId]/today` | trip list if no longer a member (R-nav-15) |
 | `leave_by` (local) | `/[tripId]/today` + hero focus on `item_id` (R-route-4) | plain today tab |
-| `document_expiry` | `/[tripId]/more/documents` when trip-associated, else documents surface via profile home [depends on navigation's profile-surface marker — vault entry for tripless docs follows that resolution] | documents list |
+| `document_expiry` | `/[tripId]/more/documents` when trip-associated, else the documents vault via the profile home (trip-list header avatar — navigation §1, resolved Gate 2) | documents list |
 | `settle_up` | `/[tripId]/money/request/[requestId]` (navigation registry row) | money tab, request-resolved empty state |
-| `flight_status` | reserved (companion R-notif-6 marker) | — |
+| `flight_status` | reserved — deferred to v2 (companion R-notif-6, resolved Gate 2) | — |
 
 Foreground arrivals: `itinerary_change` applies invalidation silently
 (R-sync-7) and shows no banner for the actor's own echo; other categories
@@ -405,7 +387,6 @@ Root: `today-screen`. Interactive/asserted elements:
 | Quick action: map | `today-button-map` |
 | Quick action: add expense | `today-button-add-expense` |
 | Quick action: add photo | `today-button-add-photo` |
-| Activity ticker row | `today-ticker` |
 | Timeline list | `today-list` |
 | Timeline item (dynamic) | `today-list-item-{itemId}` |
 | Leg row (dynamic) | `today-leg-{fromItemId}-{toItemId}` |
@@ -435,9 +416,10 @@ render indexes (navigation §2.7 rule 5).
 - **Expense/photo/packing screen internals** — their domain specs; quick
   actions only navigate.
 - **Realtime presence/live cursors** — PLANNING: no sockets v1; event-log
-  seam later.
-- **Recap surface for past trips** — recaps have an open persistence marker
-  (schema §3.7); R-today-11 links to photos only until that resolves.
+  seam later (the deferred v2 activity feed rides that seam).
+- **Recap surface for past trips** — recap persistence resolved Gate 2
+  (`recaps` table approved, schema §3.7); the recap UI is a later surface —
+  R-today-11 links to photos only in v1.
 
 ---
 
@@ -454,7 +436,7 @@ TDY-1.
 | TDY-2 | Offline bundle infra: SQLite schema mirroring shared shapes, bundle download/refresh orchestrator (wifi trigger, manual trigger, incremental refresh), `synced_at` staleness plumbing, weather snapshot persistence. | R-sync-1..4, R-sync-8 |
 | TDY-3 | Mutation queue: shared `OfflineMutation` schema (`domains/offline.ts` — coordinated contracts-spec addition), persisted queue + optimistic updates, FIFO drain + backoff, failed-changes UI with retry/discard. | R-sync-5, R-sync-6 |
 | TDY-4 | Notification tap-routing: registry extension per §2.8 table, cold/warm parity, foreground banner behavior, `itinerary_change` → TQ invalidation mapping, hero focus for leave-by taps. | R-route-1..4, R-sync-7 |
-| TDY-5 | Ticker (blocked on §1.5 marker) — placeholder task, unschedulable until the data source is decided. | R-today-12 |
+| ~~TDY-5~~ | REMOVED — ticker dropped from v1; activity feed deferred to v2 (§1.5, resolved Gate 2). | R-today-12 (deferred) |
 
 **Tests required (minimum):**
 
@@ -480,6 +462,9 @@ TDY-1.
 
 ---
 
-*Trace: R-today/R-sync/R-route cite design sections inline. §1.4 markers
-resolve in their canonical homes (navigation, schema); §1.5's ticker marker
-is this spec's P-2 interview question for Sean. Zero markers = approvable.*
+*Trace: R-today/R-sync/R-route cite design sections inline. All markers
+resolved at Gate 2 (2026-07-09): §1.4 at their canonical homes (multi-active
+launch → most-recently-viewed active trip; status derived + override;
+multi-day → one spanning item), §1.5 owned here (ticker dropped from v1;
+activity feed deferred to v2 — R-today-12 is a deferred tombstone). Zero
+markers remain.*

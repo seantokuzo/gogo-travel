@@ -139,47 +139,46 @@ candidate supports.
   HEAD verification (a client can lie at mint time; the object can't);
   slot minting SHALL be rate-limited per user (`RATE_LIMITED`).
 
-### Open questions (blocking approval)
+### Resolved questions (Gate 2, 2026-07-09)
 
-Repeated verbatim from the canonical schema spec — both gate this spec's
-public surface (`.specs/database/schema.spec.md §3.3.17`):
+Canonical resolutions inherited from the schema spec:
 
-- [NEEDS CLARIFICATION: PLANNING says public photos let others "see
-  experiences/reviews" — is a photo + caption the whole v1 review surface,
-  or are ratings/review text a separate concept? Determines whether
-  `caption` suffices or a review entity must be specced (none exists in
-  PLANNING's entity list).]
-- [NEEDS CLARIFICATION: where do public photos surface for non-members —
-  browsing a place's detail view, a destination gallery, both? Affects API
-  authz spec and whether the partial index above needs `taken_at` for
-  ordering. Schema keeps the minimal partial index until the surface is
-  defined.]
+- Resolved at `.specs/database/schema.spec.md`:§3.3.17 (Gate 2,
+  2026-07-09): photo + caption IS the whole v1 review surface — no
+  separate review/rating entity.
+- Resolved at `.specs/database/schema.spec.md`:§3.3.17 (Gate 2,
+  2026-07-09): public photos surface for non-members on the **place detail
+  sheet only** in v1 (destination gallery is a later phase). §3.7.8's
+  route placement is therefore settled (consumed by the place detail
+  sheet), the shape stays unattributed (no uploader named v1), and
+  `created_at DESC` ordering over the minimal partial index suffices at
+  place-detail scale.
 
-This spec's extension of those markers: §3.7.8 defines the public-by-place
-endpoint's **authz contract** (public-only rows, redacted shape) because the
-visibility check is settled law regardless of surface — but its route
-placement, attribution (is the uploader named?), and ordering-at-scale stay
-open until the markers resolve. Do not build §3.7.8's consuming UI first.
+Decisions owned by this spec (formerly new markers):
 
-New markers introduced by this spec:
+- **Photo moderation — decided:** the trip owner MAY delete any photo
+  within the trip (content governance in shared albums); deletion is the
+  only moderation power — visibility authority stays uploader-only per
+  R-photo-7. See R-photo-15. (Resolved 2026-07-09, Gate 2)
+- **Member departure — decided:** when a member leaves or is removed,
+  their photos remain in the trip (history preserved) and the uploader
+  retains owner rights (edit/visibility/delete) via `user_id`. See
+  R-photo-16. (Resolved 2026-07-09, Gate 2)
+- **Location-consent posture — decided:** EXIF GPS extraction (R-photo-3)
+  is per-upload opt-in via the priming flow; after the first consent the
+  client remembers the choice as the default toggle state for subsequent
+  uploads (still per-upload, always flippable — client photos spec owns
+  the UI). (Resolved 2026-07-09, Gate 2)
 
-- [NEEDS CLARIFICATION: photo moderation — may a trip owner delete another
-  member's photo from the trip (content governance in shared albums), or is
-  deletion strictly uploader-only? Deletion only — visibility authority is
-  settled as uploader-only by R-photo-7. User-visible governance in
-  collaborative trips.]
-- [NEEDS CLARIFICATION: when a member leaves or is removed from a trip, what
-  happens to their photos? Options: (a) rows remain (trip history preserved;
-  departed user keeps owner rights via `user_id`), (b) rows deleted with
-  membership, (c) rows remain but drop to `private`. `photos.user_id` is ON
-  DELETE RESTRICT pending R-db-16, but membership removal is not account
-  deletion — this is a separate, user-visible policy.]
-- [NEEDS CLARIFICATION: location-consent posture — is EXIF GPS extraction
-  (R-photo-3) per-upload opt-in via the priming flow (privacy-max, Law #3
-  aligned — recommended), a one-time global opt-in stored in `users.prefs`,
-  or default-on with priming? Auto-association (the headline pin-to-place
-  feature) only works when location is extracted, so the default materially
-  shapes the product.]
+- **R-photo-15 (owner moderation):** WHEN the trip owner deletes another
+  member's photo THE SYSTEM SHALL allow it (deletion only — R-photo-12
+  mechanics apply); no role other than uploader and trip owner may delete,
+  and no role but the uploader may edit caption/pins/visibility. (Resolved
+  2026-07-09, Gate 2)
+- **R-photo-16 (departed members' photos):** WHEN a member leaves or is
+  removed from a trip THE SYSTEM SHALL leave their `photos` rows unchanged
+  (visibility included); the departed uploader retains owner rights over
+  their photos via `user_id`. (Resolved 2026-07-09, Gate 2)
 
 ---
 
@@ -253,7 +252,8 @@ enforced by the `storage_key` unique constraint).
      present — no external service), else UTC;
   4. else NULL (clients fall back to `created_at` for grouping).
 - **`lat`/`lng`** — extracted from EXIF GPS only when the finalize request
-  carries `extract_location: true` (R-photo-3; posture marker §2). Values
+  carries `extract_location: true` (R-photo-3; per-upload opt-in posture,
+  §2, resolved Gate 2). Values
   are validated into range (±90/±180) and stored at the schema's
   `numeric(9,6)` precision.
 - **Renditions** are always regenerated with metadata stripped — consent
@@ -307,8 +307,9 @@ question arises.
   narrowed photo is unreachable within minutes even by clients holding old
   URLs. That bound is the guarantee; CDN-layer caching (if any lands at P-3)
   must respect it (constraint on the infra escalation).
-- Where `public` rows surface is **not** this spec's to answer — see the two
-  repeated markers in §2. The API contract (§3.7.8) is surface-agnostic.
+- Where `public` rows surface: the place detail sheet only in v1 (§2,
+  resolved Gate 2). The API contract (§3.7.8) remains surface-agnostic by
+  design.
 
 ### 3.7 Endpoints
 
@@ -427,8 +428,8 @@ Single photo detail. **Auth**: Required (member + `canViewPhoto`).
 #### 3.7.5 PATCH `/trips/:tripId/photos/:photoId`
 
 Edit caption / pins / visibility. **Auth**: Required (photo owner only —
-R-photo-7; pins and caption are likewise owner-only, see §2 moderation
-marker for the only contemplated exception, which is deletion).
+R-photo-7; pins and caption are likewise owner-only. The only non-owner
+power is trip-owner deletion — R-photo-15, resolved Gate 2).
 
 **Request** `{ caption?: string | null, place_id?: Uuid | null,
 itinerary_item_id?: Uuid | null, visibility?: PhotoVisibility }` — pin
@@ -448,8 +449,8 @@ trip.
       visibility → 404 (R-photo-7)
 - [ ] Widen `private→trip→public` and narrow `public→private` round-trip;
       narrowed row vanishes from member list and place surface immediately
-- [ ] Caption write pends the reviews-surface marker resolution for its
-      product meaning but is mechanically testable
+- [ ] Caption write round-trips (caption IS the v1 review surface —
+      resolved Gate 2)
 
 #### 3.7.6 GET `/trips/:tripId/photos/:photoId/suggestions`
 
@@ -468,36 +469,38 @@ new place). **Auth**: Required (photo owner).
 
 #### 3.7.7 DELETE `/trips/:tripId/photos/:photoId`
 
-Delete a photo. **Auth**: Required (photo owner; trip-owner moderation
-pends the §2 marker).
+Delete a photo. **Auth**: Required (photo owner, or trip owner as
+moderation — R-photo-15, resolved Gate 2).
 
 **Response 204**
 
-**Errors**: 404 — not owner/absent/hidden.
+**Errors**: 404 — caller neither uploader nor trip owner / absent / hidden.
 
-**Requirements covered**: R-photo-12
+**Requirements covered**: R-photo-12, R-photo-15
 
 **Tests required**:
 - [ ] Row gone; objects scheduled for deletion (all three renditions)
-- [ ] Non-owner 404; idempotent second delete 404
+- [ ] Trip owner deletes another member's photo → 204 (R-photo-15); editor
+      deleting another's photo → 404
+- [ ] Non-owner non-trip-owner 404; idempotent second delete 404
 - [ ] Expense of a deleted photo's trip unaffected (no cross-domain cascade)
 
 #### 3.7.8 GET `/places/:placeId/photos`
 
 Public photos at a place, for users planning their own trips (PLANNING
 § Overview). **Auth**: Required (any signed-in user; membership NOT
-required — this is the sanctioned cross-user surface). **Product surface
-pends the two §2 markers — build the endpoint last, wire no UI until they
-resolve.**
+required — this is the sanctioned cross-user surface). Product surface
+resolved Gate 2: consumed by the **place detail sheet only** in v1.
 
 **Request** query: `cursor?`, `limit?`
 
 **Response 200** `Paginated<PublicPlacePhoto>` where `PublicPlacePhoto =
 { id, place_id, caption, taken_at, blurhash, width, height, thumb_url,
-display_url }` — no `trip_id`, no `user_id`/attribution (pends surface
-marker), no `lat`/`lng` (R-photo-9). Only `visibility = 'public'` rows
-(R-photo-11), via the partial index; ordered `created_at DESC` v1 (the
-`taken_at`-ordering/index question stays with the schema marker).
+display_url }` — no `trip_id`, no `user_id`/attribution (unattributed v1
+per the §2 resolution), no `lat`/`lng` (R-photo-9). Only
+`visibility = 'public'` rows (R-photo-11), via the partial index; ordered
+`created_at DESC` v1 — sufficient for the place-detail-sheet surface
+(resolved Gate 2; a destination gallery would revisit ordering/indexing).
 
 **Errors**: 404 — unknown place.
 
@@ -562,18 +565,16 @@ the abuse guards above are deliberately not product limits.
   the album).** The trip album (by day/place) IS the in-trip journal — the
   Polarsteps lesson is that journaling must live inside the planner
   (`.specs/research/competitors.md` "What users love" #5), which this spec
-  delivers via pins + galleries, not a separate journaling artifact. The
-  generated-recap home remains open in the canonical schema spec (§3.7),
-  repeated verbatim: [NEEDS CLARIFICATION: PLANNING says "recaps generated
-  post-trip (Batch)" but lists no `recaps` table in the entity model. Where
-  does a generated recap live — a new `recaps` table (trip-scoped, jsonb
-  content + status like tour bundles), or reuse `ai_cache` (wrong fit:
-  trip-scoped and permanent, not destination-keyed TTL)? A new table is the
-  obvious design but it's an entity-list addition — needs Sean's nod.]
+  delivers via pins + galleries, not a separate journaling artifact.
+  Recap persistence — Resolved at `.specs/database/schema.spec.md`:§3.7
+  (Gate 2, 2026-07-09): the new `recaps` table is approved; the AI spec
+  owns the recap pipeline.
 - **Storage-side encryption/ACL hardening** — threat model + P-3 infra
   escalation (schema spec §3.7).
-- **Account-deletion interaction with `photos.user_id` RESTRICT** — pends
-  the schema spec R-db-16 marker; not restated here.
+- **Account-deletion interaction with `photos.user_id` RESTRICT** —
+  resolved at schema spec R-db-16 (Gate 2): soft-delete + PII scrub, so
+  user rows survive and RESTRICT never fires on account deletion; not
+  restated here.
 
 ---
 
@@ -586,8 +587,8 @@ Depends on DB-1 (photos table) + SH-1 (`domains/photo.ts`, envelope).
 |---|---|---|
 | PH-1 | `@gogo/shared` photo wire shapes + constants + endpoint descriptors (`Photo`, `PublicPlacePhoto`, upload slot/finalize/patch schemas; `ACCEPTED_PHOTO_MIME`, size/batch constants) — extends `domains/photo.ts` beside the existing `canViewPhoto`. | R-photo-1..5, 9 (shapes) |
 | PH-2 | StoragePort + provider adapter stub + upload pipeline: slot mint (ticket HMAC, rate limit), finalize (HEAD verify, EXIF chain, blurhash, renditions, insert). **Provider selection is the P-3 escalation — adapter lands behind the port.** | R-photo-1..4, 14 |
-| PH-3 | Gallery + detail + PATCH + suggestions + DELETE with `canViewPhoto` enforcement and URL minting; suggestion engine. | R-photo-5..10, 12 |
-| PH-4 | Public-by-place endpoint (**gated: do not start until the two §2 public-surface markers resolve**). | R-photo-11 |
+| PH-3 | Gallery + detail + PATCH + suggestions + DELETE (uploader or trip-owner moderation) with `canViewPhoto` enforcement and URL minting; suggestion engine. | R-photo-5..10, 12, 15, 16 |
+| PH-4 | Public-by-place endpoint (surface resolved Gate 2: place detail sheet only v1). | R-photo-11 |
 | PH-5 | GC job: orphan sweep, missing-object flagging, trip-prefix sweep; scheduling wiring. | R-photo-13 |
 
 **Cross-cutting tests required** (beyond per-endpoint lists): the
@@ -597,7 +598,9 @@ sensitive path (PLANNING § Review Pipeline: auto-escalate).
 
 ---
 
-*Requirements → design trace inline. Six markers total in this file: two
-repeated from schema spec §3.3.17, one repeated from schema spec §3.7
-(recaps), three new (moderation, member-departure, consent posture) — each
-is a P-2 interview question for Sean. Zero markers = approvable.*
+*Requirements → design trace inline. All six markers resolved at Gate 2
+(2026-07-09): two at schema spec §3.3.17 (caption is the v1 review
+surface; public surface = place detail sheet only), one at schema spec
+§3.7 (`recaps` table approved), three owned here (owner moderation →
+R-photo-15; departed members' photos remain → R-photo-16; per-upload
+location consent with remembered default). Zero markers remain.*
