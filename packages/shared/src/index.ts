@@ -29,3 +29,14 @@ export * from "./domains/document.js";
 export * from "./domains/weather.js";
 export * from "./domains/notification.js";
 export * from "./domains/offline.js";
+export * from "./ai/refinement.js";
+export * from "./ai/cache-key.js";
+export { sha256Hex } from "./ai/sha256.js";
+// Feature modules each export their own SCHEMA_VERSION (§3.7 rule 3), so the
+// barrel exposes them as namespaces; subpath imports stay flat.
+export * as aiRecommendations from "./ai/recommendations.js";
+export * as aiExpenseEstimate from "./ai/expense-estimate.js";
+export * as aiTourGuide from "./ai/tour-guide.js";
+export * as aiPackingList from "./ai/packing-list.js";
+export * as aiRecap from "./ai/recap.js";
+export * as aiCaptureExtract from "./ai/capture-extract.js";
