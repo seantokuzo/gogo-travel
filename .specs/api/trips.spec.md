@@ -320,8 +320,8 @@ Update trip fields (partial). **Auth**: Required (per-field per §3.2)
 start_date?, end_date?, theme?, base_currency?, status?,
 expect_updated_at? }`
 — `base_currency` owner-only (§3.6 marker); `status` owner-only
-PROVISIONAL (§3.4 marker); `expect_updated_at` is the optional §3.7
-conflict precondition.
+PROVISIONAL (§3.4 marker); `expect_updated_at` is the optional §3.5
+(rule 2) conflict precondition.
 
 **Response 200** — full updated `Trip` (R-trips-19)
 
