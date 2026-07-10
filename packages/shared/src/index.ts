@@ -1,8 +1,45 @@
 /**
- * @gogo/shared — single source of truth for wire types (Zod schemas, z.infer types).
+ * @gogo/shared — single source of truth for wire types (Zod schemas,
+ * `z.infer` types). No React/RN, no I/O, no env access (R-shared-9).
  *
- * Scaffold placeholder only: the full SH-1 content (enums, scalars, envelope,
- * descriptors, domain modules, ai/* schemas) lands in T-3.2 per
- * .specs/shared/contracts.spec.md. No React/RN, no I/O, no env access (R-shared-9).
+ * Prefer subpath imports (`@gogo/shared/enums`, `@gogo/shared/domains/money`,
+ * …) for tree-shaking (R-shared-14); this barrel re-exports everything for
+ * convenience. `ai/*` modules are re-exported as namespaces because each
+ * exports its own `SCHEMA_VERSION` (contracts spec §3.7 rule 3).
  */
-export const SHARED_PACKAGE_NAME = "@gogo/shared";
+export * from "./enums.js";
+export * from "./scalars.js";
+export * from "./api/envelope.js";
+export * from "./api/descriptor.js";
+export * from "./config/entitlements.js";
+export * from "./config/ai-pricing.js";
+export * from "./domains/user.js";
+export * from "./domains/auth.js";
+export * from "./domains/entitlement.js";
+export * from "./domains/trip.js";
+export * from "./domains/member.js";
+export * from "./domains/place.js";
+export * from "./domains/booking.js";
+export * from "./domains/itinerary.js";
+export * from "./domains/money.js";
+export * from "./domains/capture.js";
+export * from "./domains/photo.js";
+export * from "./domains/packing.js";
+export * from "./domains/document.js";
+export * from "./domains/weather.js";
+export * from "./domains/notification.js";
+export * from "./domains/offline.js";
+export * from "./ai/refinement.js";
+export * from "./ai/cache-key.js";
+// ai/sha256 is deliberately NOT re-exported here: it is an AI-cache-key
+// implementation detail, NOT a general-purpose (let alone security-grade)
+// hash. `deriveAiCacheKey` is the supported surface; anything else that
+// truly needs it must import the module path and read its doc first.
+// Feature modules each export their own SCHEMA_VERSION (§3.7 rule 3), so the
+// barrel exposes them as namespaces; subpath imports stay flat.
+export * as aiRecommendations from "./ai/recommendations.js";
+export * as aiExpenseEstimate from "./ai/expense-estimate.js";
+export * as aiTourGuide from "./ai/tour-guide.js";
+export * as aiPackingList from "./ai/packing-list.js";
+export * as aiRecap from "./ai/recap.js";
+export * as aiCaptureExtract from "./ai/capture-extract.js";
