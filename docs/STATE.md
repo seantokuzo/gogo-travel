@@ -25,7 +25,18 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-2 — Upfront spec suite (in progress; P-1 done except the push)
+### P-3 — Foundations (ACTIVE — build has started)
+
+- **Gate 3 PASSED 2026-07-10.** Exec mode: **in-session, phase by phase**.
+  Palette outcome: all three directions ship as user-selectable themes;
+  default `goldenHour`; palette additions must be pure-data (tokens spec
+  § Resolved). T-3.1 (monorepo scaffold) in progress via engineer subagent —
+  versions pinned live via `npm view`/expo-doctor, never training data.
+- Build loop per CLAUDE.md: build → CI gate → `/review` (5 lanes) → judge →
+  merge `--merge` → ledger update → next task. Escalations only per the
+  Autonomy Contract.
+
+### P-2 — Upfront spec suite (CLOSED 2026-07-10; P-1 push still pending)
 
 - **Where we are:** Gates 1 AND 2 passed 2026-07-09. Full spec suite written
   (18 files, ~280 EARS requirements) by 11 parallel spec agents; all 59
@@ -36,12 +47,16 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   logged in their reports; notable: editors can only edit/delete their OWN
   expenses (per approved permission matrix), sole-owner account deletion →
   409 transfer-first.
-- **Remaining in P-2:** Sean picks a palette (artifact:
-  claude.ai/code/artifact/229f853e-c9d3-49a9-b439-96a0c27f914f) →
-  T-2.4 feature-ledger.json + frozen phase roadmap → **Gate 3** → build.
-- P-1 remainder: push to origin (gh auth), then archive P-1 to history.
-- Sean's open action items: gh auth login · palette pick · (later) buy
-  universal-link domain.
+- **T-2.4 DONE:** `feature-ledger.json` (118 features, F-001..F-118, all
+  `passes:false`, 466 requirement IDs verified) + frozen roadmap **P-3..P-14**
+  (12 phases, ~62 PRs) in PLANNING § Phase Detail. **GATE 3 OPEN — Sean
+  approves the phase plan → P-3 build starts.**
+- Sequencing notes from T-2.4 (binding): places spine ships with trips (P-6);
+  AI expense-estimate CTA stubs in P-9, wires in P-10; capture (P-11) needs
+  the AI platform (P-10); push emitter stubs P-6, transport lands P-13.
+- Sean's open action items: **Gate 3 approval** · palette pick (artifact
+  claude.ai/code/artifact/229f853e-c9d3-49a9-b439-96a0c27f914f) · gh auth
+  login (push) · (later, P-14) buy universal-link domain.
 - **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
   pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
   (canonical GSD template: doc system, autonomous loop, naming ADRs),

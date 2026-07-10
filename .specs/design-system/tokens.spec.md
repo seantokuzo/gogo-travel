@@ -91,15 +91,28 @@
 
 ### Resolved questions (Gate 2)
 
-- **Brand accent palette** — Default palette: PENDING Sean's pick from the
-  three proposed directions — placeholder ramp values remain until then. The
-  token architecture is deliberately palette-agnostic (ramps are pure data,
-  R-ds-5), so the pick swaps hex values only — zero component or mapping
-  changes. (Resolved 2026-07-09, Gate 2 — decision protocol approved;
-  palette pick itself outstanding.)
-- **Accent theme count** — v1 ships **3 accent themes: default + 2** named
-  alternates, proving the re-skin seam without palette-sprawl; naming
-  direction lands with the palette pick. (Resolved 2026-07-09, Gate 2)
+- **Brand palettes — ALL THREE proposed directions ship as user-selectable
+  themes** (Resolved 2026-07-10, Gate 3 — Sean: "I kind of love all these
+  palettes"). The theme registry is the product surface, not just a re-skin
+  seam: users pick their palette in settings, and **adding future palettes
+  must be a pure-data addition** — one theme object in `packages/tokens`, zero
+  component or mapping changes (R-ds-5 already guarantees this; treat any
+  palette addition that requires component edits as a design-system bug).
+  **Default (first-launch) theme: `goldenHour`** — a one-line registry config,
+  flippable anytime.
+
+  Seed values from the approved artifact (full ramps derived + validated by
+  the R-ds-8 contrast-matrix test at build):
+
+  | Theme | Primary ramp (100/300/500/700/900) | Accent (100/500/700) | Light bg/ink | Dark bg/card/ink | Dark primary/accent |
+  |---|---|---|---|---|---|
+  | `goldenHour` (default) | #FBE3DD #F3A795 #D64933 #A83322 #6E2113 | #FDEED3 #E8A33D #9C6716 | #FBF6F0 / #2A211C | #201915 / #2B221D / #F4EBE3 | #E96A50 / #EFB35B |
+  | `deepWaters` | #D9ECEC #7CC2BF #0E6E6B #0A4F4D #063230 | #FDE8D4 #EE8B3A #A85A14 | #F4F7F7 / #16262A | #0E1618 / #162226 / #E9F1F1 | #2FA8A0 / #F2A45E |
+  | `midnightExpress` | #DEE3F2 #93A3CE #2B3A67 #1F2B4E #131B33 | #F3E7CD #C9994B #8A6524 | #F7F4EC / #1F2437 | #131729 / #1C2138 / #EDEEF5 | #5D74B8 / #D4A95C |
+
+- **Accent theme count** — v1 ships **3 palettes** (`goldenHour` default +
+  `deepWaters` + `midnightExpress`), all user-selectable. (Resolved
+  2026-07-10, Gate 3 — supersedes the "default + 2 alternates" framing.)
 - **Theme scope** — the accent theme is a **user-level preference**;
   `trips.theme` colors small trip-scoped accents only (card/header tint) and
   never re-skins the app in v1 (R-ds-22). (Resolved 2026-07-09, Gate 2)
