@@ -687,7 +687,7 @@ auth → membership → dates gate → deriveAiCacheKey → [hit → payload]
   `@gogo/shared/config/ai-pricing.ts`. Server-side only — no keys in the app.
 - **Key inputs** (`deriveAiCacheKey`, contracts spec §3.7): `destination` =
   lowercased, whitespace-collapsed `trips.destination_name`; `travel_style`
-  per R-money-24; `season` = meteorological season of `start_date`, hemisphere
+  per R-money-24; `season` = meteorological season of the trip midpoint (synced 2026-07-10 to canonical ai spec §3.6.2 + shipped `deriveSeason` — an earlier draft said start_date), hemisphere
   from the sign of `destination_lat` (northern assumed when null);
   `schema_version` from `ai/expense-estimate.ts`. Duration and party size are
   deliberately **not** key inputs (R-db-10 fixes the input list) — which

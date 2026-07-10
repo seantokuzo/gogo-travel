@@ -361,10 +361,10 @@ per schema spec R-db-10 and contracts spec §3.7 rule 3 (SCHEMA_VERSION is a
 key input so stale shapes never parse against new schemas — R-shared-8).
 Segment pinning (deterministic + testable):
 
-- `destination` = `lower(trim(trips.destination_name))` — display-string
+- `destination` = `lower(trim(trips.destination_name))` with internal whitespace collapsed to single spaces and control chars stripped (per shipped `canonicalizeDestination`) — display-string
   keyed; coords are used for candidate selection, not the key.
 - `travel_style` = the caller's `UserPrefs.travel_style`, or the literal
-  `"none"` when unset. Resolved at `.specs/shared/contracts.spec.md`:§3.4
+  `'any'` when unset (synced 2026-07-10 to the canonical contracts spec §3.4 and shipped code — an earlier draft said "none"). Resolved at `.specs/shared/contracts.spec.md`:§3.4
   `user.ts` (Gate 2, 2026-07-09): multi-tag from the fixed set budget,
   comfort, luxury, foodie, adventure, culture, nightlife, family,
   relaxation — the key segment serializes the sorted tag list (canonical

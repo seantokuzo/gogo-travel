@@ -71,11 +71,11 @@ Everything reversible AND in-spec runs without asking.
 Locked by [ADR-004](docs/decisions/ADR-004-stack-expo-rn-hono-drizzle.md).
 pnpm workspaces + Turborepo monorepo, TypeScript strict everywhere:
 
-| Workspace | Stack |
-|-----------|-------|
-| `apps/mobile` | Expo + React Native, `expo-router`, TanStack Query (server state), Zustand (client state), `StyleSheet` + design tokens (NO NativeWind unless a deliberate migration ADR says so) |
-| `apps/server` | Hono + `@hono/zod-validator`, Drizzle ORM, Postgres (Neon; `postgres-js` in tests) |
-| `packages/shared` | `@gogo/shared` — Zod schemas as single source of truth; all wire types are `z.infer` |
+| Workspace         | Stack                                                                                                                                                                             |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/mobile`     | Expo + React Native, `expo-router`, TanStack Query (server state), Zustand (client state), `StyleSheet` + design tokens (NO NativeWind unless a deliberate migration ADR says so) |
+| `apps/server`     | Hono + `@hono/zod-validator`, Drizzle ORM, Postgres (Neon; `postgres-js` in tests)                                                                                                |
+| `packages/shared` | `@gogo/shared` — Zod schemas as single source of truth; all wire types are `z.infer`                                                                                              |
 
 iOS first (simulator-driven; XcodeBuildMCP available), Android verification
 pass pre-launch. Exact versions pinned at P-3 scaffold via `npm view` +
@@ -97,21 +97,30 @@ Thin orchestrator, fat workers — decompose into waves, spawn specialists in
 parallel, pass **paths** not contents, no nesting, verify after each wave.
 Full directive: `.agents/agents/orchestrator.md`.
 
-| Agent | Role |
-|-------|------|
-| `orchestrator.md` | Decomposition, wave dispatch, verification |
-| `researcher.md` | Read-only research, Context7-first, confidence-tagged |
-| `reviewer.md` | Single-lane review specialist (spawned by the pipeline) |
-| `backend-engineer.md` | `apps/server` — Hono routes, Drizzle/Postgres, auth |
-| `mobile-engineer.md` | `apps/mobile` — Expo screens, maps, photos, offline, push |
+**Shared-worktree rule** (learned 2026-07-10, P-3): background agents share
+the session's working tree — a checkout by either side moves HEAD for both.
+While an engineer agent owns the tree on a feature branch, the orchestrator
+FREEZES all git writes (no commits, no checkouts); doc updates queue until
+the branch merges. Parallel review lanes: only ONE lane (correctness, which
+runs the CI gate) may checkout; the rest review via `git diff`/`git show`.
+Agents that mutate files in parallel get `isolation: "worktree"`.
+
+| Agent                 | Role                                                      |
+| --------------------- | --------------------------------------------------------- |
+| `orchestrator.md`     | Decomposition, wave dispatch, verification                |
+| `researcher.md`       | Read-only research, Context7-first, confidence-tagged     |
+| `reviewer.md`         | Single-lane review specialist (spawned by the pipeline)   |
+| `backend-engineer.md` | `apps/server` — Hono routes, Drizzle/Postgres, auth       |
+| `mobile-engineer.md`  | `apps/mobile` — Expo screens, maps, photos, offline, push |
 
 ## Planning convention
 
 Stable IDs (`P-N` / `T-N.M` / `B-N` / `S-N`), canonical doc homes, append-only
 ADRs/history, derived execution order. Canonical: [ADR-001](docs/decisions/ADR-001-naming-convention.md)
-+ `.claude/rules/planning-doc-homes.md` (auto-fires on doc reads). Status enum:
-[ADR-002](docs/decisions/ADR-002-status-enum-lock.md). Specs are three-artifact
-(requirements w/ EARS criteria · design · tasks) in `.specs/<area>/`.
+
+- `.claude/rules/planning-doc-homes.md` (auto-fires on doc reads). Status enum:
+  [ADR-002](docs/decisions/ADR-002-status-enum-lock.md). Specs are three-artifact
+  (requirements w/ EARS criteria · design · tasks) in `.specs/<area>/`.
 
 ## Local review pipeline
 
@@ -127,9 +136,9 @@ Configuration`.
 ## Quality Gates (before any task counts as done)
 
 1. Code compiles/builds; 2. tests green (new logic ⇒ new tests); 3. no
-regressions; 4. conventions honored; 5. no secrets/PII in code or logs.
-**CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
-(runnable once the P-3 scaffold lands).
+   regressions; 4. conventions honored; 5. no secrets/PII in code or logs.
+   **CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+   (runnable once the P-3 scaffold lands).
 
 ## Autonomous loop ("spec and walk away")
 

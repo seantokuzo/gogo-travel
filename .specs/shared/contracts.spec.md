@@ -130,6 +130,8 @@ packages/shared/src/
 └── ai/
     ├── constraints.md    # the §3.7 rules, colocated for implementers
     ├── cache-key.ts      # deriveAiCacheKey(feature, destination, travelStyle, season, schemaVersion)
+    ├── refinement.ts     # shared AiRefinementError (added T-3.2 — §3.7 rule 2 support)
+    ├── sha256.ts         # pure-TS SHA-256 for cache keys ONLY (exists because R-shared-9 forbids node:crypto; NOT for secrecy; WTF-8 lone-surrogate behavior pinned permanent)
     ├── recommendations.ts    # output schema + SCHEMA_VERSION
     ├── expense-estimate.ts
     ├── tour-guide.ts     # TourGuideBundle (also the jsonb shape)
