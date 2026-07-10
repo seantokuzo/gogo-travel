@@ -191,9 +191,10 @@ trip+place, offline-downloadable).
 - **Collab sync v1:** REST + optimistic updates, refetch-on-focus,
   push-notification invalidation. No sockets in v1 (last-write-wins is fine
   for small groups); event-log seam kept so realtime can land later.
-- **Auth (proposed — Sean gate):** Sign in with Apple + Google via Expo
-  AuthSession; `jose` JWTs (short-lived access + refresh rotation). Apple
-  sign-in is App-Store-mandatory once any social login exists. Passkeys later.
+- **Auth (LOCKED at Gate 1, 2026-07-09):** Sign in with Apple + Google via
+  Expo AuthSession; `jose` JWTs (short-lived access + refresh rotation).
+  Apple sign-in is App-Store-mandatory once any social login exists. Passkeys
+  later as a non-breaking enhancement. Zero passwords stored.
 - **Capture pipeline:** webhook/share → `capture_inbox` → schema.org JSON-LD
   parse → LLM fallback (Haiku, structured output) → proposed booking →
   user confirms/edits → lands in trip. Failures visible, never silent.

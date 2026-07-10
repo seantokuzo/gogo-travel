@@ -9,7 +9,11 @@
 
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
-| P-2 | Phase: upfront spec suite (architecture/data model → per-feature specs → feature ledger → frozen roadmap; Sean gates between each) | in-progress | P0 | — |
+| P-2 | Phase: upfront spec suite — Gate 1 (architecture+auth) PASSED 2026-07-09 | in-progress | P0 | — |
+| T-2.1 | Spec: DB schema + shared Zod contracts | in-progress | P0 | — |
+| T-2.2 | Spec: design system tokens + navigation IA | in-progress | P0 | — |
+| T-2.3 | Spec bundles: auth/users/entitlements · trips/itinerary/bookings · capture · maps/places · money · AI · photos · notifications/today | queued | P0 | T-2.1 |
+| T-2.4 | feature-ledger.json + frozen phase roadmap → Gate 3 | queued | P0 | T-2.3 |
 
 ## Blocked
 

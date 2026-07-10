@@ -25,12 +25,15 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-1 — Workflow foundation (nearly done)
+### P-2 — Upfront spec suite (in progress; P-1 done except the push)
 
-- **Where we are:** Machinery ported + rebranded (`GOGO-*`), CLAUDE.md + docs +
-  ADRs 1–4 authored, aggregator 31/31 tests green, engineer personas pinned to
-  the locked stack. Committed locally on `main`. **Remaining:** push to origin
-  (blocked on `gh auth login` — Sean), then P-1 closes.
+- **Where we are:** S-2 research done + banked. Sean sign-offs landed
+  2026-07-09: **free v1 + entitlement seams (ADR-005)**, dual-path booking
+  capture, accounts bundle (Anthropic+caps, Mapbox, CloudMailin), foreground-
+  only location. Architecture + entity-level data model + provider table
+  written into PLANNING.md § Architecture. **At Gate 1: Sean approves
+  architecture/data model + auth choice → then per-feature specs fan out.**
+- P-1 remainder: push to origin (gh auth), then archive P-1 to history.
 - **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
   pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
   (canonical GSD template: doc system, autonomous loop, naming ADRs),
@@ -59,7 +62,8 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Blockers / Waiting on Sean
 
-- **Push to origin blocked:** `gh` token invalid — run `gh auth login -h
-  github.com`, then `git push -u origin main` (2 commits waiting).
-- P-2 approval gates ahead: architecture/data model → per-feature specs →
-  frozen phase plan (each is a real stop per the Autonomy Contract).
+- **Push to origin blocked:** `gh` token invalid — Sean runs `gh auth login -h
+  github.com` (5 commits waiting on `main`).
+- **Gate 1 open:** approve PLANNING.md § Architecture (component map, data
+  model, provider table, offline/collab patterns) + pick auth method.
+- Gates ahead: per-feature specs → feature ledger + frozen phase plan.
