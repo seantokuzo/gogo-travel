@@ -5,7 +5,7 @@
   "description": "GoGo Travel — mobile travel app monorepo (Expo/RN + Hono/Drizzle/Postgres)",
   "packageManager": "pnpm@11.11.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9"
   },
   "scripts": {
     "lint": "turbo run lint",

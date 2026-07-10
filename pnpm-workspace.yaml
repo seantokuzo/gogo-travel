@@ -4,5 +4,6 @@ packages:
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+# hono@4.12.29 was younger than the 24h release cooldown at scaffold time (2026-07-10); delete once aged.
 minimumReleaseAgeExclude:
   - hono@4.12.29

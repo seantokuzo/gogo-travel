@@ -16,7 +16,13 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ PORT: "not-a-port" })).not.toThrowError(/not-a-port/);
   });
 
-  it("rejects a malformed DATABASE_URL", () => {
+  it("accepts a well-formed DATABASE_URL", () => {
+    const url = "postgres://u:p@localhost:5432/gogo";
+    expect(loadEnv({ DATABASE_URL: url }).DATABASE_URL).toBe(url);
+  });
+
+  it("rejects a malformed DATABASE_URL without leaking values", () => {
     expect(() => loadEnv({ DATABASE_URL: "nope" })).toThrowError(/DATABASE_URL/);
+    expect(() => loadEnv({ DATABASE_URL: "nope" })).not.toThrowError(/nope/);
   });
 });
