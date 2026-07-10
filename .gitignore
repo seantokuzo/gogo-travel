@@ -16,6 +16,8 @@ coverage/
 .tmp/
 .loop/
 *.log
+.turbo/
+*.tsbuildinfo
 
 # OS / editor
 .DS_Store

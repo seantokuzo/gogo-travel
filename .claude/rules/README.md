@@ -1,6 +1,6 @@
 # Path-Scoped Rules
 
-Convention files auto-loaded by Claude Code when it reads a file matching the `paths` glob in that rule's frontmatter. They encode *how we build here* + the landmines a review already caught, so the next model can't re-step them.
+Convention files auto-loaded by Claude Code when it reads a file matching the `paths` glob in that rule's frontmatter. They encode _how we build here_ + the landmines a review already caught, so the next model can't re-step them.
 
 ## How it works
 
@@ -20,12 +20,11 @@ This README is the index — it has no `paths`, so it doesn't auto-load.
 
 ## Files
 
-| Rule | Scopes | Purpose |
-|------|--------|---------|
-| `planning-doc-homes.md` | `docs/**`, `.specs/**` | What goes where; one home per doc |
-| `pr-review-files.md` | pr-review-pipeline skill | In-session review sentinel/verdict spec |
-| `ci.md` | `.github/workflows/**` | No cron; CI commands; prod-parity |
-| `server.md` | `apps/server/**` | Hono/Drizzle/Socket.io + landmines |
-| `web.md` | `apps/web/**` | React/TanStack + landmines |
-| `mobile.md` | `apps/mobile/**` | Expo/RN + landmines |
-| `shared.md` | `packages/shared/**` | Zod SoT, money, DI, vitest pin |
+| Rule                    | Scopes                   | Purpose                                              |
+| ----------------------- | ------------------------ | ---------------------------------------------------- |
+| `planning-doc-homes.md` | `docs/**`, `.specs/**`   | What goes where; one home per doc                    |
+| `pr-review-files.md`    | pr-review-pipeline skill | In-session review sentinel/verdict spec              |
+| `ci.md`                 | `.github/workflows/**`   | No cron; CI commands; prod-parity (lands with T-3.4) |
+| `server.md`             | `apps/server/**`         | Hono/Drizzle + landmines                             |
+| `mobile.md`             | `apps/mobile/**`         | Expo/RN + landmines                                  |
+| `shared.md`             | `packages/**`            | Zod SoT, money, DI, vitest pin                       |

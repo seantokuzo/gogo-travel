@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+coverage/
+.expo/
+.turbo/
+pnpm-lock.yaml
+feature-ledger.json

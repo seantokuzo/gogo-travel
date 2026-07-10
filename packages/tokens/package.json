@@ -1,0 +1,29 @@
+{
+  "name": "@gogo/tokens",
+  "version": "0.0.1",
+  "private": true,
+  "description": "GoGo Travel design tokens + theme definitions (full token set lands in P-4 per .specs/design-system/tokens.spec.md)",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "eslint": "9.39.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}
