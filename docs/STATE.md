@@ -28,13 +28,19 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 ### P-3 — Foundations (ACTIVE — build has started)
 
 - **Gate 3 PASSED 2026-07-10.** Exec mode: **in-session, phase by phase**.
-  Palette outcome: all three directions ship as user-selectable themes;
-  default `goldenHour`; palette additions must be pure-data (tokens spec
-  § Resolved). T-3.1 (monorepo scaffold) in progress via engineer subagent —
-  versions pinned live via `npm view`/expo-doctor, never training data.
-- Build loop per CLAUDE.md: build → CI gate → `/review` (5 lanes) → judge →
-  merge `--merge` → ledger update → next task. Escalations only per the
-  Autonomy Contract.
+  Palettes: all three ship as user themes; default `goldenHour`.
+- **T-3.1 MERGED (74d6c61)** — first full pipeline run: 5 lanes →
+  fix-then-ship (2 blocking incl. empirically-probed turbo-cache false-green,
+  9 advisory) → fix commit 6ba2acc (all 11 addressed; cache probe re-proven)
+  → impartial judge merge/high (verified firsthand). Defers recorded in
+  QUEUE: jest-expo+render test → P-4; root-config lint coverage → T-3.4.
+- **T-3.2 in progress** (engineer subagent): @gogo/shared per contracts spec —
+  16 domain modules, enum tuples, AI structured-output schemas, money pure
+  functions w/ exhaustive tests. Then review loop → T-3.3 schema → T-3.4 CI.
+- Ledger: no F-flips yet — scaffold-stage features verify at T-3.4/phase
+  close with evidence (Law #8 discipline).
+- Gotcha for future sessions: `node --env-file-if-exists` needs node ≥22.9
+  (engines bumped); mobile TS pin ~6.0.3 is Expo's own — don't "align" it.
 
 ### P-2 — Upfront spec suite (CLOSED 2026-07-10; P-1 push still pending)
 
@@ -86,7 +92,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 ## Blockers / Waiting on Sean
 
 - **Push to origin blocked:** `gh` token invalid — Sean runs `gh auth login -h
-  github.com` (5 commits waiting on `main`).
+github.com` (5 commits waiting on `main`).
 - **Gate 1 open:** approve PLANNING.md § Architecture (component map, data
   model, provider table, offline/collab patterns) + pick auth method.
 - Gates ahead: per-feature specs → feature ledger + frozen phase plan.
