@@ -10,10 +10,9 @@
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
 | P-3 | Phase: foundations — scaffold + `@gogo/shared` + DB schema (PLANNING § P-3) | in-progress | P0 | — |
-| T-3.1 | Monorepo scaffold: pnpm+Turborepo, Expo dev build, Hono server, versions pinned via `npm view`/expo-doctor, path rules + formatter hook | in-progress | P0 | — |
-| T-3.2 | `@gogo/shared` scaffold [SH-1]: enums, scalars, envelope, descriptors, 16 domain modules, ai/* schemas | queued | P0 | T-3.1 |
+| T-3.2 | `@gogo/shared` scaffold [SH-1]: enums, scalars, envelope, descriptors, 16 domain modules, ai/* schemas | in-progress | P0 | — |
 | T-3.3 | DB schema + initial migration + constraint suite [DB-1] | queued | P0 | T-3.2 |
-| T-3.4 | CI gate (`pnpm lint/typecheck/test/build`) + postgres-js test harness | queued | P0 | T-3.1 |
+| T-3.4 | CI gate (`pnpm lint/typecheck/test/build`) + postgres-js test harness + root-config lint coverage (round-1 defer) | queued | P0 | — |
 
 ## Blocked
 
@@ -25,6 +24,7 @@
 
 | ID | Title | Done |
 |----|-------|------|
+| T-3.1 | Monorepo scaffold — merged 74d6c61 after round-1 review (2 blocking fixed incl. empirically-probed turbo cache false-green; judge: merge/high). Defers: jest-expo+render test→P-4, root-config lint→T-3.4 | 2026-07-10 |
 | P-2 | Upfront spec suite — Gates 1+2+3 ALL PASSED; all three palettes ship as user themes (default: goldenHour); exec mode: in-session phase-by-phase | 2026-07-10 |
 | T-2.4 | feature-ledger.json (118 features, F-001..F-118) + frozen phase roadmap P-3..P-14 (PLANNING § Phase Detail) → Gate 3 packet ready | 2026-07-09 |
 | T-2.3 | Spec bundles: auth/users/entitlements · trips/itinerary/bookings · capture · maps/places · money · AI · photos · notifications/today — all drafted, zero markers | 2026-07-09 |
