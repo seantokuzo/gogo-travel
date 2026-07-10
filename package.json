@@ -1,0 +1,29 @@
+{
+  "name": "gogo-travel",
+  "version": "0.0.1",
+  "private": true,
+  "description": "GoGo Travel — mobile travel app monorepo (Expo/RN + Hono/Drizzle/Postgres)",
+  "packageManager": "pnpm@11.11.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.4",
+    "eslint": "9.39.4",
+    "eslint-config-prettier": "10.1.8",
+    "globals": "17.7.0",
+    "prettier": "3.9.5",
+    "turbo": "2.10.4",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.63.0"
+  }
+}
