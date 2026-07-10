@@ -2,13 +2,17 @@
   "name": "@gogo/shared",
   "version": "0.0.1",
   "private": true,
-  "description": "GoGo Travel shared contracts — Zod schemas as the single source of truth (SH-1 lands in T-3.2)",
+  "description": "GoGo Travel shared contracts — Zod schemas as the single source of truth",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
     }
   },
   "files": [
@@ -20,6 +24,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "eslint": "9.39.4",
