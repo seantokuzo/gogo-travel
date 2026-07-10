@@ -45,10 +45,17 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md)**: Expo/RN +
   Hono + Drizzle/Postgres monorepo, iOS-first, StyleSheet+tokens styling.
   Extras all approved (live-trip, utilities, collab, recap).
-- **S-2 — Product research (in progress):** competitor features,
-  booking-deeplink landscape (flights/lodging/rentals/trains), Expo maps SDK
-  choice, Splitwise/Venmo/Zelle integration reality-check, AI provider plan.
-  Feeds the P-2 spec suite; maps/AI choices may spawn ADRs.
+- ~~S-2 product research~~ → **DONE 2026-07-09.** All five streams banked in
+  `.specs/research/`: `competitors.md`, `booking-integrations.md`,
+  `maps-places.md`, `payments-settle-up.md`, `ai-architecture.md`.
+  Headlines: all-in-one slot validated w/ no good competitor execution;
+  splitting+payment-handoff is uncontested; **Mapbox over Google (Google ToS
+  bans Places/Routes content on non-Google maps + AI use — this supersedes
+  the AI report's Google-Places grounding; ground AI in our Overture/FSQ-OS
+  POI spine instead)**; settle-up = record-only ledger + handle deeplinks
+  (formats live-probed); Viator + Ticketmaster APIs instant-approve day one;
+  Amadeus self-serve dies 2026-07-17 (we never touch it). Total run-rate
+  ~$40–120/mo at 1k MAU. Spec-shaping sign-offs pending (see Blockers).
 
 ## Blockers / Waiting on Sean
 

@@ -9,7 +9,7 @@
 
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
-| S-2 | Spike: product + integration research (competitors, deeplinks, maps, payments, AI) | in-progress | P0 | — |
+| P-2 | Phase: upfront spec suite (architecture/data model → per-feature specs → feature ledger → frozen roadmap; Sean gates between each) | in-progress | P0 | — |
 
 ## Blocked
 
@@ -17,16 +17,11 @@
 |----|-------|--------|----------|---------|
 | T-1.3 | Push workflow foundation to origin | blocked | P0 | `gh auth login` needed (Sean) — 2 commits waiting on `main` |
 
-## Up next
-
-| ID | Title | Status | Priority | Depends on |
-|----|-------|--------|----------|------------|
-| P-2 | Phase: upfront spec suite (requirements/design/tasks per feature + feature ledger + frozen roadmap) | queued | P0 | S-2 |
-
 ## Recently done
 
 | ID | Title | Done |
 |----|-------|------|
+| S-2 | Product + integration research — 5 reports banked in `.specs/research/` | 2026-07-09 |
 | T-1.1 | Port workflow machinery from sibling repos | 2026-07-09 (70c0065) |
 | T-1.2 | Author CLAUDE.md + planning docs + ADRs 1–3 | 2026-07-09 (70c0065) |
 | S-1 | Stack decision → [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) (Expo/RN + Hono/Drizzle/Postgres, iOS-first) | 2026-07-09 |
