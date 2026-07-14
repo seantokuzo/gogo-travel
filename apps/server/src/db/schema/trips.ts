@@ -83,7 +83,12 @@ export const invites = pgTable(
     tripId: uuid("trip_id")
       .notNull()
       .references(() => trips.id, { onDelete: "cascade" }),
-    /** ≥128-bit entropy, URL-safe (R-db-9); generation is the API layer's. */
+    /**
+     * ≥128-bit entropy, URL-safe (R-db-9); generation is the API layer's.
+     * Stored plaintext DELIBERATELY (unique lookup by the invite link): the
+     * defense is entropy + `expires_at` + `revoked_at`, not hash-at-rest.
+     * Hashing is an additive later migration if the threat model tightens.
+     */
     token: text("token").notNull().unique(),
     role: tripMemberRole("role").notNull(),
     createdBy: uuid("created_by")

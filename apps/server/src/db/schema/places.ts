@@ -50,6 +50,9 @@ export const places = pgTable(
     // Map viewport bbox queries.
     index("places_lat_lng_idx").on(t.lat, t.lng),
     // Type-ahead search on our spine (pg_trgm, enabled in the initial migration).
+    // P-6 bulk-ingest breadcrumb: at 10^5+ rows/region use BATCHED inserts —
+    // GIN keeps a pending-list that churns badly under row-by-row writes. Never
+    // drop-and-rebuild this index without coordinating with live search traffic.
     index("places_name_trgm_idx").using("gin", t.name.op("gin_trgm_ops")),
     index("places_created_by_idx").on(t.createdBy),
     check("places_custom_source_id_ck", sql`(${t.source} = 'custom') = (${t.sourceId} IS NULL)`),

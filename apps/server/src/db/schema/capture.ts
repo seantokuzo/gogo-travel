@@ -49,7 +49,12 @@ export const captureSenders = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     email: text("email").notNull(),
-    /** ≥128-bit entropy, URL-safe (R-db-9 precedent). */
+    /**
+     * ≥128-bit entropy, URL-safe (R-db-9 precedent). Stored plaintext
+     * DELIBERATELY (unique lookup from the verification link): defense is
+     * entropy + single-use verification, not hash-at-rest. Hashing is an
+     * additive later migration if the threat model tightens.
+     */
     verificationToken: text("verification_token").notNull().unique(),
     /** NULL = pending; only verified rows participate in sender matching. */
     verifiedAt: timestamp("verified_at", { withTimezone: true }),

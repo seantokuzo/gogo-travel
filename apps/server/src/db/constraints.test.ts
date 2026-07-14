@@ -7,14 +7,17 @@
  * transaction-capable driver on purpose — prod uses the Neon WebSocket Pool
  * which is also transaction-capable (landmine #1: neon-http is NOT).
  *
- * Requires Docker. When unavailable the suite SKIPS with a loud warning
- * instead of failing CI — but a skip means DB-1 is NOT verified; treat it
- * as a blocker, not a pass.
+ * Requires Docker. In CI (`process.env.CI`) a Docker-less run is a HARD
+ * FAILURE — a skip must never be mistaken for a verified DB-1. Locally (no
+ * CI) the suite skips with a loud banner so you can still run the rest of the
+ * gate; the turbo `test` task disables its cache (turbo.json) so a local skip
+ * can never be replayed as a cached green.
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import type { BookingDetails } from "@gogo/shared/domains/booking";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -45,6 +48,21 @@ if (!dockerAvailable) {
   );
 }
 
+// CI must verify DB-1 for real. A Docker-less CI run is a HARD FAILURE, never
+// a skip — otherwise a green run is indistinguishable from "never ran". The
+// turbo `test` task also disables caching (turbo.json cache:false) so a local
+// skip can't be replayed as a cached pass. Locally (no CI) we skip with the
+// loud banner above and let the rest of the gate run.
+if (!dockerAvailable && process.env.CI) {
+  it("DB-1 constraint suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
+    throw new Error(
+      "Docker unavailable during a CI run — the DB-1 constraint suite could " +
+        "not verify R-db-1…R-db-22. A skip here is NOT a pass. Provision Docker " +
+        "or a Postgres service container and re-run.",
+    );
+  });
+}
+
 // Container boot (+ first-time image pull) is slow; DB roundtrips are not.
 const BOOT_TIMEOUT_MS = 240_000;
 
@@ -58,9 +76,11 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
     client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
     db = drizzle({ client, schema });
     // R-db-12 baseline: the initial migration applies cleanly to a blank DB.
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
+    await migrate(db, { migrationsFolder });
+    // R-db-12 idempotence: a second migrate() over an already-migrated DB is a
+    // no-op, never an error (a broken hash-journal would throw here).
+    await migrate(db, { migrationsFolder });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -306,6 +326,19 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
   });
 
   // ---------------------------------------------------------------------
+  // §1 timestamp convention — timestamptz everywhere
+  // ---------------------------------------------------------------------
+  describe("timestamp convention (schema spec §1)", () => {
+    it("has zero `timestamp without time zone` columns (all timestamptz)", async () => {
+      const rows = await db.execute(sql`
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND data_type = 'timestamp without time zone'
+      `);
+      expect(rows).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------
   // R-db-3 — photos default-private
   // ---------------------------------------------------------------------
   describe("R-db-3 photos privacy default", () => {
@@ -327,7 +360,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           INSERT INTO photos (trip_id, user_id, storage_key, visibility)
           VALUES (${trip.id}, ${user.id}, ${`photos/${uniq()}.jpg`}, NULL)
         `),
-      /not-null constraint/);
+        /not-null constraint/,
+      );
     });
   });
 
@@ -341,7 +375,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       const second = await seedUser();
       await expectPgError(
         db.insert(schema.tripMembers).values({ tripId: trip.id, userId: second.id, role: "owner" }),
-      /uq_trip_single_owner/);
+        /uq_trip_single_owner/,
+      );
 
       const editor = await seedUser();
       const viewer = await seedUser();
@@ -366,7 +401,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       const trip = await seedTrip(user.id);
       const capture = await seedCapture(user.id);
       await seedBooking(trip.id, user.id, { captureId: capture.id });
-      await expectPgError(seedBooking(trip.id, user.id, { captureId: capture.id }), 
+      await expectPgError(
+        seedBooking(trip.id, user.id, { captureId: capture.id }),
         /bookings_capture_id_uq/,
       );
       await seedBooking(trip.id, user.id);
@@ -380,12 +416,14 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       await db.insert(schema.savedPlaces).values({ tripId: trip.id, placeId: place.id });
       await expectPgError(
         db.insert(schema.savedPlaces).values({ tripId: trip.id, placeId: place.id }),
-      /saved_places_trip_place_uq/);
+        /saved_places_trip_place_uq/,
+      );
 
       await db.insert(schema.tourGuideBundles).values({ tripId: trip.id, placeId: place.id });
       await expectPgError(
         db.insert(schema.tourGuideBundles).values({ tripId: trip.id, placeId: place.id }),
-      /tour_guide_bundles_trip_place_uq/);
+        /tour_guide_bundles_trip_place_uq/,
+      );
     });
 
     it("R-db-15: rejects a duplicate leg, allows the same pair in another mode", async () => {
@@ -405,7 +443,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       await db.insert(schema.travelLegs).values({ ...leg, mode: "walking" });
       await expectPgError(
         db.insert(schema.travelLegs).values({ ...leg, mode: "walking" }),
-      /travel_legs_from_to_mode_uq/);
+        /travel_legs_from_to_mode_uq/,
+      );
       await db.insert(schema.travelLegs).values({ ...leg, mode: "transit" });
     });
 
@@ -422,14 +461,16 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           displayName: "Two",
           appleSub: `apple-${uniq()}`,
         }),
-      /users_email_lower_uq/);
+        /users_email_lower_uq/,
+      );
     });
 
     it("R-db-19 seam: rejects a second recap for the same trip", async () => {
       const user = await seedUser();
       const trip = await seedTrip(user.id);
       await db.insert(schema.recaps).values({ tripId: trip.id });
-      await expectPgError(db.insert(schema.recaps).values({ tripId: trip.id }), 
+      await expectPgError(
+        db.insert(schema.recaps).values({ tripId: trip.id }),
         /recaps_trip_id_uq/,
       );
     });
@@ -438,11 +479,101 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       const user = await seedUser();
       const trip = await seedTrip(user.id);
       await db.insert(schema.packingLists).values({ tripId: trip.id });
-      await expectPgError(db.insert(schema.packingLists).values({ tripId: trip.id }), 
+      await expectPgError(
+        db.insert(schema.packingLists).values({ tripId: trip.id }),
         /packing_lists_shared_trip_uq/,
       );
       // Personal-list seam stays open: a user-scoped list coexists.
       await db.insert(schema.packingLists).values({ tripId: trip.id, userId: user.id });
+    });
+
+    it("rejects a duplicate apple_sub and a duplicate google_sub (auth identity)", async () => {
+      const appleSub = `apple-${uniq()}`;
+      await createUserWithEntitlements(db, {
+        email: `apple-a-${uniq()}@example.com`,
+        displayName: "Apple A",
+        appleSub,
+      });
+      await expectPgError(
+        createUserWithEntitlements(db, {
+          email: `apple-b-${uniq()}@example.com`,
+          displayName: "Apple B",
+          appleSub,
+        }),
+        /users_apple_sub_unique/,
+      );
+
+      const googleSub = `google-${uniq()}`;
+      await createUserWithEntitlements(db, {
+        email: `google-a-${uniq()}@example.com`,
+        displayName: "Google A",
+        googleSub,
+      });
+      await expectPgError(
+        createUserWithEntitlements(db, {
+          email: `google-b-${uniq()}@example.com`,
+          displayName: "Google B",
+          googleSub,
+        }),
+        /users_google_sub_unique/,
+      );
+    });
+
+    it("rejects a duplicate invite token", async () => {
+      const user = await seedUser();
+      const trip = await seedTrip(user.id);
+      const token = `t-${uniq()}`;
+      const base = {
+        tripId: trip.id,
+        role: "editor" as const,
+        createdBy: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      };
+      await db.insert(schema.invites).values({ ...base, token });
+      await expectPgError(
+        db.insert(schema.invites).values({ ...base, token }),
+        /invites_token_unique/,
+      );
+    });
+
+    it("rejects a duplicate refresh-token hash", async () => {
+      const user = await seedUser();
+      const [session] = await db
+        .insert(schema.authSessions)
+        .values({ userId: user.id, platform: "ios" })
+        .returning();
+      const tokenHash = `hash-${uniq()}`;
+      const expiresAt = new Date(Date.now() + 3600_000);
+      await db
+        .insert(schema.refreshTokens)
+        .values({ sessionId: session!.id, tokenHash, expiresAt });
+      await expectPgError(
+        db.insert(schema.refreshTokens).values({ sessionId: session!.id, tokenHash, expiresAt }),
+        /refresh_tokens_token_hash_unique/,
+      );
+    });
+
+    it("rejects a duplicate photo storage_key", async () => {
+      const user = await seedUser();
+      const trip = await seedTrip(user.id);
+      const storageKey = `photos/${uniq()}.jpg`;
+      await db.insert(schema.photos).values({ tripId: trip.id, userId: user.id, storageKey });
+      await expectPgError(
+        db.insert(schema.photos).values({ tripId: trip.id, userId: user.id, storageKey }),
+        /photos_storage_key_unique/,
+      );
+    });
+
+    it("rejects a duplicate budget per (trip, category)", async () => {
+      const user = await seedUser();
+      const trip = await seedTrip(user.id);
+      await db
+        .insert(schema.budgets)
+        .values({ tripId: trip.id, category: "food", currency: "USD" });
+      await expectPgError(
+        db.insert(schema.budgets).values({ tripId: trip.id, category: "food", currency: "USD" }),
+        /budgets_trip_category_uq/,
+      );
     });
   });
 
@@ -453,10 +584,12 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
     it("rejects non-positive expense amounts", async () => {
       const user = await seedUser();
       const trip = await seedTrip(user.id);
-      await expectPgError(seedExpense(trip.id, user.id, { amountCents: 0 }), 
+      await expectPgError(
+        seedExpense(trip.id, user.id, { amountCents: 0 }),
         /expenses_amount_positive_ck/,
       );
-      await expectPgError(seedExpense(trip.id, user.id, { amountCents: -100 }), 
+      await expectPgError(
+        seedExpense(trip.id, user.id, { amountCents: -100 }),
         /expenses_amount_positive_ck/,
       );
     });
@@ -469,30 +602,37 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         db
           .insert(schema.expenseShares)
           .values({ expenseId: expense.id, userId: user.id, shareCents: -1 }),
-      /expense_shares_nonnegative_ck/);
+        /expense_shares_nonnegative_ck/,
+      );
       await expectPgError(
         db
           .insert(schema.budgets)
           .values({ tripId: trip.id, category: "food", capCents: -1, currency: "USD" }),
-      /budgets_cap_nonnegative_ck/);
+        /budgets_cap_nonnegative_ck/,
+      );
       await expectPgError(
         seedBooking(trip.id, user.id, { priceCents: -1, currency: "USD" }),
-      /bookings_price_nonnegative_ck/);
+        /bookings_price_nonnegative_ck/,
+      );
       await expectPgError(
         db.execute(sql`UPDATE trips SET budget_cap_cents = -1 WHERE id = ${trip.id}`),
-      /trips_budget_cap_nonnegative_ck/);
+        /trips_budget_cap_nonnegative_ck/,
+      );
     });
 
     it("R-db-13: rejects non-uppercase currencies and a price without a currency", async () => {
       const user = await seedUser();
       const trip = await seedTrip(user.id);
-      await expectPgError(seedExpense(trip.id, user.id, { currency: "usd" }), 
+      await expectPgError(
+        seedExpense(trip.id, user.id, { currency: "usd" }),
         /expenses_currency_upper_ck/,
       );
       await expectPgError(
         db.execute(sql`UPDATE trips SET base_currency = 'usd' WHERE id = ${trip.id}`),
-      /trips_base_currency_upper_ck/);
-      await expectPgError(seedBooking(trip.id, user.id, { priceCents: 10_000 }), 
+        /trips_base_currency_upper_ck/,
+      );
+      await expectPgError(
+        seedBooking(trip.id, user.id, { priceCents: 10_000 }),
         /bookings_price_currency_ck/,
       );
     });
@@ -509,20 +649,24 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           endDate: "2026-08-01",
           createdBy: user.id,
         }),
-      /trips_dates_ck/);
+        /trips_dates_ck/,
+      );
     });
 
     it("R-db-6: rejects custom places with a source_id, imports without one, and orphan customs", async () => {
       const creator = await seedUser();
       await expectPgError(
         seedPlace({ source: "custom", sourceId: `bad-${uniq()}`, createdBy: creator.id }),
-      /places_custom_source_id_ck/);
-      await expectPgError(seedPlace({ source: "overture", sourceId: null }), 
+        /places_custom_source_id_ck/,
+      );
+      await expectPgError(
+        seedPlace({ source: "overture", sourceId: null }),
         /places_custom_source_id_ck/,
       );
       await expectPgError(
         seedPlace({ source: "custom", sourceId: null, createdBy: null }),
-      /places_custom_created_by_ck/);
+        /places_custom_created_by_ck/,
+      );
     });
 
     it("rejects itinerary kind/column mismatches", async () => {
@@ -532,23 +676,28 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       const booking = await seedBooking(trip.id, user.id);
       await expectPgError(
         seedItineraryItem(trip.id, user.id, { kind: "booking", bookingId: null }),
-      /itinerary_items_booking_kind_ck/);
+        /itinerary_items_booking_kind_ck/,
+      );
       await expectPgError(
         seedItineraryItem(trip.id, user.id, { kind: "place_visit", placeId: null }),
-      /itinerary_items_place_visit_kind_ck/);
+        /itinerary_items_place_visit_kind_ck/,
+      );
       await expectPgError(
         seedItineraryItem(trip.id, user.id, { kind: "custom", title: null }),
-      /itinerary_items_custom_title_ck/);
+        /itinerary_items_custom_title_ck/,
+      );
       await expectPgError(
         seedItineraryItem(trip.id, user.id, {
           kind: "place_visit",
           placeId: place.id,
           bookingId: booking.id,
         }),
-      /itinerary_items_booking_only_ck/);
+        /itinerary_items_booking_only_ck/,
+      );
       await expectPgError(
         seedItineraryItem(trip.id, user.id, { day: "2026-08-05", endDay: "2026-08-04" }),
-      /itinerary_items_end_day_ck/);
+        /itinerary_items_end_day_ck/,
+      );
     });
 
     it("rejects self-legs and negative durations/distances", async () => {
@@ -566,15 +715,18 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         provider: "mapbox",
         computedAt: new Date(),
       };
-      await expectPgError(db.insert(schema.travelLegs).values({ ...leg, toItemId: a.id }), 
+      await expectPgError(
+        db.insert(schema.travelLegs).values({ ...leg, toItemId: a.id }),
         /travel_legs_not_self_ck/,
       );
       await expectPgError(
         db.insert(schema.travelLegs).values({ ...leg, durationSeconds: -1 }),
-      /travel_legs_duration_nonnegative_ck/);
+        /travel_legs_duration_nonnegative_ck/,
+      );
       await expectPgError(
         db.insert(schema.travelLegs).values({ ...leg, distanceMeters: -1 }),
-      /travel_legs_distance_nonnegative_ck/);
+        /travel_legs_distance_nonnegative_ck/,
+      );
     });
 
     it("rejects 'ready' bundles and recaps without content", async () => {
@@ -585,10 +737,12 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         db
           .insert(schema.tourGuideBundles)
           .values({ tripId: trip.id, placeId: place.id, status: "ready" }),
-      /tour_guide_bundles_ready_content_ck/);
+        /tour_guide_bundles_ready_content_ck/,
+      );
       await expectPgError(
         db.insert(schema.recaps).values({ tripId: trip.id, status: "ready" }),
-      /recaps_ready_content_ck/);
+        /recaps_ready_content_ck/,
+      );
     });
 
     it("rejects self-settlements and self-requests", async () => {
@@ -604,7 +758,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           method: "venmo",
           createdBy: user.id,
         }),
-      /settlements_not_self_ck/);
+        /settlements_not_self_ck/,
+      );
       await expectPgError(
         db.insert(schema.settlementRequests).values({
           tripId: trip.id,
@@ -613,7 +768,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           amountCents: 1_000,
           currency: "USD",
         }),
-      /settlement_requests_not_self_ck/);
+        /settlement_requests_not_self_ck/,
+      );
     });
 
     it("rejects live accounts with no provider identity; allows scrubbed rows", async () => {
@@ -621,7 +777,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         db
           .insert(schema.users)
           .values({ email: `no-sub-${uniq()}@example.com`, displayName: "Ghost" }),
-      /users_identity_or_scrubbed_ck/);
+        /users_identity_or_scrubbed_ck/,
+      );
       // Scrubbed soft-deleted rows legitimately have no identity (R-db-16).
       const [scrubbed] = await db
         .insert(schema.users)
@@ -644,12 +801,14 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       };
       await expectPgError(
         db.insert(schema.invites).values({ ...base, token: `t-${uniq()}`, role: "owner" }),
-      /invites_role_not_owner_ck/);
+        /invites_role_not_owner_ck/,
+      );
       await expectPgError(
         db
           .insert(schema.invites)
           .values({ ...base, token: `t-${uniq()}`, role: "editor", maxUses: 0 }),
-      /invites_max_uses_positive_ck/);
+        /invites_max_uses_positive_ck/,
+      );
     });
 
     it("R-db-20/R-db-21: rejects unpaired fx and unpaired soft-delete columns", async () => {
@@ -657,8 +816,10 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       const trip = await seedTrip(user.id);
       await expectPgError(
         seedExpense(trip.id, user.id, { fxRate: "0.00670000", baseAmountCents: null }),
-      /expenses_fx_pair_ck/);
-      await expectPgError(seedExpense(trip.id, user.id, { deletedAt: new Date() }), 
+        /expenses_fx_pair_ck/,
+      );
+      await expectPgError(
+        seedExpense(trip.id, user.id, { deletedAt: new Date() }),
         /expenses_deleted_pair_ck/,
       );
     });
@@ -671,7 +832,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           email: `Upper-${uniq()}@Example.com`,
           verificationToken: `v-${uniq()}`,
         }),
-      /capture_senders_email_lower_ck/);
+        /capture_senders_email_lower_ck/,
+      );
       await expectPgError(
         db.insert(schema.documents).values({
           userId: user.id,
@@ -679,7 +841,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           title: "Passport",
           remindDaysBefore: 0,
         }),
-      /documents_remind_days_positive_ck/);
+        /documents_remind_days_positive_ck/,
+      );
     });
   });
 
@@ -727,6 +890,35 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .insert(schema.documents)
         .values({ userId: owner.id, tripId: trip.id, kind: "visa", title: "Japan visa" })
         .returning();
+      // A second member so invites / settlements / requests can be seeded
+      // (settlements & requests are not-self, needing two distinct users).
+      const other = await seedUser();
+      await db
+        .insert(schema.tripMembers)
+        .values({ tripId: trip.id, userId: other.id, role: "editor" });
+      await db.insert(schema.invites).values({
+        tripId: trip.id,
+        token: `t-${uniq()}`,
+        role: "editor",
+        createdBy: owner.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
+      });
+      await db.insert(schema.settlements).values({
+        tripId: trip.id,
+        fromUserId: owner.id,
+        toUserId: other.id,
+        amountCents: 5_000,
+        currency: "USD",
+        method: "venmo",
+        createdBy: owner.id,
+      });
+      await db.insert(schema.settlementRequests).values({
+        tripId: trip.id,
+        fromUserId: other.id,
+        toUserId: owner.id,
+        amountCents: 5_000,
+        currency: "USD",
+      });
 
       await db.delete(schema.trips).where(eq(schema.trips.id, trip.id));
 
@@ -742,6 +934,9 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         schema.tourGuideBundles.tripId,
         schema.recaps.tripId,
         schema.packingLists.tripId,
+        schema.invites.tripId,
+        schema.settlements.tripId,
+        schema.settlementRequests.tripId,
       ];
       for (const column of tripScoped) {
         const rows = await db.execute(
@@ -809,7 +1004,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .insert(schema.tripMembers)
         .values({ tripId: trip.id, userId: payer.id, role: "editor" });
       await seedExpense(trip.id, payer.id);
-      await expectPgError(db.delete(schema.users).where(eq(schema.users.id, payer.id)), 
+      await expectPgError(
+        db.delete(schema.users).where(eq(schema.users.id, payer.id)),
         /violates foreign key constraint/,
       );
     });
@@ -857,7 +1053,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .insert(schema.savedPlaces)
         .values({ tripId: trip.id, placeId: place.id })
         .returning();
-      await expectPgError(db.delete(schema.places).where(eq(schema.places.id, place.id)), 
+      await expectPgError(
+        db.delete(schema.places).where(eq(schema.places.id, place.id)),
         /violates foreign key constraint/,
       );
 
@@ -939,6 +1136,47 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .where(eq(schema.photos.id, photo!.id));
       expect(photoAfter?.itineraryItemId).toBeNull();
     });
+
+    it("settlement delete SET-NULLs the settlement_request that referenced it", async () => {
+      const owner = await seedUser();
+      const other = await seedUser();
+      const trip = await seedTrip(owner.id);
+      await db
+        .insert(schema.tripMembers)
+        .values({ tripId: trip.id, userId: other.id, role: "editor" });
+      const [settlement] = await db
+        .insert(schema.settlements)
+        .values({
+          tripId: trip.id,
+          fromUserId: owner.id,
+          toUserId: other.id,
+          amountCents: 5_000,
+          currency: "USD",
+          method: "venmo",
+          createdBy: owner.id,
+        })
+        .returning();
+      const [request] = await db
+        .insert(schema.settlementRequests)
+        .values({
+          tripId: trip.id,
+          fromUserId: other.id,
+          toUserId: owner.id,
+          amountCents: 5_000,
+          currency: "USD",
+          settlementId: settlement!.id,
+        })
+        .returning();
+
+      await db.delete(schema.settlements).where(eq(schema.settlements.id, settlement!.id));
+
+      const [after] = await db
+        .select()
+        .from(schema.settlementRequests)
+        .where(eq(schema.settlementRequests.id, request!.id));
+      expect(after).toBeDefined();
+      expect(after?.settlementId).toBeNull();
+    });
   });
 
   // ---------------------------------------------------------------------
@@ -966,10 +1204,37 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           // FK violation: entitlements for a user that doesn't exist.
           await tx.insert(schema.entitlements).values({ userId: randomUUID() });
         }),
-      /violates foreign key constraint/);
+        /violates foreign key constraint/,
+      );
 
       const rows = await db.select().from(schema.users).where(eq(schema.users.email, email));
       expect(rows).toHaveLength(0);
+    });
+
+    it("rolls the users row back when createUserWithEntitlements' own entitlements write fails", async () => {
+      // Regression guard: fault-inject the helper ITSELF (the test above hand-
+      // rolls its own transaction and would still pass if the helper's
+      // db.transaction wrapper — the exact thing R-db-5 protects — were removed).
+      // A CHECK (false) NOT VALID rejects any NEW entitlements insert without
+      // touching existing rows, so the helper's second write blows up mid-tx.
+      await db.execute(
+        sql`ALTER TABLE entitlements ADD CONSTRAINT tmp_fail CHECK (false) NOT VALID`,
+      );
+      const email = `helper-rollback-${uniq()}@example.com`;
+      try {
+        await expectPgError(
+          createUserWithEntitlements(db, {
+            email,
+            displayName: "Doomed",
+            appleSub: `apple-${uniq()}`,
+          }),
+          /tmp_fail/,
+        );
+        const rows = await db.select().from(schema.users).where(eq(schema.users.email, email));
+        expect(rows).toHaveLength(0);
+      } finally {
+        await db.execute(sql`ALTER TABLE entitlements DROP CONSTRAINT tmp_fail`);
+      }
     });
   });
 
@@ -990,6 +1255,11 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
               calls: sql`${schema.aiUsage.calls} + 1`,
               inputTokens: sql`${schema.aiUsage.inputTokens} + ${input}`,
               outputTokens: sql`${schema.aiUsage.outputTokens} + ${output}`,
+              // EXEMPLAR (correctness landmine): Drizzle's `$onUpdate` does NOT
+              // fire through `onConflictDoUpdate`, so every upsert set-clause
+              // must bump `updated_at` by hand or the row's timestamp freezes at
+              // first insert. See schema/_shared.ts.
+              updatedAt: sql`now()`,
             },
           });
 
@@ -1010,6 +1280,33 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       expect(row?.calls).toBe(2);
       expect(row?.inputTokens).toBe(125);
       expect(row?.outputTokens).toBe(50);
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // JSONB $type persistence
+  // ---------------------------------------------------------------------
+  describe("JSONB round-trip (R-db-11 $type columns)", () => {
+    it("writes a real BookingDetails payload to bookings.details and reads it back intact", async () => {
+      const user = await seedUser();
+      const trip = await seedTrip(user.id);
+      const details: BookingDetails = {
+        category: "lodging",
+        property_name: "Park Hyatt Tokyo",
+        address: "3-7-1-2 Nishishinjuku, Shinjuku-ku",
+        check_in: "2026-08-01T15:00:00+09:00",
+        check_out: "2026-08-05T11:00:00+09:00",
+        guests: 2,
+        room_type: "Park Deluxe King",
+        provider: "direct",
+        notes: "High floor requested",
+      };
+      const booking = await seedBooking(trip.id, user.id, { details });
+      const [row] = await db
+        .select()
+        .from(schema.bookings)
+        .where(eq(schema.bookings.id, booking.id));
+      expect(row?.details).toEqual(details);
     });
   });
 });

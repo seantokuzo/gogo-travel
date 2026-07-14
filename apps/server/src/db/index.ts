@@ -38,7 +38,13 @@ export function getDb(): Db {
 
   // Node has no global WebSocket wired into the Neon driver — inject `ws`.
   neonConfig.webSocketConstructor = ws;
-  pool = new Pool({ connectionString: env.DATABASE_URL });
+  pool = new Pool({
+    connectionString: env.DATABASE_URL,
+    // Fail fast on acquisition instead of queueing handlers forever when the
+    // pool is saturated or the DB is unreachable (node-postgres default is
+    // 0 = wait indefinitely — a request-hang footgun under load).
+    connectionTimeoutMillis: 10_000,
+  });
   db = drizzle({ client: pool, schema });
   return db;
 }
