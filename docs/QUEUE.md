@@ -10,8 +10,7 @@
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
 | P-3 | Phase: foundations — scaffold + `@gogo/shared` + DB schema (PLANNING § P-3) | in-progress | P0 | — |
-| T-3.3 | DB schema + initial migration + constraint suite [DB-1] | in-progress | P0 | — |
-| T-3.4 | CI gate (`pnpm lint/typecheck/test/build`) + postgres-js test harness + root-config lint coverage (round-1 defer) | queued | P0 | — |
+| T-3.4 | CI gate + postgres-js test harness + root-config lint coverage (round-1 defer) | in-progress | P0 | — |
 
 ## Blocked
 
@@ -23,6 +22,7 @@
 
 | ID | Title | Done |
 |----|-------|------|
+| T-3.3 | DB schema merged — 30 tables column-exact, migration 0000 + pg_trgm, 47 constraint tests on live postgres; Docker-skip cache trap fixed (CI hard-fail + turbo cache:false); judge merge/high, escalation ruled mechanical | 2026-07-14 |
 | T-3.2 | @gogo/shared merged 7a1de80 — 259 tests; 2 security blockers fixed + judge-red-teamed (46 probes, 0 bypasses); judge merge/high, ultra-escalation ruled unnecessary. Follow-up advisories for consumer tasks: reject dot-only paypalme handles (AU-4), trim-normalize kept external_url (CAP tasks) | 2026-07-10 |
 | T-3.1 | Monorepo scaffold — merged 74d6c61 after round-1 review (2 blocking fixed incl. empirically-probed turbo cache false-green; judge: merge/high). Defers: jest-expo+render test→P-4, root-config lint→T-3.4 | 2026-07-10 |
 | P-2 | Upfront spec suite — Gates 1+2+3 ALL PASSED; all three palettes ship as user themes (default: goldenHour); exec mode: in-session phase-by-phase | 2026-07-10 |
