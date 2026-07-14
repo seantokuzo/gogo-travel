@@ -14,7 +14,12 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      // cache:false is deliberate. The DB-1 constraint suite SKIPS when Docker
+      // is down (local dev); a cached "pass" from a skip run would replay as
+      // FULL TURBO green even after Docker starts — hiding an unverified suite.
+      // Do not re-enable without a Docker-availability signal in the task hash.
+      "cache": false
     },
     "dev": {
       "cache": false,

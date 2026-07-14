@@ -7,7 +7,11 @@ import { z } from "zod";
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
-  /** Postgres connection string — optional until the schema lands (T-3.3). */
+  /**
+   * Postgres (Neon) connection string. Optional at boot so the health
+   * endpoint can run DB-less; `getDb()` (src/db) throws without it on first
+   * database access.
+   */
   DATABASE_URL: z.url().optional(),
 });
 

@@ -2,7 +2,14 @@ packages:
   - apps/*
   - packages/*
 allowBuilds:
+  # bufferutil (ws) and cpu-features/ssh2 (testcontainers) are optional native
+  # accelerators; protobufjs's postinstall only serves its CLI. All four work
+  # as pure-JS fallbacks — build scripts declined deliberately (T-3.3).
+  bufferutil: false
+  cpu-features: false
   esbuild: true
+  protobufjs: false
+  ssh2: false
   unrs-resolver: true
 # hono@4.12.29 was younger than the 24h release cooldown at scaffold time (2026-07-10); delete once aged.
 minimumReleaseAgeExclude:
