@@ -34,9 +34,17 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   9 advisory) → fix commit 6ba2acc (all 11 addressed; cache probe re-proven)
   → impartial judge merge/high (verified firsthand). Defers recorded in
   QUEUE: jest-expo+render test → P-4; root-config lint coverage → T-3.4.
-- **T-3.2 in progress** (engineer subagent): @gogo/shared per contracts spec —
-  16 domain modules, enum tuples, AI structured-output schemas, money pure
-  functions w/ exhaustive tests. Then review loop → T-3.3 schema → T-3.4 CI.
+- **T-3.2 MERGED (7a1de80)** — @gogo/shared: 16 domains, 259 tests; 2 security
+  blockers fixed + judge-red-teamed (46 probes, 0 bypasses).
+- **T-3.3 MERGED (22c7496)** — 30 tables column-exact, migration 0000 +
+  pg_trgm, 47 constraint tests on live postgres; Docker-skip cache trap fixed
+  (CI hard-fail + turbo cache:false).
+- **T-3.4 in progress (restarted 2026-07-16** — first attempt killed by spend
+  limit before any commits): CI workflow (deterministic-only + Law-#5 guard
+  job + ci-success gate), root-config lint coverage, `.claude/rules/ci.md`.
+  Last P-3 task; phase close + ledger flips follow.
+- **PUSHED to origin 2026-07-16** — full history on
+  github.com/seantokuzo/gogo-travel (gh auth finally valid).
 - Ledger: no F-flips yet — scaffold-stage features verify at T-3.4/phase
   close with evidence (Law #8 discipline).
 - Gotcha for future sessions: `node --env-file-if-exists` needs node ≥22.9
@@ -91,8 +99,6 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Blockers / Waiting on Sean
 
-- **Push to origin blocked:** `gh` token invalid — Sean runs `gh auth login -h
-github.com` (5 commits waiting on `main`).
-- **Gate 1 open:** approve PLANNING.md § Architecture (component map, data
-  model, provider table, offline/collab patterns) + pick auth method.
-- Gates ahead: per-feature specs → feature ledger + frozen phase plan.
+- ~~Push blocked~~ → RESOLVED 2026-07-16: pushed to origin.
+- ~~All P-2 gates~~ → passed. No open Sean items except: (P-14) buy the
+  universal-link domain.
