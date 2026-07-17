@@ -12,8 +12,8 @@ mechanically; don't fight it.
   months.
 - **No LLM, no metered API keys in CI** (Law #5, ADR-003). No
   `ANTHROPIC_API_KEY`, no claude actions. Reviews run in-session on Max.
-- **The gate is** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
-  (`lint` includes `lint:root` for root configs + `.github/scripts/`).
+- **Gate per CLAUDE.md § Quality Gates**; note `lint` includes `lint:root`
+  (root configs + `.github/scripts/` — nothing else lints those).
 - **The DB constraint suite must RUN in CI, never skip**: `CI=true` makes the
   Docker-down path hard-fail (T-3.3). ubuntu-latest has a native Docker
   daemon; testcontainers works without setup.

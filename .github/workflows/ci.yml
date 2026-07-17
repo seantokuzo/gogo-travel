@@ -33,10 +33,13 @@ jobs:
       - name: No scheduled/cron CI triggers
         run: |
           # ADR-003 cost guardrail: CI runs only on push / pull_request /
-          # workflow_dispatch — never on a timer.
-          # (Pattern is anchored to line-start keys so this guard's own
-          # comments and grep string can't self-match.)
-          if grep -rnE '^[[:space:]]*(schedule:|-[[:space:]]*cron:)' .github/workflows/; then
+          # workflow_dispatch — never on a timer. Patterns are assembled from
+          # parts so this step never matches itself (comments here must never
+          # contain the literal trigger keys either), and cover block form,
+          # flow-map form, and quoted keys.
+          SCHED="sched"; SCHED="${SCHED}ule"
+          CRON="cr"; CRON="${CRON}on"
+          if grep -rniE "(^|[\"'{[:space:]])(${SCHED}|${CRON})[\"']?[[:space:]]*:" .github/workflows/; then
             echo "::error::Scheduled/cron CI trigger detected. Remove it (ADR-003)."
             exit 1
           fi
@@ -44,23 +47,24 @@ jobs:
 
       - name: No metered API keys or LLM actions in CI
         run: |
-          # Law #5: everything LLM runs in-session on Max. The forbidden tokens
-          # are assembled from parts so this step never matches itself.
-          KEY="ANTHROPIC_"
-          KEY="${KEY}API_KEY"
-          ACTION="claude-code-"
-          ACTION="${ACTION}action"
-          if grep -rn -e "$KEY" -e "$ACTION" .github/workflows/; then
-            echo "::error::Metered API key or LLM action reference found in CI (Law #5 / ADR-003)."
+          # Law #5: everything LLM runs in-session on Max. Assembled patterns
+          # (self-match-proof) cover the whole anthropics action family, any
+          # ANTHROPIC-prefixed key, and — since this repo's CI uses zero
+          # secrets — ANY new secrets.* reference is itself a tripwire.
+          KEY="ANTHRO"; KEY="${KEY}PIC_"
+          ACTION="anthropics/"; ACTION2="claude-"; ACTION2="${ACTION2}code-"
+          SECRETS_REF="secrets"; SECRETS_REF="${SECRETS_REF}\."
+          if grep -rniE -e "$KEY" -e "${ACTION}.*${ACTION2}" -e "\\\$\\{\\{[[:space:]]*${SECRETS_REF}" .github/workflows/; then
+            echo "::error::Metered API key, LLM action, or unexpected secret reference in CI (Law #5 / ADR-003)."
             exit 1
           fi
-          echo "OK — no metered API keys or LLM actions."
+          echo "OK — no metered API keys, LLM actions, or secret references."
 
       - name: Aggregator unit tests
         # The verdict aggregator (.github/scripts/) sits outside turbo's
         # package graph; run its zero-dep node:test suite here so it gates
-        # ci-success.
-        run: node --test .github/scripts/aggregate-verdict.test.mjs
+        # ci-success. Directory form auto-discovers future *.test.mjs files.
+        run: node --test .github/scripts/
 
   # ===========================================================================
   # Verify — the full quality gate (CLAUDE.md § Quality Gates)
@@ -91,8 +95,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Cache Turbo
-        uses: actions/cache@v4
+      # restore/save split (not single actions/cache): the save step runs
+      # if: always(), so red review rounds still warm the cache for the retry.
+      - name: Restore Turbo cache
+        uses: actions/cache/restore@v4
         with:
           path: .turbo
           key: turbo-${{ runner.os }}-${{ github.sha }}
@@ -110,6 +116,13 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Save Turbo cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
 
   # ===========================================================================
   # Required status check — single job for future branch protection

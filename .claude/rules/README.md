@@ -20,11 +20,11 @@ This README is the index — it has no `paths`, so it doesn't auto-load.
 
 ## Files
 
-| Rule                    | Scopes                   | Purpose                                              |
-| ----------------------- | ------------------------ | ---------------------------------------------------- |
-| `planning-doc-homes.md` | `docs/**`, `.specs/**`   | What goes where; one home per doc                    |
-| `pr-review-files.md`    | pr-review-pipeline skill | In-session review sentinel/verdict spec              |
+| Rule                    | Scopes                   | Purpose                                                                     |
+| ----------------------- | ------------------------ | --------------------------------------------------------------------------- |
+| `planning-doc-homes.md` | `docs/**`, `.specs/**`   | What goes where; one home per doc                                           |
+| `pr-review-files.md`    | pr-review-pipeline skill | In-session review sentinel/verdict spec                                     |
 | `ci.md`                 | `.github/workflows/**`   | No cron / no LLM in CI (guard-enforced); gate command; prod-parity landmine |
-| `server.md`             | `apps/server/**`         | Hono/Drizzle + landmines                             |
-| `mobile.md`             | `apps/mobile/**`         | Expo/RN + landmines                                  |
-| `shared.md`             | `packages/**`            | Zod SoT, money, DI, vitest pin                       |
+| `server.md`             | `apps/server/**`         | Hono/Drizzle + landmines                                                    |
+| `mobile.md`             | `apps/mobile/**`         | Expo/RN + landmines                                                         |
+| `shared.md`             | `packages/**`            | Zod SoT, money, DI, vitest pin                                              |
