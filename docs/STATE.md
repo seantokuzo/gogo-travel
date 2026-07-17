@@ -30,10 +30,13 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 - **P-3 CLOSED 2026-07-16** — 4/4 tasks merged through the full review loop;
   ledger F-002..F-009 flipped with evidence (F-001 held: step unsatisfiable
   as written — see B-1); archive: `docs/history/PHASE-003-foundations.md`.
-- **T-4.1 in progress** (engineer subagent): `@gogo/tokens` — the three
-  approved palettes (goldenHour default, deepWaters, midnightExpress) as
-  pure-data theme objects + registry, scales, Theme types, useTheme,
-  createStyles(theme). Spec: `.specs/design-system/tokens.spec.md`.
+- **T-4.1 MERGED (544bce8)** — @gogo/tokens: 312 tests, 258-pairing WCAG
+  matrix, 45/45 approved seeds mutation-proven, 3 dark-mode AA fixes caught
+  by review-added pairing, derive script committed (byte-reproduces hexes).
+  Spec synced to shipped reality incl. §2.9 component mapping (71368ec).
+- **T-4.2 in progress** (engineer subagent): mobile theme adapters — MMKV
+  ThemeStorage + Appearance source into the app shell (REFERENTIALLY STABLE
+  instances — perf-lane landmine), jest-expo harness + first render test.
 - Then: DS-5..10 (components + Gallery screen), NAV-1..7 (route skeleton).
   P-4 detail: PLANNING § P-4. jest-expo + first render test lands this phase
   (T-3.1 defer).
