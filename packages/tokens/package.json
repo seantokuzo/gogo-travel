@@ -2,13 +2,17 @@
   "name": "@gogo/tokens",
   "version": "0.0.1",
   "private": true,
-  "description": "GoGo Travel design tokens + theme definitions (full token set lands in P-4 per .specs/design-system/tokens.spec.md)",
+  "description": "GoGo Travel design tokens + theme definitions (.specs/design-system/tokens.spec.md). Root entry is pure data; React runtime lives at ./react",
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
     }
   },
   "files": [
@@ -21,8 +25,23 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.2",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
+    "jsdom": "29.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
