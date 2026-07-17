@@ -10,7 +10,7 @@
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
 | P-4 | Phase: design system + navigation skeleton (PLANNING § P-4) | in-progress | P0 | — |
-| T-4.2 | Mobile theme adapters [DS-3/5]: MMKV ThemeStorage + Appearance source wired into app shell; jest-expo harness + first render test (P-4 defer) | in-progress | P0 | — |
+| T-4.3 | Core component library + Gallery screen [DS-5..10]: Button/Card/Input/Badge/EmptyState/ErrorBanner/ConfirmDialog/TabNav/PageHeader/ListItem/Sheet/Skeleton/SegmentedControl/Text per tokens.spec §2.9 + dev Gallery (Law #7 visual evidence) | in-progress | P0 | — |
 
 ## Blocked
 
@@ -23,6 +23,7 @@
 
 | ID | Title | Done |
 |----|-------|------|
+| T-4.2 | Theme runtime wired — first clean round-1 SHIP (0 blocking, 5 lanes); mobile jest harness live (10 tests incl. first-frame probe); judge merge/high | 2026-07-17 |
 | T-4.1 | @gogo/tokens merged — 312 tests, 45/45 seeds mutation-proven, 3 dark-mode AA fixes caught by new pairing, derive script reproducible; judge merge/high | 2026-07-17 |
 | P-3 | Foundations CLOSED — 4 tasks merged through full review loop; ledger F-002..F-009 flipped w/ evidence; archive: docs/history/PHASE-003-foundations.md | 2026-07-16 |
 | T-3.4 | CI gate merged 64b2131 — ship 0/12 → judge caught fix-regression (Node-24 dir-form) → round-2 merge/high; Law #7 Docker-down hard-fail observed live | 2026-07-16 |
