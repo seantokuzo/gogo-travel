@@ -1,5 +1,8 @@
 import { createStyles, useTheme } from "@gogo/tokens/react";
+import { Link } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
+
+import { AppText } from "@/components";
 
 // First live token consumer (R-ds-7 pattern): factory declared at module
 // scope, StyleSheet.create runs INSIDE it, once per theme object.
@@ -11,6 +14,11 @@ const useStyles = createStyles((t) =>
       justifyContent: "center",
       backgroundColor: t.color.bg.screen,
       padding: t.space[6],
+      gap: t.space[4],
+    },
+    galleryLink: {
+      minHeight: t.touchTarget,
+      justifyContent: "center",
     },
     title: {
       ...t.type.title,
@@ -32,6 +40,16 @@ export default function Index() {
       >
         GoGo Travel
       </Text>
+      {__DEV__ ? (
+        // Dev-only entry to the component gallery (DS-10 evidence surface).
+        <View style={s.galleryLink}>
+          <Link href="/gallery" testID="dev-gallery-link">
+            <AppText role="bodyStrong" color="accent">
+              Component gallery
+            </AppText>
+          </Link>
+        </View>
+      ) : null}
     </View>
   );
 }
