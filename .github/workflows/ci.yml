@@ -63,8 +63,12 @@ jobs:
       - name: Aggregator unit tests
         # The verdict aggregator (.github/scripts/) sits outside turbo's
         # package graph; run its zero-dep node:test suite here so it gates
-        # ci-success. Directory form auto-discovers future *.test.mjs files.
-        run: node --test .github/scripts/
+        # ci-success. SHELL GLOB (not directory form): the shell expands to
+        # explicit file paths, which works on every Node major — directory
+        # form exits 1 (MODULE_NOT_FOUND) on Node 24, and this job runs the
+        # runner's unpinned default node. Still auto-discovers future
+        # *.test.mjs files.
+        run: node --test .github/scripts/*.test.mjs
 
   # ===========================================================================
   # Verify — the full quality gate (CLAUDE.md § Quality Gates)
