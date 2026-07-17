@@ -9,19 +9,22 @@
 
 | ID | Title | Status | Priority | Depends on |
 |----|-------|--------|----------|------------|
-| P-3 | Phase: foundations — scaffold + `@gogo/shared` + DB schema (PLANNING § P-3) | in-progress | P0 | — |
-| T-3.4 | CI gate + postgres-js test harness + root-config lint coverage (round-1 defer) | in-progress | P0 | — |
+| P-4 | Phase: design system + navigation skeleton (PLANNING § P-4) | in-progress | P0 | — |
+| T-4.1 | `@gogo/tokens` build [DS-1..4]: three palettes as pure data (goldenHour default), theme registry, scales, Theme types + useTheme + createStyles | in-progress | P0 | — |
 
 ## Blocked
 
 | ID | Title | Status | Priority | Blocker |
 |----|-------|--------|----------|---------|
-| T-1.3 | Push workflow foundation to origin | blocked | P0 | `gh auth login` needed (Sean) — 2 commits waiting on `main` |
+| B-1 | F-001 ledger step 2 unsatisfiable as written (PG assignment cast ROUNDS numeric→bigint; probed 2026-07-16) — needs Sean's nod on the append-only ledger amendment protocol | blocked | P2 | Sean decision |
+| — | Push to origin re-blocked: workflow-file pushes need the `workflow` scope — Sean runs `gh auth refresh -h github.com -s workflow` | blocked | P0 | Sean (interactive auth) |
 
 ## Recently done
 
 | ID | Title | Done |
 |----|-------|------|
+| P-3 | Foundations CLOSED — 4 tasks merged through full review loop; ledger F-002..F-009 flipped w/ evidence; archive: docs/history/PHASE-003-foundations.md | 2026-07-16 |
+| T-3.4 | CI gate merged 64b2131 — ship 0/12 → judge caught fix-regression (Node-24 dir-form) → round-2 merge/high; Law #7 Docker-down hard-fail observed live | 2026-07-16 |
 | T-3.3 | DB schema merged — 30 tables column-exact, migration 0000 + pg_trgm, 47 constraint tests on live postgres; Docker-skip cache trap fixed (CI hard-fail + turbo cache:false); judge merge/high, escalation ruled mechanical | 2026-07-14 |
 | T-3.2 | @gogo/shared merged 7a1de80 — 259 tests; 2 security blockers fixed + judge-red-teamed (46 probes, 0 bypasses); judge merge/high, ultra-escalation ruled unnecessary. Follow-up advisories for consumer tasks: reject dot-only paypalme handles (AU-4), trim-normalize kept external_url (CAP tasks) | 2026-07-10 |
 | T-3.1 | Monorepo scaffold — merged 74d6c61 after round-1 review (2 blocking fixed incl. empirically-probed turbo cache false-green; judge: merge/high). Defers: jest-expo+render test→P-4, root-config lint→T-3.4 | 2026-07-10 |

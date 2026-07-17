@@ -3,105 +3,174 @@
   "version": 1,
   "features": [
     {
-      "id": "F-001", "area": "database", "title": "Money is integer cents at the schema level", "phase": "P-3",
-      "requirements": ["R-db-1"],
+      "id": "F-001",
+      "area": "database",
+      "title": "Money is integer cents at the schema level",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-1"
+      ],
       "verification": [
         "Apply all migrations to a blank Postgres, then run the information_schema scan: zero real/double precision columns exist anywhere and every *_cents column is bigint",
-        "Attempt INSERT of a fractional value into expenses.amount_cents via psql — rejected by type",
+        "Attempt INSERT of a fractional value into expenses.amount_cents via psql \u2014 rejected by type",
         "CI scan test (money-law scan from DB-1 suite) is green in the pipeline run"
       ],
       "passes": false
     },
     {
-      "id": "F-002", "area": "database", "title": "Photos default to private visibility at the DB level", "phase": "P-3",
-      "requirements": ["R-db-3"],
+      "id": "F-002",
+      "area": "database",
+      "title": "Photos default to private visibility at the DB level",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-3"
+      ],
       "verification": [
-        "Against the migrated DB, INSERT a photos row omitting visibility — persisted row reads visibility='private'",
+        "Against the migrated DB, INSERT a photos row omitting visibility \u2014 persisted row reads visibility='private'",
         "INSERT with explicit NULL visibility is rejected (NOT NULL)"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-003", "area": "database", "title": "Uniqueness invariants reject duplicates", "phase": "P-3",
-      "requirements": ["R-db-6", "R-db-8", "R-db-15"],
+      "id": "F-003",
+      "area": "database",
+      "title": "Uniqueness invariants reject duplicates",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-6",
+        "R-db-8",
+        "R-db-15"
+      ],
       "verification": [
         "Against the migrated DB: second trip_members row with role='owner' for the same trip is rejected by the partial unique index",
         "Duplicate places (source, source_id) rejected; duplicate travel leg (from,to,mode) rejected; second booking referencing the same capture_id rejected; duplicate (trip_id, place_id) saved place and tour bundle rejected"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-004", "area": "database", "title": "Check constraints reject malformed rows", "phase": "P-3",
-      "requirements": ["R-db-1", "R-db-13"],
+      "id": "F-004",
+      "area": "database",
+      "title": "Check constraints reject malformed rows",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-1",
+        "R-db-13"
+      ],
       "verification": [
         "Against the migrated DB, each of these INSERTs fails on its CHECK: negative cents, lowercase currency, price_cents without currency, custom place with source_id set, itinerary item kind/column mismatch, from=to travel leg, ready bundle without content, self-settlement",
         "expense_shares has no currency column (inherits parent expense currency)"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-005", "area": "database", "title": "Delete-behavior matrix holds (cascade / SET NULL / RESTRICT)", "phase": "P-3",
-      "requirements": ["R-db-16"],
+      "id": "F-005",
+      "area": "database",
+      "title": "Delete-behavior matrix holds (cascade / SET NULL / RESTRICT)",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-16"
+      ],
       "verification": [
         "Delete a fixture trip: all trip-scoped children cascade; capture_inbox.trip_id and documents.trip_id go NULL",
         "Delete a booking: its itinerary item cascades, its linked expense survives with booking_id NULL",
-        "Attempt hard DELETE of a users row that has expenses/settlements — blocked by RESTRICT"
+        "Attempt hard DELETE of a users row that has expenses/settlements \u2014 blocked by RESTRICT"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-006", "area": "database", "title": "User creation writes users + entitlements atomically", "phase": "P-3",
-      "requirements": ["R-db-5"],
+      "id": "F-006",
+      "area": "database",
+      "title": "User creation writes users + entitlements atomically",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-5"
+      ],
       "verification": [
         "Run the user-creation helper against the test DB: users row and entitlements row (plan='free') exist after commit",
         "Inject a failure between the two writes: neither row persists (single transaction)"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-007", "area": "shared", "title": "Enums and money scalars are single-source and strict", "phase": "P-3",
-      "requirements": ["R-shared-1", "R-shared-2", "R-shared-6"],
+      "id": "F-007",
+      "area": "shared",
+      "title": "Enums and money scalars are single-source and strict",
+      "phase": "P-3",
+      "requirements": [
+        "R-shared-1",
+        "R-shared-2",
+        "R-shared-6"
+      ],
       "verification": [
-        "Enum-parity snapshot test: every @gogo/shared tuple matches schema spec §3.2 value lists and the Drizzle pgEnums are built from the same tuples",
+        "Enum-parity snapshot test: every @gogo/shared tuple matches schema spec \u00a73.2 value lists and the Drizzle pgEnums are built from the same tuples",
         "Cents schema rejects 25.5 and -1; PositiveCents rejects 0; CurrencyCode rejects 'usd'",
         "ISODate/ISODateTime/ISOTime reject epoch numbers and malformed strings"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-008", "area": "shared", "title": "JSONB payloads are Zod-gatekept (booking details, expense create)", "phase": "P-3",
-      "requirements": ["R-db-11", "R-db-17", "R-shared-10"],
+      "id": "F-008",
+      "area": "shared",
+      "title": "JSONB payloads are Zod-gatekept (booking details, expense create)",
+      "phase": "P-3",
+      "requirements": [
+        "R-db-11",
+        "R-db-17",
+        "R-shared-10"
+      ],
       "verification": [
         "BookingDetails discriminated union: a valid payload per each of the 8 categories parses; details/category mismatch rejected; unknown keys stripped",
         "ExpenseCreate superRefine: shares summing != amount rejected, exact sum accepted",
         "UserPrefs parse strips unknown keys"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-009", "area": "shared", "title": "Shared privacy, AI and entitlement helpers behave", "phase": "P-3",
-      "requirements": ["R-shared-7", "R-shared-8", "R-shared-9", "R-shared-12"],
+      "id": "F-009",
+      "area": "shared",
+      "title": "Shared privacy, AI and entitlement helpers behave",
+      "phase": "P-3",
+      "requirements": [
+        "R-shared-7",
+        "R-shared-8",
+        "R-shared-9",
+        "R-shared-12"
+      ],
       "verification": [
         "canViewPhoto truth table passes: owner/member/stranger x private/trip/public (Law #3 single implementation)",
         "AI-schema constraint walker: every ai/* schema has no recursion, no numeric range constraints, depth <= 3",
         "deriveAiCacheKey is stable and changes when any input incl. SCHEMA_VERSION changes; travel_style canonicalization (sorted, empty -> 'any') proven",
         "resolveEntitlements: override beats plan default; dependency-cruiser/lint check proves @gogo/shared imports nothing platform-bound"
       ],
-      "passes": false
+      "passes": true
     },
     {
-      "id": "F-010", "area": "design-system", "title": "Appearance: OS scheme, manual pref, no dark-launch flash", "phase": "P-4",
-      "requirements": ["R-ds-1", "R-ds-2", "R-ds-3", "R-ds-4"],
+      "id": "F-010",
+      "area": "design-system",
+      "title": "Appearance: OS scheme, manual pref, no dark-launch flash",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-1",
+        "R-ds-2",
+        "R-ds-3",
+        "R-ds-4"
+      ],
       "verification": [
         "Simulator with OS dark mode + no stored pref: app boots dark with no light flash on first frame (record launch video and inspect)",
         "Set manual pref 'light', relaunch: app renders light despite OS dark; pref survives relaunch",
-        "Pref 'system': flip OS appearance while app is open — all mounted screens re-render in the new scheme without restart"
+        "Pref 'system': flip OS appearance while app is open \u2014 all mounted screens re-render in the new scheme without restart"
       ],
       "passes": false
     },
     {
-      "id": "F-011", "area": "design-system", "title": "Accent themes: 3 registered, runtime-swappable, data-only", "phase": "P-4",
-      "requirements": ["R-ds-5", "R-ds-6"],
+      "id": "F-011",
+      "area": "design-system",
+      "title": "Accent themes: 3 registered, runtime-swappable, data-only",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-5",
+        "R-ds-6"
+      ],
       "verification": [
         "Theme picker lists default + 2 alternates; selecting one re-renders mounted screens immediately and persists across relaunch",
         "Add a throwaway AccentThemeDef to the registry in a scratch branch: it appears and renders with zero component/screen code changes"
@@ -109,16 +178,26 @@
       "passes": false
     },
     {
-      "id": "F-012", "area": "design-system", "title": "WCAG AA contrast matrix passes for every scheme x accent", "phase": "P-4",
-      "requirements": ["R-ds-8"],
+      "id": "F-012",
+      "area": "design-system",
+      "title": "WCAG AA contrast matrix passes for every scheme x accent",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-8"
+      ],
       "verification": [
-        "Run the tokens contrast-matrix test: every declared fg/bg pair >= 4.5:1 body / 3:1 large-UI across light+dark x all 3 accents — green in CI output pasted as evidence"
+        "Run the tokens contrast-matrix test: every declared fg/bg pair >= 4.5:1 body / 3:1 large-UI across light+dark x all 3 accents \u2014 green in CI output pasted as evidence"
       ],
       "passes": false
     },
     {
-      "id": "F-013", "area": "design-system", "title": "Token-only styling is enforced (no literal colors in screens)", "phase": "P-4",
-      "requirements": ["R-ds-7"],
+      "id": "F-013",
+      "area": "design-system",
+      "title": "Token-only styling is enforced (no literal colors in screens)",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-7"
+      ],
       "verification": [
         "Introduce a literal hex color and a bare StyleSheet.create in a screen file on a scratch branch: pnpm lint fails on both",
         "createStyles returns referentially stable styles per Theme (memo test)"
@@ -126,8 +205,19 @@
       "passes": false
     },
     {
-      "id": "F-014", "area": "design-system", "title": "Core components behave per contract", "phase": "P-4",
-      "requirements": ["R-ds-13", "R-ds-14", "R-ds-15", "R-ds-16", "R-ds-17", "R-ds-18", "R-ds-19"],
+      "id": "F-014",
+      "area": "design-system",
+      "title": "Core components behave per contract",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-13",
+        "R-ds-14",
+        "R-ds-15",
+        "R-ds-16",
+        "R-ds-17",
+        "R-ds-18",
+        "R-ds-19"
+      ],
       "verification": [
         "In the running Gallery: Button shows pressed feedback <100ms and loading blocks re-press with stable width",
         "ConfirmDialog executes only on explicit confirm; cancel is a no-op",
@@ -137,8 +227,18 @@
       "passes": false
     },
     {
-      "id": "F-015", "area": "design-system", "title": "Accessibility floor: hit targets, Dynamic Type, reduce motion", "phase": "P-4",
-      "requirements": ["R-ds-9", "R-ds-10", "R-ds-11", "R-ds-12", "R-ds-20", "R-ds-21"],
+      "id": "F-015",
+      "area": "design-system",
+      "title": "Accessibility floor: hit targets, Dynamic Type, reduce motion",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-9",
+        "R-ds-10",
+        "R-ds-11",
+        "R-ds-12",
+        "R-ds-20",
+        "R-ds-21"
+      ],
       "verification": [
         "Snapshot UI in simulator: every interactive element hit target >= 44x44pt (small icons via hitSlop)",
         "Crank OS text size to max: typography scales per role caps without clipping single-line chrome",
@@ -148,18 +248,32 @@
       "passes": false
     },
     {
-      "id": "F-016", "area": "design-system", "title": "Gallery screen renders every component x variant x scheme x accent", "phase": "P-4",
-      "requirements": ["R-ds-11", "R-ds-12", "R-ds-20"],
+      "id": "F-016",
+      "area": "design-system",
+      "title": "Gallery screen renders every component x variant x scheme x accent",
+      "phase": "P-4",
+      "requirements": [
+        "R-ds-11",
+        "R-ds-12",
+        "R-ds-20"
+      ],
       "verification": [
-        "Open the dev Gallery in the simulator and walk all components across both schemes and all 3 accents — screenshots captured as evidence (Law #7 visual verification surface)"
+        "Open the dev Gallery in the simulator and walk all components across both schemes and all 3 accents \u2014 screenshots captured as evidence (Law #7 visual verification surface)"
       ],
       "passes": false
     },
     {
-      "id": "F-017", "area": "navigation", "title": "Route skeleton: full tree, per-tab stacks, modal conventions, testID grammar", "phase": "P-4",
-      "requirements": ["R-nav-10", "R-nav-21", "R-nav-22"],
+      "id": "F-017",
+      "area": "navigation",
+      "title": "Route skeleton: full tree, per-tab stacks, modal conventions, testID grammar",
+      "phase": "P-4",
+      "requirements": [
+        "R-nav-10",
+        "R-nav-21",
+        "R-nav-22"
+      ],
       "verification": [
-        "Every route in the nav spec §2.1 tree mounts a placeholder screen in the simulator without redbox",
+        "Every route in the nav spec \u00a72.1 tree mounts a placeholder screen in the simulator without redbox",
         "Push into a detail on one tab, switch tabs and return: stack and scroll position preserved per tab",
         "Forms present modally, detail drill-downs push (spot-check both conventions)",
         "testID lint (NAV-7) fails on a scratch interactive element missing testID; screen roots expose <screen>-screen"
@@ -167,8 +281,18 @@
       "passes": false
     },
     {
-      "id": "F-018", "area": "auth", "title": "Apple sign-in end-to-end (verify, create, return)", "phase": "P-5",
-      "requirements": ["R-auth-1", "R-auth-3", "R-auth-4", "R-auth-5", "R-auth-7", "R-auth-15"],
+      "id": "F-018",
+      "area": "auth",
+      "title": "Apple sign-in end-to-end (verify, create, return)",
+      "phase": "P-5",
+      "requirements": [
+        "R-auth-1",
+        "R-auth-3",
+        "R-auth-4",
+        "R-auth-5",
+        "R-auth-7",
+        "R-auth-15"
+      ],
       "verification": [
         "Drive POST /auth/apple with a new-user token fixture: users + entitlements rows created in one txn, is_new_user=true, ES256 access token carries sub/sid, refresh stored hashed",
         "Repeat with the same apple_sub: same user id, is_new_user=false, new session row",
@@ -178,8 +302,15 @@
       "passes": false
     },
     {
-      "id": "F-019", "area": "auth", "title": "Google sign-in + auto-link on verified email", "phase": "P-5",
-      "requirements": ["R-auth-2", "R-auth-3", "R-auth-6"],
+      "id": "F-019",
+      "area": "auth",
+      "title": "Google sign-in + auto-link on verified email",
+      "phase": "P-5",
+      "requirements": [
+        "R-auth-2",
+        "R-auth-3",
+        "R-auth-6"
+      ],
       "verification": [
         "POST /auth/google with new + returning fixtures behaves as Apple equivalents keyed on google_sub",
         "Unknown google_sub whose verified email matches an Apple-created account: google_sub set on the existing row, signed in, no second account",
@@ -188,10 +319,18 @@
       "passes": false
     },
     {
-      "id": "F-020", "area": "auth", "title": "Refresh rotation with reuse-theft family revocation", "phase": "P-5",
-      "requirements": ["R-auth-8", "R-auth-9", "R-auth-10", "R-auth-11"],
+      "id": "F-020",
+      "area": "auth",
+      "title": "Refresh rotation with reuse-theft family revocation",
+      "phase": "P-5",
+      "requirements": [
+        "R-auth-8",
+        "R-auth-9",
+        "R-auth-10",
+        "R-auth-11"
+      ],
       "verification": [
-        "POST /auth/refresh with a valid token: old token stamped rotated_at, new pair returned, session last_used_at bumped — atomically",
+        "POST /auth/refresh with a valid token: old token stamped rotated_at, new pair returned, session last_used_at bumped \u2014 atomically",
         "Present the already-rotated token: 401 AND the whole session's tokens revoked; the newer 'legitimate' token now also 401s",
         "Expired-but-never-rotated token: plain 401, session NOT revoked",
         "DB inspection: only SHA-256 hashes stored, no plaintext refresh tokens anywhere"
@@ -199,8 +338,19 @@
       "passes": false
     },
     {
-      "id": "F-021", "area": "auth", "title": "Stateless requireAuth, fixed middleware order, rate limits, uniform errors", "phase": "P-5",
-      "requirements": ["R-auth-12", "R-auth-14", "R-authz-1", "R-authz-4", "R-shared-3", "R-shared-4", "R-shared-5"],
+      "id": "F-021",
+      "area": "auth",
+      "title": "Stateless requireAuth, fixed middleware order, rate limits, uniform errors",
+      "phase": "P-5",
+      "requirements": [
+        "R-auth-12",
+        "R-auth-14",
+        "R-authz-1",
+        "R-authz-4",
+        "R-shared-3",
+        "R-shared-4",
+        "R-shared-5"
+      ],
       "verification": [
         "Protected route with alg=none / HS256 / bad iss / bad aud / expired token: all 401; verification does no DB read (assert via query counter)",
         "Invalid token + invalid body returns 401 (auth precedes validation)",
@@ -210,8 +360,13 @@
       "passes": false
     },
     {
-      "id": "F-022", "area": "auth", "title": "Sessions: list, revoke, logout", "phase": "P-5",
-      "requirements": ["R-auth-13"],
+      "id": "F-022",
+      "area": "auth",
+      "title": "Sessions: list, revoke, logout",
+      "phase": "P-5",
+      "requirements": [
+        "R-auth-13"
+      ],
       "verification": [
         "Sign in on two simulators: GET /auth/sessions lists both with current=true exactly once; the settings screen renders them",
         "Revoke the other device's session: its refresh 401s immediately; access works only until exp (<=15 min documented latency)",
@@ -220,19 +375,35 @@
       "passes": false
     },
     {
-      "id": "F-023", "area": "navigation", "title": "Client auth gate: splash hold, redirect + stash/resume, sign-out reset, secure storage", "phase": "P-5",
-      "requirements": ["R-nav-1", "R-nav-2", "R-nav-3", "R-nav-4", "R-auth-9"],
+      "id": "F-023",
+      "area": "navigation",
+      "title": "Client auth gate: splash hold, redirect + stash/resume, sign-out reset, secure storage",
+      "phase": "P-5",
+      "requirements": [
+        "R-nav-1",
+        "R-nav-2",
+        "R-nav-3",
+        "R-nav-4",
+        "R-auth-9"
+      ],
       "verification": [
         "Cold launch signed-out: no authed-screen flash before sign-in renders (splash holds through hydration)",
         "Navigate to a protected route while signed out: redirected to sign-in, then landed on the intended destination after auth",
         "Sign out: navigation state reset, stashes cleared, lands on sign-in; query cache empty",
-        "Refresh token lives in expo-secure-store only (not AsyncStorage/MMKV/TQ persist — code + device inspection); access token memory-only"
+        "Refresh token lives in expo-secure-store only (not AsyncStorage/MMKV/TQ persist \u2014 code + device inspection); access token memory-only"
       ],
       "passes": false
     },
     {
-      "id": "F-024", "area": "auth", "title": "First-run onboarding flow", "phase": "P-5",
-      "requirements": ["R-nav-2", "R-user-2", "R-user-5"],
+      "id": "F-024",
+      "area": "auth",
+      "title": "First-run onboarding flow",
+      "phase": "P-5",
+      "requirements": [
+        "R-nav-2",
+        "R-user-2",
+        "R-user-5"
+      ],
       "verification": [
         "Fresh account sign-in routes to onboarding: name/avatar -> home currency -> payment handles (skippable) -> notification priming -> optional travel_style",
         "Every collected field round-trips through GET /users/me after completion",
@@ -241,8 +412,15 @@
       "passes": false
     },
     {
-      "id": "F-025", "area": "users", "title": "Profile edit + avatar presigned upload", "phase": "P-5",
-      "requirements": ["R-user-1", "R-user-2", "R-user-3"],
+      "id": "F-025",
+      "area": "users",
+      "title": "Profile edit + avatar presigned upload",
+      "phase": "P-5",
+      "requirements": [
+        "R-user-1",
+        "R-user-2",
+        "R-user-3"
+      ],
       "verification": [
         "GET /users/me returns the full User shape; PATCH display_name + prefs round-trips with unknown pref keys stripped",
         "Avatar flow in the app: presign ticket (key namespaced avatars/{user_id}/, TTL <= 10 min) -> PUT bytes -> commit key -> avatar renders",
@@ -251,8 +429,15 @@
       "passes": false
     },
     {
-      "id": "F-026", "area": "users", "title": "Payment handles: normalization, validation, no Venmo traffic", "phase": "P-5",
-      "requirements": ["R-user-5", "R-user-6", "R-user-7"],
+      "id": "F-026",
+      "area": "users",
+      "title": "Payment handles: normalization, validation, no Venmo traffic",
+      "phase": "P-5",
+      "requirements": [
+        "R-user-5",
+        "R-user-6",
+        "R-user-7"
+      ],
       "verification": [
         "Save '@sean' and '$seantokuzo': stored and returned bare; charset violations 400",
         "cashtag HEAD 404 -> 400 with details.cashtag='not_found'; cash.app 5xx/timeout -> save succeeds (fail-open)",
@@ -262,8 +447,13 @@
       "passes": false
     },
     {
-      "id": "F-027", "area": "users", "title": "Push token registration, keep-alive, move semantics", "phase": "P-5",
-      "requirements": ["R-user-8"],
+      "id": "F-027",
+      "area": "users",
+      "title": "Push token registration, keep-alive, move semantics",
+      "phase": "P-5",
+      "requirements": [
+        "R-user-8"
+      ],
       "verification": [
         "Register a token: row created; re-register same token: same id, last_seen_at bumped",
         "Register a token previously owned by account B as account A: token moves (owned by A only, not duplicated)",
@@ -272,8 +462,14 @@
       "passes": false
     },
     {
-      "id": "F-028", "area": "entitlements", "title": "Effective entitlements read via the shared resolver", "phase": "P-5",
-      "requirements": ["R-ent-1", "R-ent-3"],
+      "id": "F-028",
+      "area": "entitlements",
+      "title": "Effective entitlements read via the shared resolver",
+      "phase": "P-5",
+      "requirements": [
+        "R-ent-1",
+        "R-ent-3"
+      ],
       "verification": [
         "GET /users/me/entitlements on a fresh free account returns ai_calls_per_day=30 etc. from PLAN_DEFAULTS",
         "Set overrides.ai_calls_per_day=100 in DB: endpoint returns 100 (resolver precedence)",
@@ -282,8 +478,14 @@
       "passes": false
     },
     {
-      "id": "F-029", "area": "users", "title": "Account deletion: fixed effects + soft-delete/PII scrub", "phase": "P-5",
-      "requirements": ["R-user-9", "R-db-16"],
+      "id": "F-029",
+      "area": "users",
+      "title": "Account deletion: fixed effects + soft-delete/PII scrub",
+      "phase": "P-5",
+      "requirements": [
+        "R-user-9",
+        "R-db-16"
+      ],
       "verification": [
         "DELETE /users/me: all sessions + refresh tokens revoked, push tokens deleted, Apple revocation endpoint called (mocked assert), device signed out",
         "DB shows the users row surviving with deleted_at set and PII scrubbed (email tombstone, 'Deleted user' name, handles/subs/slug NULL, prefs {})",
@@ -292,10 +494,19 @@
       "passes": false
     },
     {
-      "id": "F-030", "area": "trips", "title": "Create trip: owner membership txn, structured destination, required dates", "phase": "P-6",
-      "requirements": ["R-trips-3", "R-tripui-6", "R-tripui-7", "R-tripui-8", "R-places-6"],
+      "id": "F-030",
+      "area": "trips",
+      "title": "Create trip: owner membership txn, structured destination, required dates",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-3",
+        "R-tripui-6",
+        "R-tripui-7",
+        "R-tripui-8",
+        "R-places-6"
+      ],
       "verification": [
-        "In the app: create-trip modal requires name, destination via structured search (Overture city subset; picking a result fills lat/lng), and a date range — no free-text destination path exists",
+        "In the app: create-trip modal requires name, destination via structured search (Overture city subset; picking a result fills lat/lng), and a date range \u2014 no free-text destination path exists",
         "Submit: trips row + creator owner membership in one txn (DB check); app lands inside the new trip on the itinerary tab",
         "Failure path preserves entered values with ErrorBanner; dirty dismissal intercepts with a discard confirm",
         "base_currency defaulted from home_currency ?? USD without occupying the form"
@@ -303,8 +514,17 @@
       "passes": false
     },
     {
-      "id": "F-031", "area": "trips", "title": "Trip list: status sections, sorting, empty state, freshness", "phase": "P-6",
-      "requirements": ["R-trips-4", "R-tripui-1", "R-tripui-2", "R-tripui-3", "R-tripui-5"],
+      "id": "F-031",
+      "area": "trips",
+      "title": "Trip list: status sections, sorting, empty state, freshness",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-4",
+        "R-tripui-1",
+        "R-tripui-2",
+        "R-tripui-3",
+        "R-tripui-5"
+      ],
       "verification": [
         "Seed active/planning/past trips: list groups Happening now -> Upcoming -> Past with correct intra-section sort; rows show name/destination/dates/member count",
         "GET /trips returns only membership trips, each with the caller's role",
@@ -313,18 +533,33 @@
       "passes": false
     },
     {
-      "id": "F-032", "area": "trips", "title": "Trip settings edit with LWW + expect_updated_at conflict UX", "phase": "P-6",
-      "requirements": ["R-trips-5", "R-trips-6", "R-trips-20", "R-tripui-18", "R-tripui-19"],
+      "id": "F-032",
+      "area": "trips",
+      "title": "Trip settings edit with LWW + expect_updated_at conflict UX",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-5",
+        "R-trips-6",
+        "R-trips-20",
+        "R-tripui-18",
+        "R-tripui-19"
+      ],
       "verification": [
         "Editor edits name/dates/destination/theme; viewer sees those rows hidden/disabled and the server 403s a forced attempt",
-        "Two-device edit race: second save with stale expect_updated_at gets 409, client refetches, re-renders fresh values with a 'review and re-save' notice — no silent overwrite",
+        "Two-device edit race: second save with stale expect_updated_at gets 409, client refetches, re-renders fresh values with a 'review and re-save' notice \u2014 no silent overwrite",
         "Mutations return the full updated row (client reconciles without a follow-up GET)"
       ],
       "passes": false
     },
     {
-      "id": "F-033", "area": "trips", "title": "Trip status: date-derived with owner override (archive)", "phase": "P-6",
-      "requirements": ["R-trips-7", "R-db-19"],
+      "id": "F-033",
+      "area": "trips",
+      "title": "Trip status: date-derived with owner override (archive)",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-7",
+        "R-db-19"
+      ],
       "verification": [
         "Trip with today inside dates reads status active; move dates to the past + run reconciliation: status flips to past",
         "Owner sets override to 'past' on a current trip: effective status past, reconciliation skips it; clearing the override recomputes from dates",
@@ -333,8 +568,21 @@
       "passes": false
     },
     {
-      "id": "F-034", "area": "trips", "title": "Members: role ladder, role change, transfer, removal/leave, member profiles", "phase": "P-6",
-      "requirements": ["R-trips-9", "R-trips-10", "R-trips-11", "R-tripui-13", "R-tripui-14", "R-tripui-15", "R-tripui-16", "R-tripui-17", "R-user-4"],
+      "id": "F-034",
+      "area": "trips",
+      "title": "Members: role ladder, role change, transfer, removal/leave, member profiles",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-9",
+        "R-trips-10",
+        "R-trips-11",
+        "R-tripui-13",
+        "R-tripui-14",
+        "R-tripui-15",
+        "R-tripui-16",
+        "R-tripui-17",
+        "R-user-4"
+      ],
       "verification": [
         "Members screen: viewer sees no manage affordances, editor sees invite only, owner sees all; forced 403 renders ErrorBanner not a crash",
         "Role change editor<->viewer works; role endpoint can never grant/revoke owner; transfer demotes owner to editor and promotes target in one txn",
@@ -344,8 +592,15 @@
       "passes": false
     },
     {
-      "id": "F-035", "area": "trips", "title": "Trip deletion cascades and force-exits other members", "phase": "P-6",
-      "requirements": ["R-trips-8", "R-tripui-4", "R-tripui-20"],
+      "id": "F-035",
+      "area": "trips",
+      "title": "Trip deletion cascades and force-exits other members",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-8",
+        "R-tripui-4",
+        "R-tripui-20"
+      ],
       "verification": [
         "Owner deletes trip through the destructive ConfirmDialog: API cascades children per the schema matrix (DB check)",
         "A second signed-in member inside that trip receives trip.deleted invalidation and is exited to the trip list with a notice",
@@ -354,8 +609,21 @@
       "passes": false
     },
     {
-      "id": "F-036", "area": "trips", "title": "Invites: multi-use links, expiry, revoke, max_uses race, idempotent accept", "phase": "P-6",
-      "requirements": ["R-trips-13", "R-trips-14", "R-trips-15", "R-trips-16", "R-trips-17", "R-tripui-9", "R-tripui-11", "R-tripui-12", "R-tripui-16"],
+      "id": "F-036",
+      "area": "trips",
+      "title": "Invites: multi-use links, expiry, revoke, max_uses race, idempotent accept",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-13",
+        "R-trips-14",
+        "R-trips-15",
+        "R-trips-16",
+        "R-trips-17",
+        "R-tripui-9",
+        "R-tripui-11",
+        "R-tripui-12",
+        "R-tripui-16"
+      ],
       "verification": [
         "Create invite (role <= creator's, never owner; >=128-bit token) and share: second account joins via the link; use_count increments; preview renders before any membership change",
         "Concurrent accepts against max_uses=1 never exceed the cap (race test); existing-member accept is a no-op returning current membership",
@@ -365,8 +633,17 @@
       "passes": false
     },
     {
-      "id": "F-037", "area": "navigation", "title": "Invite deep links: cold/warm parity, stash-resume, malformed fallback", "phase": "P-6",
-      "requirements": ["R-nav-11", "R-nav-12", "R-nav-14", "R-nav-16", "R-nav-17"],
+      "id": "F-037",
+      "area": "navigation",
+      "title": "Invite deep links: cold/warm parity, stash-resume, malformed fallback",
+      "phase": "P-6",
+      "requirements": [
+        "R-nav-11",
+        "R-nav-12",
+        "R-nav-14",
+        "R-nav-16",
+        "R-nav-17"
+      ],
       "verification": [
         "Open an invite link with the app killed and again warm: both land on the join screen identically",
         "Open while signed out: auth flow runs, then the join screen resumes with authz re-checked",
@@ -375,8 +652,17 @@
       "passes": false
     },
     {
-      "id": "F-038", "area": "trips", "title": "IDOR posture: non-members get indistinguishable 404s everywhere", "phase": "P-6",
-      "requirements": ["R-trips-1", "R-authz-2", "R-authz-3", "R-nav-15", "R-nav-20"],
+      "id": "F-038",
+      "area": "trips",
+      "title": "IDOR posture: non-members get indistinguishable 404s everywhere",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-1",
+        "R-authz-2",
+        "R-authz-3",
+        "R-nav-15",
+        "R-nav-20"
+      ],
       "verification": [
         "Non-member calls trip-scoped endpoints with a real tripId and a random uuid: byte-identical 404 bodies (reusable authz harness output pasted)",
         "Deep link to a non-member trip renders the no-access state with zero trip data fetched into the UI (network log)",
@@ -385,8 +671,18 @@
       "passes": false
     },
     {
-      "id": "F-039", "area": "navigation", "title": "Entry redirect, default tabs, in-session tab memory, multi-active landing", "phase": "P-6",
-      "requirements": ["R-nav-5", "R-nav-6", "R-nav-7", "R-nav-8", "R-nav-9", "R-nav-23"],
+      "id": "F-039",
+      "area": "navigation",
+      "title": "Entry redirect, default tabs, in-session tab memory, multi-active landing",
+      "phase": "P-6",
+      "requirements": [
+        "R-nav-5",
+        "R-nav-6",
+        "R-nav-7",
+        "R-nav-8",
+        "R-nav-9",
+        "R-nav-23"
+      ],
       "verification": [
         "No active trip: cold launch lands on the trip list; exactly one active trip: lands on its today tab",
         "Opening an active trip defaults to today; planning/past trip defaults to itinerary; manual tab choice sticks for the session and resets on relaunch",
@@ -395,8 +691,18 @@
       "passes": false
     },
     {
-      "id": "F-040", "area": "places", "title": "POI spine ingestion: on-demand, idempotent, deduped, failure-visible", "phase": "P-6",
-      "requirements": ["R-places-1", "R-places-2", "R-places-3", "R-places-4", "R-places-5", "R-places-18"],
+      "id": "F-040",
+      "area": "places",
+      "title": "POI spine ingestion: on-demand, idempotent, deduped, failure-visible",
+      "phase": "P-6",
+      "requirements": [
+        "R-places-1",
+        "R-places-2",
+        "R-places-3",
+        "R-places-4",
+        "R-places-5",
+        "R-places-18"
+      ],
       "verification": [
         "Create a trip for a fresh destination: region cells enqueue and ingest Overture + FSQ OS rows; place_ingest_regions rows track status",
         "Re-trigger the same region: upsert is idempotent (no duplicates, no deletes); FSQ record within dedup distance of an Overture record loses",
@@ -406,28 +712,55 @@
       "passes": false
     },
     {
-      "id": "F-041", "area": "places", "title": "Place search (spine-first) + custom places", "phase": "P-6",
-      "requirements": ["R-places-6", "R-places-7", "R-places-8", "R-places-9", "R-places-10"],
+      "id": "F-041",
+      "area": "places",
+      "title": "Place search (spine-first) + custom places",
+      "phase": "P-6",
+      "requirements": [
+        "R-places-6",
+        "R-places-7",
+        "R-places-8",
+        "R-places-9",
+        "R-places-10"
+      ],
       "verification": [
         "GET /places/search returns spine hits for text + geo-biased queries (trgm-backed); coverage miss returns gracefully and enqueues backfill ingest",
-        "Custom places appear only for members of trips where they are referenced — stranger searches never see them",
+        "Custom places appear only for members of trips where they are referenced \u2014 stranger searches never see them",
         "Create a custom place (name+coords): only its creator can PATCH/DELETE it (others 403/404 per posture)"
       ],
       "passes": false
     },
     {
-      "id": "F-042", "area": "trips", "title": "Collab loop: ids-only push events, optimistic writes with rollback, invalidation map", "phase": "P-6",
-      "requirements": ["R-trips-18", "R-trips-19", "R-tripui-4", "R-tripui-21"],
+      "id": "F-042",
+      "area": "trips",
+      "title": "Collab loop: ids-only push events, optimistic writes with rollback, invalidation map",
+      "phase": "P-6",
+      "requirements": [
+        "R-trips-18",
+        "R-trips-19",
+        "R-tripui-4",
+        "R-tripui-21"
+      ],
       "verification": [
-        "Every §3.5 domain event fires post-commit to members except the actor; payload carries event/trip_id/entity_id only — no content, no PII (captured payload evidence)",
+        "Every \u00a73.5 domain event fires post-commit to members except the actor; payload carries event/trip_id/entity_id only \u2014 no content, no PII (captured payload evidence)",
         "Role change applied optimistically rolls back visibly on a forced 500",
         "member.removed targeting me evicts the trip subtree and exits with a notice; invite.created/revoked invalidates the invite list"
       ],
       "passes": false
     },
     {
-      "id": "F-043", "area": "bookings", "title": "Booking lifecycle: typed per-category details, status machine, cancel keeps history", "phase": "P-7",
-      "requirements": ["R-ib-1", "R-ib-2", "R-ib-3", "R-ib-4", "R-ib-7", "R-ib-12"],
+      "id": "F-043",
+      "area": "bookings",
+      "title": "Booking lifecycle: typed per-category details, status machine, cancel keeps history",
+      "phase": "P-7",
+      "requirements": [
+        "R-ib-1",
+        "R-ib-2",
+        "R-ib-3",
+        "R-ib-4",
+        "R-ib-7",
+        "R-ib-12"
+      ],
       "verification": [
         "Create one booking per category through the app: details validated against the shared union (invalid shape 400), price requires currency",
         "Category change attempt on update is rejected; starts_at/ends_at denormalize from details times",
@@ -436,8 +769,15 @@
       "passes": false
     },
     {
-      "id": "F-044", "area": "itinerary", "title": "Booking <-> calendar item single source of truth", "phase": "P-7",
-      "requirements": ["R-ib-5", "R-ib-8", "R-ib-9"],
+      "id": "F-044",
+      "area": "itinerary",
+      "title": "Booking <-> calendar item single source of truth",
+      "phase": "P-7",
+      "requirements": [
+        "R-ib-5",
+        "R-ib-8",
+        "R-ib-9"
+      ],
       "verification": [
         "Create a timed booking: its itinerary item appears automatically on the right day; edit the booking's times: the item moves in the same transaction",
         "Schedule a timeless booking via the schedule endpoint / Add-to-day flow: item created, status advances idea->planned",
@@ -446,8 +786,17 @@
       "passes": false
     },
     {
-      "id": "F-045", "area": "itinerary", "title": "Ideas bucket: off-calendar candidates with scheduling flow", "phase": "P-7",
-      "requirements": ["R-ib-6", "R-ib-10", "R-itin-10", "R-itin-11", "R-itin-12"],
+      "id": "F-045",
+      "area": "itinerary",
+      "title": "Ideas bucket: off-calendar candidates with scheduling flow",
+      "phase": "P-7",
+      "requirements": [
+        "R-ib-6",
+        "R-ib-10",
+        "R-itin-10",
+        "R-itin-11",
+        "R-itin-12"
+      ],
       "verification": [
         "Idea bookings never render in day sections; the pinned Ideas entry shows a correct count badge and groups cards by category",
         "'Add to day' picker schedules the card into its day optimistically with the badge advancing to planned",
@@ -456,8 +805,16 @@
       "passes": false
     },
     {
-      "id": "F-046", "area": "itinerary", "title": "Plan-mode day list: sections, empty-day rows, view-toggle persistence", "phase": "P-7",
-      "requirements": ["R-itin-1", "R-itin-8", "R-itin-9", "R-itin-28"],
+      "id": "F-046",
+      "area": "itinerary",
+      "title": "Plan-mode day list: sections, empty-day rows, view-toggle persistence",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-1",
+        "R-itin-8",
+        "R-itin-9",
+        "R-itin-28"
+      ],
       "verification": [
         "Day list covers the trip range with items ordered by sort_order; empty days render the slim 'Add to this day' row",
         "Booking items show category icon + status badge (planned=accent, booked=success)",
@@ -466,8 +823,16 @@
       "passes": false
     },
     {
-      "id": "F-047", "area": "itinerary", "title": "Drag reorder with booking-day locks and rollback", "phase": "P-7",
-      "requirements": ["R-itin-2", "R-itin-3", "R-ib-15", "R-ib-16"],
+      "id": "F-047",
+      "area": "itinerary",
+      "title": "Drag reorder with booking-day locks and rollback",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-2",
+        "R-itin-3",
+        "R-ib-15",
+        "R-ib-16"
+      ],
       "verification": [
         "Long-press drag within and across days persists via the day-order PUT and survives refetch; haptics fire on lift/drop",
         "Forced server failure rolls the order back visibly with an ErrorBanner",
@@ -476,10 +841,22 @@
       "passes": false
     },
     {
-      "id": "F-048", "area": "itinerary", "title": "Travel times end-to-end: leg computation, chips, degradation, refresh", "phase": "P-7",
-      "requirements": ["R-ib-19", "R-ib-20", "R-ib-21", "R-ib-22", "R-ib-23", "R-itin-4", "R-itin-5", "R-itin-6"],
+      "id": "F-048",
+      "area": "itinerary",
+      "title": "Travel times end-to-end: leg computation, chips, degradation, refresh",
+      "phase": "P-7",
+      "requirements": [
+        "R-ib-19",
+        "R-ib-20",
+        "R-ib-21",
+        "R-ib-22",
+        "R-ib-23",
+        "R-itin-4",
+        "R-itin-5",
+        "R-itin-6"
+      ],
       "verification": [
-        "Add two located consecutive items: legs compute async (mutation latency unaffected — measure) and the travel-time chip appears with the R-itin-5 default mode",
+        "Add two located consecutive items: legs compute async (mutation latency unaffected \u2014 measure) and the travel-time chip appears with the R-itin-5 default mode",
         "Chip tap lists every computed mode + a Directions handoff opening Apple/Google Maps; absent transit shows no error (rows simply missing)",
         "Reorder the day: stale legs for broken adjacencies are cleaned, new pairs computed (DB matches the adjacency contract)",
         "Provider outage: itinerary mutations still succeed; chips degrade silently; refresh endpoint rate-limits"
@@ -487,17 +864,32 @@
       "passes": false
     },
     {
-      "id": "F-049", "area": "itinerary", "title": "Overlaps surfaced, never blocked: list chips + grid side-by-side + sort-by-time", "phase": "P-7",
-      "requirements": ["R-itin-7", "R-itin-15", "R-ib-17"],
+      "id": "F-049",
+      "area": "itinerary",
+      "title": "Overlaps surfaced, never blocked: list chips + grid side-by-side + sort-by-time",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-7",
+        "R-itin-15",
+        "R-ib-17"
+      ],
       "verification": [
-        "Create two overlapping timed items: both save (legal), list shows warning chips on both, grid renders them side-by-side with overlap badges — never occluded",
+        "Create two overlapping timed items: both save (legal), list shows warning chips on both, grid renders them side-by-side with overlap badges \u2014 never occluded",
         "Non-monotonic day ordering offers one-tap 'Sort day by time' which issues the day-order PUT; nothing auto-resorts"
       ],
       "passes": false
     },
     {
-      "id": "F-050", "area": "itinerary", "title": "Calendar grid: hour axis, positioned blocks, gap-tap add, all-day lane", "phase": "P-7",
-      "requirements": ["R-itin-13", "R-itin-14", "R-itin-16", "R-itin-17"],
+      "id": "F-050",
+      "area": "itinerary",
+      "title": "Calendar grid: hour axis, positioned blocks, gap-tap add, all-day lane",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-13",
+        "R-itin-14",
+        "R-itin-16",
+        "R-itin-17"
+      ],
       "verification": [
         "Grid mode pages day columns against a shared 00-24 hour axis; timed items are positioned/sized by start/end; block tap opens detail",
         "Tapping an empty slot opens the add flow prefilled with that day + time rounded to 30 min",
@@ -506,18 +898,33 @@
       "passes": false
     },
     {
-      "id": "F-051", "area": "itinerary", "title": "Multi-day bookings render as one spanning item", "phase": "P-7",
-      "requirements": ["R-itin-31", "R-today-13"],
+      "id": "F-051",
+      "area": "itinerary",
+      "title": "Multi-day bookings render as one spanning item",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-31",
+        "R-today-13"
+      ],
       "verification": [
-        "Multi-night lodging booking: grid shows one spanning all-day lane across covered columns; day list synthesizes check-in and check-out point rows only (nights between show nothing) — both route to the same booking detail",
+        "Multi-night lodging booking: grid shows one spanning all-day lane across covered columns; day list synthesizes check-in and check-out point rows only (nights between show nothing) \u2014 both route to the same booking detail",
         "DB holds exactly one itinerary row (day + end_day), never two",
         "Cross-midnight flight renders clipped at midnight with the +1 tail"
       ],
       "passes": false
     },
     {
-      "id": "F-052", "area": "itinerary", "title": "Add/edit flows for all 10 types with inline conflict notice", "phase": "P-7",
-      "requirements": ["R-itin-18", "R-itin-19", "R-itin-20", "R-itin-23", "R-ib-14"],
+      "id": "F-052",
+      "area": "itinerary",
+      "title": "Add/edit flows for all 10 types with inline conflict notice",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-18",
+        "R-itin-19",
+        "R-itin-20",
+        "R-itin-23",
+        "R-ib-14"
+      ],
       "verification": [
         "FAB opens the add sheet with 8 categories + place visit + custom; each type's form mirrors its details shape",
         "Saving without times lands in the Ideas bucket; saving with times auto-schedules; overlapping choice shows a non-blocking inline notice and still saves",
@@ -526,10 +933,19 @@
       "passes": false
     },
     {
-      "id": "F-053", "area": "itinerary", "title": "Deeplink-out loop: exact partner URLs, recording, return prompt", "phase": "P-7",
-      "requirements": ["R-itin-21", "R-itin-22", "R-itin-32", "R-nav-18", "R-ib-11"],
+      "id": "F-053",
+      "area": "itinerary",
+      "title": "Deeplink-out loop: exact partner URLs, recording, return prompt",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-21",
+        "R-itin-22",
+        "R-itin-32",
+        "R-nav-18",
+        "R-ib-11"
+      ],
       "verification": [
-        "Each partner button builds its exact §2.7 URL (snapshot per partner: Kayak/Skyscanner date formats, Airbnb/Booking/Expedia/Vrbo params, Trainline URN two-step, Turo MM/DD/YYYY); buttons disable with a missing-field hint until required fields exist",
+        "Each partner button builds its exact \u00a72.7 URL (snapshot per partner: Kayak/Skyscanner date formats, Airbnb/Booking/Expedia/Vrbo params, Trainline URN two-step, Turo MM/DD/YYYY); buttons disable with a missing-field hint until required fields exist",
         "adults defaults to trip member count and an inline edit flows into the constructed URL",
         "Tapping records {partner, category, tripId, timestamp} then opens externally; foregrounding within 30 min shows 'Did you book it?' exactly once",
         "Prompt's add-manually reopens the add flow prefilled and the created booking carries source='deeplink_return'"
@@ -537,19 +953,36 @@
       "passes": false
     },
     {
-      "id": "F-054", "area": "itinerary", "title": "Booking & item detail screens + composite read + viewer read-only", "phase": "P-7",
-      "requirements": ["R-itin-24", "R-itin-25", "R-itin-26", "R-itin-27", "R-ib-13", "R-ib-24"],
+      "id": "F-054",
+      "area": "itinerary",
+      "title": "Booking & item detail screens + composite read + viewer read-only",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-24",
+        "R-itin-25",
+        "R-itin-26",
+        "R-itin-27",
+        "R-ib-13",
+        "R-ib-24"
+      ],
       "verification": [
         "Booking detail renders per-category field grid, confirmation-code copy (mono), price, source label, linked place/expenses/schedule rows; cancel/delete run their ConfirmDialogs with correct copy",
         "place_visit/custom items open the item detail; booking-kind items route to booking detail (no duplicated surface)",
-        "The itinerary renders from the one-shot composite read (items + legs, single request per range — network log)",
+        "The itinerary renders from the one-shot composite read (items + legs, single request per range \u2014 network log)",
         "Viewer role: all itinerary/booking mutations 403 server-side; edit affordances absent in UI"
       ],
       "passes": false
     },
     {
-      "id": "F-055", "area": "maps", "title": "Map pin layers, clustering, day filter", "phase": "P-8",
-      "requirements": ["R-map-1", "R-map-2", "R-map-3"],
+      "id": "F-055",
+      "area": "maps",
+      "title": "Map pin layers, clustering, day filter",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-1",
+        "R-map-2",
+        "R-map-3"
+      ],
       "verification": [
         "Trip with saved places + scheduled items: map renders saved pins and day-color-coded itinerary pins from cached trip data",
         "Zoom out to force clustering: clusters show counts; cluster tap expands, never opens a sheet",
@@ -558,28 +991,53 @@
       "passes": false
     },
     {
-      "id": "F-056", "area": "maps", "title": "Map theming and attribution compliance", "phase": "P-8",
-      "requirements": ["R-map-6", "R-map-7"],
+      "id": "F-056",
+      "area": "maps",
+      "title": "Map theming and attribution compliance",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-6",
+        "R-map-7"
+      ],
       "verification": [
-        "Switch light/dark: matching custom style loads and pin/route colors derive from Theme (no literal colors — lint + visual check)",
+        "Switch light/dark: matching custom style loads and pin/route colors derive from Theme (no literal colors \u2014 lint + visual check)",
         "Mapbox wordmark + attribution visible and unobscured by pills/FABs/sheet at rest; attribution info sheet lists spine attribution strings"
       ],
       "passes": false
     },
     {
-      "id": "F-057", "area": "maps", "title": "Pin interactions: place sheet, external nav handoff, map<->itinerary linking", "phase": "P-8",
-      "requirements": ["R-map-4", "R-map-8", "R-map-12", "R-map-23", "R-map-24"],
+      "id": "F-057",
+      "area": "maps",
+      "title": "Pin interactions: place sheet, external nav handoff, map<->itinerary linking",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-4",
+        "R-map-8",
+        "R-map-12",
+        "R-map-23",
+        "R-map-24"
+      ],
       "verification": [
         "Pin tap opens the place sheet (name, category, save toggle, actions); map tap dismisses",
-        "Navigate hands off to Apple/Google Maps with the coordinates — no in-app turn-by-turn",
+        "Navigate hands off to Apple/Google Maps with the coordinates \u2014 no in-app turn-by-turn",
         "Add-to-day opens the itinerary add modal prefilled kind=place_visit + place_id",
         "View-in-itinerary cross-tab pushes to the item detail with tab stacks intact; itinerary->map focuses the pin, opens its sheet once, and the param is not re-consumed on tab revisit"
       ],
       "passes": false
     },
     {
-      "id": "F-058", "area": "maps", "title": "Place detail: spine view, note editing, linked content, silent fresh degrade", "phase": "P-8",
-      "requirements": ["R-map-9", "R-map-10", "R-map-14", "R-places-11", "R-places-13", "R-places-17"],
+      "id": "F-058",
+      "area": "maps",
+      "title": "Place detail: spine view, note editing, linked content, silent fresh degrade",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-9",
+        "R-map-10",
+        "R-map-14",
+        "R-places-11",
+        "R-places-13",
+        "R-places-17"
+      ],
       "verification": [
         "Detail screen renders spine data, editable saved-place note (owner/editor), linked itinerary items and this-trip photos with cross-navigation, and source attribution footer",
         "Fresh premium block absent (offline/error/deferred-MVP): full spine view renders with no error surface",
@@ -588,8 +1046,13 @@
       "passes": false
     },
     {
-      "id": "F-059", "area": "maps", "title": "Map search bar with temporary result pins", "phase": "P-8",
-      "requirements": ["R-map-25"],
+      "id": "F-059",
+      "area": "maps",
+      "title": "Map search bar with temporary result pins",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-25"
+      ],
       "verification": [
         ">=2 chars queries GET /places/search debounced and geo-biased; results render as temporary pins + list",
         "Result tap opens the standard place sheet (save/add-to-day work); clearing removes temporary pins",
@@ -598,18 +1061,34 @@
       "passes": false
     },
     {
-      "id": "F-060", "area": "maps", "title": "Foreground-only location: lazy permission, no background keys", "phase": "P-8",
-      "requirements": ["R-map-15", "R-map-16", "R-map-17"],
+      "id": "F-060",
+      "area": "maps",
+      "title": "Foreground-only location: lazy permission, no background keys",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-15",
+        "R-map-16",
+        "R-map-17"
+      ],
       "verification": [
         "No permission prompt on map mount; first locate-me tap prompts when-in-use once",
         "Denied: map fully functional without puck, locate-me offers a Settings path with no re-prompt loop; granted: camera flies to the user with pins intact",
-        "Built app's Info.plist contains only NSLocationWhenInUseUsageDescription — no always keys, no background location modes (inspect the built plist)"
+        "Built app's Info.plist contains only NSLocationWhenInUseUsageDescription \u2014 no always keys, no background location modes (inspect the built plist)"
       ],
       "passes": false
     },
     {
-      "id": "F-061", "area": "maps", "title": "Offline tile packs: lifecycle, hygiene, airplane-mode map", "phase": "P-8",
-      "requirements": ["R-map-18", "R-map-19", "R-map-20", "R-map-21", "R-map-22"],
+      "id": "F-061",
+      "area": "maps",
+      "title": "Offline tile packs: lifecycle, hygiene, airplane-mode map",
+      "phase": "P-8",
+      "requirements": [
+        "R-map-18",
+        "R-map-19",
+        "R-map-20",
+        "R-map-21",
+        "R-map-22"
+      ],
       "verification": [
         "Trip flips to active on wifi: style + tile pack download starts exactly once with progress in the status pill; on cellular it defers and resumes on the next wifi+active window",
         "Trip-settings management UI shows none/downloading/ready/stale/failed with download (cellular size-confirm), refresh, delete; failure marks failed with working retry and the map stays usable online",
@@ -619,8 +1098,14 @@
       "passes": false
     },
     {
-      "id": "F-062", "area": "places", "title": "Saved places: role-gated CRUD with save-once semantics", "phase": "P-8",
-      "requirements": ["R-places-15", "R-places-16"],
+      "id": "F-062",
+      "area": "places",
+      "title": "Saved places: role-gated CRUD with save-once semantics",
+      "phase": "P-8",
+      "requirements": [
+        "R-places-15",
+        "R-places-16"
+      ],
       "verification": [
         "Editor saves/unsaves a place and edits its note; viewer sees state but has no save control and the server 403s a forced write",
         "Saving an already-saved place returns 409 which the client treats as success (saved state, no error UI)",
@@ -629,8 +1114,20 @@
       "passes": false
     },
     {
-      "id": "F-063", "area": "money", "title": "Add expense: integer cents, atomic shares, member-only participants", "phase": "P-9",
-      "requirements": ["R-money-1", "R-money-2", "R-money-4", "R-money-5", "R-money-26", "R-trips-21", "R-cmoney-7", "R-cmoney-8"],
+      "id": "F-063",
+      "area": "money",
+      "title": "Add expense: integer cents, atomic shares, member-only participants",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-1",
+        "R-money-2",
+        "R-money-4",
+        "R-money-5",
+        "R-money-26",
+        "R-trips-21",
+        "R-cmoney-7",
+        "R-cmoney-8"
+      ],
       "verification": [
         "Amount input parses '25.50'->2550 and JPY '2550'->2550 via the shared minor-unit helper; floats fail wire validation (send 25.5 -> 400)",
         "Create expense with shares: expenses + expense_shares written in one transaction; shares not summing to amount rejected server-side regardless of client math",
@@ -640,8 +1137,14 @@
       "passes": false
     },
     {
-      "id": "F-064", "area": "money", "title": "Split engine: four types, deterministic remainders, client-server parity", "phase": "P-9",
-      "requirements": ["R-money-3", "R-cmoney-9"],
+      "id": "F-064",
+      "area": "money",
+      "title": "Split engine: four types, deterministic remainders, client-server parity",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-3",
+        "R-cmoney-9"
+      ],
       "verification": [
         "Equal/exact/percent/shares editors each show live per-member previews from the shared computeShares; save blocked until the split resolves exactly (remaining readout at zero, percents sum 100)",
         "Property test: client preview === shared computeShares output across random inputs; remainder cents assigned by largest-remainder deterministically (same input -> same shares)",
@@ -650,8 +1153,16 @@
       "passes": false
     },
     {
-      "id": "F-065", "area": "money", "title": "Multi-currency FX capture + base-currency lock", "phase": "P-9",
-      "requirements": ["R-money-6", "R-db-20", "R-cmoney-10", "R-trips-22"],
+      "id": "F-065",
+      "area": "money",
+      "title": "Multi-currency FX capture + base-currency lock",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-6",
+        "R-db-20",
+        "R-cmoney-10",
+        "R-trips-22"
+      ],
       "verification": [
         "Log a non-base-currency expense online: rate auto-fetched, base amount prefilled, manual override respected; stored fx_rate/base_amount_cents never re-fetched after write",
         "Offline or FX-source failure: save requires manual rate entry",
@@ -660,8 +1171,18 @@
       "passes": false
     },
     {
-      "id": "F-066", "area": "money", "title": "Expense list, detail, edit + the invalidation trio", "phase": "P-9",
-      "requirements": ["R-cmoney-5", "R-cmoney-11", "R-cmoney-12", "R-cmoney-13", "R-cmoney-29", "R-cmoney-32"],
+      "id": "F-066",
+      "area": "money",
+      "title": "Expense list, detail, edit + the invalidation trio",
+      "phase": "P-9",
+      "requirements": [
+        "R-cmoney-5",
+        "R-cmoney-11",
+        "R-cmoney-12",
+        "R-cmoney-13",
+        "R-cmoney-29",
+        "R-cmoney-32"
+      ],
       "verification": [
         "Expenses segment lists newest-first with payer, logged currency and 'your share'; member/category filters work; infinite scroll follows the cursor",
         "Booking-link picker prefills amount/description/category per the fixed mapping; edit mode reopens with exact shares and PATCHes full replacement",
@@ -671,8 +1192,14 @@
       "passes": false
     },
     {
-      "id": "F-067", "area": "money", "title": "Expense soft-delete with visible audit trail", "phase": "P-9",
-      "requirements": ["R-money-27", "R-db-21"],
+      "id": "F-067",
+      "area": "money",
+      "title": "Expense soft-delete with visible audit trail",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-27",
+        "R-db-21"
+      ],
       "verification": [
         "Creator deletes own expense via ConfirmDialog: row gets deleted_at/deleted_by (never removed), balances and budget spend exclude it",
         "History shows the audit entry ('X deleted ...'); owner can delete any expense, a non-creator editor cannot (403)",
@@ -681,8 +1208,17 @@
       "passes": false
     },
     {
-      "id": "F-068", "area": "money", "title": "Balances: computed pairwise nets in base currency, ex-members included", "phase": "P-9",
-      "requirements": ["R-money-8", "R-money-9", "R-money-28", "R-trips-12", "R-cmoney-6"],
+      "id": "F-068",
+      "area": "money",
+      "title": "Balances: computed pairwise nets in base currency, ex-members included",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-8",
+        "R-money-9",
+        "R-money-28",
+        "R-trips-12",
+        "R-cmoney-6"
+      ],
       "verification": [
         "Fixture trip (multi-payer, multi-currency, settlements): balances endpoint returns pairwise nets matching hand-computed base-currency totals; nothing stored (no balance table)",
         "FX expenses allocate via base_amount_cents",
@@ -692,17 +1228,32 @@
       "passes": false
     },
     {
-      "id": "F-069", "area": "money", "title": "Simplify debts: off by default, one-tap view toggle", "phase": "P-9",
-      "requirements": ["R-money-10", "R-cmoney-6"],
+      "id": "F-069",
+      "area": "money",
+      "title": "Simplify debts: off by default, one-tap view toggle",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-10",
+        "R-cmoney-6"
+      ],
       "verification": [
-        "Transfer list renders pairwise by default; the toggle switches to the API's simplified array (fewer transfers, same net positions — verify totals) and back",
+        "Transfer list renders pairwise by default; the toggle switches to the API's simplified array (fewer transfers, same net positions \u2014 verify totals) and back",
         "Toggle state is per-view, not persisted across mounts"
       ],
       "passes": false
     },
     {
-      "id": "F-070", "area": "money", "title": "Settlements: record-only ledger, party rule, correction window", "phase": "P-9",
-      "requirements": ["R-money-11", "R-money-12", "R-money-13", "R-money-14", "R-money-15"],
+      "id": "F-070",
+      "area": "money",
+      "title": "Settlements: record-only ledger, party rule, correction window",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-11",
+        "R-money-12",
+        "R-money-13",
+        "R-money-14",
+        "R-money-15"
+      ],
       "verification": [
         "Either party records a settlement; a third member attempting for others is rejected; rows carry no external transaction ids or payment state (schema + payload check)",
         "Settlement commits in trip base currency and balances reflect it immediately",
@@ -711,19 +1262,39 @@
       "passes": false
     },
     {
-      "id": "F-071", "area": "money", "title": "Settle-up rails: exact URL formats and gating", "phase": "P-9",
-      "requirements": ["R-cmoney-14", "R-cmoney-15", "R-cmoney-16", "R-cmoney-17", "R-cmoney-18", "R-cmoney-19", "R-cmoney-22", "R-cmoney-24", "R-cmoney-31"],
+      "id": "F-071",
+      "area": "money",
+      "title": "Settle-up rails: exact URL formats and gating",
+      "phase": "P-9",
+      "requirements": [
+        "R-cmoney-14",
+        "R-cmoney-15",
+        "R-cmoney-16",
+        "R-cmoney-17",
+        "R-cmoney-18",
+        "R-cmoney-19",
+        "R-cmoney-22",
+        "R-cmoney-24",
+        "R-cmoney-31"
+      ],
       "verification": [
-        "Settle screen headlines the pairwise position with editable amount (over-amount warns, partial allowed); one button per handle the counterparty actually has — no disabled stubs, hint when zero handles",
-        "Link builder snapshots match §2.5 verbatim: venmo:// pay URL (web fallback when canOpenURL fails), cash.app/$tag/amount, paypal.me amount with pinned currency, JPY zero-decimal formatting; Zelle renders copyable handle + display name",
+        "Settle screen headlines the pairwise position with editable amount (over-amount warns, partial allowed); one button per handle the counterparty actually has \u2014 no disabled stubs, hint when zero handles",
+        "Link builder snapshots match \u00a72.5 verbatim: venmo:// pay URL (web fallback when canOpenURL fails), cash.app/$tag/amount, paypal.me amount with pinned currency, JPY zero-decimal formatting; Zelle renders copyable handle + display name",
         "Non-USD base trip hides Venmo/CashApp/Zelle, keeps PayPal + mark-as-settled; PayPal copy frames Friends & Family",
         "Rail open failure shows a non-blocking error and the screen stays usable; handles are sourced only from trip-member UserProfile"
       ],
       "passes": false
     },
     {
-      "id": "F-072", "area": "money", "title": "Mark-as-settled always works + payment return prompt", "phase": "P-9",
-      "requirements": ["R-cmoney-20", "R-cmoney-21", "R-cmoney-23"],
+      "id": "F-072",
+      "area": "money",
+      "title": "Mark-as-settled always works + payment return prompt",
+      "phase": "P-9",
+      "requirements": [
+        "R-cmoney-20",
+        "R-cmoney-21",
+        "R-cmoney-23"
+      ],
       "verification": [
         "Mark-as-settled renders and records (method/amount/note sheet) with zero handles and zero rails",
         "Rail deeplink-out then foreground within 30 min: 'Did you complete the payment?' sheet appears exactly once, prefilled with rail + amount; confirm posts the settlement, decline clears the stash",
@@ -732,19 +1303,38 @@
       "passes": false
     },
     {
-      "id": "F-073", "area": "money", "title": "Send-the-bill: request create, share, recipient screen, resolution", "phase": "P-9",
-      "requirements": ["R-money-16", "R-money-17", "R-money-18", "R-money-19", "R-cmoney-25", "R-cmoney-26", "R-cmoney-27", "R-nav-13"],
+      "id": "F-073",
+      "area": "money",
+      "title": "Send-the-bill: request create, share, recipient screen, resolution",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-16",
+        "R-money-17",
+        "R-money-18",
+        "R-money-19",
+        "R-cmoney-25",
+        "R-cmoney-26",
+        "R-cmoney-27",
+        "R-nav-13"
+      ],
       "verification": [
         "Creditor creates a request: share sheet opens with the universal link + message text; open requests annotate the balances rows with cancel via ConfirmDialog",
         "Recipient (member) opens the link cold and warm: request screen renders requester, amount, the requester's rails, mark-as-settled; paying through it links the settlement and flips the request to settled for both parties",
         "Settled/cancelled/unknown request ids render resolved/empty states with no pay buttons; a non-member opener gets the no-access state",
-        "Request detail discloses only the §minimum fields (payload inspection)"
+        "Request detail discloses only the \u00a7minimum fields (payload inspection)"
       ],
       "passes": false
     },
     {
-      "id": "F-074", "area": "money", "title": "Budgets: per-category caps + overall cap vs actual spend", "phase": "P-9",
-      "requirements": ["R-money-20", "R-cmoney-2", "R-cmoney-4"],
+      "id": "F-074",
+      "area": "money",
+      "title": "Budgets: per-category caps + overall cap vs actual spend",
+      "phase": "P-9",
+      "requirements": [
+        "R-money-20",
+        "R-cmoney-2",
+        "R-cmoney-4"
+      ],
       "verification": [
         "Budget segment shows one row per expense_category (list derived from the shared enum) with cap, AI-estimate column, actual spend and progress; header shows editable overall trip cap (editor+) with computed total",
         "Warning styling at >=80% of cap, over-budget styling past 100% (drive with fixture expenses)",
@@ -753,8 +1343,21 @@
       "passes": false
     },
     {
-      "id": "F-075", "area": "ai", "title": "AI platform gates: key custody, caps, ceilings, order, typed degradation", "phase": "P-10",
-      "requirements": ["R-ai-1", "R-ai-2", "R-ai-3", "R-ai-4", "R-ai-5", "R-ai-11", "R-ai-18", "R-ai-19", "R-ent-2"],
+      "id": "F-075",
+      "area": "ai",
+      "title": "AI platform gates: key custody, caps, ceilings, order, typed degradation",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-1",
+        "R-ai-2",
+        "R-ai-3",
+        "R-ai-4",
+        "R-ai-5",
+        "R-ai-11",
+        "R-ai-18",
+        "R-ai-19",
+        "R-ent-2"
+      ],
       "verification": [
         "Mobile workspace dependency scan shows no Anthropic SDK/key; CI env asserts no ANTHROPIC_API_KEY; all model calls originate server-side",
         "Drive an AI endpoint to the cap: 29th counted call passes, 30th returns 429 AI_CAP_EXCEEDED; per-feature ceilings trip independently; gate runs before any model call (mock assert)",
@@ -764,8 +1367,15 @@
       "passes": false
     },
     {
-      "id": "F-076", "area": "ai", "title": "Usage accounting, integer cost math, $50 alert / $100 kill-switch", "phase": "P-10",
-      "requirements": ["R-ai-6", "R-ai-7", "R-ai-8"],
+      "id": "F-076",
+      "area": "ai",
+      "title": "Usage accounting, integer cost math, $50 alert / $100 kill-switch",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-6",
+        "R-ai-7",
+        "R-ai-8"
+      ],
       "verification": [
         "Each model call upserts ai_usage (calls + token counts) on (user, feature, day); cache hits write nothing",
         "Cost fixtures: tokens x price table compute in integer microcents end-to-end (no float types in the pipeline); batch features half-priced",
@@ -774,8 +1384,15 @@
       "passes": false
     },
     {
-      "id": "F-077", "area": "ai", "title": "Destination cache: shared, anonymous, cache-first", "phase": "P-10",
-      "requirements": ["R-ai-9", "R-ai-10", "R-db-10"],
+      "id": "F-077",
+      "area": "ai",
+      "title": "Destination cache: shared, anonymous, cache-first",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-9",
+        "R-ai-10",
+        "R-db-10"
+      ],
       "verification": [
         "Two different users with the same destination/style/season: second request serves from ai_cache with no model call, no usage row, no cap decrement (assert via mock + counters)",
         "ai_cache rows contain no user_id/trip_id (schema + row inspection); expired rows evicted by the sweep",
@@ -784,8 +1401,18 @@
       "passes": false
     },
     {
-      "id": "F-078", "area": "ai", "title": "Anti-hallucination contract: grounding, cite-or-retract, no volatile facts", "phase": "P-10",
-      "requirements": ["R-ai-12", "R-ai-13", "R-ai-14", "R-ai-15", "R-ai-16", "R-ai-17"],
+      "id": "F-078",
+      "area": "ai",
+      "title": "Anti-hallucination contract: grounding, cite-or-retract, no volatile facts",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-12",
+        "R-ai-13",
+        "R-ai-14",
+        "R-ai-15",
+        "R-ai-16",
+        "R-ai-17"
+      ],
       "verification": [
         "Snapshot every generative template: grounding block with provided facts/ids, restriction clause, unknown-permission clause, no banned brevity phrases",
         "Refiner drops output items whose place_id is outside the candidate set and facts whose source_ref does not resolve (fixture proof)",
@@ -794,8 +1421,15 @@
       "passes": false
     },
     {
-      "id": "F-079", "area": "ai", "title": "Recommendations grounded in the spine", "phase": "P-10",
-      "requirements": ["R-ai-20", "R-ai-21", "R-ai-22"],
+      "id": "F-079",
+      "area": "ai",
+      "title": "Recommendations grounded in the spine",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-20",
+        "R-ai-21",
+        "R-ai-22"
+      ],
       "verification": [
         "Request recommendations for a seeded destination: every returned item references a real spine place_id from the candidate list; capped at 20",
         "Cards render with save-to-trip working (saved place appears on the map); repeat request hits the destination cache",
@@ -804,8 +1438,17 @@
       "passes": false
     },
     {
-      "id": "F-080", "area": "ai", "title": "AI expense estimation writes budgets, client CTA state machine", "phase": "P-10",
-      "requirements": ["R-money-21", "R-money-22", "R-money-23", "R-money-24", "R-cmoney-3"],
+      "id": "F-080",
+      "area": "ai",
+      "title": "AI expense estimation writes budgets, client CTA state machine",
+      "phase": "P-10",
+      "requirements": [
+        "R-money-21",
+        "R-money-22",
+        "R-money-23",
+        "R-money-24",
+        "R-cmoney-3"
+      ],
       "verification": [
         "Editor taps Estimate with AI: gate order (kill-switch -> entitlement -> cache) holds, per-category integer ranges validate server-side, budgets rows persist ai_estimate_cents + ai_estimated_at and the UI refetches to show them",
         "Cache key includes canonicalized travel_style; second user same destination/style hits cache",
@@ -814,8 +1457,17 @@
       "passes": false
     },
     {
-      "id": "F-081", "area": "ai", "title": "Tour guide: T-3 batch pre-gen, reconciliation, offline bundles, surfacing", "phase": "P-10",
-      "requirements": ["R-ai-23", "R-ai-24", "R-ai-25", "R-ai-26", "R-map-13"],
+      "id": "F-081",
+      "area": "ai",
+      "title": "Tour guide: T-3 batch pre-gen, reconciliation, offline bundles, surfacing",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-23",
+        "R-ai-24",
+        "R-ai-25",
+        "R-ai-26",
+        "R-map-13"
+      ],
       "verification": [
         "Trip entering T-3 days (or manual Prepare offline): batch submits one bundle per saved place idempotently within the structural cap; reconciliation flips pending->ready/failed from batch results in any order",
         "Ready bundles download into device SQLite over wifi; airplane-mode lookup by place_id renders full bundle content with per-fact source refs",
@@ -825,38 +1477,71 @@
       "passes": false
     },
     {
-      "id": "F-082", "area": "ai", "title": "Packing-list generation (live, uncached)", "phase": "P-10",
-      "requirements": ["R-ai-27", "R-ai-28"],
+      "id": "F-082",
+      "area": "ai",
+      "title": "Packing-list generation (live, uncached)",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-27",
+        "R-ai-28"
+      ],
       "verification": [
         "POST /ai/packing-list for a trip: inputs are destination/dates/weather/travel_style; returns PackingItem[] without checked, nothing persisted by the endpoint (DB unchanged until the client saves)",
-        "Counts against the packing feature ceiling (5/day) — 6th call 429s",
+        "Counts against the packing feature ceiling (5/day) \u2014 6th call 429s",
         "No cache row written (live/uncached by design)"
       ],
       "passes": false
     },
     {
-      "id": "F-083", "area": "ai", "title": "Post-trip recap: one per trip, grounded, privacy-filtered highlights", "phase": "P-10",
-      "requirements": ["R-ai-29", "R-ai-30", "R-ai-31"],
+      "id": "F-083",
+      "area": "ai",
+      "title": "Post-trip recap: one per trip, grounded, privacy-filtered highlights",
+      "phase": "P-10",
+      "requirements": [
+        "R-ai-29",
+        "R-ai-30",
+        "R-ai-31"
+      ],
       "verification": [
-        "Trip transitions to past: recap batch submits once (re-trigger is idempotent — unique per trip); reconciliation lands content in recaps",
-        "Prompt snapshot contains only server-computed facts (stats/trace/highlight ids) — no photo content or private-photo metadata with a mixed-visibility fixture",
+        "Trip transitions to past: recap batch submits once (re-trigger is idempotent \u2014 unique per trip); reconciliation lands content in recaps",
+        "Prompt snapshot contains only server-computed facts (stats/trace/highlight ids) \u2014 no photo content or private-photo metadata with a mixed-visibility fixture",
         "Highlight selection is deterministic (same inputs -> same ids) and rendered highlights pass canViewPhoto for the viewer"
       ],
       "passes": false
     },
     {
-      "id": "F-084", "area": "capture", "title": "Forward address provisioning + capture onboarding", "phase": "P-11",
-      "requirements": ["R-capc-17", "R-capc-18", "R-capc-19", "R-capc-20"],
+      "id": "F-084",
+      "area": "capture",
+      "title": "Forward address provisioning + capture onboarding",
+      "phase": "P-11",
+      "requirements": [
+        "R-capc-17",
+        "R-capc-18",
+        "R-capc-19",
+        "R-capc-20"
+      ],
       "verification": [
-        "First onboarding open provisions the address (idempotent slug) with a loading state; failure shows ErrorBanner with working retry — never a fake address",
+        "First onboarding open provisions the address (idempotent slug) with a loading state; failure shows ErrorBanner with working retry \u2014 never a fake address",
         "Address renders with one-tap copy + toast; teaching covers forward path (Apple Mail 3-tap, Gmail-must-forward) and share path",
         "The 'Did you book it?' prompt's how-to-forward action opens this same screen; it stays reachable from the queue header afterward"
       ],
       "passes": false
     },
     {
-      "id": "F-085", "area": "capture", "title": "Email ingest: webhook auth, slug routing, sender policy, parse-reply", "phase": "P-11",
-      "requirements": ["R-cap-1", "R-cap-2", "R-cap-3", "R-cap-4", "R-cap-5", "R-cap-6", "R-cap-15", "R-cap-27"],
+      "id": "F-085",
+      "area": "capture",
+      "title": "Email ingest: webhook auth, slug routing, sender policy, parse-reply",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-1",
+        "R-cap-2",
+        "R-cap-3",
+        "R-cap-4",
+        "R-cap-5",
+        "R-cap-6",
+        "R-cap-15",
+        "R-cap-27"
+      ],
       "verification": [
         "Unsigned/misauthenticated webhook posts are rejected; a real forwarded email to <slug>@in.<domain> lands a pending capture_inbox row with raw MIME in object storage",
         "From an unverified sender: bounced per policy; add + verify an additional sender (token link) and the same forward now lands",
@@ -866,18 +1551,39 @@
       "passes": false
     },
     {
-      "id": "F-086", "area": "capture", "title": "Share-sheet ingestion: cold/warm routing, limits, never dropped", "phase": "P-11",
-      "requirements": ["R-cap-7", "R-cap-8", "R-capc-1", "R-capc-2", "R-capc-3", "R-capc-4", "R-nav-19"],
+      "id": "F-086",
+      "area": "capture",
+      "title": "Share-sheet ingestion: cold/warm routing, limits, never dropped",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-7",
+        "R-cap-8",
+        "R-capc-1",
+        "R-capc-2",
+        "R-capc-3",
+        "R-capc-4",
+        "R-nav-19"
+      ],
       "verification": [
         "Share a PDF, an image, text, and a URL from other apps on cold AND warm start: each routes through auth gating into the queue with a processing row",
         "Share while signed out: payload stashed, auth runs, upload resumes",
-        "413/400/429/network failures render the synthetic row with reason + retry; discard requires ConfirmDialog; the payload is never silently dropped (kill the app mid-failure and relaunch — still there)"
+        "413/400/429/network failures render the synthetic row with reason + retry; discard requires ConfirmDialog; the payload is never silently dropped (kill the app mid-failure and relaunch \u2014 still there)"
       ],
       "passes": false
     },
     {
-      "id": "F-087", "area": "capture", "title": "Parse pipeline: JSON-LD first, LLM fallback, confidence routing, trip inference", "phase": "P-11",
-      "requirements": ["R-cap-9", "R-cap-10", "R-cap-11", "R-cap-12", "R-cap-14", "R-cap-16"],
+      "id": "F-087",
+      "area": "capture",
+      "title": "Parse pipeline: JSON-LD first, LLM fallback, confidence routing, trip inference",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-9",
+        "R-cap-10",
+        "R-cap-11",
+        "R-cap-12",
+        "R-cap-14",
+        "R-cap-16"
+      ],
       "verification": [
         "JSON-LD fixtures per reservation type parse to the right category/details with parser='jsonld'; a no-JSON-LD fixture invokes the Haiku fallback",
         "High/medium/low LLM confidence routes to parsed vs needs_review at the pinned threshold; the heuristic gate (no dates + no confirmation code) forces needs_review even at high confidence",
@@ -887,8 +1593,16 @@
       "passes": false
     },
     {
-      "id": "F-088", "area": "capture", "title": "Auto-file with push and one-tap undo", "phase": "P-11",
-      "requirements": ["R-cap-13", "R-cap-28", "R-capc-16", "R-capc-23"],
+      "id": "F-088",
+      "area": "capture",
+      "title": "Auto-file with push and one-tap undo",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-13",
+        "R-cap-28",
+        "R-capc-16",
+        "R-capc-23"
+      ],
       "verification": [
         "High-confidence capture with a single trip guess auto-files: booking + capture link created in one transaction and the push notification carries the undo action",
         "Undo (push action or landed-row overflow): booking removed, capture returns to needs_review for normal review; 409 (booking edited/deleted since) shows the explanatory toast + refresh",
@@ -897,8 +1611,17 @@
       "passes": false
     },
     {
-      "id": "F-089", "area": "capture", "title": "Review queue: states, polling, badge", "phase": "P-11",
-      "requirements": ["R-capc-5", "R-capc-6", "R-capc-7", "R-capc-8", "R-nav-24"],
+      "id": "F-089",
+      "area": "capture",
+      "title": "Review queue: states, polling, badge",
+      "phase": "P-11",
+      "requirements": [
+        "R-capc-5",
+        "R-capc-6",
+        "R-capc-7",
+        "R-capc-8",
+        "R-nav-24"
+      ],
       "verification": [
         "Queue lists captures newest-first with all five row treatments (pending/parsed/needs_review/failed/landed); segment switches open vs landed history",
         "A pending row updates in place within the 3s poll window; polling stops after 90s falling back to refetch-on-focus",
@@ -907,8 +1630,26 @@
       "passes": false
     },
     {
-      "id": "F-090", "area": "capture", "title": "Review flows: confirm lands atomically, reject, reparse, raw view", "phase": "P-11",
-      "requirements": ["R-cap-17", "R-cap-18", "R-cap-19", "R-cap-20", "R-cap-21", "R-cap-22", "R-cap-23", "R-capc-9", "R-capc-10", "R-capc-11", "R-capc-12", "R-capc-13", "R-capc-14", "R-capc-15"],
+      "id": "F-090",
+      "area": "capture",
+      "title": "Review flows: confirm lands atomically, reject, reparse, raw view",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-17",
+        "R-cap-18",
+        "R-cap-19",
+        "R-cap-20",
+        "R-cap-21",
+        "R-cap-22",
+        "R-cap-23",
+        "R-capc-9",
+        "R-capc-10",
+        "R-capc-11",
+        "R-capc-12",
+        "R-capc-13",
+        "R-capc-14",
+        "R-capc-15"
+      ],
       "verification": [
         "Review screen renders the proposal (category/title/times/price/confirmation + parser provenance) with trip picker (owner/editor trips only, date-overlapping first, guess preselected)",
         "Edited fields ride confirm as overrides; 201 creates the booking atomically with capture_id linked and navigates to it; 400 shows inline field errors; 409 flips the row to landed",
@@ -918,8 +1659,16 @@
       "passes": false
     },
     {
-      "id": "F-091", "area": "capture", "title": "Capture privacy: PII-free logs, SSRF guard, 30-day raw retention", "phase": "P-11",
-      "requirements": ["R-cap-24", "R-cap-25", "R-cap-26", "R-capc-22"],
+      "id": "F-091",
+      "area": "capture",
+      "title": "Capture privacy: PII-free logs, SSRF guard, 30-day raw retention",
+      "phase": "P-11",
+      "requirements": [
+        "R-cap-24",
+        "R-cap-25",
+        "R-cap-26",
+        "R-capc-22"
+      ],
       "verification": [
         "Run a full email + share capture cycle and sweep logs: no subjects, bodies, addresses, or parsed PII beyond ids/statuses",
         "Shared URLs targeting private/link-local/metadata addresses are refused (unit + integration proof, redirects re-checked)",
@@ -929,8 +1678,19 @@
       "passes": false
     },
     {
-      "id": "F-092", "area": "photos", "title": "Two-phase photo upload with limits", "phase": "P-12",
-      "requirements": ["R-photo-1", "R-photo-2", "R-photo-4", "R-photo-14", "R-cphoto-5", "R-cphoto-6", "R-cphoto-7"],
+      "id": "F-092",
+      "area": "photos",
+      "title": "Two-phase photo upload with limits",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-1",
+        "R-photo-2",
+        "R-photo-4",
+        "R-photo-14",
+        "R-cphoto-5",
+        "R-cphoto-6",
+        "R-cphoto-7"
+      ],
       "verification": [
         "Album FAB offers camera + multi-select library; chosen photos enqueue and return control immediately (no network block)",
         "Pipeline mints slots (batch cap enforced), PUTs bytes, finalizes: photos row appears with blurhash + dimensions; finalize retry for the same slot is idempotent (one row)",
@@ -939,8 +1699,15 @@
       "passes": false
     },
     {
-      "id": "F-093", "area": "photos", "title": "Offline-tolerant upload queue with visible failures", "phase": "P-12",
-      "requirements": ["R-cphoto-8", "R-cphoto-9", "R-cphoto-10"],
+      "id": "F-093",
+      "area": "photos",
+      "title": "Offline-tolerant upload queue with visible failures",
+      "phase": "P-12",
+      "requirements": [
+        "R-cphoto-8",
+        "R-cphoto-9",
+        "R-cphoto-10"
+      ],
       "verification": [
         "Enqueue uploads in airplane mode, kill the app, relaunch, restore connectivity: uploads complete (queue persisted, bytes referenced not copied)",
         "Pending/failed tiles render in the grid with progress, retry, cancel; a deleted local asset marks its item failed with an explanation, never crashes",
@@ -949,8 +1716,17 @@
       "passes": false
     },
     {
-      "id": "F-094", "area": "photos", "title": "Location consent: per-upload opt-in, priming before every OS prompt", "phase": "P-12",
-      "requirements": ["R-photo-3", "R-cphoto-1", "R-cphoto-2", "R-cphoto-3", "R-cphoto-4"],
+      "id": "F-094",
+      "area": "photos",
+      "title": "Location consent: per-upload opt-in, priming before every OS prompt",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-3",
+        "R-cphoto-1",
+        "R-cphoto-2",
+        "R-cphoto-3",
+        "R-cphoto-4"
+      ],
       "verification": [
         "Camera, library, and location primes each render before their OS dialog on first use; denial of one path leaves the other functional with a settings explainer",
         "Consent off: extract_location=false on the wire (proxy the finalize call) and no GPS is read client-side; server persists no lat/lng even when EXIF has GPS",
@@ -959,8 +1735,17 @@
       "passes": false
     },
     {
-      "id": "F-095", "area": "photos", "title": "Visibility boundary enforced on every photo read", "phase": "P-12",
-      "requirements": ["R-photo-6", "R-photo-9", "R-photo-10", "R-photo-11", "R-db-4"],
+      "id": "F-095",
+      "area": "photos",
+      "title": "Visibility boundary enforced on every photo read",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-6",
+        "R-photo-9",
+        "R-photo-10",
+        "R-photo-11",
+        "R-db-4"
+      ],
       "verification": [
         "Fixture trip with private/trip/public photos from two members: member B's gallery, viewer deep link, and pin feed never contain member A's private photo (404-indistinguishable on direct fetch)",
         "Coordinates are redacted from serialized rows wherever the viewer could not see location (payload inspection)",
@@ -970,8 +1755,17 @@
       "passes": false
     },
     {
-      "id": "F-096", "area": "photos", "title": "Visibility control UX: explicit widen, frictionless narrow, owner-only", "phase": "P-12",
-      "requirements": ["R-photo-7", "R-photo-8", "R-cphoto-17", "R-cphoto-18", "R-cphoto-19"],
+      "id": "F-096",
+      "area": "photos",
+      "title": "Visibility control UX: explicit widen, frictionless narrow, owner-only",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-7",
+        "R-photo-8",
+        "R-cphoto-17",
+        "R-cphoto-18",
+        "R-cphoto-19"
+      ],
       "verification": [
         "Owner sees pin/caption/visibility/delete controls; non-owners see read-only metadata with controls absent (not disabled); server 403s a non-owner visibility PATCH",
         "Widening to public opens the ConfirmDialog stating scope + no-recall; cancel leaves visibility unchanged; confirm is not the default-focused action",
@@ -980,8 +1774,17 @@
       "passes": false
     },
     {
-      "id": "F-097", "area": "photos", "title": "Trip album: day and place grouping (the trip journal)", "phase": "P-12",
-      "requirements": ["R-cphoto-12", "R-cphoto-13", "R-cphoto-14", "R-cphoto-15", "R-cphoto-16"],
+      "id": "F-097",
+      "area": "photos",
+      "title": "Trip album: day and place grouping (the trip journal)",
+      "phase": "P-12",
+      "requirements": [
+        "R-cphoto-12",
+        "R-cphoto-13",
+        "R-cphoto-14",
+        "R-cphoto-15",
+        "R-cphoto-16"
+      ],
       "verification": [
         "By-day grid groups by taken_at in trip-day terms matching itinerary day headers (created_at fallback covered); by-place segment groups under pinned places with an Unpinned section",
         "Tiles show blurhash placeholders then thumbs; trip/public badges overlay (private unmarked); empty album renders EmptyState with upload CTA",
@@ -990,8 +1793,14 @@
       "passes": false
     },
     {
-      "id": "F-098", "area": "photos", "title": "Pin editing and suggestions that never auto-pin", "phase": "P-12",
-      "requirements": ["R-photo-5", "R-cphoto-11"],
+      "id": "F-098",
+      "area": "photos",
+      "title": "Pin editing and suggestions that never auto-pin",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-5",
+        "R-cphoto-11"
+      ],
       "verification": [
         "Finalize response suggestions surface as one-tap 'Pin to <place>?' chips; confirm PATCHes the pin, dismiss writes nothing (network log)",
         "Viewer pin editor offers saved places + same-day itinerary items with suggestions preselected; caption edit round-trips",
@@ -1000,8 +1809,14 @@
       "passes": false
     },
     {
-      "id": "F-099", "area": "photos", "title": "Photo pins on the map are visibility-safe", "phase": "P-12",
-      "requirements": ["R-map-5", "R-cphoto-21"],
+      "id": "F-099",
+      "area": "photos",
+      "title": "Photo pins on the map are visibility-safe",
+      "phase": "P-12",
+      "requirements": [
+        "R-map-5",
+        "R-cphoto-21"
+      ],
       "verification": [
         "Map photo pins derive from the server-filtered gallery query restricted to located rows; a second member's map never receives coordinates for photos they cannot see (inspect the pin data source)",
         "Photo-pin tap opens the place/day-filtered album; cluster of photo pins routes the same way"
@@ -1009,8 +1824,17 @@
       "passes": false
     },
     {
-      "id": "F-100", "area": "photos", "title": "Photo deletion, owner moderation, departed members, storage GC", "phase": "P-12",
-      "requirements": ["R-photo-12", "R-photo-13", "R-photo-15", "R-photo-16", "R-cphoto-20"],
+      "id": "F-100",
+      "area": "photos",
+      "title": "Photo deletion, owner moderation, departed members, storage GC",
+      "phase": "P-12",
+      "requirements": [
+        "R-photo-12",
+        "R-photo-13",
+        "R-photo-15",
+        "R-photo-16",
+        "R-cphoto-20"
+      ],
       "verification": [
         "Uploader deletes own photo via ConfirmDialog: optimistic removal, row + renditions gone, restored visibly on server error",
         "Trip owner deletes another member's photo (moderation); an editor cannot",
@@ -1020,8 +1844,23 @@
       "passes": false
     },
     {
-      "id": "F-101", "area": "today", "title": "Today surface: timeline, hero countdown, leave-by, day states, quick actions", "phase": "P-13",
-      "requirements": ["R-today-1", "R-today-2", "R-today-3", "R-today-4", "R-today-5", "R-today-6", "R-today-8", "R-today-9", "R-today-10", "R-today-11", "R-today-13"],
+      "id": "F-101",
+      "area": "today",
+      "title": "Today surface: timeline, hero countdown, leave-by, day states, quick actions",
+      "phase": "P-13",
+      "requirements": [
+        "R-today-1",
+        "R-today-2",
+        "R-today-3",
+        "R-today-4",
+        "R-today-5",
+        "R-today-6",
+        "R-today-8",
+        "R-today-9",
+        "R-today-10",
+        "R-today-11",
+        "R-today-13"
+      ],
       "verification": [
         "Active-trip day with timed items: chronological timeline with legs interleaved, done items collapsed/dimmed, the in-progress item marked Now, the next item as hero with a live countdown refreshing every minute",
         "Hero with a preceding leg shows leave-by = start - leg - 10min buffer (matches the shared computation); spanning lodging renders as a passive staying-at row, never a hero",
@@ -1031,18 +1870,37 @@
       "passes": false
     },
     {
-      "id": "F-102", "area": "utilities", "title": "Weather: cache-first endpoint + today strip with honest staleness", "phase": "P-13",
-      "requirements": ["R-wx-1", "R-wx-2", "R-wx-3", "R-wx-4", "R-today-7"],
+      "id": "F-102",
+      "area": "utilities",
+      "title": "Weather: cache-first endpoint + today strip with honest staleness",
+      "phase": "P-13",
+      "requirements": [
+        "R-wx-1",
+        "R-wx-2",
+        "R-wx-3",
+        "R-wx-4",
+        "R-today-7"
+      ],
       "verification": [
-        "GET /trips/:tripId/weather serves from weather_cache within TTL (no provider call — mock assert); expired/missing refetches through the provider port and upserts",
+        "GET /trips/:tripId/weather serves from weather_cache within TTL (no provider call \u2014 mock assert); expired/missing refetches through the provider port and upserts",
         "Provider failure serves the stale blob with its fetched_at (client shows the age); no forecast hides the strip without blocking the timeline",
         "Units render per UserPrefs.units (conversion is presentation)"
       ],
       "passes": false
     },
     {
-      "id": "F-103", "area": "offline", "title": "Active-trip offline bundle: full today/tab render with staleness honesty", "phase": "P-13",
-      "requirements": ["R-sync-1", "R-sync-2", "R-sync-3", "R-sync-4", "R-sync-8", "R-itin-29"],
+      "id": "F-103",
+      "area": "offline",
+      "title": "Active-trip offline bundle: full today/tab render with staleness honesty",
+      "phase": "P-13",
+      "requirements": [
+        "R-sync-1",
+        "R-sync-2",
+        "R-sync-3",
+        "R-sync-4",
+        "R-sync-8",
+        "R-itin-29"
+      ],
       "verification": [
         "Wifi + trip within 3 days of start: bundle (itinerary, bookings, saved places+rows, legs, ready tour bundles, member profiles, weather snapshot, trip row) downloads once automatically; cellular auto-download never fires; manual download works from trip settings with a size warning",
         "Airplane mode: today tab renders completely from SQLite (timeline, hero, leave-by, weather snapshot, quick actions) with zero spinners; itinerary/map/money tabs mount from cache; deeplink-out buttons disable with an offline hint",
@@ -1052,10 +1910,17 @@
       "passes": false
     },
     {
-      "id": "F-104", "area": "offline", "title": "Offline mutation queue: FIFO drain, LWW, visible failed changes", "phase": "P-13",
-      "requirements": ["R-sync-5", "R-sync-6", "R-sync-7"],
+      "id": "F-104",
+      "area": "offline",
+      "title": "Offline mutation queue: FIFO drain, LWW, visible failed changes",
+      "phase": "P-13",
+      "requirements": [
+        "R-sync-5",
+        "R-sync-6",
+        "R-sync-7"
+      ],
       "verification": [
-        "Offline: add an expense and check off packing items — both apply optimistically and enqueue (persisted OfflineMutation entries survive app kill)",
+        "Offline: add an expense and check off packing items \u2014 both apply optimistically and enqueue (persisted OfflineMutation entries survive app kill)",
         "Reconnect: queue drains FIFO per trip through the descriptor-addressed ApiClient; server truth reconciles the cache after drain",
         "A server-rejected mutation surfaces in the failed-changes banner with retry and discard (discard rolls back the optimistic patch); nothing silently dropped",
         "itinerary_change push while online invalidates mapped queries; the actor's own echo triggers no banner"
@@ -1063,8 +1928,17 @@
       "passes": false
     },
     {
-      "id": "F-105", "area": "notifications", "title": "Push registration, priming, preferences", "phase": "P-13",
-      "requirements": ["R-push-1", "R-push-2", "R-push-3", "R-push-4", "R-push-5"],
+      "id": "F-105",
+      "area": "notifications",
+      "title": "Push registration, priming, preferences",
+      "phase": "P-13",
+      "requirements": [
+        "R-push-1",
+        "R-push-2",
+        "R-push-3",
+        "R-push-4",
+        "R-push-5"
+      ],
       "verification": [
         "Notification priming renders before the OS permission dialog; denial degrades visibly (no silent null token) and the EAS projectId path is exercised on a real build",
         "Token registers on grant and re-registers on foreground (last_seen_at bumps); sign-out deletes the token and cancels local schedules",
@@ -1073,8 +1947,18 @@
       "passes": false
     },
     {
-      "id": "F-106", "area": "notifications", "title": "Send pipeline hygiene: receipts, PII posture, no LLM, entitlement seam", "phase": "P-13",
-      "requirements": ["R-push-6", "R-push-7", "R-push-8", "R-push-9", "R-push-10", "R-notif-7"],
+      "id": "F-106",
+      "area": "notifications",
+      "title": "Send pipeline hygiene: receipts, PII posture, no LLM, entitlement seam",
+      "phase": "P-13",
+      "requirements": [
+        "R-push-6",
+        "R-push-7",
+        "R-push-8",
+        "R-push-9",
+        "R-push-10",
+        "R-notif-7"
+      ],
       "verification": [
         "Every sent payload validates against the shared NotificationPayload union and routes through the deep-link registry shape (ids, never entity content)",
         "DeviceNotRegistered receipts delete the token; stale tokens pruned by the job",
@@ -1083,8 +1967,13 @@
       "passes": false
     },
     {
-      "id": "F-107", "area": "notifications", "title": "Collaborator itinerary-change pushes with coalescing", "phase": "P-13",
-      "requirements": ["R-notif-1"],
+      "id": "F-107",
+      "area": "notifications",
+      "title": "Collaborator itinerary-change pushes with coalescing",
+      "phase": "P-13",
+      "requirements": [
+        "R-notif-1"
+      ],
       "verification": [
         "Member A edits itinerary items: member B receives the push (actor excluded); burst edits within the 120s window coalesce into one notification",
         "Notification tap lands on the item detail (single) or trip default tab (coalesced); foreground arrival invalidates queries silently"
@@ -1092,18 +1981,31 @@
       "passes": false
     },
     {
-      "id": "F-108", "area": "notifications", "title": "Scheduled sends: day-ahead digest, document expiry, settle-up request", "phase": "P-13",
-      "requirements": ["R-notif-2", "R-notif-4", "R-notif-5"],
+      "id": "F-108",
+      "area": "notifications",
+      "title": "Scheduled sends: day-ahead digest, document expiry, settle-up request",
+      "phase": "P-13",
+      "requirements": [
+        "R-notif-2",
+        "R-notif-4",
+        "R-notif-5"
+      ],
       "verification": [
-        "Active trip: digest fires at 20:00 destination-local (device-tz fallback) with tomorrow's first item + counts, deduped per (user, trip, day) — drive with a faked clock",
+        "Active trip: digest fires at 20:00 destination-local (device-tz fallback) with tomorrow's first item + counts, deduped per (user, trip, day) \u2014 drive with a faked clock",
         "Document with expiry + remind_days_before: reminder fires once (last_reminded_at dedup) and taps into the vault",
         "Creating a settle-up request pushes the debtor and taps into the request screen"
       ],
       "passes": false
     },
     {
-      "id": "F-109", "area": "notifications", "title": "Leave-by local notifications from the offline bundle", "phase": "P-13",
-      "requirements": ["R-notif-3", "R-route-4"],
+      "id": "F-109",
+      "area": "notifications",
+      "title": "Leave-by local notifications from the offline bundle",
+      "phase": "P-13",
+      "requirements": [
+        "R-notif-3",
+        "R-route-4"
+      ],
       "verification": [
         "Bundle with legs: local notifications schedule at leave_by for items in the 48h window (<=64 pending cap respected); items without legs/start times skipped",
         "Reschedule on foreground/bundle refresh/local mutation; pref off schedules nothing",
@@ -1112,29 +2014,55 @@
       "passes": false
     },
     {
-      "id": "F-110", "area": "notifications", "title": "Notification tap-routing through the deep-link registry with guards", "phase": "P-13",
-      "requirements": ["R-route-1", "R-route-2", "R-route-3"],
+      "id": "F-110",
+      "area": "notifications",
+      "title": "Notification tap-routing through the deep-link registry with guards",
+      "phase": "P-13",
+      "requirements": [
+        "R-route-1",
+        "R-route-2",
+        "R-route-3"
+      ],
       "verification": [
-        "Each category routes per the §2.8 table on cold AND warm start identically (drive each category with a test push)",
+        "Each category routes per the \u00a72.8 table on cold AND warm start identically (drive each category with a test push)",
         "Signed-out tap stashes and resumes after auth; a stale notification for a trip the user left renders the no-access state",
         "Missing-entity fallbacks land per table (default tab / money tab / documents list)"
       ],
       "passes": false
     },
     {
-      "id": "F-111", "area": "utilities", "title": "Documents vault: strictly private, presigned flows, expiry metadata", "phase": "P-13",
-      "requirements": ["R-docs-1", "R-docs-2", "R-docs-3", "R-docs-5", "R-docs-6", "R-docs-7", "R-db-18"],
+      "id": "F-111",
+      "area": "utilities",
+      "title": "Documents vault: strictly private, presigned flows, expiry metadata",
+      "phase": "P-13",
+      "requirements": [
+        "R-docs-1",
+        "R-docs-2",
+        "R-docs-3",
+        "R-docs-5",
+        "R-docs-6",
+        "R-docs-7",
+        "R-db-18"
+      ],
       "verification": [
         "Owner CRUDs documents with presigned upload and short-TTL signed download; metadata-only entries (no scan) work as reminder rows",
-        "A co-member of the associated trip cannot read the document by any route (ownership matrix: owner/member/stranger x endpoint — member and stranger 404)",
+        "A co-member of the associated trip cannot read the document by any route (ownership matrix: owner/member/stranger x endpoint \u2014 member and stranger 404)",
         "Upload validation enforces type/size; reminder scheduling persists and dedups via last_reminded_at",
-        "No document scan is cached offline (v1 posture — storage inspection)"
+        "No document scan is cached offline (v1 posture \u2014 storage inspection)"
       ],
       "passes": false
     },
     {
-      "id": "F-112", "area": "utilities", "title": "Packing lists: shared per trip, whole-list edits, offline check-off, AI seed", "phase": "P-13",
-      "requirements": ["R-pack-1", "R-pack-2", "R-pack-3", "R-pack-4"],
+      "id": "F-112",
+      "area": "utilities",
+      "title": "Packing lists: shared per trip, whole-list edits, offline check-off, AI seed",
+      "phase": "P-13",
+      "requirements": [
+        "R-pack-1",
+        "R-pack-2",
+        "R-pack-3",
+        "R-pack-4"
+      ],
       "verification": [
         "Members read the shared list; editor+ adds/edits/checks items via whole-list PATCH keyed by stable item ids; viewer read-only per matrix",
         "Concurrent PATCHes resolve LWW without corrupting the items array",
@@ -1144,10 +2072,17 @@
       "passes": false
     },
     {
-      "id": "F-113", "area": "launch", "title": "Payment-rail device tests D1-D4 on real hardware", "phase": "P-14",
-      "requirements": ["R-cmoney-16", "R-cmoney-21", "R-cmoney-28"],
+      "id": "F-113",
+      "area": "launch",
+      "title": "Payment-rail device tests D1-D4 on real hardware",
+      "phase": "P-14",
+      "requirements": [
+        "R-cmoney-16",
+        "R-cmoney-21",
+        "R-cmoney-28"
+      ],
       "verification": [
-        "D1: Venmo txn=charge on real iPhone + Android — result recorded; request-via-Venmo stays disabled unless it passes",
+        "D1: Venmo txn=charge on real iPhone + Android \u2014 result recorded; request-via-Venmo stays disabled unless it passes",
         "D2: Venmo return-to-app behavior after payment validates the return-prompt trigger",
         "D3: Cash App/PayPal universal links open externally (never in-app browser) from our app context",
         "D4: canOpenURL gating verified on one device WITH Venmo (scheme path) and one WITHOUT (web fallback)"
@@ -1155,8 +2090,16 @@
       "passes": false
     },
     {
-      "id": "F-114", "area": "launch", "title": "Android verification pass", "phase": "P-14",
-      "requirements": ["R-capc-1", "R-cmoney-16", "R-nav-16", "R-push-1"],
+      "id": "F-114",
+      "area": "launch",
+      "title": "Android verification pass",
+      "phase": "P-14",
+      "requirements": [
+        "R-capc-1",
+        "R-cmoney-16",
+        "R-nav-16",
+        "R-push-1"
+      ],
       "verification": [
         "On a real Android device: share-target ingestion, deep links (cold/warm), back-button stack-pop parity, map rendering + offline packs, push delivery, and the payment-rail queries element all exercised with results recorded",
         "Any Android-specific failures filed as B-N bugs and fixed before store submission"
@@ -1164,8 +2107,15 @@
       "passes": false
     },
     {
-      "id": "F-115", "area": "launch", "title": "Universal-link domain live: AASA/assetlinks verified", "phase": "P-14",
-      "requirements": ["R-nav-11", "R-nav-13", "R-nav-16"],
+      "id": "F-115",
+      "area": "launch",
+      "title": "Universal-link domain live: AASA/assetlinks verified",
+      "phase": "P-14",
+      "requirements": [
+        "R-nav-11",
+        "R-nav-13",
+        "R-nav-16"
+      ],
       "verification": [
         "Sean's purchased domain replaces links.gogotravel.example via the single LINK_DOMAIN config constant (one-config diff)",
         "AASA and assetlinks serve correctly; invite and settle-request links open the installed app directly from Messages/Mail on device (cold + warm)",
@@ -1174,8 +2124,14 @@
       "passes": false
     },
     {
-      "id": "F-116", "area": "launch", "title": "EAS production build + TestFlight with zero embedded secrets", "phase": "P-14",
-      "requirements": ["R-ai-1", "R-ai-2"],
+      "id": "F-116",
+      "area": "launch",
+      "title": "EAS production build + TestFlight with zero embedded secrets",
+      "phase": "P-14",
+      "requirements": [
+        "R-ai-1",
+        "R-ai-2"
+      ],
       "verification": [
         "EAS production iOS build succeeds and installs via TestFlight; the app runs the full golden path against the production API",
         "Bundle inspection: no ANTHROPIC_API_KEY, no server-side secrets, no Mapbox secret-scope token in the shipped artifact",
@@ -1184,8 +2140,16 @@
       "passes": false
     },
     {
-      "id": "F-117", "area": "launch", "title": "App Store readiness: privacy labels, mandated flows, permission copy", "phase": "P-14",
-      "requirements": ["R-map-15", "R-user-9", "R-cap-26", "R-photo-3"],
+      "id": "F-117",
+      "area": "launch",
+      "title": "App Store readiness: privacy labels, mandated flows, permission copy",
+      "phase": "P-14",
+      "requirements": [
+        "R-map-15",
+        "R-user-9",
+        "R-cap-26",
+        "R-photo-3"
+      ],
       "verification": [
         "Privacy nutrition labels match reality: foreground-only location, photo/EXIF handling, 30-day capture raw retention disclosed",
         "Account deletion is reachable and functional in the shipped build (guideline 5.1.1(v)); Apple token revocation fires",
@@ -1194,10 +2158,17 @@
       "passes": false
     },
     {
-      "id": "F-118", "area": "launch", "title": "Large-trip performance floor", "phase": "P-14",
-      "requirements": ["R-map-2", "R-today-1", "R-itin-1"],
+      "id": "F-118",
+      "area": "launch",
+      "title": "Large-trip performance floor",
+      "phase": "P-14",
+      "requirements": [
+        "R-map-2",
+        "R-today-1",
+        "R-itin-1"
+      ],
       "verification": [
-        "Fixture trip with 500 saved places, 14 days, 100+ itinerary items, 500 photos: map pans at interactive framerates (style-layer pins, clustering on), itinerary and today lists scroll without jank (virtualized), album grid paginates smoothly — measured on device, numbers recorded",
+        "Fixture trip with 500 saved places, 14 days, 100+ itinerary items, 500 photos: map pans at interactive framerates (style-layer pins, clustering on), itinerary and today lists scroll without jank (virtualized), album grid paginates smoothly \u2014 measured on device, numbers recorded",
         "Cold launch to interactive trip list under an agreed budget on a mid-tier device"
       ],
       "passes": false

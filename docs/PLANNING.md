@@ -225,8 +225,8 @@ trip+place, offline-downloadable).
 |----|------|-------|--------|----------|------------|
 | P-1 | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision) | in-progress | P0 | — |
 | P-2 | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress | P0 | P-1 |
-| P-3 | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema | queued | P0 | P-2 |
-| P-4 | Phase | Design system + navigation skeleton | queued | P0 | P-3 |
+| P-3 | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema | done ([archive](history/PHASE-003-foundations.md)) | P0 | P-2 |
+| P-4 | Phase | Design system + navigation skeleton | in-progress | P0 | P-3 |
 | P-5 | Phase | Auth, profiles & entitlements | queued | P0 | P-3, P-4 |
 | P-6 | Phase | Trips, collaboration & places spine | queued | P0 | P-5 |
 | P-7 | Phase | Itinerary & bookings (incl. deeplink-out) | queued | P0 | P-6 |

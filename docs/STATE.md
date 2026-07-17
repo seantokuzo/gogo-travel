@@ -25,30 +25,24 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-3 — Foundations (ACTIVE — build has started)
+### P-4 — Design system + navigation skeleton (ACTIVE)
 
-- **Gate 3 PASSED 2026-07-10.** Exec mode: **in-session, phase by phase**.
-  Palettes: all three ship as user themes; default `goldenHour`.
-- **T-3.1 MERGED (74d6c61)** — first full pipeline run: 5 lanes →
-  fix-then-ship (2 blocking incl. empirically-probed turbo-cache false-green,
-  9 advisory) → fix commit 6ba2acc (all 11 addressed; cache probe re-proven)
-  → impartial judge merge/high (verified firsthand). Defers recorded in
-  QUEUE: jest-expo+render test → P-4; root-config lint coverage → T-3.4.
-- **T-3.2 MERGED (7a1de80)** — @gogo/shared: 16 domains, 259 tests; 2 security
-  blockers fixed + judge-red-teamed (46 probes, 0 bypasses).
-- **T-3.3 MERGED (22c7496)** — 30 tables column-exact, migration 0000 +
-  pg_trgm, 47 constraint tests on live postgres; Docker-skip cache trap fixed
-  (CI hard-fail + turbo cache:false).
-- **T-3.4 in progress (restarted 2026-07-16** — first attempt killed by spend
-  limit before any commits): CI workflow (deterministic-only + Law-#5 guard
-  job + ci-success gate), root-config lint coverage, `.claude/rules/ci.md`.
-  Last P-3 task; phase close + ledger flips follow.
-- **PUSHED to origin 2026-07-16** — full history on
-  github.com/seantokuzo/gogo-travel (gh auth finally valid).
-- Ledger: no F-flips yet — scaffold-stage features verify at T-3.4/phase
-  close with evidence (Law #8 discipline).
-- Gotcha for future sessions: `node --env-file-if-exists` needs node ≥22.9
-  (engines bumped); mobile TS pin ~6.0.3 is Expo's own — don't "align" it.
+- **P-3 CLOSED 2026-07-16** — 4/4 tasks merged through the full review loop;
+  ledger F-002..F-009 flipped with evidence (F-001 held: step unsatisfiable
+  as written — see B-1); archive: `docs/history/PHASE-003-foundations.md`.
+- **T-4.1 in progress** (engineer subagent): `@gogo/tokens` — the three
+  approved palettes (goldenHour default, deepWaters, midnightExpress) as
+  pure-data theme objects + registry, scales, Theme types, useTheme,
+  createStyles(theme). Spec: `.specs/design-system/tokens.spec.md`.
+- Then: DS-5..10 (components + Gallery screen), NAV-1..7 (route skeleton).
+  P-4 detail: PLANNING § P-4. jest-expo + first render test lands this phase
+  (T-3.1 defer).
+- **Push re-blocked**: workflow-file pushes need `workflow` scope — Sean:
+  `gh auth refresh -h github.com -s workflow`, then I push (first GitHub
+  Actions run validates the new CI on the runner).
+- Gotchas for future sessions: node ≥22.9 (env-file flag); mobile TS ~6.0.3
+  is Expo's pin; guard-job comments must never contain literal trigger keys;
+  PG assignment cast rounds numeric→bigint (app-boundary z.int is the gate).
 
 ### P-2 — Upfront spec suite (CLOSED 2026-07-10; P-1 push still pending)
 
