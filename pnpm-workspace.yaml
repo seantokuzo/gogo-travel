@@ -14,3 +14,16 @@ allowBuilds:
 # hono@4.12.29 was younger than the 24h release cooldown at scaffold time (2026-07-10); delete once aged.
 minimumReleaseAgeExclude:
   - hono@4.12.29
+  # SDK 57 patch wave <24h old at T-4.2 (2026-07-17); delete once aged.
+  - "@expo/cli@57.0.9"
+  - "@expo/metro-config@57.0.6"
+  - "@expo/prebuild-config@57.0.8"
+  - expo-asset@57.0.6
+  - expo-constants@57.0.6
+  - expo-modules-autolinking@57.0.8
+  - expo-modules-core@57.0.6
+  - expo@57.0.7
+  - "@expo/ui@57.0.7"
+  - expo-router@57.0.7
+  # expo-router@57.0.7 peer-requires ^57.0.6, released < 24h before T-4.2; delete once aged.
+  - "@expo/metro-runtime@57.0.6"
