@@ -17,9 +17,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import * as ramps from "./ramps.js";
-import { deepWaters } from "./themes/deepWaters.js";
-import { goldenHour } from "./themes/goldenHour.js";
-import { midnightExpress } from "./themes/midnightExpress.js";
+import { themes } from "./themes.js";
 
 // ------------------------------------------------------- 1. pure data
 
@@ -35,18 +33,37 @@ function assertPlainData(value: unknown, path: string): void {
     proto === Object.prototype || proto === Array.prototype || proto === null,
     `${path} must be a plain object/array`,
   ).toBe(true);
-  for (const [key, child] of Object.entries(value as object)) {
-    assertPlainData(child, `${path}.${key}`);
+  // Walk OWN property descriptors, not Object.entries: entries invokes
+  // accessors and only sees the returned value, so a sneaky getter
+  // (`get solid() { ... }`) would pass as "plain data". Symbol keys are
+  // rejected outright — data has string keys.
+  expect(
+    Object.getOwnPropertySymbols(value).length,
+    `${path} must not have symbol-keyed properties`,
+  ).toBe(0);
+  for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    expect(
+      desc.get === undefined && desc.set === undefined,
+      `${path}.${key} must be a value property, not a getter/setter`,
+    ).toBe(true);
+    assertPlainData(desc.value, `${path}.${key}`);
   }
 }
 
 describe("pure-data invariant (R-ds-5)", () => {
+  // Iterate the REGISTRY (plus ramps): registering a palette auto-enrolls it
+  // here — no hand-maintained module list to forget.
   const dataModules: Array<[string, Record<string, unknown>]> = [
-    ["themes/goldenHour", { goldenHour }],
-    ["themes/deepWaters", { deepWaters }],
-    ["themes/midnightExpress", { midnightExpress }],
+    ...Object.entries(themes).map(([name, palette]): [string, Record<string, unknown>] => [
+      `themes/${name}`,
+      { [name]: palette },
+    ]),
     ["ramps", { ...ramps }],
   ];
+
+  it("covers every registered palette", () => {
+    expect(dataModules.length).toBe(Object.keys(themes).length + 1);
+  });
 
   for (const [name, mod] of dataModules) {
     it(`${name} exports only plain data (no functions)`, () => {
@@ -60,6 +77,20 @@ describe("pure-data invariant (R-ds-5)", () => {
 
   it("assertPlainData rejects functions (self-test)", () => {
     expect(() => assertPlainData({ sneaky: () => "#FFF" }, "self-test")).toThrow();
+  });
+
+  it("assertPlainData rejects getters and symbol keys (self-test)", () => {
+    expect(() =>
+      assertPlainData(
+        {
+          get sneaky() {
+            return "#FFF";
+          },
+        },
+        "self-test",
+      ),
+    ).toThrow();
+    expect(() => assertPlainData({ [Symbol("sneaky")]: "#FFF" }, "self-test")).toThrow();
   });
 });
 

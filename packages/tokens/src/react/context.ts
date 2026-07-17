@@ -37,6 +37,9 @@ import type { AppearancePref, ColorSchemeName, Theme } from "../types.js";
 // This package compiles with lib ES2023 only (no DOM/node type env — it is
 // platform-agnostic). `console` exists in every host we target (RN, browser,
 // node); declare just the sliver we use rather than pulling in a lib.
+// Deliberate dev-signal, and the documented exception to inject-never-import:
+// console is a host GLOBAL (LogBox-visible in RN), not a platform module —
+// a DI seam (onWarning prop) for one warning would be ceremony without value.
 declare const console: { warn(message: string): void };
 
 /**
@@ -82,9 +85,19 @@ export interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export interface ThemeProviderProps {
-  /** Omit for ephemeral theming (tests, previews) — nothing persists. */
+  /**
+   * Omit for ephemeral theming (tests, previews) — nothing persists.
+   * MUST be a referentially stable instance (module-level or memoized): an
+   * inline object churns the memoized context value on every provider
+   * render (app-wide re-render) and re-creates the persist callbacks.
+   */
   storage?: ThemeStorage;
-  /** Omit to resolve `system` as light (tests, non-RN hosts). */
+  /**
+   * Omit to resolve `system` as light (tests, non-RN hosts).
+   * MUST be a referentially stable instance (module-level or memoized): an
+   * inline object additionally tears down + resubscribes the OS listener
+   * every provider render.
+   */
   systemAppearance?: SystemAppearanceSource;
   /** Fallback when storage holds no (valid) value. Default: "system". */
   defaultAppearancePref?: AppearancePref;
@@ -127,6 +140,10 @@ export function ThemeProvider(props: ThemeProviderProps): ReactElement {
   // R-ds-3: follow OS scheme changes while pref === "system".
   useEffect(() => {
     if (!systemAppearance) return undefined;
+    // Re-read BEFORE subscribing: a scheme change between the useState
+    // initializer and this effect's flush (or across a source swap/remount)
+    // would otherwise go unseen until the NEXT change event.
+    setSystemScheme(normalizeScheme(systemAppearance.getColorScheme()));
     return systemAppearance.subscribe((scheme) => {
       setSystemScheme(normalizeScheme(scheme));
     });

@@ -5,7 +5,8 @@
  * .specs/design-system/tokens.spec.md § Resolved (Gate 3). Seeds are exact;
  * in-between stops are OKLCH-interpolated; any derived value participating
  * in a contrast pairing was minimally adjusted to WCAG AA (see the R-ds-8
- * contrast matrix test — the validator for palette additions).
+ * contrast matrix test — the validator for palette additions). Recipe,
+ * interpolation params + full adjustment report: scripts/derive-ramps.mjs.
  */
 import type { PaletteDef } from "../types.js";
 
@@ -134,7 +135,7 @@ export const midnightExpress: PaletteDef = {
         inverse: "#131729",
         onPrimary: "#000000",
         onAccent: "#131729",
-        accent: "#8695CA",
+        accent: "#929FCF",
       },
       border: {
         subtle: "#353A50",

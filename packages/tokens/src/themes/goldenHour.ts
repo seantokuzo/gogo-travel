@@ -5,7 +5,8 @@
  * .specs/design-system/tokens.spec.md § Resolved (Gate 3). Seeds are exact;
  * in-between stops are OKLCH-interpolated; any derived value participating
  * in a contrast pairing was minimally adjusted to WCAG AA (see the R-ds-8
- * contrast matrix test — the validator for palette additions).
+ * contrast matrix test — the validator for palette additions). Recipe,
+ * interpolation params + full adjustment report: scripts/derive-ramps.mjs.
  */
 import type { PaletteDef } from "../types.js";
 
@@ -134,7 +135,7 @@ export const goldenHour: PaletteDef = {
         inverse: "#201915",
         onPrimary: "#201915",
         onAccent: "#201915",
-        accent: "#EC7E5E",
+        accent: "#EE8E6B",
       },
       border: {
         subtle: "#433A34",

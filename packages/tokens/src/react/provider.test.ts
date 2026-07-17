@@ -36,6 +36,7 @@ function fakeStorage(seed: Record<string, string> = {}): ThemeStorage & {
 
 function fakeSystem(initial: ColorSchemeName | null): SystemAppearanceSource & {
   emit(scheme: ColorSchemeName | null): void;
+  listenerCount(): number;
 } {
   let current = initial;
   const listeners = new Set<(s: ColorSchemeName | null | undefined) => void>();
@@ -49,6 +50,7 @@ function fakeSystem(initial: ColorSchemeName | null): SystemAppearanceSource & {
       current = scheme;
       for (const l of listeners) l(scheme);
     },
+    listenerCount: () => listeners.size,
   };
 }
 
@@ -59,13 +61,13 @@ function mount(props: Omit<ThemeProviderProps, "children"> = {}) {
     seen.push(useTheme());
     return null;
   }
-  render(createElement(ThemeProvider, props, createElement(Probe)));
+  const { unmount } = render(createElement(ThemeProvider, props, createElement(Probe)));
   const latest = () => {
     const value = seen[seen.length - 1];
     if (!value) throw new Error("probe never rendered");
     return value;
   };
-  return { seen, latest };
+  return { seen, latest, unmount };
 }
 
 // ------------------------------------------------------------ tests
@@ -104,6 +106,27 @@ describe("ThemeProvider boot resolution", () => {
     const { latest } = mount({});
     expect(latest().scheme).toBe("light");
   });
+
+  it("defaultAppearancePref applies when storage holds no value — persisted wins over it", () => {
+    const { latest } = mount({ defaultAppearancePref: "dark" });
+    expect(latest().appearancePref).toBe("dark");
+    expect(latest().scheme).toBe("dark");
+
+    const storage = fakeStorage({ [STORAGE_KEYS.appearance]: "light" });
+    const persisted = mount({ storage, defaultAppearancePref: "dark" });
+    expect(persisted.latest().appearancePref).toBe("light");
+    expect(persisted.latest().scheme).toBe("light");
+  });
+
+  it("defaultAccentName applies when storage holds no value — persisted wins over it", () => {
+    const { latest } = mount({ defaultAccentName: "midnightExpress" });
+    expect(latest().accentName).toBe("midnightExpress");
+    expect(latest().theme).toBe(getTheme("midnightExpress", "light"));
+
+    const storage = fakeStorage({ [STORAGE_KEYS.accentTheme]: "deepWaters" });
+    const persisted = mount({ storage, defaultAccentName: "midnightExpress" });
+    expect(persisted.latest().accentName).toBe("deepWaters");
+  });
 });
 
 describe("appearance preference (R-ds-2, R-ds-3)", () => {
@@ -134,6 +157,14 @@ describe("appearance preference (R-ds-2, R-ds-3)", () => {
     expect(latest().scheme).toBe("light"); // pinned
     act(() => latest().setAppearancePref("system"));
     expect(latest().scheme).toBe("dark"); // follows OS again
+  });
+
+  it("unmount unsubscribes from the system appearance source", () => {
+    const system = fakeSystem("light");
+    const { unmount } = mount({ systemAppearance: system });
+    expect(system.listenerCount()).toBe(1);
+    unmount();
+    expect(system.listenerCount()).toBe(0);
   });
 });
 

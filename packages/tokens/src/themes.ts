@@ -11,15 +11,18 @@ import { deepWaters } from "./themes/deepWaters.js";
 import { goldenHour } from "./themes/goldenHour.js";
 import { midnightExpress } from "./themes/midnightExpress.js";
 
-export const themes = {
+// Frozen at module scope: the registry is the validation gate for persisted
+// accent values (isThemeName) — `as const` is compile-time only, and a lazy
+// per-palette freeze would leave the record itself mutable at runtime.
+export const themes = Object.freeze({
   goldenHour,
   deepWaters,
   midnightExpress,
-} as const satisfies Record<string, PaletteDef>;
+} as const satisfies Record<string, PaletteDef>);
 
 export type ThemeName = keyof typeof themes;
 
-export const THEME_NAMES = Object.keys(themes) as readonly ThemeName[];
+export const THEME_NAMES: readonly ThemeName[] = Object.freeze(Object.keys(themes) as ThemeName[]);
 
 /** First-launch default — one-line config, flippable anytime (Gate 3). */
 export const DEFAULT_THEME = "goldenHour" satisfies ThemeName;

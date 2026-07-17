@@ -29,6 +29,12 @@ export function isThemeName(value: string): value is ThemeName {
 /**
  * Compose a frozen Theme from any PaletteDef — works for unregistered
  * palettes too (tests, previews). Not cached; prefer `getTheme` at runtime.
+ *
+ * NOTE: deep-freezes the palette ARGUMENT's composed subtrees in place (the
+ * Theme shares the palette's ramps + the chosen scheme's semantics, not
+ * copies) — a caller's preview palette comes back frozen. Intentional:
+ * frozen-at-first-use is the same immutability guarantee registry palettes
+ * get, and copying would break `getTheme`'s reference-equality contract.
  */
 export function buildTheme(scheme: ColorSchemeName, palette: PaletteDef): Theme {
   return deepFreeze<Theme>({

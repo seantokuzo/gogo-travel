@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { buildTheme, getTheme, isThemeName } from "./build.js";
 import { DEFAULT_THEME, THEME_NAMES, themes } from "./themes.js";
+import type { ThemeName } from "./themes.js";
 import type { ColorRamp, RampStep } from "./types.js";
 
 const RAMP_STOPS: readonly RampStep[] = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
@@ -37,17 +38,84 @@ describe("theme registry", () => {
     }
   });
 
-  it("approved seed values are preserved exactly (never adjusted)", () => {
-    // Spot-check the spec's seed table (Gate 3) against shipped data.
-    expect(themes.goldenHour.ramps.primary[500]).toBe("#D64933");
-    expect(themes.goldenHour.ramps.accent[500]).toBe("#E8A33D");
-    expect(themes.goldenHour.semantics.light.bg.screen).toBe("#FBF6F0");
-    expect(themes.goldenHour.semantics.dark.bg.surface).toBe("#2B221D");
-    expect(themes.goldenHour.semantics.dark.primary.solid).toBe("#E96A50");
-    expect(themes.deepWaters.ramps.primary[500]).toBe("#0E6E6B");
-    expect(themes.deepWaters.semantics.dark.bg.screen).toBe("#0E1618");
-    expect(themes.midnightExpress.ramps.primary[700]).toBe("#1F2B4E");
-    expect(themes.midnightExpress.semantics.dark.accent.solid).toBe("#D4A95C");
+  // The FULL Gate-3 seed table from .specs/design-system/tokens.spec.md
+  // § Resolved — 3 palettes x 15 slots = 45 approved values. The contrast
+  // suite's rule is "fix by adjusting DERIVED stops, never approved seeds";
+  // this table is what machine-enforces it: ANY seed edit fails loudly here.
+  const GATE3_SEEDS: Record<
+    ThemeName,
+    {
+      primary: Record<100 | 300 | 500 | 700 | 900, string>;
+      accent: Record<100 | 500 | 700, string>;
+      lightBg: string;
+      lightInk: string;
+      darkBg: string;
+      darkCard: string;
+      darkInk: string;
+      darkPrimary: string;
+      darkAccent: string;
+    }
+  > = {
+    goldenHour: {
+      primary: { 100: "#FBE3DD", 300: "#F3A795", 500: "#D64933", 700: "#A83322", 900: "#6E2113" },
+      accent: { 100: "#FDEED3", 500: "#E8A33D", 700: "#9C6716" },
+      lightBg: "#FBF6F0",
+      lightInk: "#2A211C",
+      darkBg: "#201915",
+      darkCard: "#2B221D",
+      darkInk: "#F4EBE3",
+      darkPrimary: "#E96A50",
+      darkAccent: "#EFB35B",
+    },
+    deepWaters: {
+      primary: { 100: "#D9ECEC", 300: "#7CC2BF", 500: "#0E6E6B", 700: "#0A4F4D", 900: "#063230" },
+      accent: { 100: "#FDE8D4", 500: "#EE8B3A", 700: "#A85A14" },
+      lightBg: "#F4F7F7",
+      lightInk: "#16262A",
+      darkBg: "#0E1618",
+      darkCard: "#162226",
+      darkInk: "#E9F1F1",
+      darkPrimary: "#2FA8A0",
+      darkAccent: "#F2A45E",
+    },
+    midnightExpress: {
+      primary: { 100: "#DEE3F2", 300: "#93A3CE", 500: "#2B3A67", 700: "#1F2B4E", 900: "#131B33" },
+      accent: { 100: "#F3E7CD", 500: "#C9994B", 700: "#8A6524" },
+      lightBg: "#F7F4EC",
+      lightInk: "#1F2437",
+      darkBg: "#131729",
+      darkCard: "#1C2138",
+      darkInk: "#EDEEF5",
+      darkPrimary: "#5D74B8",
+      darkAccent: "#D4A95C",
+    },
+  };
+
+  for (const name of THEME_NAMES) {
+    it(`${name}: all 15 approved seeds are preserved exactly (never adjusted)`, () => {
+      const seeds = GATE3_SEEDS[name];
+      const palette = themes[name];
+      for (const [stop, hex] of Object.entries(seeds.primary)) {
+        expect(palette.ramps.primary[Number(stop) as RampStep], `${name}.primary[${stop}]`).toBe(
+          hex,
+        );
+      }
+      for (const [stop, hex] of Object.entries(seeds.accent)) {
+        expect(palette.ramps.accent[Number(stop) as RampStep], `${name}.accent[${stop}]`).toBe(hex);
+      }
+      expect(palette.semantics.light.bg.screen, `${name} light bg`).toBe(seeds.lightBg);
+      expect(palette.semantics.light.text.primary, `${name} light ink`).toBe(seeds.lightInk);
+      expect(palette.semantics.dark.bg.screen, `${name} dark bg`).toBe(seeds.darkBg);
+      expect(palette.semantics.dark.bg.surface, `${name} dark card`).toBe(seeds.darkCard);
+      expect(palette.semantics.dark.text.primary, `${name} dark ink`).toBe(seeds.darkInk);
+      expect(palette.semantics.dark.primary.solid, `${name} dark primary`).toBe(seeds.darkPrimary);
+      expect(palette.semantics.dark.accent.solid, `${name} dark accent`).toBe(seeds.darkAccent);
+    });
+  }
+
+  it("the registry and THEME_NAMES are frozen (isThemeName gate can't widen at runtime)", () => {
+    expect(Object.isFrozen(themes)).toBe(true);
+    expect(Object.isFrozen(THEME_NAMES)).toBe(true);
   });
 
   it("isThemeName guards registry membership (incl. prototype keys)", () => {

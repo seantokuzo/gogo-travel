@@ -11,8 +11,14 @@
  * authoring-time derivation. A new palette that fails a pairing fails the
  * build; fix it by adjusting DERIVED stops, never approved seeds.
  *
- * Deliberately unchecked: `interactive.disabled*` (WCAG 1.4.3 exempts
- * disabled controls) and decorative hairlines (`border.subtle/default`).
+ * Deliberately unchecked (recorded decisions, not omissions):
+ *   - `interactive.disabled*` — WCAG 1.4.3 exempts disabled controls.
+ *   - `border.subtle/default` — decorative hairlines, not required to meet
+ *     1.4.11 (they don't identify a control or state).
+ *   - `status.*.border` — same class: a decorative banner outline. The banner
+ *     is identified by its bg tint + AA-checked fg text (measured below);
+ *     the border is a pastel hairline that sits ~1.3-2.3:1 vs its own bg by
+ *     design and carries no meaning of its own.
  */
 import { describe, expect, it } from "vitest";
 import { THEME_NAMES, themes } from "./themes.js";
@@ -62,10 +68,22 @@ function composite(fg: Rgb, bg: Rgb): Rgb {
   };
 }
 
-/** WCAG contrast ratio between an opaque fg and opaque bg, 1..21. */
+/**
+ * WCAG contrast ratio between an opaque fg and opaque bg, 1..21.
+ * THROWS on any translucent input: measuring an 8-digit hex as if opaque
+ * silently yields a wrong ratio — composite() it onto its surface first.
+ */
 function contrast(fgHex: string, bgHex: string): number {
-  const l1 = luminance(parseHex(fgHex));
-  const l2 = luminance(parseHex(bgHex));
+  const fg = parseHex(fgHex);
+  const bg = parseHex(bgHex);
+  if (fg.alpha !== 1 || bg.alpha !== 1) {
+    throw new Error(
+      `contrast() requires opaque colors (got ${fgHex} on ${bgHex}) — ` +
+        "composite() translucent inputs onto their surface first",
+    );
+  }
+  const l1 = luminance(fg);
+  const l2 = luminance(bg);
   const [hi, lo] = l1 >= l2 ? [l1, l2] : [l2, l1];
   return (hi + 0.05) / (lo + 0.05);
 }
@@ -78,6 +96,11 @@ describe("WCAG helpers (self-test)", () => {
     const gray = composite(parseHex("#00000080"), parseHex("#FFFFFF"));
     expect(luminance(gray)).toBeGreaterThan(0.2);
     expect(luminance(gray)).toBeLessThan(0.26);
+  });
+
+  it("refuses translucent inputs (explicit compositing only)", () => {
+    expect(() => contrast("#00000080", "#FFFFFF")).toThrow(/composite/);
+    expect(() => contrast("#FFFFFF", "#00000080")).toThrow(/composite/);
   });
 });
 
@@ -123,22 +146,25 @@ function pairingsOf(sem: SemanticColors, opposite: SemanticColors): Pairing[] {
       min: TEXT_AA,
     });
   }
-  // ... including over the accent-tinted container fill (composited when
-  // translucent — the dark-scheme subtleBg is 8-digit hex)
-  for (const [surface, bg] of [
-    ["bg.surface", sem.bg.surface],
-    ["bg.screen", sem.bg.screen],
-  ] as const) {
-    const fill = composite(parseHex(sem.primary.subtleBg), parseHex(bg));
-    const fillHex = `#${[fill.r, fill.g, fill.b]
-      .map((v) => Math.round(v).toString(16).padStart(2, "0"))
-      .join("")}`;
-    pairs.push({
-      label: `text.accent on primary.subtleBg over ${surface}`,
-      fg: sem.text.accent,
-      bg: fillHex,
-      min: TEXT_AA,
-    });
+  // ... including over BOTH tinted container fills (composited when
+  // translucent — the dark-scheme subtleBgs are 8-digit hex). Badge §2.9
+  // pairs text.accent ink with accent.subtleBg (pills, selected rows).
+  for (const group of ["primary", "accent"] as const) {
+    for (const [surface, bg] of [
+      ["bg.surface", sem.bg.surface],
+      ["bg.screen", sem.bg.screen],
+    ] as const) {
+      const fill = composite(parseHex(sem[group].subtleBg), parseHex(bg));
+      const fillHex = `#${[fill.r, fill.g, fill.b]
+        .map((v) => Math.round(v).toString(16).padStart(2, "0"))
+        .join("")}`;
+      pairs.push({
+        label: `text.accent on ${group}.subtleBg over ${surface}`,
+        fg: sem.text.accent,
+        bg: fillHex,
+        min: TEXT_AA,
+      });
+    }
   }
 
   // button labels on solid fills — held to BODY AA, incl. pressed state
@@ -171,7 +197,9 @@ function pairingsOf(sem: SemanticColors, opposite: SemanticColors): Pairing[] {
     min: TEXT_AA,
   });
 
-  // status banners
+  // status banners — and status ink as INLINE text on plain surfaces
+  // (error text under an input sits on bg.surface/bg.screen, a certain v1
+  // pattern; added round 1)
   for (const tone of ["success", "warning", "danger", "info"] as const) {
     pairs.push({
       label: `status.${tone}.fg on status.${tone}.bg`,
@@ -179,6 +207,17 @@ function pairingsOf(sem: SemanticColors, opposite: SemanticColors): Pairing[] {
       bg: sem.status[tone].bg,
       min: TEXT_AA,
     });
+    for (const [surface, bg] of [
+      ["bg.screen", sem.bg.screen],
+      ["bg.surface", sem.bg.surface],
+    ] as const) {
+      pairs.push({
+        label: `status.${tone}.fg on ${surface}`,
+        fg: sem.status[tone].fg,
+        bg,
+        min: TEXT_AA,
+      });
+    }
   }
 
   // inverse ink sits on the OPPOSITE scheme's surfaces (chips/toasts)
