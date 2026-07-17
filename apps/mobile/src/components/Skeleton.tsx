@@ -90,10 +90,23 @@ export function Skeleton({ variant, width, height, lines, testID }: SkeletonProp
       return undefined;
     }
     const half = theme.motion.duration.shimmer / 2;
+    // isInteraction: false — an infinite loop would otherwise hold an
+    // InteractionManager handle forever, stalling every runAfterInteractions
+    // callback while a skeleton shimmers (review r1).
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.5, duration: half, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 1, duration: half, useNativeDriver: true }),
+        Animated.timing(opacity, {
+          toValue: 0.5,
+          duration: half,
+          isInteraction: false,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: half,
+          isInteraction: false,
+          useNativeDriver: true,
+        }),
       ]),
     );
     loop.start();

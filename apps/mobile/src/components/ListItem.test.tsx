@@ -25,6 +25,13 @@ describe("ListItem", () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it("pressable row with a subtitle folds it into the derived label — AT announces it", async () => {
+    await renderWithTheme(
+      <ListItem title="Documents" subtitle="3 files" onPress={() => undefined} testID="docs-row" />,
+    );
+    expect(screen.getByTestId("docs-row").props.accessibilityLabel).toBe("Documents, 3 files");
+  });
+
   it("static row exposes no button role", async () => {
     await renderWithTheme(<ListItem title="Static" testID="row" />);
     expect(screen.getByTestId("row").props.accessibilityRole).toBeUndefined();

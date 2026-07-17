@@ -2,7 +2,8 @@
  * Input (DS-8, spec §2.9) — label ALWAYS visible (no placeholder-as-label).
  * Error state: danger border + the helper slot shows the error, announced to
  * AT via accessibilityLiveRegion. `testID` lands on the TextInput itself —
- * that's what E2E types into (R-ds-20).
+ * that's what E2E types into (R-ds-20); the border wrapper derives
+ * `{testID}-field` (non-interactive — border-state assertions).
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import type { ReactNode } from "react";
@@ -91,6 +92,7 @@ export function Input({
         {label}
       </AppText>
       <View
+        testID={`${testID}-field`}
         style={[
           s.field,
           multiline && s.fieldMultiline,

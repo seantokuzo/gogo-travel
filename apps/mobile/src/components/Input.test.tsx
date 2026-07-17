@@ -1,6 +1,7 @@
 /**
  * Input — label ALWAYS visible; error replaces helper + danger border +
- * polite live region; testID lands on the TextInput (what E2E types into).
+ * polite live region; focus swaps the border to border.focus; testID lands on
+ * the TextInput (what E2E types into), `{testID}-field` on the border wrapper.
  */
 import { fireEvent, screen } from "@testing-library/react-native";
 
@@ -49,6 +50,35 @@ describe("Input", () => {
     expect(error).toHaveTextContent("Trip name is required");
     expect(error.props.accessibilityLiveRegion).toBe("polite");
     expect(screen.queryByText("hidden while erroring")).toBeNull();
+  });
+
+  it("error state paints the danger border on the field wrapper (R-ds-17 kin)", async () => {
+    await renderWithTheme(
+      <Input
+        label="Trip name"
+        value=""
+        onChangeText={() => undefined}
+        error="Trip name is required"
+        testID="in"
+      />,
+    );
+    expect(screen.getByTestId("in-field")).toHaveStyle({
+      borderColor: lightTheme.color.status.danger.border,
+    });
+  });
+
+  it("focus swaps the border to border.focus; blur restores border.subtle", async () => {
+    await renderWithTheme(
+      <Input label="Trip name" value="" onChangeText={() => undefined} testID="in" />,
+    );
+    const field = screen.getByTestId("in-field");
+    expect(field).toHaveStyle({ borderColor: lightTheme.color.border.subtle });
+
+    await fireEvent(screen.getByTestId("in"), "focus");
+    expect(field).toHaveStyle({ borderColor: lightTheme.color.border.focus });
+
+    await fireEvent(screen.getByTestId("in"), "blur");
+    expect(field).toHaveStyle({ borderColor: lightTheme.color.border.subtle });
   });
 
   it("passes through keyboard/secure/multiline props and muted placeholder color", async () => {

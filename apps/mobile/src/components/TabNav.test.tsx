@@ -2,12 +2,13 @@
  * TabNav — spec-fixed `tab-bar-{key}` testIDs, selected a11y state,
  * `selection` haptic on ACTUAL switches only (§2.8), badges.
  */
-import { fireEvent, screen } from "@testing-library/react-native";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { fireEvent, screen, within } from "@testing-library/react-native";
 
 import { TabNav } from "@/components";
 import type { TabNavItem } from "@/components";
 import { triggerHaptic } from "@/theme/haptics";
-import { renderWithTheme } from "@/test-utils/render";
+import { lightTheme, renderWithTheme } from "@/test-utils/render";
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 const mockTriggerHaptic = triggerHaptic as jest.Mock;
@@ -36,6 +37,27 @@ describe("TabNav", () => {
     expect(screen.getByTestId("tab-bar-budget").props.accessibilityState).toMatchObject({
       selected: false,
     });
+  });
+
+  it("tints active label + icon primary.solid, inactive text.muted (DECIDED 2026-07-17)", async () => {
+    await renderWithTheme(<TabNav items={items} activeKey="today" onSelect={() => undefined} />);
+
+    expect(screen.getByText("Today")).toHaveStyle({ color: lightTheme.color.primary.solid });
+    expect(screen.getByText("Itinerary")).toHaveStyle({ color: lightTheme.color.text.muted });
+
+    // Ionicons renders its glyph as a Text carrying the color style — the only
+    // ByType-free way to reach the icon in RNTL 14. Mirrors the icon set's own
+    // glyph resolution (numeric codepoint or literal string).
+    const glyph = (name: keyof typeof Ionicons.glyphMap) => {
+      const value = Ionicons.glyphMap[name];
+      return typeof value === "number" ? String.fromCodePoint(value) : value;
+    };
+    expect(
+      within(screen.getByTestId("tab-bar-today")).getByText(glyph("sunny-outline")),
+    ).toHaveStyle({ color: lightTheme.color.primary.solid });
+    expect(
+      within(screen.getByTestId("tab-bar-budget")).getByText(glyph("wallet-outline")),
+    ).toHaveStyle({ color: lightTheme.color.text.muted });
   });
 
   it("selecting another tab fires onSelect + selection haptic", async () => {

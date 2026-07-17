@@ -102,7 +102,9 @@ export function ListItem({
       testID={testID}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? title}
+      // Explicit label suppresses platform child-text concatenation — fold the
+      // subtitle in so AT still announces it (review r1).
+      accessibilityLabel={accessibilityLabel ?? (subtitle ? `${title}, ${subtitle}` : title)}
       style={s.row}
     >
       {({ pressed }) => (

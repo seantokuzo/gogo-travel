@@ -48,6 +48,36 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
+  it("Android hardware back cancels — never confirms (R-ds-18)", async () => {
+    const onConfirm = jest.fn();
+    const onCancel = jest.fn();
+    await renderWithTheme(dialog({ onConfirm, onCancel }));
+
+    // fireEvent walks ancestors for the handler — `requestClose` fired from
+    // inside the modal reaches Modal's onRequestClose (UNSAFE_getByType is
+    // gone in RNTL 14; the Modal host carries no testID).
+    await fireEvent(screen.getByTestId("dlg"), "requestClose");
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("confirm and cancel are individually reachable a11y elements (R-ds-12/18)", async () => {
+    await renderWithTheme(dialog());
+
+    // The card Pressable must NOT be an a11y element itself: RN 0.86 Pressable
+    // defaults accessible:true, which flattens the whole card into ONE iOS
+    // VoiceOver element (children unreachable). RNTL doesn't simulate that
+    // flattening, so the non-element status is asserted via the host prop —
+    // this line fails if the accessible={false} fix is reverted.
+    expect(screen.getByTestId("dlg").props.accessible).toBe(false);
+
+    // Both actions stay individually reachable, role-button a11y elements.
+    const buttons = screen.getAllByRole("button");
+    expect(buttons.length).toBeGreaterThanOrEqual(2);
+    const ids = buttons.map((b) => b.props.testID);
+    expect(ids).toEqual(expect.arrayContaining(["dlg-confirm", "dlg-cancel"]));
+  });
+
   it("derives child testIDs and labels from props", async () => {
     await renderWithTheme(dialog({ cancelLabel: "Keep it" }));
     expect(screen.getByTestId("dlg-confirm")).toHaveTextContent("Delete");

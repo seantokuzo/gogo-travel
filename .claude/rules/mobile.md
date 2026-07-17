@@ -17,5 +17,6 @@ paths: ["apps/mobile/**"]
 - TypeScript here is pinned by the Expo template (`~6.0.3`) — independent of the root TS 5.9; don't "align" it.
 - 🟡 jest is pinned `~29.7.0` because jest-expo 57 pins the jest-29 family internally (`babel-jest ^29`, `@jest/globals ^29`, …); jest 30 crashes the preset — don't "helpfully" bump (same deal as the TS `~6.0.3` pin). Verify `npm view jest-expo@<ver> dependencies` before ever touching it.
 - `app.json` `plugins` entries are added by `expo-doctor`/`expo install --fix` for plugin-bearing deps — tool-driven, not hand-curated; JSON can't carry comments, so the rationale lives here.
+- Test placement: screen tests → `src/__tests__/`; module/component tests → co-located next to the source file.
 - Screens need loading/error states, safe-area + keyboard handling; consider offline for during-trip surfaces.
 - Lint = `expo lint` (local flat config, not the root one). Build = `expo export --platform ios`.

@@ -78,8 +78,12 @@ export function ConfirmDialog({
         testID={`${testID}-scrim`}
         accessibilityLabel="Dismiss dialog"
       >
-        {/* Stop scrim-press from swallowing dialog taps. */}
-        <Pressable style={s.dialog} testID={testID} accessibilityViewIsModal>
+        {/* Stop scrim-press from swallowing dialog taps. `accessible={false}`:
+            RN 0.86 Pressable defaults accessible:true, which would flatten the
+            whole card into ONE iOS a11y element — confirm/cancel unreachable
+            via VoiceOver (R-ds-12/18). The responder grab needs no a11y-element
+            status. */}
+        <Pressable style={s.dialog} testID={testID} accessible={false} accessibilityViewIsModal>
           <AppText role="heading" accessibilityRole="header">
             {title}
           </AppText>

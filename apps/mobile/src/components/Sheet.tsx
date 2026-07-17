@@ -45,8 +45,17 @@ export interface SheetProps {
   testID: string;
 }
 
-const DISMISS_DRAG_PT = 80;
-const DISMISS_VELOCITY = 0.5;
+export const DISMISS_DRAG_PT = 80;
+export const DISMISS_VELOCITY = 0.5;
+
+/**
+ * The swipe-down release decision (R-ds-19), extracted pure so the 80pt/0.5vy
+ * math is unit-testable — the PanResponder gesture pipeline itself is not
+ * simulatable in jest. Exported for tests; not part of the component API.
+ */
+export function shouldDismissSheet(gesture: { dy: number; vy: number }): boolean {
+  return gesture.dy > DISMISS_DRAG_PT || gesture.vy > DISMISS_VELOCITY;
+}
 
 /**
  * Module-scope factory (render-scope-free — react-hooks/refs + Compiler
@@ -74,7 +83,7 @@ function createSheetPanResponder(opts: {
       dragY.setValue(Math.max(0, gesture.dy));
     },
     onPanResponderRelease: (_evt, gesture) => {
-      if (gesture.dy > DISMISS_DRAG_PT || gesture.vy > DISMISS_VELOCITY) {
+      if (shouldDismissSheet(gesture)) {
         onDismiss();
       } else {
         springBack();

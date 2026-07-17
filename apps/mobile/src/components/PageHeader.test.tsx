@@ -33,6 +33,16 @@ describe("PageHeader", () => {
     expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
+  it("has NO default testID — screens must pass their own (nav §2.7 grammar)", async () => {
+    await renderWithTheme(<PageHeader title="Trip" leading="back" />);
+    // The removed "page-header" fallback must not resurface, and the derived
+    // back id must not degrade to "undefined-back".
+    expect(screen.queryByTestId("page-header")).toBeNull();
+    expect(screen.queryByTestId("page-header-back")).toBeNull();
+    expect(screen.queryByTestId("undefined-back")).toBeNull();
+    expect(screen.getByLabelText("Back")).toBeOnTheScreen();
+  });
+
   it("renders trailing actions and fires their handlers", async () => {
     const onAdd = jest.fn();
     await renderWithTheme(
