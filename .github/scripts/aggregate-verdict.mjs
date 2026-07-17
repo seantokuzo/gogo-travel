@@ -229,7 +229,7 @@ function renderSticky(a) {
   L.push("");
   if (a.degraded) {
     L.push(
-      "> ⚠️ One or more specialist lanes produced no usable verdict this round — the verdict is incomplete. Re-run the affected lane(s) before merging."
+      "> ⚠️ One or more specialist lanes produced no usable verdict this round — the verdict is incomplete. Re-run the affected lane(s) before merging.",
     );
     L.push("");
   }
@@ -252,7 +252,7 @@ function renderSticky(a) {
   L.push(
     "🤖 _Verdict computed deterministically by `.github/scripts/aggregate-verdict.mjs` from " +
       a.lanes.length +
-      " specialist sentinels (no LLM)._"
+      " specialist sentinels (no LLM)._",
   );
   return L.join("\n");
 }
@@ -274,7 +274,7 @@ export function aggregate({
   round: roundOverride,
 } = {}) {
   const ordered = [...comments].sort((a, b) =>
-    String(a?.created_at ?? "").localeCompare(String(b?.created_at ?? ""))
+    String(a?.created_at ?? "").localeCompare(String(b?.created_at ?? "")),
   );
 
   const lanes = LANE_IDS.map((id) => buildLane(ordered, id, laneResults[id]));
@@ -384,8 +384,9 @@ function readStdin() {
 function main() {
   const { files, opts } = parseArgs(process.argv.slice(2));
   if (opts.help) {
+    // eslint-disable-next-line no-console -- CLI help text; stdout is this tool's output channel
     console.log(
-      "Usage: aggregate-verdict.mjs [--round N] [--head SHA] [--pr N] [--additions N] [--deletions N] <sentinel-file>..."
+      "Usage: aggregate-verdict.mjs [--round N] [--head SHA] [--pr N] [--additions N] [--deletions N] <sentinel-file>...",
     );
     return;
   }
@@ -436,7 +437,7 @@ function main() {
       " escalate=" +
       result.escalate +
       (result.escalateReason ? "(" + result.escalateReason + ")" : "") +
-      "\n"
+      "\n",
   );
 }
 
@@ -446,7 +447,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     main();
   } catch (err) {
     console.error(
-      "✗ aggregate-verdict failed: " + (err instanceof Error ? err.stack : String(err))
+      "✗ aggregate-verdict failed: " + (err instanceof Error ? err.stack : String(err)),
     );
     process.exit(1);
   }

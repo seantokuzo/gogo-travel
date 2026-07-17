@@ -10,6 +10,7 @@ paths: ["apps/mobile/**"]
 - 🔴 Push needs an EAS `projectId` in app config or `getExpoPushToken()` silently returns `null`.
 - 🟡 `crypto.randomUUID()` doesn't exist in RN — use `react-native-get-random-values` + `uuid`, or nanoid w/ polyfill.
 - 🟡 Long lists = `FlatList`/`FlashList`, never `ScrollView` + `.map()`.
+- 🟡 `expo lint` has no `--max-warnings 0` cap (flag pass-through undocumented); every other package is zero-warning — don't let mobile warnings accumulate.
 - Wire types come from `@gogo/shared` — no local redefines. No `any`, no `console.log`.
 - Routes live in `src/app/` (expo-router, typed routes on). Server state = TanStack Query; client state = Zustand.
 - Deps: ALWAYS `npx expo install <pkg>` (never bare add) and `npx expo-doctor` before relying on a native module.

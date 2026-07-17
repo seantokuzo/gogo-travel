@@ -8,7 +8,8 @@
     "node": ">=22.9"
   },
   "scripts": {
-    "lint": "turbo run lint",
+    "lint": "pnpm run lint:root && turbo run lint",
+    "lint:root": "eslint eslint.config.mjs prettier.config.mjs .github/scripts/ --max-warnings 0",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "build": "turbo run build",

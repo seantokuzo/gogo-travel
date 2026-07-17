@@ -1,0 +1,147 @@
+# GoGo Travel CI — deterministic checks ONLY.
+# Law #5 / ADR-003: no LLM, no metered API keys, no scheduled triggers.
+# Reviews run in-session on Max (ADR-003) — this gate is lint/types/tests/build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Expo export can be memory-hungry on runners
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
+jobs:
+  # ===========================================================================
+  # Guard — cheap structural policy checks (Law #5 tripwires; fail fast)
+  # ===========================================================================
+  guard:
+    name: Guard (policy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No scheduled/cron CI triggers
+        run: |
+          # ADR-003 cost guardrail: CI runs only on push / pull_request /
+          # workflow_dispatch — never on a timer. Patterns are assembled from
+          # parts so this step never matches itself (comments here must never
+          # contain the literal trigger keys either), and cover block form,
+          # flow-map form, and quoted keys.
+          SCHED="sched"; SCHED="${SCHED}ule"
+          CRON="cr"; CRON="${CRON}on"
+          if grep -rniE "(^|[\"'{[:space:]])(${SCHED}|${CRON})[\"']?[[:space:]]*:" .github/workflows/; then
+            echo "::error::Scheduled/cron CI trigger detected. Remove it (ADR-003)."
+            exit 1
+          fi
+          echo "OK — no scheduled/cron triggers."
+
+      - name: No metered API keys or LLM actions in CI
+        run: |
+          # Law #5: everything LLM runs in-session on Max. Assembled patterns
+          # (self-match-proof) cover the whole anthropics action family, any
+          # ANTHROPIC-prefixed key, and — since this repo's CI uses zero
+          # secrets — ANY new secrets.* reference is itself a tripwire.
+          KEY="ANTHRO"; KEY="${KEY}PIC_"
+          ACTION="anthropics/"; ACTION2="claude-"; ACTION2="${ACTION2}code-"
+          SECRETS_REF="secrets"; SECRETS_REF="${SECRETS_REF}\."
+          if grep -rniE -e "$KEY" -e "${ACTION}.*${ACTION2}" -e "\\\$\\{\\{[[:space:]]*${SECRETS_REF}" .github/workflows/; then
+            echo "::error::Metered API key, LLM action, or unexpected secret reference in CI (Law #5 / ADR-003)."
+            exit 1
+          fi
+          echo "OK — no metered API keys, LLM actions, or secret references."
+
+      - name: Aggregator unit tests
+        # The verdict aggregator (.github/scripts/) sits outside turbo's
+        # package graph; run its zero-dep node:test suite here so it gates
+        # ci-success. SHELL GLOB (not directory form): the shell expands to
+        # explicit file paths, which works on every Node major — directory
+        # form exits 1 (MODULE_NOT_FOUND) on Node 24, and this job runs the
+        # runner's unpinned default node. Still auto-discovers future
+        # *.test.mjs files.
+        run: node --test .github/scripts/*.test.mjs
+
+  # ===========================================================================
+  # Verify — the full quality gate (CLAUDE.md § Quality Gates)
+  # ===========================================================================
+  verify:
+    name: Verify (lint · typecheck · test · build)
+    runs-on: ubuntu-latest
+    env:
+      # CI=true makes the DB constraint suite HARD-FAIL if Docker is missing
+      # (T-3.3 fix) instead of skipping. On ubuntu-latest the Docker daemon is
+      # available natively, so testcontainers spins up postgres:17 for real.
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        # Version comes from package.json "packageManager" (pinned).
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Major-only: setup-node resolves latest 22.x; engines (>=22.9)
+          # enforces the floor at install time.
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # restore/save split (not single actions/cache): the save step runs
+      # if: always(), so red review rounds still warm the cache for the retry.
+      - name: Restore Turbo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - name: Lint (root configs + all packages)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test (incl. DB constraint suite on live Postgres)
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Save Turbo cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+
+  # ===========================================================================
+  # Required status check — single job for future branch protection
+  # ===========================================================================
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [guard, verify]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.guard.result }}" != "success" ]] || \
+             [[ "${{ needs.verify.result }}" != "success" ]]; then
+            echo "One or more jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed."

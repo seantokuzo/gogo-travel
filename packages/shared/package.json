@@ -2,7 +2,7 @@
   "name": "@gogo/shared",
   "version": "0.0.1",
   "private": true,
-  "description": "GoGo Travel shared contracts — Zod schemas as the single source of truth",
+  "description": "GoGo Travel shared contracts \u2014 Zod schemas as the single source of truth",
   "type": "module",
   "sideEffects": false,
   "exports": {
@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest"
   },
