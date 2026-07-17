@@ -13,6 +13,16 @@ import { useEffect } from "react";
 import Index from "@/app/index";
 import { systemAppearance, themeStorage } from "@/theme";
 
+// The home screen's __DEV__ gallery Link needs a router context that doesn't
+// exist in a bare component render — stub it (navigation is not under test).
+jest.mock("expo-router", () => {
+  const { createElement, Fragment } = jest.requireActual<typeof import("react")>("react");
+  return {
+    Link: ({ children }: { children?: import("react").ReactNode }) =>
+      createElement(Fragment, null, children),
+  };
+});
+
 /**
  * Records the resolved scheme on every COMMIT. seen[0] is the first committed
  * frame — what R-ds-4 actually promises. A regression moving the storage read

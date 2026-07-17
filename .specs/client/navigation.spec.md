@@ -204,6 +204,7 @@ apps/mobile/app/
 ```
 
 Layout responsibilities:
+
 - **Root `_layout`** owns providers, splash-hold until session hydration
   (R-nav-3), the redirect gate (R-nav-1), and registers the modal
   presentation group.
@@ -251,13 +252,13 @@ real domain swaps in via the single `LINK_DOMAIN` config constant, see
 flow through one registry (single source of truth for parse → target →
 guard):
 
-| Link | Target route | Auth | Guard / failure |
-|---|---|---|---|
-| `/invite/[token]` | `/(trips)/join/[token]` | required (stash+resume) | invalid/expired token → in-screen error + "Back to trips" (R-nav-11) |
-| `/t/[tripId]` | `/[tripId]` (default tab) | required | non-member → no-access (R-nav-15) |
-| `/t/[tripId]/request/[requestId]` | `/[tripId]/money/request/[requestId]` | required — membership too (app + account v1; non-member → R-nav-15, no unauthenticated branch) | missing/settled request → request screen's resolved/empty state |
-| share-sheet intent (`expo-share-intent`) | `/(trips)/capture` inbox → review (R-nav-24) | required | parse failure → capture entry with raw payload visible (never dropped) |
-| anything else | `/(trips)` + toast | — | R-nav-17 |
+| Link                                     | Target route                                 | Auth                                                                                           | Guard / failure                                                        |
+| ---------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `/invite/[token]`                        | `/(trips)/join/[token]`                      | required (stash+resume)                                                                        | invalid/expired token → in-screen error + "Back to trips" (R-nav-11)   |
+| `/t/[tripId]`                            | `/[tripId]` (default tab)                    | required                                                                                       | non-member → no-access (R-nav-15)                                      |
+| `/t/[tripId]/request/[requestId]`        | `/[tripId]/money/request/[requestId]`        | required — membership too (app + account v1; non-member → R-nav-15, no unauthenticated branch) | missing/settled request → request screen's resolved/empty state        |
+| share-sheet intent (`expo-share-intent`) | `/(trips)/capture` inbox → review (R-nav-24) | required                                                                                       | parse failure → capture entry with raw payload visible (never dropped) |
+| anything else                            | `/(trips)` + toast                           | —                                                                                              | R-nav-17                                                               |
 
 Mechanics: expo-router linking config handles warm links; cold start resolves
 `getInitialURL()`/initial share intent through the same registry (R-nav-16).
@@ -274,12 +275,14 @@ category) / dismiss.
 ### 2.4 Screen inventory (name · purpose · key interactions)
 
 **(auth)**
+
 - `sign-in` — Apple/Google sign-in; legal links; error banner on failure.
 - `onboarding` — first-run setup: name/avatar → home currency → payment
   handles (skippable) → notification priming; optional travel_style prompt
   (§ Resolved questions); skippable steps → trip list.
 
 **(trips)**
+
 - `trip-list` — trips grouped active/upcoming/past; tap → trip; create + join
   entries; header: profile avatar → `profile`, capture-inbox icon with
   needs-review badge → `capture-queue` (R-nav-24).
@@ -297,12 +300,14 @@ category) / dismiss.
   → booking lands; content owned by the client capture spec.
 
 **[tripId]/today** (live-trip surface — TripIt-style what's-next timeline)
+
 - `today` — chronological timeline of today's items; next-event card with
   countdown/leave-by (from precomputed `travel_legs`); weather strip; quick
   actions (add expense, add photo, open map); tap item → itinerary item
   detail (cross-tab push into itinerary stack).
 
 **[tripId]/itinerary** (plan surface — Wanderlog day list + our calendar grid)
+
 - `itinerary` — day-sectioned list, drag-to-reorder, inline travel times
   between consecutive items; view toggle → calendar-grid (gaps/overlaps
   exposed — the differentiator nobody has); day tap → jump; FAB → add item.
@@ -317,6 +322,7 @@ category) / dismiss.
   2026-07-09, Gate 2 sync.)
 
 **[tripId]/map**
+
 - `map` — persistent trip map: saved places, itinerary pins (day-colored),
   photo pins; **spine-backed place search bar** (Gate 2, F4 — see map spec
   R-map-25; `map-search` testID); day filter; offline-pack status pill; pin
@@ -326,6 +332,7 @@ category) / dismiss.
   notes, linked itinerary items/photos; save/unsave; "add to day".
 
 **[tripId]/money**
+
 - `money` — segmented budget (caps + AI estimate vs actual) · expenses
   (list, filter by member/category) · balances (who-owes-who, simplified);
   FAB → add expense.
@@ -341,6 +348,7 @@ category) / dismiss.
   account v1, § Resolved questions).
 
 **[tripId]/more**
+
 - `more` — hub of ListItem rows: Photos, Packing, Documents, Members,
   Capture inbox (opens the trips-level queue filtered to this trip —
   R-nav-24), Trip settings; offline-pack status.
@@ -371,12 +379,12 @@ initialTab(trip)   = tripIsActive(trip) ? 'today' : 'itinerary'   (R-nav-7/8)
 
 ### 2.6 Modal vs push conventions (R-nav-21)
 
-| Presentation | Use for | Examples |
-|---|---|---|
-| **Push** (tab-local Stack) | Drill-down into an entity already on screen | itinerary item, expense detail, place detail (full), photo viewer, settle |
-| **Modal — sheet** (design-system `Sheet`, in-screen) | Quick, single-decision interactions that keep context visible | map place preview, "Did you book it?", settle handoff options, filters |
-| **Modal — form** (router `presentation: 'modal'`) | Create/edit forms; self-contained flows with explicit save/cancel | trip-new, itinerary-item-new, expense-new, doc add |
-| **Dialog** (design-system `ConfirmDialog`) | Destructive confirmation only | delete trip/item/expense/photo, remove member, leave trip |
+| Presentation                                         | Use for                                                           | Examples                                                                  |
+| ---------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Push** (tab-local Stack)                           | Drill-down into an entity already on screen                       | itinerary item, expense detail, place detail (full), photo viewer, settle |
+| **Modal — sheet** (design-system `Sheet`, in-screen) | Quick, single-decision interactions that keep context visible     | map place preview, "Did you book it?", settle handoff options, filters    |
+| **Modal — form** (router `presentation: 'modal'`)    | Create/edit forms; self-contained flows with explicit save/cancel | trip-new, itinerary-item-new, expense-new, doc add                        |
+| **Dialog** (design-system `ConfirmDialog`)           | Destructive confirmation only                                     | delete trip/item/expense/photo, remove member, leave trip                 |
 
 Rules: modals never stack on modals (dismiss first); ConfirmDialog may sit
 over anything; back/swipe-back pops pushes, swipe-down dismisses modals —
@@ -402,6 +410,7 @@ Grammar — kebab-case, screen-prefixed:
   render index.
 
 Fixed rules:
+
 1. **Every interactive element** (Pressable/Touchable, Input, Switch, tab,
    FAB, swipe action) carries one. Design-system components make it a
    required prop, so omission is a type error.
@@ -410,8 +419,12 @@ Fixed rules:
    `tab-bar-money`, `tab-bar-more` (trip-agnostic — E2E flows shouldn't need
    the tripId to switch tabs).
 4. Compound components derive children from their base:
-   `{testID}-confirm` / `{testID}-cancel` (ConfirmDialog), `{testID}-retry`
-   (ErrorBanner).
+   `{testID}-confirm` / `{testID}-cancel` / `{testID}-scrim` (ConfirmDialog),
+   `{testID}-retry` / `{testID}-dismiss` (ErrorBanner), `{testID}-close` /
+   `{testID}-scrim` (Sheet), `{testID}-back` (PageHeader); non-interactive
+   derived IDs: `{testID}-spinner` (Button loading), `{testID}-error` /
+   `{testID}-field` (Input), `tab-bar-{key}-badge` / `tab-bar-{key}-dot`
+   (TabNav). _(Synced 2026-07-18, post-T-4.3)_
 5. IDs are stable across renders and refactors — E2E flows match on them
    (landmine: flows point at the REAL UI).
 
@@ -442,17 +455,18 @@ Examples: `sign-in-button-apple`, `trip-list-fab-create`,
 Traceable to requirement IDs; each sized to one agent session. These become
 `T-N.M` rows in `docs/QUEUE.md` when the phase is cut.
 
-| ID | Task | Covers |
-|---|---|---|
-| NAV-1 | Route skeleton: full file tree with placeholder screens, tab-local Stacks, TabNav wiring, root modal group. | R-nav-10, R-nav-21 |
-| NAV-2 | Session store + root auth gate: hydration splash, redirect, stash/resume, first-run onboarding branch, sign-out reset. | R-nav-1..4 |
-| NAV-3 | Entry redirect + trip default-tab resolution + in-session tab memory + most-recently-viewed multi-active landing (MMKV stamp) + header trip switcher. | R-nav-5..9, R-nav-23 |
-| NAV-4 | `[tripId]` membership guard + trip context provider + no-access state. | R-nav-15, R-nav-20 |
-| NAV-5 | Deep-link registry: scheme + universal-link config (AASA/assetlinks against the `LINK_DOMAIN` placeholder), invite + trip + settle-request routes, cold/warm parity, malformed fallback. | R-nav-11..17 |
-| NAV-6 | Capture entries: share-intent routing + deeplink-out return prompt + inbox surfaces (trips-level queue + badge + per-trip filtered view). | R-nav-18, R-nav-19, R-nav-24 |
-| NAV-7 | testID audit tooling: convention doc in `.claude/rules/mobile.md` + lint/check that flags interactive elements missing testIDs. | R-nav-22 |
+| ID    | Task                                                                                                                                                                                     | Covers                       |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| NAV-1 | Route skeleton: full file tree with placeholder screens, tab-local Stacks, TabNav wiring, root modal group.                                                                              | R-nav-10, R-nav-21           |
+| NAV-2 | Session store + root auth gate: hydration splash, redirect, stash/resume, first-run onboarding branch, sign-out reset.                                                                   | R-nav-1..4                   |
+| NAV-3 | Entry redirect + trip default-tab resolution + in-session tab memory + most-recently-viewed multi-active landing (MMKV stamp) + header trip switcher.                                    | R-nav-5..9, R-nav-23         |
+| NAV-4 | `[tripId]` membership guard + trip context provider + no-access state.                                                                                                                   | R-nav-15, R-nav-20           |
+| NAV-5 | Deep-link registry: scheme + universal-link config (AASA/assetlinks against the `LINK_DOMAIN` placeholder), invite + trip + settle-request routes, cold/warm parity, malformed fallback. | R-nav-11..17                 |
+| NAV-6 | Capture entries: share-intent routing + deeplink-out return prompt + inbox surfaces (trips-level queue + badge + per-trip filtered view).                                                | R-nav-18, R-nav-19, R-nav-24 |
+| NAV-7 | testID audit tooling: convention doc in `.claude/rules/mobile.md` + lint/check that flags interactive elements missing testIDs.                                                          | R-nav-22                     |
 
 **Tests required (minimum):**
+
 - [ ] Unauthed access to `(trips)` and `[tripId]/*` redirects to sign-in; destination resumes post-auth (NAV-2)
 - [ ] Active trip → today default; planning/past trip → itinerary; manual choice sticky in session, reset on relaunch (NAV-3)
 - [ ] 2+ active trips → most-recently-viewed active trip's today tab; never-viewed fallback → trip list (NAV-3)

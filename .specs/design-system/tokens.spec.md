@@ -626,7 +626,9 @@ settings, docs, packing, capture queue. Swipe actions are a v1 seam
 Bottom sheet with grab handle, `bg.surfaceRaised`, radius `xl` top, scrim,
 swipe-down + close button (R-ds-19). Used for place details on map, quick
 add, settle handoff. Full-screen modals route through expo-router
-(navigation spec § modal conventions), not this component.
+(navigation spec § modal conventions), not this component. v1 honors
+`snapPoints[0]` only — multi-snap dragging is an additive seam. _(Synced
+2026-07-18, post-T-4.3)_
 
 **Skeleton** — `variant: 'text' | 'circle' | 'rect'`, `width? / height? /
 lines?`; shimmer honors reduce-motion (R-ds-11). Composable into per-screen
@@ -644,7 +646,9 @@ skeleton layouts (R-ds-15).
   contradicts "minimalistic"; revisit only via a deliberate design pass.
 - Icon set choice — pinned at P-3 scaffold via `npm view` (candidates:
   `@expo/vector-icons`, `lucide-react-native`); components reference an
-  `IconName` type seam.
+  `IconName` type seam. DECIDED 2026-07-17: Ionicons via `@expo/vector-icons`
+  deep import (seam-contained in `Icon.tsx`; swappable). _(Synced 2026-07-18,
+  post-T-4.3)_
 
 ---
 
