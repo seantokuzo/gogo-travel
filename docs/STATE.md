@@ -34,12 +34,18 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   matrix, 45/45 approved seeds mutation-proven, 3 dark-mode AA fixes caught
   by review-added pairing, derive script committed (byte-reproduces hexes).
   Spec synced to shipped reality incl. §2.9 component mapping (71368ec).
-- **T-4.2 in progress** (engineer subagent): mobile theme adapters — MMKV
-  ThemeStorage + Appearance source into the app shell (REFERENTIALLY STABLE
-  instances — perf-lane landmine), jest-expo harness + first render test.
-- Then: DS-5..10 (components + Gallery screen), NAV-1..7 (route skeleton).
-  P-4 detail: PLANNING § P-4. jest-expo + first render test lands this phase
-  (T-3.1 defer).
+- **T-4.2 MERGED 2026-07-17** — theme runtime wired (MMKV + Appearance
+  singleton seams); first clean round-1 SHIP; mobile jest harness live.
+- **T-4.3 MERGED (1fc755f)** — 14 components + dev Gallery, mobile 96 tests.
+  Round-1: 1 blocking (RN 0.86 Pressable defaults `accessible:true` →
+  ConfirmDialog card flattened to one AT element; fixed `accessible={false}`,
+  revert-proven) + 11 advisories all addressed; judge merge/high (re-ran
+  suite + revert-proof firsthand). Fix agent died awaiting Docker boot —
+  orchestrator ran gate/commit inline. Landmine codified in rules/mobile.md.
+- **T-4.4 ACTIVE** (engineer subagent): NAV-1..7 route skeleton per
+  `.specs/client/navigation.spec.md`, branch `P-4/T-4-4-navigation`.
+  LAST P-4 task → then phase close (ledger F-010..F-017 w/ evidence,
+  archive, PLANNING row, Gallery simulator QA moment for Sean).
 - **Push re-blocked**: workflow-file pushes need `workflow` scope — Sean:
   `gh auth refresh -h github.com -s workflow`, then I push (first GitHub
   Actions run validates the new CI on the runner).
