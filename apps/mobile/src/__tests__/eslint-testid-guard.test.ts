@@ -53,14 +53,17 @@ export default function Probe() {
 }
 `;
 
-async function guardFindings(code: string, virtualPath: string) {
+async function restrictedFindings(code: string, virtualPath: string, marker: string) {
   const [result] = await eslint.lintText(code, {
     filePath: join(APP_ROOT, virtualPath),
   });
   return result.messages.filter(
-    (m) => m.ruleId === "no-restricted-syntax" && m.message.includes("R-nav-22"),
+    (m) => m.ruleId === "no-restricted-syntax" && m.message.includes(marker),
   );
 }
+
+const guardFindings = (code: string, virtualPath: string) =>
+  restrictedFindings(code, virtualPath, "R-nav-22");
 
 describe("R-nav-22 ESLint guard (eslint.config.js) is alive", () => {
   it("errors on a bare Pressable without testID in src/app/**", async () => {
@@ -72,6 +75,77 @@ describe("R-nav-22 ESLint guard (eslint.config.js) is alive", () => {
 
   it("passes the same Pressable once it carries a testID", async () => {
     const findings = await guardFindings(PRESSABLE_WITH_TESTID, "src/app/__guard-probe__.tsx");
+    expect(findings).toEqual([]);
+  });
+});
+
+const HEX_LITERAL = `export const oops = { color: "#FF0000" };\n`;
+
+const RGB_LITERAL = `export const oops = { color: "rgba(255, 0, 0, 0.5)" };\n`;
+
+const BARE_STYLESHEET = `import { StyleSheet } from "react-native";
+
+export const s = StyleSheet.create({ screen: { flex: 1 } });
+`;
+
+const WRAPPED_STYLESHEET = `import { StyleSheet } from "react-native";
+import { createStyles } from "@gogo/tokens/react";
+
+export const useStyles = createStyles((t) =>
+  StyleSheet.create({ screen: { flex: 1, backgroundColor: t.color.bg.screen } }),
+);
+`;
+
+describe("R-ds-7 token-only lint (DS-4) is alive", () => {
+  it("errors on a literal hex color in src/components/**", async () => {
+    const findings = await restrictedFindings(HEX_LITERAL, "src/components/__probe__.ts", "R-ds-7");
+    expect(findings).toHaveLength(1);
+    expect(findings[0].severity).toBe(2);
+  });
+
+  it("errors on a literal rgba() color in src/components/**", async () => {
+    const findings = await restrictedFindings(RGB_LITERAL, "src/components/__probe__.ts", "R-ds-7");
+    expect(findings).toHaveLength(1);
+  });
+
+  it("errors on bare StyleSheet.create outside createStyles", async () => {
+    const findings = await restrictedFindings(
+      BARE_STYLESHEET,
+      "src/components/__probe__.ts",
+      "R-ds-7",
+    );
+    expect(findings).toHaveLength(1);
+  });
+
+  it("passes StyleSheet.create wrapped in the createStyles factory", async () => {
+    const findings = await restrictedFindings(
+      WRAPPED_STYLESHEET,
+      "src/components/__probe__.ts",
+      "R-ds-7",
+    );
+    expect(findings).toEqual([]);
+  });
+
+  // Flat-config landmine: a second block's no-restricted-syntax REPLACES the
+  // first for files both match. These two prove src/app/** carries BOTH rule
+  // sets — i.e. adding the R-ds-7 block did not clobber the testID guard and
+  // vice versa.
+  it("errors on a hex literal in src/app/** (merged into the guard block)", async () => {
+    const findings = await restrictedFindings(HEX_LITERAL, "src/app/__probe__.tsx", "R-ds-7");
+    expect(findings).toHaveLength(1);
+  });
+
+  it("keeps the testID guard alive alongside R-ds-7 in src/app/**", async () => {
+    const findings = await guardFindings(BARE_PRESSABLE, "src/app/__guard-probe__.tsx");
+    expect(findings).toHaveLength(1);
+  });
+
+  it("exempts test files from token-only styling", async () => {
+    const findings = await restrictedFindings(
+      HEX_LITERAL,
+      "src/__tests__/__probe__.test.ts",
+      "R-ds-7",
+    );
     expect(findings).toEqual([]);
   });
 });

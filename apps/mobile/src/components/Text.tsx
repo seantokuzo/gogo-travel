@@ -46,7 +46,7 @@ function buildRoleStyles(theme: Theme): Record<TypeRole, TextStyle> {
   for (const [role, typeStyle] of entries) {
     styles[role] = toTextStyle(typeStyle, role);
   }
-  return StyleSheet.create(styles);
+  return styles;
 }
 
 function buildColorStyles(theme: Theme): Record<AppTextColor, TextStyle> {
@@ -55,12 +55,14 @@ function buildColorStyles(theme: Theme): Record<AppTextColor, TextStyle> {
   for (const [name, value] of entries) {
     styles[name] = { color: value };
   }
-  return StyleSheet.create(styles);
+  return styles;
 }
 
+// Builders stay pure; the single StyleSheet.create wrap lives inside the
+// factory so the R-ds-7 lint can see the createStyles ancestry.
 const useStyles = createStyles((t) => ({
-  role: buildRoleStyles(t),
-  color: buildColorStyles(t),
+  role: StyleSheet.create(buildRoleStyles(t)),
+  color: StyleSheet.create(buildColorStyles(t)),
 }));
 
 export function AppText({
