@@ -1,6 +1,5 @@
-import { useLocalSearchParams } from "expo-router";
-
 import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
+import { useTripId } from "@/navigation/trip-context";
 
 /**
  * Photos (§2.4, pushed from the More hub) — album grid with visibility
@@ -8,7 +7,7 @@ import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
  * levels are an explicit boundary).
  */
 export default function PhotosScreen() {
-  const { tripId } = useLocalSearchParams<{ tripId: string }>();
+  const tripId = useTripId();
   return (
     <PlaceholderScreen
       screenId="photos"

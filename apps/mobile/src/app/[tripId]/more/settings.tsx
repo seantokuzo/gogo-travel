@@ -1,6 +1,5 @@
-import { useLocalSearchParams } from "expo-router";
-
 import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
+import { useTripId } from "@/navigation/trip-context";
 
 /**
  * Trip settings (§2.4, pushed from the More hub) — dates/name/destination
@@ -8,7 +7,7 @@ import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
  * leave/delete with destructive Confirms. Content owned by the trips spec.
  */
 export default function TripSettingsScreen() {
-  const { tripId } = useLocalSearchParams<{ tripId: string }>();
+  const tripId = useTripId();
   return (
     <PlaceholderScreen
       screenId="trip-settings"

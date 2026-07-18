@@ -18,7 +18,7 @@ describe("PageHeader", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("renders title (header role) and subtitle", async () => {
-    await renderWithTheme(<PageHeader title="Trip" subtitle="Jul 20 – Aug 2" />);
+    await renderWithTheme(<PageHeader title="Trip" subtitle="Jul 20 – Aug 2" testID="hdr" />);
     const title = screen.getByText("Trip");
     expect(title.props.accessibilityRole).toBe("header");
     expect(screen.getByText("Jul 20 – Aug 2")).toBeOnTheScreen();
@@ -33,13 +33,14 @@ describe("PageHeader", () => {
     expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
-  it("has NO default testID — screens must pass their own (nav §2.7 grammar)", async () => {
-    await renderWithTheme(<PageHeader title="Trip" leading="back" />);
-    // The removed "page-header" fallback must not resurface, and the derived
-    // back id must not degrade to "undefined-back".
+  it("uses ONLY the screen-passed testID — no default resurfaces (nav §2.7 grammar)", async () => {
+    // Omission itself is now a type error (testid-required.typetest.tsx);
+    // this guards the runtime half: the passed id is applied verbatim and
+    // the removed "page-header" fallback must not resurface.
+    await renderWithTheme(<PageHeader title="Trip" leading="back" testID="hdr" />);
+    expect(screen.getByTestId("hdr")).toBeOnTheScreen();
     expect(screen.queryByTestId("page-header")).toBeNull();
     expect(screen.queryByTestId("page-header-back")).toBeNull();
-    expect(screen.queryByTestId("undefined-back")).toBeNull();
     expect(screen.getByLabelText("Back")).toBeOnTheScreen();
   });
 
@@ -48,6 +49,7 @@ describe("PageHeader", () => {
     await renderWithTheme(
       <PageHeader
         title="Trip"
+        testID="hdr"
         trailing={[{ icon: "add", label: "Add stop", onPress: onAdd, testID: "hdr-add" }]}
       />,
     );
@@ -62,6 +64,7 @@ describe("PageHeader", () => {
     await renderWithTheme(
       <PageHeader
         title="Trip"
+        testID="hdr"
         trailing={[
           { icon: "add", label: "One", onPress: noop, testID: "a1" },
           { icon: "search", label: "Two", onPress: noop, testID: "a2" },

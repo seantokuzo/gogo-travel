@@ -4,9 +4,9 @@
  *
  * GATING: dev-only via a `__DEV__` redirect. File-based routing can't
  * conditionally register routes, so the route always exists but production
- * builds bounce straight back to home before any gallery UI mounts (and the
- * dev-only Link on the home screen is itself `__DEV__`-gated). Chosen over a
- * route group because it keeps the gate in ONE grep-able place.
+ * builds bounce straight back to the trip list before any gallery UI mounts
+ * (and the dev-only entry on the trip-list screen is itself `__DEV__`-gated).
+ * Chosen over a route group because it keeps the gate in ONE grep-able place.
  *
  * This screen intentionally uses a ScrollView: it is a STATIC, bounded set
  * of demo sections, not a data list (the FlatList landmine targets

@@ -97,10 +97,13 @@ describe("auth group scaffolds (NAV-2 targets exist unguarded)", () => {
 });
 
 describe("dynamic segments thread their params (deep-link plumbing for NAV-5)", () => {
-  it("invite token reaches the join screen", async () => {
-    await renderApp("/join/tok-123");
+  it("invite token reaches the join screen — echoed TRUNCATED (bearer credential)", async () => {
+    await renderApp("/join/tok-1234567890");
     const join = await screen.findByTestId("invite-join-screen");
-    expect(within(join).getByText("Invite tok-123")).toBeOnTheScreen();
+    // Tokens are bearer credentials (security R1): first 8 chars + ellipsis
+    // only, and the full token must never appear on screen.
+    expect(within(join).getByText("Invite tok-1234…")).toBeOnTheScreen();
+    expect(within(join).queryByText(/tok-1234567890/)).toBeNull();
   });
 
   it("itinerary item id reaches the detail screen", async () => {

@@ -1,6 +1,5 @@
-import { useLocalSearchParams } from "expo-router";
-
 import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
+import { useTripId } from "@/navigation/trip-context";
 
 /**
  * Members (§2.4, pushed from the More hub) — member list with roles, invite
@@ -8,7 +7,7 @@ import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
  * Content owned by the trips/collab spec.
  */
 export default function MembersScreen() {
-  const { tripId } = useLocalSearchParams<{ tripId: string }>();
+  const tripId = useTripId();
   return (
     <PlaceholderScreen
       screenId="members"
