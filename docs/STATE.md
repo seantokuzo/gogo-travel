@@ -42,10 +42,20 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   revert-proven) + 11 advisories all addressed; judge merge/high (re-ran
   suite + revert-proof firsthand). Fix agent died awaiting Docker boot —
   orchestrator ran gate/commit inline. Landmine codified in rules/mobile.md.
-- **T-4.4 ACTIVE** (engineer subagent): NAV-1..7 route skeleton per
-  `.specs/client/navigation.spec.md`, branch `P-4/T-4-4-navigation`.
-  LAST P-4 task → then phase close (ledger F-010..F-017 w/ evidence,
-  archive, PLANNING row, Gallery simulator QA moment for Sean).
+- **T-4.4 MERGED (e7a56e2)** — NAV-1..7 skeleton: full §2.1 tree (36 route
+  files), DS TabNav tab shell, TripIdProvider (vendored-router param gap),
+  NAV-7 ESLint testID guard w/ committed self-test, mobile 144 tests.
+  Round-1: first 5-lane 0-blocking SHIP (12 advisories, all fixed — one
+  exposed a factually false test comment re back-behavior); judge merge/high,
+  large-diff escalation WAIVED (mechanical, T-3.2/T-3.3 precedent).
+  expo-router 57 landmines codified in rules/mobile.md.
+- **PHASE CLOSE IN PROGRESS**: F-010..F-017 need simulator evidence
+  (F-012 machine-only). First native build running (`expo run:ios`, Debug +
+  Metro — MMKV blocks Expo Go; ios/ is CNG-gitignored). Then: evidence
+  capture → ledger flips → archive → PLANNING row → Sean's Gallery QA moment.
+- Parked (judge note, non-blocking): apps/mobile/tsconfig.json comment
+  overstates node-builtin guard (real guard = Metro resolution failure);
+  one-line no-restricted-imports or comment tweak in a future task.
 - **Push re-blocked**: workflow-file pushes need `workflow` scope — Sean:
   `gh auth refresh -h github.com -s workflow`, then I push (first GitHub
   Actions run validates the new CI on the runner).

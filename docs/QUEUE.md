@@ -7,10 +7,10 @@
 
 ## Active
 
-| ID    | Title                                                                                                                                                           | Status      | Priority | Depends on |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | ---------- |
-| P-4   | Phase: design system + navigation skeleton (PLANNING § P-4)                                                                                                     | in-progress | P0       | —          |
-| T-4.4 | Navigation skeleton [NAV-1..7]: expo-router route tree, tab bar, screen scaffolds + placeholder states per navigation.spec — LAST P-4 task, phase close follows | in-progress | P0       | T-4.3      |
+| ID    | Title                                                                                                                                          | Status      | Priority | Depends on |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | ---------- |
+| P-4   | Phase: design system + navigation skeleton (PLANNING § P-4)                                                                                    | in-progress | P0       | —          |
+| T-4.4 | P-4 phase close: simulator evidence capture (first native build) → ledger F-010..F-017 flips → archive → PLANNING row → Sean Gallery QA moment | in-progress | P0       | —          |
 
 ## Blocked
 
@@ -23,6 +23,7 @@
 
 | ID    | Title                                                                                                                                                                                                                                                                                               | Done                 |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| T-4.4 | Navigation skeleton merged e7a56e2 — 36 route files, TripIdProvider, NAV-7 lint guard + self-test, mobile 144 tests; first 5-lane 0-blocking round-1 SHIP (12 advisories fixed, one exposed a false test comment); judge merge/high, large-diff escalation waived                                   | 2026-07-18           |
 | T-4.3 | Component library merged 1fc755f — 14 components + dev Gallery, mobile 96 tests; round-1 fix-then-ship (1 blocking: RN 0.86 Pressable a11y flattening in ConfirmDialog, revert-proven) → judge merge/high; fix committed by orchestrator after fix agent died awaiting Docker                       | 2026-07-17           |
 | T-4.2 | Theme runtime wired — first clean round-1 SHIP (0 blocking, 5 lanes); mobile jest harness live (10 tests incl. first-frame probe); judge merge/high                                                                                                                                                 | 2026-07-17           |
 | T-4.1 | @gogo/tokens merged — 312 tests, 45/45 seeds mutation-proven, 3 dark-mode AA fixes caught by new pairing, derive script reproducible; judge merge/high                                                                                                                                              | 2026-07-17           |
