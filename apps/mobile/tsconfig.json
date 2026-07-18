@@ -4,7 +4,10 @@
     "strict": true,
     // Explicit: TS 6 + pnpm doesn't reliably auto-include node_modules/@types
     // here; jest globals (describe/it/expect/jest) come from @types/jest.
-    "types": ["jest"],
+    // "node" is for node-runtime TEST code only (route-audit fs walk, ESLint
+    // guard self-test) — app source still must not reach for node builtins
+    // (Metro provides no node stdlib; lint + review guard that line).
+    "types": ["jest", "node"],
     "paths": {
       "@/*": ["./src/*"],
       "@/assets/*": ["./assets/*"]

@@ -2,26 +2,34 @@ import { ThemeProvider, useTheme } from "@gogo/tokens/react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
+import { useStackScreenOptions } from "@/navigation/stack-options";
 import { systemAppearance, themeStorage } from "@/theme";
 
 /**
- * Navigator chrome lives INSIDE the provider so useTheme re-skins the stack
- * header, screen background, and status bar on scheme/accent changes
- * (R-ds-3 / R-ds-6 end-to-end).
+ * Root layout (navigation.spec §2.1) — owns providers and the root Stack.
+ *
+ * NAV-2 seams (deliberately NOT wired — no session store exists yet, and the
+ * mobile landmine forbids gating screens on state nothing sets):
+ * - splash-hold until session hydration (R-nav-3)
+ * - redirect gate: unauthed → /(auth)/sign-in with stashed destination
+ *   (R-nav-1), first-run → onboarding (R-nav-2), sign-out reset (R-nav-4)
+ *
+ * Modal presentation (R-nav-21) is registered in each modal's OWNING stack
+ * layout — expo-router configures `presentation` where the screen is a direct
+ * child, so the "root modal group" of the spec is distributed: `(trips)`
+ * declares `new` + `capture/onboarding`; the itinerary/money tab stacks
+ * declare `item/new` / `expense/new`.
+ *
+ * Navigator chrome lives INSIDE the provider so useTheme re-skins the status
+ * bar and scene backgrounds on scheme/accent changes (R-ds-3 / R-ds-6).
  */
 function ThemedShell() {
-  const { theme, scheme } = useTheme();
+  const { scheme } = useTheme();
   return (
     <>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: theme.color.bg.surface },
-          headerTintColor: theme.color.text.accent,
-          headerTitleStyle: { color: theme.color.text.primary },
-          contentStyle: { backgroundColor: theme.color.bg.screen },
-        }}
-      />
+      {/* PageHeader owns all screen chrome (§2.9) — native headers stay off. */}
+      <Stack screenOptions={useStackScreenOptions()} />
     </>
   );
 }

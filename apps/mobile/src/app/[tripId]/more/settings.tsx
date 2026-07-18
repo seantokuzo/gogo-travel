@@ -1,0 +1,21 @@
+import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
+import { useTripId } from "@/navigation/trip-context";
+
+/**
+ * Trip settings (§2.4, pushed from the More hub) — dates/name/destination
+ * edit, trip theme (R-ds-22: trip-scoped accents only), offline pack,
+ * leave/delete with destructive Confirms. Content owned by the trips spec.
+ */
+export default function TripSettingsScreen() {
+  const tripId = useTripId();
+  return (
+    <PlaceholderScreen
+      screenId="trip-settings"
+      title="Trip settings"
+      subtitle={`Trip ${tripId}`}
+      back
+      icon="settings-outline"
+      note="Trip edit, theme, offline pack, and leave/delete land with the trips phase."
+    />
+  );
+}

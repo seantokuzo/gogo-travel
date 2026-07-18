@@ -48,9 +48,12 @@ export const invalidWithoutTestID = [
   // @ts-expect-error — EmptyState action requires its own testID (R-ds-20)
   <EmptyState key="empty" icon="add" title="x" action={{ label: "x", onPress: noop }} />,
 
+  // @ts-expect-error — PageHeader requires testID (nav §2.7 rule 1, T-4.4 R1)
+  <PageHeader key="header-no-id" title="x" />,
+
   // prettier-ignore
   // @ts-expect-error — PageHeader trailing actions require testID (R-ds-20)
-  <PageHeader key="header" title="x" trailing={[{ icon: "add", label: "x", onPress: noop }]} />,
+  <PageHeader key="header" title="x" testID="hdr" trailing={[{ icon: "add", label: "x", onPress: noop }]} />,
 ];
 
 // Non-pressable Card / ListItem keep testID OPTIONAL — compile-time proof the

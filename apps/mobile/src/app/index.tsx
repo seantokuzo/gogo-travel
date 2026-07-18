@@ -1,55 +1,15 @@
-import { createStyles, useTheme } from "@gogo/tokens/react";
-import { Link } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { Redirect } from "expo-router";
 
-import { AppText } from "@/components";
-
-// First live token consumer (R-ds-7 pattern): factory declared at module
-// scope, StyleSheet.create runs INSIDE it, once per theme object.
-const useStyles = createStyles((t) =>
-  StyleSheet.create({
-    container: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: t.color.bg.screen,
-      padding: t.space[6],
-      gap: t.space[4],
-    },
-    galleryLink: {
-      minHeight: t.touchTarget,
-      justifyContent: "center",
-    },
-    title: {
-      ...t.type.title,
-      color: t.color.text.primary,
-    },
-  }),
-);
-
-export default function Index() {
-  const { theme } = useTheme();
-  const s = useStyles();
-  return (
-    <View style={s.container} testID="home-screen">
-      <Text
-        style={s.title}
-        testID="home-title"
-        // Dynamic Type cap is a Text PROP, not a style (R-ds-10).
-        maxFontSizeMultiplier={theme.type.title.maxFontSizeMultiplier}
-      >
-        GoGo Travel
-      </Text>
-      {__DEV__ ? (
-        // Dev-only entry to the component gallery (DS-10 evidence surface).
-        <View style={s.galleryLink}>
-          <Link href="/gallery" testID="dev-gallery-link">
-            <AppText role="bodyStrong" color="accent">
-              Component gallery
-            </AppText>
-          </Link>
-        </View>
-      ) : null}
-    </View>
-  );
+/**
+ * Entry redirect (navigation.spec §2.1 / §2.2).
+ *
+ * Skeleton resolution: no session store or trip data exists yet, so every
+ * launch lands on the trip list — the R-nav-5 default. NAV-2/NAV-3 replace
+ * this with the full ladder:
+ *   hydration splash (R-nav-3) → auth gate (R-nav-1/2) →
+ *   single active trip → its today tab (R-nav-6) →
+ *   2+ active trips → most-recently-viewed's today tab (R-nav-23, MMKV stamp).
+ */
+export default function Entry() {
+  return <Redirect href="/(trips)" />;
 }

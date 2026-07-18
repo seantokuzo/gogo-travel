@@ -215,6 +215,21 @@ Layout responsibilities:
   trips are active (R-nav-23).
 - **Each tab directory** is its own Stack → per-tab history (R-nav-10).
 
+_(Synced 2026-07-18, post-T-4.4 — two clarifications from the build, no
+topology change:)_
+
+- Modal `presentation` (R-nav-21) registers in each modal's **owning stack**,
+  not a literal root modal group: the file map above nests every modal inside
+  a child stack, and expo-router configures `presentation` where the screen
+  is a direct child. Concretely: `(trips)/_layout` declares `new` +
+  `capture/onboarding`; the itinerary/money tab-stack layouts declare
+  `item/new` / `expense/new`. The root layout keeps its other
+  responsibilities unchanged.
+- `today/`, `map/`, `money/`, and `more/` each carry their own `_layout.tsx`
+  (tab-local Stack), exactly as the "(pattern repeats per tab)" note and the
+  per-tab-Stack responsibilities line (R-nav-10) mandate — the literal tree
+  above draws only itinerary's.
+
 ### 2.2 Auth gate & session flow
 
 State: Zustand session store (tokens in expo-secure-store, hydrated at
@@ -402,9 +417,14 @@ Grammar — kebab-case, screen-prefixed:
   `invite-join`, `profile`, `capture-queue`, `capture-review`, `today`,
   `itinerary`, `itinerary-item`, `booking-detail`, `map`, `place-detail`,
   `money`, `expense-new`, `settle`, `more`, `photos`, `packing`,
-  `documents`, `members`, `trip-settings`.
+  `documents`, `members`, `trip-settings`, plus the remaining §2.4 screens
+  the skeleton established: `onboarding`, `capture-onboarding`,
+  `itinerary-item-new`, `expense-detail`, `settle-request`, `photo-viewer`.
+  _(Enumeration completed 2026-07-18, post-T-4.4)_
 - `<element>` — role noun: `button`, `input`, `list`, `list-item`, `tab`,
-  `fab`, `toggle`, `segment`, `sheet`, `back`, `retry`.
+  `fab`, `toggle`, `segment`, `sheet`, `back`, `retry`, `header` (PageHeader
+  base ID `<screen>-header`; derives `-back` per rule 4).
+  _(`header` added 2026-07-18, post-T-4.4)_
 - `<qualifier>` — static discriminator (`-apple`, `-confirm`) or, for
   dynamic collections, the **stable entity id** (`-{expenseId}`) — never a
   render index.

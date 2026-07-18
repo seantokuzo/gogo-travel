@@ -33,8 +33,11 @@ export interface PageHeaderProps {
   leading?: "back" | ReactNode;
   /** Max 2 (spec) — extras are not rendered. */
   trailing?: PageHeaderAction[];
-  /** No default — screens pass their own so nav §2.7 screen-prefix grammar holds. */
-  testID?: string;
+  /**
+   * Required (nav §2.7 rule 1) — screens pass their own so the screen-prefix
+   * grammar holds; `leading: 'back'` derives `{testID}-back` from it.
+   */
+  testID: string;
 }
 
 const useStyles = createStyles((t) =>
@@ -86,7 +89,7 @@ export function PageHeader({
         {leading === "back" ? (
           <Pressable
             onPress={() => router.back()}
-            testID={testID !== undefined ? `${testID}-back` : undefined}
+            testID={`${testID}-back`}
             accessibilityRole="button"
             accessibilityLabel="Back"
             hitSlop={theme.hitSlop.sm}
