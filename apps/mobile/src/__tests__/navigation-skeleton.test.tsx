@@ -32,6 +32,8 @@ import {
   within,
 } from "expo-router/testing-library";
 
+import { SCREEN_ROUTES } from "@/test-utils/screen-routes";
+
 // Tab switches fire the `selection` haptic through the DS TabNav — keep the
 // expo-haptics native call out of the loop (convention verified in
 // TabNav.test.tsx / haptics.test.ts).
@@ -55,40 +57,8 @@ async function renderApp(initialUrl: string) {
   };
 }
 
-/**
- * §2.1 route map → §2.7 rule-2 root testIDs. Every screen route in the spec
- * tree, addressed by URL exactly as deep links will address it (R-nav-22:
- * a screen without testIDs can never be E2E covered).
- */
-const SCREEN_ROUTES: [url: string, rootTestID: string][] = [
-  ["/sign-in", "sign-in-screen"],
-  ["/onboarding", "onboarding-screen"],
-  ["/new", "trip-new-screen"],
-  ["/join/tok-123", "invite-join-screen"],
-  ["/profile", "profile-screen"],
-  ["/capture", "capture-queue-screen"],
-  ["/capture/cap-1", "capture-review-screen"],
-  ["/capture/onboarding", "capture-onboarding-screen"],
-  ["/trip-1/today", "today-screen"],
-  ["/trip-1/itinerary", "itinerary-screen"],
-  ["/trip-1/itinerary/item/item-9", "itinerary-item-screen"],
-  ["/trip-1/itinerary/item/new", "itinerary-item-new-screen"],
-  ["/trip-1/itinerary/booking/bk-3", "booking-detail-screen"],
-  ["/trip-1/map", "map-screen"],
-  ["/trip-1/map/place/pl-7", "place-detail-screen"],
-  ["/trip-1/money", "money-screen"],
-  ["/trip-1/money/expense/exp-2", "expense-detail-screen"],
-  ["/trip-1/money/expense/new", "expense-new-screen"],
-  ["/trip-1/money/settle/mem-4", "settle-screen"],
-  ["/trip-1/money/request/req-5", "settle-request-screen"],
-  ["/trip-1/more", "more-screen"],
-  ["/trip-1/more/photos", "photos-screen"],
-  ["/trip-1/more/photos/ph-8", "photo-viewer-screen"],
-  ["/trip-1/more/packing", "packing-screen"],
-  ["/trip-1/more/documents", "documents-screen"],
-  ["/trip-1/more/members", "members-screen"],
-  ["/trip-1/more/settings", "trip-settings-screen"],
-];
+// SCREEN_ROUTES (imported above) lives in src/test-utils/screen-routes.ts so
+// route-audit.test.ts can fs-walk src/app/** against the same table.
 
 describe("entry redirect (NAV-1 skeleton of R-nav-5)", () => {
   it("lands on the trip list", async () => {
@@ -101,6 +71,12 @@ describe("trip tab shell (NAV-1: R-nav-10 structure, §2.7 rule-3 tab IDs)", () 
   it("opens a bare trip URL on the itinerary tab (planning default, R-nav-8 seam) with all five tabs", async () => {
     await renderApp("/trip-1");
     expect(await screen.findByTestId("itinerary-screen")).toBeOnTheScreen();
+    // Initial-tab proof must not ride solely on lazy-mount semantics: under
+    // the vendored tabs' `lazy: true` default a never-visited tab renders
+    // null, so today's absence pins itinerary as the focused initial tab. If
+    // a future config preloads tabs, this fails LOUDLY (instead of the line
+    // above passing vacuously) and the assertion strategy gets revisited.
+    expect(screen.queryByTestId("today-screen")).toBeNull();
     for (const key of ["today", "itinerary", "map", "money", "more"]) {
       expect(screen.getByTestId(`tab-bar-${key}`)).toBeOnTheScreen();
     }
@@ -195,27 +171,43 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     expect(screen.getByTestId("money-segment-budget")).toBeOnTheScreen();
     expect(screen.getByTestId("money-segment-balances")).toBeOnTheScreen();
 
-    // Per-tab stack push + PageHeader back pop (R-nav-10 structure).
+    // Per-tab stack push (R-nav-10 structure).
     fireEvent.press(screen.getByTestId("tab-bar-more"));
     await screen.findByTestId("more-screen");
     fireEvent.press(screen.getByTestId("more-list-item-photos"));
     expect(await screen.findByTestId("photos-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/trip-1/more/photos");
+
+    // R-nav-10 BEHAVIOR: per-tab history survives tab switches. Pathname is
+    // the proof — visited screens stay mounted in the tab tree, so testID
+    // presence alone can't distinguish "focused" from "kept alive".
+    fireEvent.press(screen.getByTestId("tab-bar-today"));
+    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/today"));
+    fireEvent.press(screen.getByTestId("tab-bar-more"));
+    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more/photos"));
+    expect(screen.getByTestId("photos-screen")).toBeOnTheScreen();
+
+    // PageHeader back pop (R-nav-10 structure).
     fireEvent.press(screen.getByTestId("photos-header-back"));
     await waitFor(() => expect(screen.queryByTestId("photos-screen")).toBeNull());
     expect(await screen.findByTestId("more-screen")).toBeOnTheScreen();
 
-    // More-tab capture entry routes to the TRIPS-LEVEL queue (R-nav-24) —
-    // it lives OUTSIDE trip context, so backing out lands on the trip list,
-    // not back inside the trip.
+    // More-tab capture entry routes to the TRIPS-LEVEL queue (R-nav-24): the
+    // pathname carries no trip segment — the queue lives outside trip
+    // context. Backing out RETURNS TO THE ENTRY POINT (the trip's More tab):
+    // the queue is pushed onto history, it does not reset it. (An earlier
+    // comment claimed back lands on the trip list — empirically false; this
+    // assertion pins the real behavior.)
     fireEvent.press(screen.getByTestId("more-list-item-capture"));
     expect(await screen.findByTestId("capture-queue-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/capture");
-    // (Back-navigation out of the inbox is already exercised in the header
-    // leg above — move straight to the next leg.)
+    fireEvent.press(screen.getByTestId("capture-queue-header-back"));
+    await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
+    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more"));
 
     // Itinerary FAB → add-item modal route in the tab-local stack (R-nav-21).
-    act(() => router.navigate("/trip-1"));
+    // (Back landed us on the More tab — switch tabs like a user would.)
+    fireEvent.press(screen.getByTestId("tab-bar-itinerary"));
     await screen.findByTestId("itinerary-screen");
     fireEvent.press(screen.getByTestId("itinerary-fab-add"));
     expect(await screen.findByTestId("itinerary-item-new-screen")).toBeOnTheScreen();

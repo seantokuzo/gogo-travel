@@ -13,6 +13,14 @@ module.exports = defineConfig([
     // testID (grammar: navigation.spec §2.7). Design-system components
     // already enforce it via required props, so the guard targets the raw
     // primitives only — spread-only usages of DS components stay legal.
+    //
+    // Known limits (self-tested in src/__tests__/eslint-testid-guard.test.ts):
+    // - `import { Pressable as P }` aliasing evades the name match (guard is
+    //   name-based; the DS-component convention makes aliased raw primitives
+    //   rare enough to accept).
+    // - An attribute spread carrying testID (`<Pressable {...props} />`)
+    //   still errors — the guard fails CLOSED (false positive over silent
+    //   hole); write a literal testID or use the DS component.
     files: ["src/app/**/*.tsx", "src/navigation/**/*.tsx"],
     rules: {
       "no-restricted-syntax": [
