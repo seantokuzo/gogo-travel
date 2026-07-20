@@ -49,10 +49,31 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   exposed a factually false test comment re back-behavior); judge merge/high,
   large-diff escalation WAIVED (mechanical, T-3.2/T-3.3 precedent).
   expo-router 57 landmines codified in rules/mobile.md.
-- **PHASE CLOSE IN PROGRESS**: F-010..F-017 need simulator evidence
-  (F-012 machine-only). First native build running (`expo run:ios`, Debug +
-  Metro — MMKV blocks Expo Go; ios/ is CNG-gitignored). Then: evidence
-  capture → ledger flips → archive → PLANNING row → Sean's Gallery QA moment.
+- **P-4 SIMULATOR EVIDENCE CAPTURED 2026-07-19/20** (first native build:
+  `expo run:ios` Debug + Metro; CocoaPods needs `LANG=en_US.UTF-8`; app
+  driven by a temporary in-app QA driver — no tap automation exists, and
+  custom-scheme `simctl openurl` posts an un-acceptable confirm dialog).
+  Evidence in `.tmp/qa/p4/` (session-scoped): 26/27 routes visually mounted
+  no-redbox (profile jest-only, fell between frames); modals present as
+  cards; live OS light↔dark re-render both directions; pref-over-OS proven;
+  cold-boot persistence proven (deepWaters+dark relaunch); full gallery
+  scheme×accent 6-cell matrix; Dynamic-Type-max role caps hold; launch
+  burst = no light app frame (dev-client splash is Expo-blue, release
+  splash config is a P-14 QA item); tab bar live w/ accent tint.
+  **Ledger flipped: F-010, F-011, F-012, F-013** (F-011 registry probe:
+  4th palette → 397/400 parameterized tests auto-cover; 3 fails = the
+  T-4.1 seed-pin gate demanding pins, zero component changes — by design).
+  **DS-4 lint gap found+shipped (7c75206)**: R-ds-7 token-only ESLint rules
+  were never built in T-4.2/T-4.3; now live w/ 9-test self-suite; caught
+  Text.tsx indirection (builders made pure).
+  **HELD (need Sean's tap QA): F-014, F-015, F-016, F-017** — press
+  feedback, dialog/sheet interactions, reduce-motion visual, hit targets,
+  full gallery scroll, per-tab history via real tab presses.
+- New landmine codified (rules/mobile.md): imperative cross-tab
+  router.push/navigate silently no-ops inside the vendored tab navigator —
+  sim-confirmed; cross-tab jumps need tab-bar-press plumbing.
+- Bundle id stamped by expo CLI: `com.anonymous.gogo-travel` (placeholder
+  until Apple Developer account → real id, new install, pre-launch).
 - Parked (judge note, non-blocking): apps/mobile/tsconfig.json comment
   overstates node-builtin guard (real guard = Metro resolution failure);
   one-line no-restricted-imports or comment tweak in a future task.

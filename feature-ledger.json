@@ -160,7 +160,7 @@
         "Set manual pref 'light', relaunch: app renders light despite OS dark; pref survives relaunch",
         "Pref 'system': flip OS appearance while app is open \u2014 all mounted screens re-render in the new scheme without restart"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-011",
@@ -175,7 +175,7 @@
         "Theme picker lists default + 2 alternates; selecting one re-renders mounted screens immediately and persists across relaunch",
         "Add a throwaway AccentThemeDef to the registry in a scratch branch: it appears and renders with zero component/screen code changes"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-012",
@@ -188,7 +188,7 @@
       "verification": [
         "Run the tokens contrast-matrix test: every declared fg/bg pair >= 4.5:1 body / 3:1 large-UI across light+dark x all 3 accents \u2014 green in CI output pasted as evidence"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-013",
@@ -202,7 +202,7 @@
         "Introduce a literal hex color and a bare StyleSheet.create in a screen file on a scratch branch: pnpm lint fails on both",
         "createStyles returns referentially stable styles per Theme (memo test)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-014",
