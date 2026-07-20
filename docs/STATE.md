@@ -77,9 +77,10 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 - Parked (judge note, non-blocking): apps/mobile/tsconfig.json comment
   overstates node-builtin guard (real guard = Metro resolution failure);
   one-line no-restricted-imports or comment tweak in a future task.
-- **Push re-blocked**: workflow-file pushes need `workflow` scope — Sean:
-  `gh auth refresh -h github.com -s workflow`, then I push (first GitHub
-  Actions run validates the new CI on the runner).
+- ~~Push re-blocked~~ → **RESOLVED 2026-07-20**: Sean granted `workflow`
+  scope; pushed daa8f50..0ccdadd. **First GitHub Actions CI run: SUCCESS**
+  (run 29769331811 — Guard, Verify incl. live-Postgres constraint suite,
+  CI Success all green). T-3.4's workflow validated on real runners.
 - Gotchas for future sessions: node ≥22.9 (env-file flag); mobile TS ~6.0.3
   is Expo's pin; guard-job comments must never contain literal trigger keys;
   PG assignment cast rounds numeric→bigint (app-boundary z.int is the gate).

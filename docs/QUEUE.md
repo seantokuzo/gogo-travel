@@ -14,10 +14,9 @@
 
 ## Blocked
 
-| ID  | Title                                                                                                                                                                      | Status  | Priority | Blocker                 |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------- | ----------------------- |
-| B-1 | F-001 ledger step 2 unsatisfiable as written (PG assignment cast ROUNDS numeric→bigint; probed 2026-07-16) — needs Sean's nod on the append-only ledger amendment protocol | blocked | P2       | Sean decision           |
-| —   | Push to origin re-blocked: workflow-file pushes need the `workflow` scope — Sean runs `gh auth refresh -h github.com -s workflow`                                          | blocked | P0       | Sean (interactive auth) |
+| ID  | Title                                                                                                                                                                      | Status  | Priority | Blocker       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------- | ------------- |
+| B-1 | F-001 ledger step 2 unsatisfiable as written (PG assignment cast ROUNDS numeric→bigint; probed 2026-07-16) — needs Sean's nod on the append-only ledger amendment protocol | blocked | P2       | Sean decision |
 
 ## Recently done
 
