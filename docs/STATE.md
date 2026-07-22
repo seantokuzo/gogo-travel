@@ -35,8 +35,17 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   refresh token in expo-secure-store ONLY (never AsyncStorage/MMKV),
   middleware trio `requireAuth`/`requireTripMember`/`requireAiQuota`,
   404-indistinguishable authz, zero passwords stored.
-- **T-5.1 ACTIVE** (engineer subagent): shared auth schemas + auth tables +
-  migration [AU-1, AU-2], branch `P-5/T-5-1-auth-schemas`.
+- **T-5.1 MERGED (de98def)** — 15 endpoint descriptors (auth 6 / users 8 /
+  entitlements 1), credential length caps, `pruneAuthRows` (strict-lt,
+  revoked_at-anchored, mutation-pinned), shared 317 + server 63 tests.
+  Reconciliation: AU-1 schemas + AU-2 tables pre-existed spec-exact
+  (T-3.2/T-3.3); drizzle zero-delta verified by engineer AND correctness
+  lane — no migration owed. 5-lane 0-blocking SHIP (14 advisories: 7 fixed,
+  4 deferred w/ QUEUE rows, 1 parked for Sean, 2 spec syncs); judge
+  merge/high. **Judge directive: spend Sean's /code-review ultra on T-5.2
+  (provider verify) or T-5.4 (middleware) — the real crypto/authz surface.**
+- **T-5.2 ACTIVE** (engineer subagent): Apple/Google provider verification +
+  sign-in [AU-3], branch `P-5/T-5-2-provider-signin`.
 
 ### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
 
