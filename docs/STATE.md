@@ -25,65 +25,33 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-4 — Design system + navigation skeleton (ACTIVE)
+### P-5 — Auth, profiles & entitlements (ACTIVE since 2026-07-22)
 
-- **P-3 CLOSED 2026-07-16** — 4/4 tasks merged through the full review loop;
-  ledger F-002..F-009 flipped with evidence (F-001 held: step unsatisfiable
-  as written — see B-1); archive: `docs/history/PHASE-003-foundations.md`.
-- **T-4.1 MERGED (544bce8)** — @gogo/tokens: 312 tests, 258-pairing WCAG
-  matrix, 45/45 approved seeds mutation-proven, 3 dark-mode AA fixes caught
-  by review-added pairing, derive script committed (byte-reproduces hexes).
-  Spec synced to shipped reality incl. §2.9 component mapping (71368ec).
-- **T-4.2 MERGED 2026-07-17** — theme runtime wired (MMKV + Appearance
-  singleton seams); first clean round-1 SHIP; mobile jest harness live.
-- **T-4.3 MERGED (1fc755f)** — 14 components + dev Gallery, mobile 96 tests.
-  Round-1: 1 blocking (RN 0.86 Pressable defaults `accessible:true` →
-  ConfirmDialog card flattened to one AT element; fixed `accessible={false}`,
-  revert-proven) + 11 advisories all addressed; judge merge/high (re-ran
-  suite + revert-proof firsthand). Fix agent died awaiting Docker boot —
-  orchestrator ran gate/commit inline. Landmine codified in rules/mobile.md.
-- **T-4.4 MERGED (e7a56e2)** — NAV-1..7 skeleton: full §2.1 tree (36 route
-  files), DS TabNav tab shell, TripIdProvider (vendored-router param gap),
-  NAV-7 ESLint testID guard w/ committed self-test, mobile 144 tests.
-  Round-1: first 5-lane 0-blocking SHIP (12 advisories, all fixed — one
-  exposed a factually false test comment re back-behavior); judge merge/high,
-  large-diff escalation WAIVED (mechanical, T-3.2/T-3.3 precedent).
-  expo-router 57 landmines codified in rules/mobile.md.
-- **P-4 SIMULATOR EVIDENCE CAPTURED 2026-07-19/20** (first native build:
-  `expo run:ios` Debug + Metro; CocoaPods needs `LANG=en_US.UTF-8`; app
-  driven by a temporary in-app QA driver — no tap automation exists, and
-  custom-scheme `simctl openurl` posts an un-acceptable confirm dialog).
-  Evidence in `.tmp/qa/p4/` (session-scoped): 26/27 routes visually mounted
-  no-redbox (profile jest-only, fell between frames); modals present as
-  cards; live OS light↔dark re-render both directions; pref-over-OS proven;
-  cold-boot persistence proven (deepWaters+dark relaunch); full gallery
-  scheme×accent 6-cell matrix; Dynamic-Type-max role caps hold; launch
-  burst = no light app frame (dev-client splash is Expo-blue, release
-  splash config is a P-14 QA item); tab bar live w/ accent tint.
-  **Ledger flipped: F-010, F-011, F-012, F-013** (F-011 registry probe:
-  4th palette → 397/400 parameterized tests auto-cover; 3 fails = the
-  T-4.1 seed-pin gate demanding pins, zero component changes — by design).
-  **DS-4 lint gap found+shipped (7c75206)**: R-ds-7 token-only ESLint rules
-  were never built in T-4.2/T-4.3; now live w/ 9-test self-suite; caught
-  Text.tsx indirection (builders made pure).
-  **HELD (need Sean's tap QA): F-014, F-015, F-016, F-017** — press
-  feedback, dialog/sheet interactions, reduce-motion visual, hit targets,
-  full gallery scroll, per-tab history via real tab presses.
-- New landmine codified (rules/mobile.md): imperative cross-tab
-  router.push/navigate silently no-ops inside the vendored tab navigator —
-  sim-confirmed; cross-tab jumps need tab-bar-press plumbing.
-- Bundle id stamped by expo CLI: `com.anonymous.gogo-travel` (placeholder
-  until Apple Developer account → real id, new install, pre-launch).
-- Parked (judge note, non-blocking): apps/mobile/tsconfig.json comment
-  overstates node-builtin guard (real guard = Metro resolution failure);
-  one-line no-restricted-imports or comment tweak in a future task.
-- ~~Push re-blocked~~ → **RESOLVED 2026-07-20**: Sean granted `workflow`
-  scope; pushed daa8f50..0ccdadd. **First GitHub Actions CI run: SUCCESS**
-  (run 29769331811 — Guard, Verify incl. live-Postgres constraint suite,
-  CI Success all green). T-3.4's workflow validated on real runners.
-- Gotchas for future sessions: node ≥22.9 (env-file flag); mobile TS ~6.0.3
+- **Sensitive path: auth — every review round auto-escalates.** 8 tasks
+  T-5.1..T-5.8 (PLANNING § P-5). Specs: `api/auth-users`,
+  `client/navigation` (NAV-2), `shared/contracts`. Ledger F-018..F-029.
+- Security invariants from the approved spec set: Apple + Google OAuth only,
+  ES256 access + rotating refresh tokens w/ reuse-theft family revocation,
+  refresh token in expo-secure-store ONLY (never AsyncStorage/MMKV),
+  middleware trio `requireAuth`/`requireTripMember`/`requireAiQuota`,
+  404-indistinguishable authz, zero passwords stored.
+- **T-5.1 ACTIVE** (engineer subagent): shared auth schemas + auth tables +
+  migration [AU-1, AU-2], branch `P-5/T-5-1-auth-schemas`.
+
+### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
+
+- **4/4 build tasks + 2 direct commits merged; ledger F-010..F-017 ALL
+  flipped** (sim evidence sweep + Sean's full device-QA pass on iPhone 15
+  Pro — checklist cleared 2026-07-22). Archive:
+  `docs/history/PHASE-004-design-system-navigation.md` (incl. the
+  device-install bootstrap recipe + landmine list). Mobile suite 152 tests.
+- First native builds: simulator AND Sean's iPhone. Dev QA doors on trip
+  list: Component gallery + Open sample trip (both `__DEV__`-only).
+- Gotchas for future sessions: node >=22.9 (env-file flag); mobile TS ~6.0.3
   is Expo's pin; guard-job comments must never contain literal trigger keys;
-  PG assignment cast rounds numeric→bigint (app-boundary z.int is the gate).
+  PG assignment cast rounds numeric->bigint (app-boundary z.int is the gate);
+  CocoaPods needs UTF-8 locale; JS-only changes reach the device app via
+  kill+reopen (Metro), no rebuild.
 
 ### P-2 — Upfront spec suite (CLOSED 2026-07-10; P-1 push still pending)
 

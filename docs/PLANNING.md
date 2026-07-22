@@ -11,16 +11,16 @@
 
 ## How to use this doc
 
-| Doc | Purpose | When to read |
-|-----|---------|--------------|
-| `docs/PLANNING.md` (this file) | Architecture, design, full phase roadmap | Planning a phase, onboarding |
-| `docs/QUEUE.md` | What's in flight RIGHT NOW | Every session start |
-| `docs/STATE.md` | Active context, in-flight decisions, failed approaches | Every session start (auto-injected) |
-| `docs/SECURITY.md` | Security findings + fix order | Security work |
-| `docs/decisions/` | Locked decisions (append-only ADRs) | "Why did we do X?" |
-| `docs/history/` | Completed-phase archives (append-only) | Post-mortems |
-| `docs/SESSION-GUIDE.md` | Human operator playbook | Session start/end |
-| `.specs/<area>/<name>.spec.md` | Feature/impl specs — the build contracts | Before building the thing |
+| Doc                            | Purpose                                                | When to read                        |
+| ------------------------------ | ------------------------------------------------------ | ----------------------------------- |
+| `docs/PLANNING.md` (this file) | Architecture, design, full phase roadmap               | Planning a phase, onboarding        |
+| `docs/QUEUE.md`                | What's in flight RIGHT NOW                             | Every session start                 |
+| `docs/STATE.md`                | Active context, in-flight decisions, failed approaches | Every session start (auto-injected) |
+| `docs/SECURITY.md`             | Security findings + fix order                          | Security work                       |
+| `docs/decisions/`              | Locked decisions (append-only ADRs)                    | "Why did we do X?"                  |
+| `docs/history/`                | Completed-phase archives (append-only)                 | Post-mortems                        |
+| `docs/SESSION-GUIDE.md`        | Human operator playbook                                | Session start/end                   |
+| `.specs/<area>/<name>.spec.md` | Feature/impl specs — the build contracts               | Before building the thing           |
 
 ---
 
@@ -33,6 +33,7 @@ full arc: plan it, book it, budget it, live it, remember it. Sean's brief,
 verbatim scope:
 
 **Core features (committed):**
+
 - **Trips** — a user holds multiple trip plans; everything below is per-trip
 - **Itinerary / calendar** — customizable calendar interface; day + range views
 - **Bookings by category** — Stay (lodging); Travel (flights, trains, car/moped
@@ -55,6 +56,7 @@ verbatim scope:
   themes à la bartling-bachelor's ThemeProvider)
 
 **Extras — APPROVED by Sean 2026-07-09, all four bundles committed:**
+
 - Packing lists (AI-generated from destination/weather/duration)
 - Weather forecast integrated into itinerary days
 - Travel-document vault (passport/visa/insurance reminders + expiry alerts)
@@ -103,18 +105,18 @@ DURING the trip — is the gap.
 
 ### Provider decisions (locked by S-2 research, 2026-07-09)
 
-| Concern | Choice | Why (evidence: `.specs/research/`) |
-|---------|--------|-----------------------------------|
-| Map SDK | **@rnmapbox/maps** | Only real offline (tile packs, $0 extra); 25k MAU free; Google ToS bans its content on non-Google maps |
-| Directions | Mapbox Directions (drive/walk/cycle) + Transitous (transit, degradable) | 100k free req/mo; Google Routes contractually unusable with Mapbox |
-| Places spine | Overture / FSQ OS open data → **our Postgres** | Legally storable forever, LLM-safe (Apache 2.0/CDLA); Google Places bans storage + AI use |
-| Place rich details | Foursquare hosted API (fetch-fresh, zero caching) | Only if premium fields warranted; ~$0–60/mo |
-| AI | Claude server-side (Haiku 4.5 default, Sonnet 5 for recs/recaps), Batch API for pre-gen | Structured outputs w/ Zod; grounded in our POI spine + Wikipedia — never invent venues |
-| AI policy | 30 calls/user/day, $50 alert / $100 kill-switch, entitlement-checked | Approved by Sean 2026-07-09 |
-| Booking capture | Share-sheet (expo-share-intent) + permanent forward address (CloudMailin→Hono webhook); schema.org JSON-LD first, LLM fallback; needs-review queue | Approved; skip OAuth inbox (CASA tax) |
-| Booking deeplinks | Kayak/Skyscanner (flights), Airbnb/Booking/Expedia/Vrbo (lodging), Trainline/Omio (trains), Kayak/Turo (cars); Viator + Ticketmaster APIs day one | All zero-approval; formats in research |
-| Settle-up | Own ledger (record-only) + per-user payment handles + deeplink handoff (Venmo/CashApp/PayPal links, Zelle copy) | Splitwise ToS bans competitors; formats live-probed |
-| Location | Foreground-only v1 (no background geofencing) | Approved; App Store friction avoided |
+| Concern            | Choice                                                                                                                                             | Why (evidence: `.specs/research/`)                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Map SDK            | **@rnmapbox/maps**                                                                                                                                 | Only real offline (tile packs, $0 extra); 25k MAU free; Google ToS bans its content on non-Google maps |
+| Directions         | Mapbox Directions (drive/walk/cycle) + Transitous (transit, degradable)                                                                            | 100k free req/mo; Google Routes contractually unusable with Mapbox                                     |
+| Places spine       | Overture / FSQ OS open data → **our Postgres**                                                                                                     | Legally storable forever, LLM-safe (Apache 2.0/CDLA); Google Places bans storage + AI use              |
+| Place rich details | Foursquare hosted API (fetch-fresh, zero caching)                                                                                                  | Only if premium fields warranted; ~$0–60/mo                                                            |
+| AI                 | Claude server-side (Haiku 4.5 default, Sonnet 5 for recs/recaps), Batch API for pre-gen                                                            | Structured outputs w/ Zod; grounded in our POI spine + Wikipedia — never invent venues                 |
+| AI policy          | 30 calls/user/day, $50 alert / $100 kill-switch, entitlement-checked                                                                               | Approved by Sean 2026-07-09                                                                            |
+| Booking capture    | Share-sheet (expo-share-intent) + permanent forward address (CloudMailin→Hono webhook); schema.org JSON-LD first, LLM fallback; needs-review queue | Approved; skip OAuth inbox (CASA tax)                                                                  |
+| Booking deeplinks  | Kayak/Skyscanner (flights), Airbnb/Booking/Expedia/Vrbo (lodging), Trainline/Omio (trains), Kayak/Turo (cars); Viator + Ticketmaster APIs day one  | All zero-approval; formats in research                                                                 |
+| Settle-up          | Own ledger (record-only) + per-user payment handles + deeplink handoff (Venmo/CashApp/PayPal links, Zelle copy)                                    | Splitwise ToS bans competitors; formats live-probed                                                    |
+| Location           | Foreground-only v1 (no background geofencing)                                                                                                      | Approved; App Store friction avoided                                                                   |
 
 ### Component map
 
@@ -221,22 +223,22 @@ trip+place, offline-downloadable).
 > 2–6 reviewable PRs (ADR-001 sizing); spec task IDs (SH/DB/DS/NAV/AU/…) map
 > to `T-N.M` rows in the Phase Detail blocks below.
 
-| ID | Type | Title | Status | Priority | Depends on |
-|----|------|-------|--------|----------|------------|
-| P-1 | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision) | in-progress | P0 | — |
-| P-2 | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress | P0 | P-1 |
-| P-3 | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema | done ([archive](history/PHASE-003-foundations.md)) | P0 | P-2 |
-| P-4 | Phase | Design system + navigation skeleton | in-progress | P0 | P-3 |
-| P-5 | Phase | Auth, profiles & entitlements | queued | P0 | P-3, P-4 |
-| P-6 | Phase | Trips, collaboration & places spine | queued | P0 | P-5 |
-| P-7 | Phase | Itinerary & bookings (incl. deeplink-out) | queued | P0 | P-6 |
-| P-8 | Phase | Maps, saved places & offline tile packs | queued | P0 | P-7 |
-| P-9 | Phase | Money: budgets, expenses, splits & settle-up | queued | P0 | P-7 |
-| P-10 | Phase | AI layer: platform, recommendations, estimates, tour guide, packing, recap | queued | P1 | P-8, P-9 |
-| P-11 | Phase | Booking capture: email + share pipeline | queued | P1 | P-7, P-10 |
-| P-12 | Phase | Photos & memories | queued | P1 | P-8 |
-| P-13 | Phase | Today view, offline sync, notifications & utilities | queued | P1 | P-9, P-10, P-12 |
-| P-14 | Phase | Launch readiness: device tests, Android pass, EAS, App Store | queued | P1 | P-13 |
+| ID   | Type  | Title                                                                                                                     | Status                                             | Priority | Depends on      |
+| ---- | ----- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------- | --------------- |
+| P-1  | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision)                                           | in-progress                                        | P0       | —               |
+| P-2  | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress                                        | P0       | P-1             |
+| P-3  | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema                                                               | done ([archive](history/PHASE-003-foundations.md)) | P0       | P-2             |
+| P-4  | Phase | Design system + navigation skeleton                                                                                       | done                                               | P0       | P-3             |
+| P-5  | Phase | Auth, profiles & entitlements                                                                                             | in-progress                                        | P0       | P-3, P-4        |
+| P-6  | Phase | Trips, collaboration & places spine                                                                                       | queued                                             | P0       | P-5             |
+| P-7  | Phase | Itinerary & bookings (incl. deeplink-out)                                                                                 | queued                                             | P0       | P-6             |
+| P-8  | Phase | Maps, saved places & offline tile packs                                                                                   | queued                                             | P0       | P-7             |
+| P-9  | Phase | Money: budgets, expenses, splits & settle-up                                                                              | queued                                             | P0       | P-7             |
+| P-10 | Phase | AI layer: platform, recommendations, estimates, tour guide, packing, recap                                                | queued                                             | P1       | P-8, P-9        |
+| P-11 | Phase | Booking capture: email + share pipeline                                                                                   | queued                                             | P1       | P-7, P-10       |
+| P-12 | Phase | Photos & memories                                                                                                         | queued                                             | P1       | P-8             |
+| P-13 | Phase | Today view, offline sync, notifications & utilities                                                                       | queued                                             | P1       | P-9, P-10, P-12 |
+| P-14 | Phase | Launch readiness: device tests, Android pass, EAS, App Store                                                              | queued                                             | P1       | P-13            |
 
 ---
 
@@ -294,7 +296,7 @@ trip+place, offline-downloadable).
   via `npm view` + `npx expo-doctor` — never training data (R-shared-13).
 - **Acceptance criteria:**
   - [ ] CI gate live and green at the root: `pnpm lint && pnpm typecheck &&
-        pnpm test && pnpm build`
+pnpm test && pnpm build`
   - [ ] SH-1 checklist complete (enums, scalars, envelope, descriptors,
         16 domain modules, `ai/*` schemas + refiners) — all tests green
   - [ ] DB-1 checklist complete — initial migration applies to a blank
@@ -311,20 +313,23 @@ trip+place, offline-downloadable).
 
 ### P-4 — Design system & navigation skeleton
 
-- **Status:** queued · **Priority:** P0 · **Depends on:** P-3 · **~5–6 PRs**
+- **Status:** done 2026-07-22 —
+  [PHASE-004 archive](../docs/history/PHASE-004-design-system-navigation.md) ·
+  **Priority:** P0 · **Depends on:** P-3 · shipped as 4 PRs + 2 direct
+  (T-4.1..T-4.6 consolidated)
 - **Goal:** Every pixel's source: `@gogo/tokens` (ramps, scales, semantic
   mapping, 3 accent themes), the mobile theme runtime, the core component
   library + dev Gallery, and the full expo-router tree with per-tab stacks,
   modal conventions, and testID discipline — so every later screen lands on
   rails.
 - **Acceptance criteria:**
-  - [ ] Contrast matrix green for every scheme × accent pair (R-ds-8)
-  - [ ] Gallery renders every component × variant × scheme × accent in the
-        simulator (the Law #7 visual evidence surface)
-  - [ ] Full route tree mounts placeholder screens; per-tab stacks hold
-  - [ ] Lint enforcement live: literal colors, bare StyleSheet, and missing
+  - [x] Contrast matrix green for every scheme × accent pair (R-ds-8)
+  - [x] Gallery renders every component × variant × scheme × accent in the
+        simulator (the Law #7 visual evidence surface) — plus Sean's device QA
+  - [x] Full route tree mounts placeholder screens; per-tab stacks hold
+  - [x] Lint enforcement live: literal colors, bare StyleSheet, and missing
         testIDs all fail CI
-  - [ ] Ledger F-010..F-017 verified
+  - [x] Ledger F-010..F-017 verified
 - **Tasks:** T-4.1 tokens package + contrast matrix [DS-1, DS-2] · T-4.2
   theme runtime + createStyles/lint [DS-3, DS-4] · T-4.3 Text primitive +
   haptics [DS-5, DS-6] · T-4.4 components batch 1–2 [DS-7, DS-8] · T-4.5
@@ -337,7 +342,8 @@ trip+place, offline-downloadable).
 
 ### P-5 — Auth, profiles & entitlements
 
-- **Status:** queued · **Priority:** P0 · **Depends on:** P-3, P-4 ·
+- **Status:** in-progress since 2026-07-22 · **Priority:** P0 ·
+  **Depends on:** P-3, P-4 ·
   **~6 PRs** · **Sensitive path: auth — auto-escalated review**
 - **Goal:** Sign in with Apple + Google end-to-end: JWKS verification, ES256
   access + rotating refresh tokens with theft response, the middleware trio
@@ -644,11 +650,11 @@ trip+place, offline-downloadable).
 
 > At-a-glance pointers. Full rationale in `docs/decisions/`.
 
-| Date | ID | Decision | ADR | Revisit? |
-|------|-----|----------|-----|----------|
-| 2026-07-09 | ADR-001 | Stable IDs (P/T/B/S) + canonical doc homes (adopted from GSD template) | [ADR-001](decisions/ADR-001-naming-convention.md) | No |
-| 2026-07-09 | ADR-002 | Status enum lock: `queued/in-progress/blocked/done/deferred/cancelled` | [ADR-002](decisions/ADR-002-status-enum-lock.md) | No |
-| 2026-07-09 | ADR-003 | PR reviews run local in-session on Max — never GitHub Claude app / metered CI | [ADR-003](decisions/ADR-003-local-in-session-reviews.md) | No |
-| 2026-07-09 | ADR-004 | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) | No |
-| 2026-07-09 | ADR-005 | Free v1 + entitlement seams; offline/collab/splitting free forever | [ADR-005](decisions/ADR-005-free-v1-entitlement-seams.md) | No |
-| 2026-07-09 | — | Provider set locked from S-2 evidence (Mapbox, open-data POI spine, Claude, dual-path capture, record-only settle-up, foreground-only location) | § Architecture table | At scale |
+| Date       | ID      | Decision                                                                                                                                        | ADR                                                        | Revisit? |
+| ---------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------- |
+| 2026-07-09 | ADR-001 | Stable IDs (P/T/B/S) + canonical doc homes (adopted from GSD template)                                                                          | [ADR-001](decisions/ADR-001-naming-convention.md)          | No       |
+| 2026-07-09 | ADR-002 | Status enum lock: `queued/in-progress/blocked/done/deferred/cancelled`                                                                          | [ADR-002](decisions/ADR-002-status-enum-lock.md)           | No       |
+| 2026-07-09 | ADR-003 | PR reviews run local in-session on Max — never GitHub Claude app / metered CI                                                                   | [ADR-003](decisions/ADR-003-local-in-session-reviews.md)   | No       |
+| 2026-07-09 | ADR-004 | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first                                                                                           | [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md) | No       |
+| 2026-07-09 | ADR-005 | Free v1 + entitlement seams; offline/collab/splitting free forever                                                                              | [ADR-005](decisions/ADR-005-free-v1-entitlement-seams.md)  | No       |
+| 2026-07-09 | —       | Provider set locked from S-2 evidence (Mapbox, open-data POI spine, Claude, dual-path capture, record-only settle-up, foreground-only location) | § Architecture table                                       | At scale |

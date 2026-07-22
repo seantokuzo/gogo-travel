@@ -7,10 +7,10 @@
 
 ## Active
 
-| ID     | Title                                                                                                                                        | Status      | Priority | Depends on |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------- | ---------- |
-| P-4    | Phase: design system + navigation skeleton (PLANNING § P-4)                                                                                  | in-progress | P0       | —          |
-| P-4-QA | Sean's simulator QA moment (~10 min, checklist in session report): closes ledger F-014..F-017 → then archive + PLANNING row + P-5 auth start | blocked     | P0       | Sean       |
+| ID    | Title                                                                                         | Status      | Priority | Depends on |
+| ----- | --------------------------------------------------------------------------------------------- | ----------- | -------- | ---------- |
+| P-5   | Phase: auth, profiles & entitlements (PLANNING § P-5) — SENSITIVE PATH, reviews auto-escalate | in-progress | P0       | —          |
+| T-5.1 | Shared auth schemas + auth tables + migration [AU-1, AU-2] — branch P-5/T-5-1-auth-schemas    | in-progress | P0       | —          |
 
 ## Blocked
 
@@ -22,6 +22,7 @@
 
 | ID    | Title                                                                                                                                                                                                                                                                                               | Done                 |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| P-4   | Phase CLOSED — Sean's device QA cleared the full checklist (iPhone 15 Pro, first device install); ledger F-010..F-017 all flipped; archive docs/history/PHASE-004-design-system-navigation.md                                                                                                       | 2026-07-22           |
 | —     | P-4 evidence sweep: first native sim build + in-app QA driver; 26/27 routes no-redbox, 6-cell theme matrix, persistence + Dynamic Type proven; ledger F-010..F-013 flipped; DS-4 token-only lint gap found+shipped (7c75206); cross-tab-push landmine codified                                      | 2026-07-20           |
 | T-4.4 | Navigation skeleton merged e7a56e2 — 36 route files, TripIdProvider, NAV-7 lint guard + self-test, mobile 144 tests; first 5-lane 0-blocking round-1 SHIP (12 advisories fixed, one exposed a false test comment); judge merge/high, large-diff escalation waived                                   | 2026-07-18           |
 | T-4.3 | Component library merged 1fc755f — 14 components + dev Gallery, mobile 96 tests; round-1 fix-then-ship (1 blocking: RN 0.86 Pressable a11y flattening in ConfirmDialog, revert-proven) → judge merge/high; fix committed by orchestrator after fix agent died awaiting Docker                       | 2026-07-17           |

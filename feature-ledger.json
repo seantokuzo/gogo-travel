@@ -224,7 +224,7 @@
         "Sheet supports swipe-down AND explicit close; screen-reader focus moves in on open and restores on close",
         "Skeleton renders on initial fetch, EmptyState on zero items, ErrorBanner with working retry on failure (drive with a stubbed failing query)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-015",
@@ -245,7 +245,7 @@
         "Enable reduce-motion: skeleton shimmer becomes static, entrance slides become fades",
         "Interactive components expose accessibilityRole/Label; omitting testID on an interactive component is a type error (compile check)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-016",
@@ -260,7 +260,7 @@
       "verification": [
         "Open the dev Gallery in the simulator and walk all components across both schemes and all 3 accents \u2014 screenshots captured as evidence (Law #7 visual verification surface)"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-017",
@@ -278,7 +278,7 @@
         "Forms present modally, detail drill-downs push (spot-check both conventions)",
         "testID lint (NAV-7) fails on a scratch interactive element missing testID; screen roots expose <screen>-screen"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "F-018",
