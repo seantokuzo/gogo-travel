@@ -14,14 +14,20 @@
  */
 import { randomUUID } from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Hono, type Context, type Env } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import { authEndpoints, type SignInResponse } from "@gogo/shared/domains/auth";
+import { authEndpoints, type AuthTokens, type SignInResponse } from "@gogo/shared/domains/auth";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
-import { apiError, requestIdOf, type RequestVars } from "../http/errors.js";
+import {
+  apiError,
+  requestIdOf,
+  UNAUTHENTICATED_MESSAGE,
+  type RequestVars,
+} from "../http/errors.js";
+import type { AccessTokenVerifier } from "./access-verify.js";
 import type { AppleCodeExchanger } from "./apple-exchange.js";
 import { encryptSecret } from "./crypto.js";
 import {
@@ -31,8 +37,11 @@ import {
   type ProviderVerifierDeps,
   type VerifiedIdentity,
 } from "./provider-verify.js";
+import { authContextOf, createRequireAuth } from "./require-auth.js";
+import { listUserSessions, revokeOwnedSession, revokeSession } from "./session-service.js";
 import { resolveSignIn, SignInRejectedError, type SignInResolution } from "./sign-in.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "./token-issuer.js";
+import { rotateRefreshToken, RefreshRejectedError } from "./token-rotation.js";
 import { toUserWire } from "./serialize.js";
 
 export interface AuthLogger {
@@ -43,6 +52,8 @@ export interface AuthRouterDeps {
   db: DbClient;
   verifier: ProviderVerifierDeps;
   signer: AccessTokenSigner;
+  /** ES256 public key for stateless access-token verification (R-auth-12). */
+  accessVerify: AccessTokenVerifier;
   /** R-auth-7 seam — prod hits Apple's endpoint, tests inject a fake. */
   appleExchange: AppleCodeExchanger;
   /** AES-256-GCM key for `apple_credentials` ciphertext (§3.3.3). */
@@ -53,9 +64,6 @@ export interface AuthRouterDeps {
 }
 
 type AuthContext = Context<RequestVars>;
-
-/** One message for every 401 — no oracle for which check failed (R-auth-1). */
-const UNAUTHENTICATED_MESSAGE = "authentication failed";
 
 /**
  * Shared zValidator failure hook body: a body that fails schema validation
@@ -83,6 +91,9 @@ function failureReason(error: unknown): string {
 export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   const logger = deps.logger ?? console;
   const router = new Hono<RequestVars>();
+  // AU-4 local guard for this router's Auth: Required routes (AU-5 promotes it
+  // app-wide with the public allowlist + rate limiting).
+  const requireAuth = createRequireAuth({ verifier: deps.accessVerify, logger });
 
   // Correlation id on every request/response (AU-5 promotes this app-wide).
   router.use("*", async (c, next) => {
@@ -228,6 +239,119 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
 
       // Google name material rides the ID token (already on `identity.name`).
       return completeSignIn(c, identity, body.device);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /auth/refresh — rotation + reuse-theft (R-auth-10/11). Public: the
+  // refresh token IS the credential. Every rejection (unknown / expired /
+  // rotated-reuse / revoked-session) is the SAME 401 — no oracle (§3.6.4);
+  // the reuse branch has already burned the family before we get here.
+  // ---------------------------------------------------------------------------
+  router.post(
+    authEndpoints.refresh.path,
+    zValidator("json", authEndpoints.refresh.body, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
+    async (c) => {
+      const body = c.req.valid("json");
+
+      let issued;
+      try {
+        issued = await rotateRefreshToken(deps.db, {
+          presentedToken: body.refresh_token,
+          signer: deps.signer,
+          ...(deps.now ? { now: deps.now() } : {}),
+        });
+      } catch (error) {
+        if (error instanceof RefreshRejectedError) {
+          logger.warn(
+            `[auth] refresh rejected (requestId=${requestIdOf(c)}, reason=${error.reason})`,
+          );
+          return apiError(c, "UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE);
+        }
+        throw error;
+      }
+
+      const tokens: AuthTokens = {
+        access_token: issued.accessToken,
+        refresh_token: issued.refreshToken,
+        expires_in: issued.expiresIn,
+      };
+      return c.json(tokens);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // POST /auth/logout — revoke the calling session (from the `sid` claim) and
+  // optionally deregister this device's push token (R-auth-13, R-user-8).
+  // Order: requireAuth → validation → handler (R-authz-4).
+  // ---------------------------------------------------------------------------
+  router.post(
+    authEndpoints.logout.path,
+    requireAuth,
+    zValidator("json", authEndpoints.logout.body, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
+    async (c) => {
+      const { userId, sessionId } = authContextOf(c);
+      const body = c.req.valid("json");
+      const now = deps.now ? deps.now() : new Date();
+
+      // Family kill for this device — idempotent (already-revoked → no-op).
+      await revokeSession(deps.db, sessionId, now);
+
+      // Push-token deregistration is scoped to the caller: a foreign id
+      // matches 0 rows and is silently skipped (spec §3.4.1 authz test).
+      if (body.push_token_id) {
+        await deps.db
+          .delete(schema.pushTokens)
+          .where(
+            and(eq(schema.pushTokens.id, body.push_token_id), eq(schema.pushTokens.userId, userId)),
+          );
+      }
+
+      return c.body(null, 204);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // GET /auth/sessions — the caller's live devices (R-auth-13). Revoked
+  // sessions excluded; `current` marks the caller's own session.
+  // ---------------------------------------------------------------------------
+  router.get(
+    authEndpoints.listSessions.path,
+    requireAuth,
+    zValidator("query", authEndpoints.listSessions.query, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
+    async (c) => {
+      const { userId, sessionId } = authContextOf(c);
+      const { cursor } = c.req.valid("query");
+      const page = await listUserSessions(deps.db, userId, sessionId, cursor);
+      return c.json(page);
+    },
+  );
+
+  // ---------------------------------------------------------------------------
+  // DELETE /auth/sessions/:sessionId — remote sign-out (R-auth-13). Absent,
+  // already-revoked, or foreign ids are an indistinguishable 404 (IDOR posture).
+  // ---------------------------------------------------------------------------
+  router.delete(
+    authEndpoints.revokeSession.path,
+    requireAuth,
+    zValidator("param", authEndpoints.revokeSession.params, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
+    async (c) => {
+      const { userId } = authContextOf(c);
+      const { sessionId } = c.req.valid("param");
+      const now = deps.now ? deps.now() : new Date();
+
+      const revoked = await revokeOwnedSession(deps.db, userId, sessionId, now);
+      if (!revoked) return apiError(c, "NOT_FOUND", "not found");
+
+      return c.body(null, 204);
     },
   );
 

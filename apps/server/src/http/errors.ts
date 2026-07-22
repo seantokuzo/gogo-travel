@@ -13,15 +13,39 @@ import type { Context } from "hono";
 import { ERROR_STATUS, type ApiError, type ErrorCode } from "@gogo/shared/api/envelope";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
+/**
+ * The ONE message every 401 carries — sign-in verification failures AND
+ * `requireAuth` failures alike. A single constant guarantees no oracle for
+ * "which check failed" or "does this principal exist" (R-auth-1 / §3.6.4).
+ */
+export const UNAUTHENTICATED_MESSAGE = "authentication failed";
+
+/** The identity `requireAuth` attaches to an authenticated request (R-auth-12). */
+export interface AuthIdentity {
+  /** `sub` claim — `users.id`. */
+  userId: string;
+  /** `sid` claim — `auth_sessions.id`. */
+  sessionId: string;
+}
+
 /** Hono context variables the auth router sets. */
 export interface RequestVars {
   Variables: {
     requestId: string;
+    /**
+     * Set by `requireAuth` on authenticated routes only (AU-4 local guard;
+     * AU-5 promotes the app-wide convention). Absent on public routes.
+     */
+    auth?: AuthIdentity;
   };
 }
 
-/** Read the request's correlation id, minting one if middleware hasn't. */
-export function requestIdOf(c: Context<RequestVars>): string {
+/**
+ * Read the request's correlation id, minting one if middleware hasn't.
+ * Generic over any env that extends `RequestVars` so authed routes (which
+ * carry a wider `Variables`) reuse the same envelope helpers without a cast.
+ */
+export function requestIdOf<E extends RequestVars>(c: Context<E>): string {
   const existing = c.get("requestId");
   if (existing) return existing;
   const minted = randomUUID();
@@ -33,8 +57,8 @@ export function requestIdOf(c: Context<RequestVars>): string {
  * Serialize an `ApiError`. Status comes from the fixed `ERROR_STATUS` map —
  * handlers pick codes, never status numbers.
  */
-export function apiError(
-  c: Context<RequestVars>,
+export function apiError<E extends RequestVars>(
+  c: Context<E>,
   code: ErrorCode,
   message: string,
   details?: unknown,

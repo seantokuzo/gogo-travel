@@ -78,6 +78,8 @@ describe("buildAuthDepsFromEnv", () => {
     ]);
     expect(deps!.appleCredentialsKey.length).toBe(32);
     expect(typeof deps!.appleExchange.exchange).toBe("function");
+    // R-auth-12: the access-token verification public key is derived at boot.
+    expect(deps!.accessVerify.publicKey).toBeDefined();
   });
 
   it("throws when GOOGLE_CLIENT_IDS is non-empty but parses to zero client ids (fail-closed footgun)", async () => {

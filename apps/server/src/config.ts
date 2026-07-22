@@ -28,6 +28,13 @@ export const JWT_AUDIENCE = "gogo-mobile";
  */
 export const ACCESS_TOKEN_ALGORITHMS = ["ES256"] as const;
 
+/**
+ * `GET /auth/sessions` page size (spec §3.4.1 — `Paginated<AuthSessionInfo>`).
+ * Devices per user are few; this is a keyset-pagination guard, not a tuning
+ * knob. A config constant so the test can assert the page boundary.
+ */
+export const SESSIONS_PAGE_SIZE = 50;
+
 // ---------------------------------------------------------------------------
 // Provider verification (auth-users spec §2.1, R-auth-1/2)
 // ---------------------------------------------------------------------------

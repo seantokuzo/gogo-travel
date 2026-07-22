@@ -127,6 +127,7 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
         googleAudiences: GOOGLE_AUDS,
       },
       signer: { privateKey: signerPair.privateKey, kid: SIGNER_KID },
+      accessVerify: { publicKey: signerPair.publicKey },
       appleExchange: {
         exchange: (code) => {
           exchangedCodes.push(code);

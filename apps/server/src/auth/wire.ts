@@ -9,6 +9,7 @@
  * dev boot); a PARTIAL config throws, naming the missing variables — names
  * only, never values.
  */
+import { createPrivateKey, createPublicKey } from "node:crypto";
 import { createRemoteJWKSet, importPKCS8 } from "jose";
 import { APPLE_JWKS_URL, GOOGLE_JWKS_URL } from "../config.js";
 import { getDb } from "../db/index.js";
@@ -92,6 +93,12 @@ export async function buildAuthDepsFromEnv(env: Env): Promise<AuthRouterDeps | n
     signer: {
       privateKey: await importPKCS8(pem(AUTH_ES256_PRIVATE_KEY), "ES256"),
       kid: AUTH_ES256_KID,
+    },
+    // Stateless access-token verification (R-auth-12): the PUBLIC half of the
+    // signing key, derived at boot. Synchronous parse → a malformed key fails
+    // LOUD here, never deferred to first verify (boot-parse-awaited landmine).
+    accessVerify: {
+      publicKey: createPublicKey(createPrivateKey(pem(AUTH_ES256_PRIVATE_KEY))),
     },
     appleExchange: await createAppleCodeExchanger({
       clientId: APPLE_CLIENT_ID,
