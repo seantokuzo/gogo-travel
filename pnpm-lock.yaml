@@ -162,6 +162,9 @@ importers:
       '@hono/node-server':
         specifier: 2.0.8
         version: 2.0.8(hono@4.12.29)
+      '@hono/zod-validator':
+        specifier: 0.9.0
+        version: 0.9.0(hono@4.12.29)(zod@4.4.3)
       '@neondatabase/serverless':
         specifier: 1.1.0
         version: 1.1.0
@@ -171,6 +174,9 @@ importers:
       hono:
         specifier: 4.12.29
         version: 4.12.29
+      jose:
+        specifier: 6.2.4
+        version: 6.2.4
       postgres:
         specifier: 3.4.9
         version: 3.4.9
@@ -1513,6 +1519,12 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4
+
+  '@hono/zod-validator@0.9.0':
+    resolution: {integrity: sha512-n0ZSXmCiHVIp4Y5wlOOyZCeTd/rsawA/qW1cipB8QOYKZ9N8Tk0nZUZCXho9cu374AN4JpDNKioNKBJ/W+LBug==}
+    peerDependencies:
+      hono: '>=4.11.2'
+      zod: ^3.25.0 || ^4.0.0
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -4536,6 +4548,9 @@ packages:
 
   jimp-compact@0.16.1:
     resolution: {integrity: sha512-dZ6Ra7u1G8c4Letq/B5EzAxj4tLFHL+cGtdpR+PVm4yzPDj+lCk+AbivWt1eOM+ikzkowtyV7qSqX6qr3t71Ww==}
+
+  jose@6.2.4:
+    resolution: {integrity: sha512-N8acGzVsQy6M/fjFcxtysNc4Q379TcM5dM/qKkNtsHFji88yANnXTr7BLeP75iPnFwBfQzM/jg2BZ9+HZrHCZA==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -7776,6 +7791,11 @@ snapshots:
   '@hono/node-server@2.0.8(hono@4.12.29)':
     dependencies:
       hono: 4.12.29
+
+  '@hono/zod-validator@0.9.0(hono@4.12.29)(zod@4.4.3)':
+    dependencies:
+      hono: 4.12.29
+      zod: 4.4.3
 
   '@humanfs/core@0.19.2':
     dependencies:
@@ -11480,6 +11500,8 @@ snapshots:
       - ts-node
 
   jimp-compact@0.16.1: {}
+
+  jose@6.2.4: {}
 
   js-tokens@4.0.0: {}
 
