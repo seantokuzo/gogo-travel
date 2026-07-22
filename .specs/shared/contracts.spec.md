@@ -253,7 +253,11 @@ contract-specific notes listed here:
 
 **Success:** 2xx with the endpoint's response schema as the body — no `data`
 wrapper (R-shared-5). Lists: `Paginated<T> = { items: T[], nextCursor:
-string | null }` — opaque cursor, server-defined page size cap.
+string | null }` — opaque cursor, server-defined page size cap. Cursor
+round-trip: list endpoints take the previous page's `nextCursor` as the
+`?cursor` query param (`CursorQuerySchema` in `api/envelope.ts`; absent =
+first page). *(Synced 2026-07-22, post-T-5.1 — request-param convention
+pinned; already the shape used by the trips/photos route tables.)*
 
 **Error (every non-2xx):**
 

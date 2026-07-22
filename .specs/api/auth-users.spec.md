@@ -324,6 +324,10 @@ R-db-12).
   unique `token_hash`; FK index `(session_id)`.
 - Prune job: delete rows `expires_at < now() - 30d`, and revoked sessions
   older than 90d (pairs with the schema spec's stale push-token prune).
+- "Revoked sessions older than 90d" is measured from `revoked_at`: the rule
+  is `revoked_at IS NOT NULL AND revoked_at < now() - 90d` (strict `<`; a
+  never-revoked session is unprunable at any age — no absolute session
+  lifetime, §3.2). *(Synced 2026-07-22, post-T-5.1)*
 
 #### 3.3.3 `apple_credentials` — Apple revocation material (R-auth-7)
 
@@ -457,6 +461,11 @@ Revoke the calling session; optionally deregister this device's push token.
 ### GET /auth/sessions
 
 List the caller's signed-in devices. **Auth**: Required
+
+**Query**: `{ cursor? }` — the standard `Paginated<T>` page cursor
+(contracts spec §3.5; `CursorQuerySchema`). *(Synced 2026-07-22, post-T-5.1
+— the response was already `Paginated<AuthSessionInfo>`; the request-side
+param that round-trips `nextCursor` is now pinned.)*
 
 **Response 200** `Paginated<AuthSessionInfo>` where `AuthSessionInfo =
 { id: Uuid, device_name: string | null, platform: 'ios' | 'android',

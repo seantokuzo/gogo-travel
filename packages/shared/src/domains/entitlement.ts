@@ -6,6 +6,7 @@
  * `resolveEntitlements` in config is the only resolution path (R-shared-12).
  */
 import { z } from "zod";
+import type { EndpointDescriptor } from "../api/descriptor.js";
 import { PlanSchema } from "../enums.js";
 import { ISODateTimeSchema, UuidSchema } from "../scalars.js";
 
@@ -42,3 +43,24 @@ export const EffectiveEntitlementsSchema = z.object({
   premium_place_details: z.boolean(),
 });
 export type EffectiveEntitlements = z.infer<typeof EffectiveEntitlementsSchema>;
+
+// ---------------------------------------------------------------------------
+// Endpoint descriptors (auth-users spec §3.4.3; contracts spec §3.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read side of the ADR-005 seam. No entitlement write endpoint exists in v1
+ * (R-ent-3) — plan/override changes are operator actions, not API surface.
+ */
+export const entitlementEndpoints = {
+  /**
+   * Auth required. Computed solely by shared `resolveEntitlements()`
+   * (R-ent-1); values are display-only on the client — the server-side
+   * `requireAiQuota` check is the enforcement (R-ent-2).
+   */
+  getMyEntitlements: {
+    method: "GET",
+    path: "/users/me/entitlements",
+    response: EffectiveEntitlementsSchema,
+  },
+} as const satisfies Record<string, EndpointDescriptor>;

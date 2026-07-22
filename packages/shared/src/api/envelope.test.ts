@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   ApiErrorSchema,
+  CursorQuerySchema,
   ERROR_CODES,
   ERROR_STATUS,
   ErrorCodeSchema,
+  NoContentSchema,
   paginatedSchema,
 } from "./envelope.js";
 
@@ -83,5 +85,36 @@ describe("Paginated<T>", () => {
   it("requires nextCursor to be explicit (null = last page)", () => {
     expect(page.parse({ items: [], nextCursor: null }).nextCursor).toBeNull();
     expect(page.safeParse({ items: [] }).success).toBe(false);
+  });
+});
+
+describe("CursorQuery (?cursor= round-trip for Paginated<T> lists, §3.5)", () => {
+  it("parses absent (first page) and present opaque cursors", () => {
+    expect(CursorQuerySchema.parse({}).cursor).toBeUndefined();
+    expect(CursorQuerySchema.parse({ cursor: "opaque" }).cursor).toBe("opaque");
+  });
+
+  it("strips unknown query params (R-shared-10)", () => {
+    expect(CursorQuerySchema.parse({ cursor: "c", limit: "50", admin: "1" })).toEqual({
+      cursor: "c",
+    });
+  });
+
+  it("rejects non-string cursors", () => {
+    for (const cursor of [1, null, true, ["a"], { gt: "x" }]) {
+      expect(CursorQuerySchema.safeParse({ cursor }).success).toBe(false);
+    }
+  });
+});
+
+describe("NoContent (204 response schema)", () => {
+  it("parses undefined — the no-body case — to undefined", () => {
+    expect(NoContentSchema.parse(undefined)).toBeUndefined();
+  });
+
+  it("rejects any actual body, including null and empty shapes", () => {
+    for (const body of [null, "", {}, [], 0, false]) {
+      expect(NoContentSchema.safeParse(body).success).toBe(false);
+    }
   });
 });

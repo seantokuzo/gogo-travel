@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { descriptorKey } from "../api/descriptor.js";
 import {
+  AVATAR_MAX_BYTES,
+  AvatarUploadRequestSchema,
+  AvatarUploadTicketSchema,
   canonicalizeTravelStyles,
   DisplayNameSchema,
+  PaymentHandlesSchema,
   PaymentHandlesUpdateSchema,
+  PushTokenCreateSchema,
+  PushTokenSchema,
+  userEndpoints,
   UserPrefsSchema,
   UserProfileSchema,
   UserSchema,
+  UserUpdateSchema,
 } from "./user.js";
 
 describe("UserPrefs", () => {
@@ -143,7 +152,143 @@ describe("DisplayName", () => {
     expect(DisplayNameSchema.safeParse("x".repeat(51)).success).toBe(false);
   });
   it("rejects control characters", () => {
-    expect(DisplayNameSchema.safeParse("Sean").success).toBe(false);
+    expect(DisplayNameSchema.safeParse("Sean\u0007").success).toBe(false);
+  });
+});
+
+describe("UserUpdate (PATCH /users/me — R-user-2/3)", () => {
+  it("accepts display_name + whole-object prefs; avatar_key null clears", () => {
+    const parsed = UserUpdateSchema.parse({
+      display_name: "  Sean  ",
+      prefs: { units: "metric" },
+      avatar_key: null,
+    });
+    expect(parsed.display_name).toBe("Sean");
+    expect(parsed.avatar_key).toBeNull();
+  });
+
+  it("strips non-writable fields — email/subs/slug can never reach the handler", () => {
+    const parsed = UserUpdateSchema.parse({
+      display_name: "Sean",
+      email: "evil@example.com",
+      apple_sub: "sub",
+      google_sub: "sub",
+      forward_email_slug: "hijack",
+    });
+    expect(parsed).not.toHaveProperty("email");
+    expect(parsed).not.toHaveProperty("apple_sub");
+    expect(parsed).not.toHaveProperty("google_sub");
+    expect(parsed).not.toHaveProperty("forward_email_slug");
+  });
+
+  it("rejects empty avatar_key (empty string is not a clear — null is)", () => {
+    expect(UserUpdateSchema.safeParse({ avatar_key: "" }).success).toBe(false);
+  });
+
+  it("rejects control-character display names", () => {
+    expect(UserUpdateSchema.safeParse({ display_name: "a\u0000b" }).success).toBe(false);
+  });
+});
+
+describe("Avatar upload contract (R-user-3)", () => {
+  it("accepts the three allowed content types", () => {
+    for (const content_type of ["image/jpeg", "image/png", "image/webp"] as const) {
+      expect(AvatarUploadRequestSchema.parse({ content_type, byte_size: 1024 }).content_type).toBe(
+        content_type,
+      );
+    }
+  });
+  it("rejects gif/svg/anything else, and non-positive or float byte_size", () => {
+    for (const content_type of ["image/gif", "image/svg+xml", "application/pdf", ""]) {
+      expect(AvatarUploadRequestSchema.safeParse({ content_type, byte_size: 1 }).success).toBe(
+        false,
+      );
+    }
+    for (const byte_size of [0, -1, 1.5, "1024"]) {
+      expect(
+        AvatarUploadRequestSchema.safeParse({ content_type: "image/png", byte_size }).success,
+      ).toBe(false);
+    }
+  });
+  it("pins AVATAR_MAX_BYTES at 5 MB (413 threshold is the server's to enforce)", () => {
+    expect(AVATAR_MAX_BYTES).toBe(5 * 1024 * 1024);
+  });
+  it("ticket round-trips; method is literally PUT and upload_url must be a URL", () => {
+    const ticket = {
+      upload_url: "https://storage.example.com/presigned",
+      method: "PUT",
+      headers: { "content-type": "image/png" },
+      storage_key: "avatars/6f9d9d31-6d4a-4b7a-9df6-9b4a3f6d2e1c/abc",
+      expires_at: "2026-07-22T00:10:00Z",
+    };
+    expect(AvatarUploadTicketSchema.parse(ticket).method).toBe("PUT");
+    expect(AvatarUploadTicketSchema.safeParse({ ...ticket, method: "POST" }).success).toBe(false);
+    expect(AvatarUploadTicketSchema.safeParse({ ...ticket, upload_url: "not-a-url" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("Push token schemas (R-user-8)", () => {
+  it("create requires a nonempty token and a known platform", () => {
+    expect(
+      PushTokenCreateSchema.parse({ token: "ExponentPushToken[abc]", platform: "android" }).token,
+    ).toBe("ExponentPushToken[abc]");
+    expect(PushTokenCreateSchema.safeParse({ token: "", platform: "ios" }).success).toBe(false);
+    expect(PushTokenCreateSchema.safeParse({ token: "t", platform: "web" }).success).toBe(false);
+  });
+  it("row shape round-trips with ISO last_seen_at", () => {
+    const parsed = PushTokenSchema.parse({
+      id: "6f9d9d31-6d4a-4b7a-9df6-9b4a3f6d2e1c",
+      token: "ExponentPushToken[abc]",
+      platform: "ios",
+      last_seen_at: "2026-07-22T00:00:00Z",
+    });
+    expect(parsed.platform).toBe("ios");
+    expect(PushTokenSchema.safeParse({ ...parsed, last_seen_at: 1786000000000 }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("userEndpoints descriptors (§3.4.2 route table)", () => {
+  it("mirror the spec routes exactly", () => {
+    expect(
+      Object.fromEntries(
+        Object.entries(userEndpoints).map(([name, d]) => [name, descriptorKey(d)]),
+      ),
+    ).toEqual({
+      getMe: "GET /users/me",
+      updateMe: "PATCH /users/me",
+      requestAvatarUpload: "POST /users/me/avatar-upload",
+      updatePaymentHandles: "PATCH /users/me/payment-handles",
+      getUserProfile: "GET /users/:userId",
+      registerPushToken: "POST /users/me/push-tokens",
+      deletePushToken: "DELETE /users/me/push-tokens/:pushTokenId",
+      deleteMe: "DELETE /users/me",
+    });
+  });
+
+  it("bind the shared write/read schemas", () => {
+    expect(userEndpoints.getMe.response).toBe(UserSchema);
+    expect(userEndpoints.updateMe.body).toBe(UserUpdateSchema);
+    expect(userEndpoints.updateMe.response).toBe(UserSchema);
+    expect(userEndpoints.updatePaymentHandles.body).toBe(PaymentHandlesUpdateSchema);
+    expect(userEndpoints.updatePaymentHandles.response).toBe(PaymentHandlesSchema);
+    expect(userEndpoints.requestAvatarUpload.body).toBe(AvatarUploadRequestSchema);
+    expect(userEndpoints.requestAvatarUpload.response).toBe(AvatarUploadTicketSchema);
+    expect(userEndpoints.getUserProfile.response).toBe(UserProfileSchema);
+    expect(userEndpoints.registerPushToken.body).toBe(PushTokenCreateSchema);
+    expect(userEndpoints.registerPushToken.response).toBe(PushTokenSchema);
+  });
+
+  it("path params require uuids; 204 endpoints have no body schema", () => {
+    expect(userEndpoints.getUserProfile.params.safeParse({ userId: "1" }).success).toBe(false);
+    expect(userEndpoints.deletePushToken.params.safeParse({ pushTokenId: "abc" }).success).toBe(
+      false,
+    );
+    expect(userEndpoints.deleteMe.response.parse(undefined)).toBeUndefined();
+    expect(userEndpoints.deleteMe).not.toHaveProperty("body");
   });
 });
 
