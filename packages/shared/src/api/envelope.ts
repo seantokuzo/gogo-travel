@@ -83,3 +83,20 @@ export type Paginated<T> = {
   items: T[];
   nextCursor: string | null;
 };
+
+/**
+ * Standard query shape for `Paginated<T>` list endpoints (§3.5): the opaque
+ * `nextCursor` from the previous page round-trips as `?cursor=`. Absent =
+ * first page.
+ */
+export const CursorQuerySchema = z.object({
+  cursor: z.string().optional(),
+});
+export type CursorQuery = z.infer<typeof CursorQuerySchema>;
+
+/**
+ * Response "schema" for 204 endpoints — there is no body; `ApiClient`
+ * implementations call `parse(undefined)` (Zod: `z.void()` ≡ `z.undefined()`).
+ */
+export const NoContentSchema = z.void();
+export type NoContent = z.infer<typeof NoContentSchema>;

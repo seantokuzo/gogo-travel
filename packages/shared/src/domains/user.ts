@@ -6,6 +6,8 @@
  * (`PaymentHandlesUpdate`, `UserUpdate`) normalize and validate.
  */
 import { z } from "zod";
+import type { EndpointDescriptor } from "../api/descriptor.js";
+import { NoContentSchema } from "../api/envelope.js";
 import { CurrencyCodeSchema, ISODateTimeSchema, UuidSchema } from "../scalars.js";
 import {
   NotificationCategorySchema,
@@ -246,3 +248,72 @@ export const PushTokenSchema = z.object({
   last_seen_at: ISODateTimeSchema,
 });
 export type PushToken = z.infer<typeof PushTokenSchema>;
+
+// ---------------------------------------------------------------------------
+// Endpoint descriptors (auth-users spec §3.4.2; contracts spec §3.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Machine-readable mirror of the users/profile routes. All run behind
+ * `requireAuth` (R-authz-1); `/users/me/*` routes address the token's `sub`
+ * only — there is no user parameter to reach another account.
+ */
+export const userEndpoints = {
+  /** The caller's full profile — never another principal's (R-user-1). */
+  getMe: {
+    method: "GET",
+    path: "/users/me",
+    response: UserSchema,
+  },
+  /** Only `display_name`/`prefs`/`avatar_key` are client-writable (R-user-2/3). */
+  updateMe: {
+    method: "PATCH",
+    path: "/users/me",
+    body: UserUpdateSchema,
+    response: UserSchema,
+  },
+  /** Presign ticket via the `ObjectStorage` port (R-user-3; rate-limited). */
+  requestAvatarUpload: {
+    method: "POST",
+    path: "/users/me/avatar-upload",
+    body: AvatarUploadRequestSchema,
+    response: AvatarUploadTicketSchema,
+  },
+  /** Normalize-then-validate rails; cashtag HEAD check fail-open (R-user-5..7). */
+  updatePaymentHandles: {
+    method: "PATCH",
+    path: "/users/me/payment-handles",
+    body: PaymentHandlesUpdateSchema,
+    response: PaymentHandlesSchema,
+  },
+  /**
+   * Member-visible view — requires ≥1 shared trip, else 404 indistinguishable
+   * from a nonexistent user (R-user-4).
+   */
+  getUserProfile: {
+    method: "GET",
+    path: "/users/:userId",
+    params: z.object({ userId: UuidSchema }),
+    response: UserProfileSchema,
+  },
+  /** Upsert on the unique `token` — foreign-owned tokens MOVE (R-user-8). */
+  registerPushToken: {
+    method: "POST",
+    path: "/users/me/push-tokens",
+    body: PushTokenCreateSchema,
+    response: PushTokenSchema,
+  },
+  /** 204; absent-or-foreign ids are an indistinguishable 404 (R-user-8). */
+  deletePushToken: {
+    method: "DELETE",
+    path: "/users/me/push-tokens/:pushTokenId",
+    params: z.object({ pushTokenId: UuidSchema }),
+    response: NoContentSchema,
+  },
+  /** 204. Account deletion — fixed effects + soft-delete disposition (R-user-9). */
+  deleteMe: {
+    method: "DELETE",
+    path: "/users/me",
+    response: NoContentSchema,
+  },
+} as const satisfies Record<string, EndpointDescriptor>;
