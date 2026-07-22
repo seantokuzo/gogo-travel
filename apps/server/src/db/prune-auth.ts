@@ -6,8 +6,8 @@
  * spec's stale push-token prune).
  *
  * Callable core only: the scheduling wire-up joins the same housekeeping
- * job family as the invite/push-token prunes (schema spec §3.3.3/§3.3.27)
- * when that infra lands — nothing here assumes a scheduler.
+ * job family as the push-token (schema spec §3.3.3) and capture-sender
+ * (§3.3.27) prunes when that infra lands — nothing here assumes a scheduler.
  *
  * Live rows are untouched by construction: an unexpired token can't match
  * the first delete; a session with `revoked_at IS NULL` can't match the
