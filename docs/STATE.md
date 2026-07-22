@@ -44,8 +44,24 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   4 deferred w/ QUEUE rows, 1 parked for Sean, 2 spec syncs); judge
   merge/high. **Judge directive: spend Sean's /code-review ultra on T-5.2
   (provider verify) or T-5.4 (middleware) — the real crypto/authz surface.**
-- **T-5.2 ACTIVE** (engineer subagent): Apple/Google provider verification +
-  sign-in [AU-3], branch `P-5/T-5-2-provider-signin`.
+- **T-5.2 MERGED (bc58180)** — Apple/Google JWKS verify, nonce binding
+  (Apple SHA-256(raw_nonce) lowercase hex / Google raw), auto-link,
+  AES-256-GCM Apple-credential store, ES256 access + CSPRNG refresh
+  issuance. Server 63→143. **First HITL gate exercised end-to-end**:
+  round-1 fix-then-ship (5 blocking fixed) → judge routed to human →
+  Sean ran `/code-review ultra` (1st of 3 free) → bug_001 (unawaited
+  Apple key import: malformed key passed boot, every Apple sign-in
+  silently skipped credential store → App-Store revocation broken) →
+  fixed 3deb831 (await import at boot, mirror ES256 key) + re-judged
+  merge/high. jose@6.2.4 + @hono/zod-validator@0.9.0 added. Landmines
+  codified in rules/server.md (boot-parse-secrets-awaited; no raw
+  control bytes in test literals). Spec syncs applied (R-auth-3/5/6
+  interpretations, contracts §3.6 /api base). Prettier reflows locked
+  .md/.yaml on edit — apply spec/YAML syncs SURGICALLY via Bash, the
+  Write/Edit hook matcher doesn't catch it.
+- **T-5.3 ACTIVE** (engineer subagent): token issuance/rotation/sessions
+  [AU-4] — rotating refresh + reuse-theft family revocation, session
+  lifecycle. Branch `P-5/T-5-3-tokens`.
 
 ### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
 
