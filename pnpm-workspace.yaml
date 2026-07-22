@@ -27,3 +27,4 @@ minimumReleaseAgeExclude:
   - expo-router@57.0.7
   # expo-router@57.0.7 peer-requires ^57.0.6, released < 24h before T-4.2; delete once aged.
   - "@expo/metro-runtime@57.0.6"
+  - jose@6.2.4
