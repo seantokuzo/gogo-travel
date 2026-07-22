@@ -105,6 +105,23 @@ describe("AppleSignInRequest (POST /auth/apple)", () => {
     }
   });
 
+  it("rejects oversized credential material (DoS-headroom caps: 8192 JWT/code, 512 nonce)", () => {
+    for (const [field, cap] of [
+      ["identity_token", 8192],
+      ["authorization_code", 8192],
+      ["raw_nonce", 512],
+    ] as const) {
+      // At-cap parses (headroom, not a tighter contract) …
+      expect(
+        AppleSignInRequestSchema.safeParse({ ...validApple, [field]: "A".repeat(cap) }).success,
+      ).toBe(true);
+      // … one past the cap does not.
+      expect(
+        AppleSignInRequestSchema.safeParse({ ...validApple, [field]: "A".repeat(cap + 1) }).success,
+      ).toBe(false);
+    }
+  });
+
   it("requires device with a valid platform", () => {
     const { device: _device, ...noDevice } = validApple;
     expect(AppleSignInRequestSchema.safeParse(noDevice).success).toBe(false);
@@ -140,6 +157,18 @@ describe("GoogleSignInRequest (POST /auth/google)", () => {
     expect(GoogleSignInRequestSchema.safeParse(rest).success).toBe(false);
   });
 
+  it("rejects oversized id_token (8192 cap) and raw_nonce (512 cap)", () => {
+    expect(
+      GoogleSignInRequestSchema.safeParse({ ...validGoogle, id_token: "A".repeat(8192) }).success,
+    ).toBe(true);
+    expect(
+      GoogleSignInRequestSchema.safeParse({ ...validGoogle, id_token: "A".repeat(8193) }).success,
+    ).toBe(false);
+    expect(
+      GoogleSignInRequestSchema.safeParse({ ...validGoogle, raw_nonce: "A".repeat(513) }).success,
+    ).toBe(false);
+  });
+
   it("has no Apple-only fields — they are stripped, not accepted", () => {
     const parsed = GoogleSignInRequestSchema.parse({
       ...validGoogle,
@@ -161,6 +190,10 @@ describe("RefreshRequest (POST /auth/refresh)", () => {
     for (const evil of [null, 1, ["t"], { hash: "x" }]) {
       expect(RefreshRequestSchema.safeParse({ refresh_token: evil }).success).toBe(false);
     }
+  });
+  it("rejects oversized tokens (512 cap = headroom over the spec's 43-char size)", () => {
+    expect(RefreshRequestSchema.safeParse({ refresh_token: "A".repeat(512) }).success).toBe(true);
+    expect(RefreshRequestSchema.safeParse({ refresh_token: "A".repeat(513) }).success).toBe(false);
   });
 });
 

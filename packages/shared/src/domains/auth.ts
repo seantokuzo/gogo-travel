@@ -20,28 +20,42 @@ export type DeviceInfo = z.infer<typeof DeviceInfoSchema>;
 /**
  * `POST /auth/apple`. Name fields arrive on first Apple authorization only —
  * the client forwards them or they're gone (R-auth-5).
+ *
+ * Credential-field `.max()` caps here (and on the Google/refresh requests
+ * below) are DoS headroom, not wire-contract sizes: these three routes are
+ * the entire unauthenticated public allowlist (R-authz-1), and an unbounded
+ * string field is a cheap memory/CPU-amplification surface. Real provider
+ * JWTs run ~1–4 KB (8192 cap); nonces are small (512 cap). The
+ * transport-level request-body cap still belongs to route setup (AU-3/AU-5).
  */
 export const AppleSignInRequestSchema = z.object({
-  identity_token: z.string().min(1),
-  authorization_code: z.string().min(1),
-  raw_nonce: z.string().min(1),
+  identity_token: z.string().min(1).max(8192),
+  authorization_code: z.string().min(1).max(8192),
+  raw_nonce: z.string().min(1).max(512),
   device: DeviceInfoSchema,
   given_name: z.string().optional(),
   family_name: z.string().optional(),
 });
 export type AppleSignInRequest = z.infer<typeof AppleSignInRequestSchema>;
 
-/** `POST /auth/google`. */
+/** `POST /auth/google`. Caps = DoS headroom (see `AppleSignInRequestSchema`). */
 export const GoogleSignInRequestSchema = z.object({
-  id_token: z.string().min(1),
-  raw_nonce: z.string().min(1),
+  id_token: z.string().min(1).max(8192),
+  raw_nonce: z.string().min(1).max(512),
   device: DeviceInfoSchema,
 });
 export type GoogleSignInRequest = z.infer<typeof GoogleSignInRequestSchema>;
 
-/** `POST /auth/refresh` — the refresh token IS the credential. */
+/**
+ * `POST /auth/refresh` — the refresh token IS the credential.
+ *
+ * `.max(512)` is DoS headroom over the spec's exact 43-char token (256-bit
+ * base64url, §3.2) — not a contract change; the server hashes whatever is
+ * presented on every unauthenticated call, so the field itself is bounded.
+ * The transport body cap remains AU-3/AU-5's (see `AppleSignInRequestSchema`).
+ */
 export const RefreshRequestSchema = z.object({
-  refresh_token: z.string().min(1),
+  refresh_token: z.string().min(1).max(512),
 });
 export type RefreshRequest = z.infer<typeof RefreshRequestSchema>;
 
