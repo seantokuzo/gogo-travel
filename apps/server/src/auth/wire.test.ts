@@ -80,6 +80,28 @@ describe("buildAuthDepsFromEnv", () => {
     expect(typeof deps!.appleExchange.exchange).toBe("function");
   });
 
+  it("throws when GOOGLE_CLIENT_IDS is non-empty but parses to zero client ids (fail-closed footgun)", async () => {
+    vi.stubEnv("DATABASE_URL", DB_URL);
+    // " , " passes env's `min(1)` and the all-or-nothing gate, yet yields an
+    // empty audience allowlist — jose fails CLOSED on `audience: []`, so every
+    // Google sign-in would 401 with no boot signal. Must fail loudly instead.
+    const env = loadEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: DB_URL,
+      ...fullAuthEnv(),
+      GOOGLE_CLIENT_IDS: " , ",
+    });
+
+    const error = await buildAuthDepsFromEnv(env).then(
+      () => {
+        throw new Error("expected empty-audience config to throw");
+      },
+      (e: unknown) => e as Error,
+    );
+    expect(error.message).toContain("GOOGLE_CLIENT_IDS");
+    expect(error.message).not.toContain("BEGIN PRIVATE KEY");
+  });
+
   it("normalizes \\n-escaped PEM env values", async () => {
     vi.stubEnv("DATABASE_URL", DB_URL);
     const escaped = { ...fullAuthEnv() };

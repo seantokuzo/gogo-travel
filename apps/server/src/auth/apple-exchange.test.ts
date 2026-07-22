@@ -88,4 +88,57 @@ describe("createAppleCodeExchanger", () => {
     const exchanger = createAppleCodeExchanger(config, impl);
     await expect(exchanger.exchange("auth-code-123")).rejects.toThrowError(/no refresh_token/);
   });
+
+  it("aborts a hung Apple endpoint via the timeout signal so a stall can't block sign-in (R-auth-7)", async () => {
+    // A fetch that NEVER resolves on its own — only the injected AbortSignal
+    // can end it. Without the timeout the sign-in would hang for undici's
+    // ~300s default; the caller's try/catch tolerates a failure, not a stall.
+    const { impl, calls } = fakeFetch(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          // AbortSignal.timeout aborts with a "TimeoutError" DOMException as
+          // `.reason` (an Error) — surface it verbatim so the caller sees the
+          // real abort cause.
+          init.signal?.addEventListener("abort", () =>
+            reject((init.signal as AbortSignal).reason as Error),
+          );
+        }),
+    );
+    // Tiny timeout keeps the test deterministic and fast (real timers).
+    const exchanger = createAppleCodeExchanger(config, impl, () => new Date(), 20);
+
+    const error = await exchanger.exchange("auth-code-hang").then(
+      () => {
+        throw new Error("expected the hung exchange to abort");
+      },
+      (e: unknown) => e as Error,
+    );
+    // AbortSignal.timeout surfaces a TimeoutError → the caller catches it and
+    // continues the sign-in (logging only `error.name`, never the code).
+    expect(error.name).toBe("TimeoutError");
+    expect(calls[0]!.init.signal).toBeInstanceOf(AbortSignal);
+    expect(error.message).not.toContain("auth-code-hang");
+  });
+
+  it("imports the signing key once, not per exchange (perf hoist)", async () => {
+    // Two exchanges through one exchanger both succeed off the single hoisted
+    // key import — behavioral proof the hoist didn't break per-call signing.
+    const { impl, calls } = fakeFetch(() =>
+      Response.json({ refresh_token: "apple-refresh-secret" }),
+    );
+    const exchanger = createAppleCodeExchanger(config, impl);
+    expect(await exchanger.exchange("code-1")).toBe("apple-refresh-secret");
+    expect(await exchanger.exchange("code-2")).toBe("apple-refresh-secret");
+    expect(calls).toHaveLength(2);
+    // Each call still mints a fresh, valid client-secret JWT.
+    for (const call of calls) {
+      const secret = new URLSearchParams(call.init.body as string).get("client_secret");
+      const { protectedHeader } = await jwtVerify(secret!, publicKey, {
+        issuer: config.teamId,
+        audience: APPLE_ISSUER,
+        algorithms: ["ES256"],
+      });
+      expect(protectedHeader.kid).toBe(config.keyId);
+    }
+  });
 });

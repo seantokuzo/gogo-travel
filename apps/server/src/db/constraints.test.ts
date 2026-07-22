@@ -72,7 +72,11 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
   let db: PostgresJsDatabase<typeof schema>;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine").start();
+    // 60s startup budget — concurrent DB suites can exceed the default 10s
+    // port-bind wait in the full gate (T-5.2 round-1 flake).
+    container = await new PostgreSqlContainer("postgres:17-alpine")
+      .withStartupTimeout(60_000)
+      .start();
     client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
     db = drizzle({ client, schema });
     // R-db-12 baseline: the initial migration applies cleanly to a blank DB.

@@ -97,7 +97,12 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
   const exchangedCodes: string[] = [];
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine").start();
+    // 60s startup budget: three DB suites boot their own container
+    // concurrently in the full gate; the default 10s port-bind wait went red
+    // when the third hit it (T-5.2 round-1 flake).
+    container = await new PostgreSqlContainer("postgres:17-alpine")
+      .withStartupTimeout(60_000)
+      .start();
     client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
     db = drizzle({ client, schema });
     const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
@@ -307,6 +312,44 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("apple: re-sign-in REFRESHES the stored credential — upsert overwrites with the new token (R-auth-7)", async () => {
+    const email = `refresh-${uniq()}@example.com`;
+    const sub = `apple-${uniq()}`;
+
+    const first = await expectSignInResponse(
+      await post("/api/auth/apple", appleBody(await mintApple(sub, email))),
+    );
+    const [firstCred] = await db
+      .select()
+      .from(schema.appleCredentials)
+      .where(eq(schema.appleCredentials.userId, first.user.id));
+    expect(decryptSecret(credentialsKey, firstCred!.refreshTokenCiphertext)).toBe(
+      APPLE_REFRESH_PLAINTEXT,
+    );
+
+    // Apple returns a NEW refresh token on the next sign-in. The onConflictDoUpdate
+    // MUST replace the stored ciphertext (a broken conflict target / set would
+    // warn-and-continue and keep the stale token — and `storeAppleCredential`
+    // swallows errors, so only asserting the refreshed value catches it).
+    const rotated = "apple-refresh-token-plaintext-ROTATED";
+    exchangeImpl = () => Promise.resolve(rotated);
+    const second = await expectSignInResponse(
+      await post("/api/auth/apple", appleBody(await mintApple(sub, email))),
+    );
+    expect(second.user.id).toBe(first.user.id);
+
+    const creds = await db
+      .select()
+      .from(schema.appleCredentials)
+      .where(eq(schema.appleCredentials.userId, first.user.id));
+    expect(creds).toHaveLength(1); // upsert, never a second row
+    expect(decryptSecret(credentialsKey, creds[0]!.refreshTokenCiphertext)).toBe(rotated);
+    expect(creds[0]!.refreshTokenCiphertext).not.toContain(rotated);
+
+    // Both exchanges succeeded — no exchange-failure warning was logged.
+    expect(warnings.filter((w) => w.includes("apple code exchange failed"))).toHaveLength(0);
+  });
+
   it("apple: unknown sub, email matches a Google-created account → auto-link, no second account (R-auth-6)", async () => {
     const email = `link-${uniq()}@example.com`;
     const { user: existing } = await createUserWithEntitlements(db, {
@@ -410,7 +453,7 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
     return body;
   }
 
-  it("verification failures are one undifferentiated 401 across both providers", async () => {
+  it("every verification AND account-state rejection is one undifferentiated 401 (no oracle, §3.6.4)", async () => {
     const email = `uni-${uniq()}@example.com`;
     const sub = `apple-${uniq()}`;
 
@@ -420,7 +463,26 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
     forged.sub = "attacker";
     const tampered = `${header}.${Buffer.from(JSON.stringify(forged)).toString("base64url")}.${signature}`;
 
+    // Pre-existing accounts for the account-state (resolution) rejections.
+    const occupiedEmail = `occ-${uniq()}@example.com`;
+    await createUserWithEntitlements(db, {
+      email: occupiedEmail,
+      displayName: "Original",
+      appleSub: `apple-orig-${uniq()}`,
+    });
+    const collisionEmail = `coll-${uniq()}@example.com`;
+    await createUserWithEntitlements(db, {
+      email: collisionEmail,
+      displayName: "Apple Owner",
+      appleSub: `apple-${uniq()}`,
+    });
+    const noEmailToken = await mintProviderToken(
+      { sub: `g-${uniq()}`, nonce: RAW_NONCE },
+      { iss: "accounts.google.com", aud: GOOGLE_AUDS[0]! },
+    );
+
     const failures = await Promise.all([
+      // Verification failures (crypto / claims).
       post("/api/auth/apple", appleBody(tampered)),
       post("/api/auth/apple", appleBody(await mintApple(sub, email, { aud: "com.other.app" }))),
       post("/api/auth/apple", appleBody(await mintApple(sub, email, { expired: true }))),
@@ -437,6 +499,30 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
         "/api/auth/google",
         googleBody(await mintGoogle(`g-${uniq()}`, email, { expired: true })),
       ),
+      // Account-state (resolution) rejections — MUST be byte-identical to the
+      // verification failures above, else they become an account-existence
+      // oracle (today they hold only because routes.ts serializes one constant).
+      post(
+        "/api/auth/apple",
+        appleBody(await mintApple(`apple-imposter-${uniq()}`, occupiedEmail)),
+      ), // occupied slot → provider_identity_conflict
+      post(
+        "/api/auth/google",
+        googleBody(
+          await mintGoogle(`google-${uniq()}`, collisionEmail, {
+            claims: { email_verified: false },
+          }),
+        ),
+      ), // unverified email collision
+      post(
+        "/api/auth/google",
+        googleBody(
+          await mintGoogle(`google-${uniq()}`, `unvnew-${uniq()}@example.com`, {
+            claims: { email_verified: false },
+          }),
+        ),
+      ), // unverified new account
+      post("/api/auth/google", googleBody(noEmailToken)), // missing email
     ]);
 
     const bodies = await Promise.all(failures.map(expect401));
@@ -447,7 +533,7 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
       expect(body.error.details).toBeUndefined();
     }
 
-    // No account side effects from any failure.
+    // No account side effects from any verification failure on `email`.
     const rows = await db.select().from(schema.users).where(eq(schema.users.email, email));
     expect(rows).toHaveLength(0);
   });
@@ -505,6 +591,26 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
 
     const [row] = await db.select().from(schema.users).where(eq(schema.users.id, existing.id));
     expect(row?.appleSub).toBe(originalSub);
+  });
+
+  it("cross-provider token posted to the wrong route → 401 (issuer pinning; guards a seam swap)", async () => {
+    const email = `xprov-${uniq()}@example.com`;
+
+    // A Google-issuer token to /auth/apple: the Apple verifier pins
+    // iss = appleid.apple.com → rejected (the two prod JWKS are distinct;
+    // this catches a future accidental swap of the seams in wire.ts).
+    const googleToken = await mintGoogle(`google-${uniq()}`, email);
+    await expect401(await post("/api/auth/apple", appleBody(googleToken)));
+
+    // An Apple-issuer token to /auth/google: the Google verifier pins
+    // iss ∈ the Google set → rejected.
+    const appleToken = await mintApple(`apple-${uniq()}`, email);
+    await expect401(await post("/api/auth/google", googleBody(appleToken)));
+
+    // Neither attempt created an account.
+    expect(await db.select().from(schema.users).where(eq(schema.users.email, email))).toHaveLength(
+      0,
+    );
   });
 
   // -------------------------------------------------------------------------
