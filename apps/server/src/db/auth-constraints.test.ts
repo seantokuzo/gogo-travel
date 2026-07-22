@@ -1,8 +1,10 @@
 /**
  * T-5.1 auth-table suite (auth-users spec §3.3; AU-2) — structural
  * invariants of `auth_sessions` / `refresh_tokens` / `apple_credentials`
- * beyond the DB-1 baseline (which owns the token_hash-unique and
- * user-cascade cases), plus the §3.3.2 prune job.
+ * beyond the DB-1 baseline (which owns token_hash-unique and the
+ * users→auth_sessions→refresh_tokens cascade; the users→apple_credentials
+ * cascade is covered HERE — DB-1's user-cascade test predates the table's
+ * use), plus the §3.3.2 prune job.
  *
  * Driver: postgres-js on an ephemeral testcontainers Postgres, same harness
  * contract as `constraints.test.ts`: requires Docker; a Docker-less CI run
@@ -203,6 +205,21 @@ describe.skipIf(!dockerAvailable)("T-5.1 auth-table constraint suite", () => {
     );
   });
 
+  it("apple_credentials: deleting the user cascades the credential row (ON DELETE CASCADE)", async () => {
+    const user = await seedUser();
+    await db
+      .insert(schema.appleCredentials)
+      .values({ userId: user.id, refreshTokenCiphertext: "ct" });
+
+    await db.delete(schema.users).where(eq(schema.users.id, user.id));
+
+    const rows = await db
+      .select()
+      .from(schema.appleCredentials)
+      .where(eq(schema.appleCredentials.userId, user.id));
+    expect(rows).toHaveLength(0);
+  });
+
   it("apple_credentials upsert EXEMPLAR: refresh on re-sign-in replaces ciphertext and bumps updated_at by hand", async () => {
     const user = await seedUser();
     await db
@@ -286,6 +303,40 @@ describe.skipIf(!dockerAvailable)("T-5.1 auth-table constraint suite", () => {
       refreshTokensDeleted: 0,
       sessionsDeleted: 0,
     });
+  });
+
+  it("pruneAuthRows: cutoffs are strict-lt — rows at exactly now-30d / now-90d are RETAINED", async () => {
+    // Pins the `<` in §3.3.2's `expires_at < now() - 30d` (and the revoked-
+    // session twin): an lt→lte mutation in prune-auth.ts must fail here.
+    const now = new Date();
+    const daysAgo = (d: number) => new Date(now.getTime() - d * DAY_MS);
+    const user = await seedUser();
+
+    const liveSession = await seedSession(user.id);
+    const tokenAtCutoff = await seedToken(
+      liveSession.id,
+      daysAgo(EXPIRED_REFRESH_TOKEN_RETENTION_DAYS),
+    );
+    const sessionRevokedAtCutoff = await seedSession(
+      user.id,
+      daysAgo(REVOKED_SESSION_RETENTION_DAYS),
+    );
+
+    expect(await pruneAuthRows(db, now)).toEqual({
+      refreshTokensDeleted: 0,
+      sessionsDeleted: 0,
+    });
+
+    const [token] = await db
+      .select({ id: schema.refreshTokens.id })
+      .from(schema.refreshTokens)
+      .where(eq(schema.refreshTokens.id, tokenAtCutoff.id));
+    expect(token).toBeDefined();
+    const [session] = await db
+      .select({ id: schema.authSessions.id })
+      .from(schema.authSessions)
+      .where(eq(schema.authSessions.id, sessionRevokedAtCutoff.id));
+    expect(session).toBeDefined();
   });
 
   it("prune cutoffs are the spec constants (30d / 90d)", () => {
