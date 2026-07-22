@@ -15,14 +15,10 @@
 import { randomUUID } from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { sql } from "drizzle-orm";
-import { Hono, type Context } from "hono";
+import { Hono, type Context, type Env } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
-import {
-  AppleSignInRequestSchema,
-  GoogleSignInRequestSchema,
-  type SignInResponse,
-} from "@gogo/shared/domains/auth";
+import { authEndpoints, type SignInResponse } from "@gogo/shared/domains/auth";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, requestIdOf, type RequestVars } from "../http/errors.js";
@@ -60,6 +56,23 @@ type AuthContext = Context<RequestVars>;
 
 /** One message for every 401 — no oracle for which check failed (R-auth-1). */
 const UNAUTHENTICATED_MESSAGE = "authentication failed";
+
+/**
+ * Shared zValidator failure hook body: a body that fails schema validation
+ * becomes the `VALIDATION_FAILED` envelope (never zValidator's default 400
+ * shape). Extracted so the single `c`-to-`AuthContext` cast — hook contexts
+ * arrive typed with Hono's base `Env`, not our `RequestVars` (`requestIdOf`
+ * mints the id if the requestId middleware hasn't run) — lives here once, not
+ * copied per route.
+ */
+function rejectInvalidBody<T>(c: Context<Env>, error: z.core.$ZodError<T>): Response {
+  return apiError(
+    c as unknown as AuthContext,
+    "VALIDATION_FAILED",
+    "request body failed validation",
+    z.flattenError(error),
+  );
+}
 
 function failureReason(error: unknown): string {
   if (error instanceof ProviderVerificationError) return error.reason;
@@ -156,29 +169,28 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
           set: { refreshTokenCiphertext: ciphertext, updatedAt: sql`now()` },
         });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "unknown";
+      // Log `error.name` (or a fixed reason) — NEVER `.message`. This is the
+      // one path that trusts a DI dependency's error on a scope holding the
+      // authorization code + Apple refresh token; an alternate exchanger that
+      // interpolated the code into its message must not be able to leak it.
+      const reason = error instanceof Error ? error.name : "unknown";
       logger.warn(
         `[auth] apple code exchange failed — sign-in continues (requestId=${requestIdOf(c)}, reason=${reason})`,
       );
     }
   };
 
-  // Validation hooks: Zod failure → 400 `VALIDATION_FAILED` envelope (never
-  // zValidator's default shape).
+  // Paths + body schemas come from the shared `authEndpoints` descriptors
+  // (single source of truth, contracts spec §3.6) — this is the first route
+  // implementation and the template every future route copies, so descriptor/
+  // route drift (which would 404 clients) is killed at the source. Validation
+  // hooks: Zod failure → 400 `VALIDATION_FAILED` envelope (never zValidator's
+  // default shape).
   router.post(
-    "/auth/apple",
-    zValidator("json", AppleSignInRequestSchema, (result, c) => {
-      if (!result.success) {
-        // Hook contexts arrive with Hono's base env — safe: the router env is RequestVars.
-        return apiError(
-          c as unknown as AuthContext,
-          "VALIDATION_FAILED",
-          "request body failed validation",
-          z.flattenError(result.error),
-        );
-      }
-      return undefined;
-    }),
+    authEndpoints.appleSignIn.path,
+    zValidator("json", authEndpoints.appleSignIn.body, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
     async (c) => {
       const body = c.req.valid("json");
 
@@ -200,19 +212,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   );
 
   router.post(
-    "/auth/google",
-    zValidator("json", GoogleSignInRequestSchema, (result, c) => {
-      if (!result.success) {
-        // Hook contexts arrive with Hono's base env — safe: the router env is RequestVars.
-        return apiError(
-          c as unknown as AuthContext,
-          "VALIDATION_FAILED",
-          "request body failed validation",
-          z.flattenError(result.error),
-        );
-      }
-      return undefined;
-    }),
+    authEndpoints.googleSignIn.path,
+    zValidator("json", authEndpoints.googleSignIn.body, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
     async (c) => {
       const body = c.req.valid("json");
 
