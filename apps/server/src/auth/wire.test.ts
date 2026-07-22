@@ -102,6 +102,29 @@ describe("buildAuthDepsFromEnv", () => {
     expect(error.message).not.toContain("BEGIN PRIVATE KEY");
   });
 
+  it("throws at boot on a malformed APPLE_PRIVATE_KEY — not silently on first Apple sign-in", async () => {
+    vi.stubEnv("DATABASE_URL", DB_URL);
+    // A bad Apple .p8 must fail LOUD at wire time like the ES256 signer key
+    // does — otherwise the parse would reject inside the error-swallowed
+    // credential-store path on every Apple sign-in, leaving apple_credentials
+    // empty and silently breaking App-Store revocation (R-user-9).
+    const env = loadEnv({
+      NODE_ENV: "test",
+      DATABASE_URL: DB_URL,
+      ...fullAuthEnv(),
+      APPLE_PRIVATE_KEY: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----",
+    });
+
+    const error = await buildAuthDepsFromEnv(env).then(
+      () => {
+        throw new Error("expected a malformed Apple key to throw at boot");
+      },
+      (e: unknown) => e as Error,
+    );
+    expect(error.message).not.toContain("not-a-key");
+    expect(error.message).not.toContain("BEGIN PRIVATE KEY");
+  });
+
   it("normalizes \\n-escaped PEM env values", async () => {
     vi.stubEnv("DATABASE_URL", DB_URL);
     const escaped = { ...fullAuthEnv() };

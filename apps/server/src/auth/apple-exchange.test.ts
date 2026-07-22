@@ -40,7 +40,7 @@ describe("createAppleCodeExchanger", () => {
     const { impl, calls } = fakeFetch(() =>
       Response.json({ access_token: "at", refresh_token: "apple-refresh-secret" }),
     );
-    const exchanger = createAppleCodeExchanger(config, impl);
+    const exchanger = await createAppleCodeExchanger(config, impl);
 
     const refreshToken = await exchanger.exchange("auth-code-123");
     expect(refreshToken).toBe("apple-refresh-secret");
@@ -71,7 +71,7 @@ describe("createAppleCodeExchanger", () => {
 
   it("throws on a non-2xx with the status only — no code, secret, or body content", async () => {
     const { impl } = fakeFetch(() => new Response("apple error body", { status: 400 }));
-    const exchanger = createAppleCodeExchanger(config, impl);
+    const exchanger = await createAppleCodeExchanger(config, impl);
     const error = await exchanger.exchange("auth-code-XYZ").then(
       () => {
         throw new Error("expected exchange to fail");
@@ -85,7 +85,7 @@ describe("createAppleCodeExchanger", () => {
 
   it("throws when a 2xx response carries no refresh_token", async () => {
     const { impl } = fakeFetch(() => Response.json({ access_token: "at-only" }));
-    const exchanger = createAppleCodeExchanger(config, impl);
+    const exchanger = await createAppleCodeExchanger(config, impl);
     await expect(exchanger.exchange("auth-code-123")).rejects.toThrowError(/no refresh_token/);
   });
 
@@ -105,7 +105,7 @@ describe("createAppleCodeExchanger", () => {
         }),
     );
     // Tiny timeout keeps the test deterministic and fast (real timers).
-    const exchanger = createAppleCodeExchanger(config, impl, () => new Date(), 20);
+    const exchanger = await createAppleCodeExchanger(config, impl, () => new Date(), 20);
 
     const error = await exchanger.exchange("auth-code-hang").then(
       () => {
@@ -126,7 +126,7 @@ describe("createAppleCodeExchanger", () => {
     const { impl, calls } = fakeFetch(() =>
       Response.json({ refresh_token: "apple-refresh-secret" }),
     );
-    const exchanger = createAppleCodeExchanger(config, impl);
+    const exchanger = await createAppleCodeExchanger(config, impl);
     expect(await exchanger.exchange("code-1")).toBe("apple-refresh-secret");
     expect(await exchanger.exchange("code-2")).toBe("apple-refresh-secret");
     expect(calls).toHaveLength(2);
@@ -140,5 +140,22 @@ describe("createAppleCodeExchanger", () => {
       });
       expect(protectedHeader.kid).toBe(config.keyId);
     }
+  });
+
+  it("rejects at construction (boot) on a malformed private key — fail loud, not on first sign-in", async () => {
+    // The key parse is awaited inside the factory, so a bad APPLE_PRIVATE_KEY
+    // throws at wire time (like the ES256 signer key) instead of rejecting
+    // inside the error-swallowed store path on every Apple sign-in, which would
+    // silently leave apple_credentials empty and break revocation (R-user-9).
+    const { impl } = fakeFetch(() => Response.json({ refresh_token: "unreachable" }));
+    await expect(
+      createAppleCodeExchanger(
+        {
+          ...config,
+          privateKeyPem: "-----BEGIN PRIVATE KEY-----\nnot-a-key\n-----END PRIVATE KEY-----",
+        },
+        impl,
+      ),
+    ).rejects.toThrow();
   });
 });

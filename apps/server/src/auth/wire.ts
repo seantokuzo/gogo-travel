@@ -93,7 +93,7 @@ export async function buildAuthDepsFromEnv(env: Env): Promise<AuthRouterDeps | n
       privateKey: await importPKCS8(pem(AUTH_ES256_PRIVATE_KEY), "ES256"),
       kid: AUTH_ES256_KID,
     },
-    appleExchange: createAppleCodeExchanger({
+    appleExchange: await createAppleCodeExchanger({
       clientId: APPLE_CLIENT_ID,
       teamId: APPLE_TEAM_ID,
       keyId: APPLE_KEY_ID,

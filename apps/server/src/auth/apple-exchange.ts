@@ -63,19 +63,23 @@ async function signClientSecret(
     .sign(key);
 }
 
-export function createAppleCodeExchanger(
+export async function createAppleCodeExchanger(
   config: AppleExchangeConfig,
   fetchImpl: typeof fetch = fetch,
   now: () => Date = () => new Date(),
   timeoutMs: number = EXCHANGE_TIMEOUT_MS,
-): AppleCodeExchanger {
-  // Hoisted: the .p8 PEM is static for the exchanger's lifetime, and key
-  // import is the expensive step of the signing path — do it ONCE at wire
-  // time (mirroring the access-token signer, wire.ts), not on every sign-in.
-  const signingKey = importPKCS8(config.privateKeyPem, "ES256");
+): Promise<AppleCodeExchanger> {
+  // Import the .p8 PEM ONCE, and AWAIT it HERE at wire time — the key is static
+  // for the exchanger's lifetime and import is the expensive signing step, so
+  // hoisting saves per-sign-in work. The await is load-bearing: a malformed
+  // APPLE_PRIVATE_KEY must fail LOUDLY at boot (mirroring the ES256 signer key,
+  // wire.ts) — deferring the parse into exchange() would let a bad key reject
+  // inside the error-swallowed store path on every Apple sign-in, leaving
+  // apple_credentials empty and silently breaking App-Store revocation (R-user-9).
+  const signingKey = await importPKCS8(config.privateKeyPem, "ES256");
   return {
     async exchange(authorizationCode: string): Promise<string> {
-      const clientSecret = await signClientSecret(await signingKey, config, now());
+      const clientSecret = await signClientSecret(signingKey, config, now());
       const response = await fetchImpl(APPLE_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
