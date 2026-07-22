@@ -39,15 +39,24 @@ export default function TripListScreen() {
       ]}
     >
       {__DEV__ ? (
-        // Dev-only entry to the component gallery (DS-10 evidence surface) —
-        // moved here from the old home screen when index.tsx became the
-        // entry redirect.
-        <Button
-          title="Component gallery"
-          variant="ghost"
-          onPress={() => router.push("/gallery")}
-          testID="trip-list-button-gallery"
-        />
+        // Dev-only entries: component gallery (DS-10 evidence surface, moved
+        // here from the old home screen) + a sample-trip door into the
+        // `[tripId]` tab navigator — until trips CRUD lands (P-6) there is
+        // no user path into the tabs, and device QA can't deeplink.
+        <>
+          <Button
+            title="Component gallery"
+            variant="ghost"
+            onPress={() => router.push("/gallery")}
+            testID="trip-list-button-gallery"
+          />
+          <Button
+            title="Open sample trip (dev)"
+            variant="ghost"
+            onPress={() => router.push("/trip-1/itinerary")}
+            testID="trip-list-button-sample-trip"
+          />
+        </>
       ) : null}
     </PlaceholderScreen>
   );

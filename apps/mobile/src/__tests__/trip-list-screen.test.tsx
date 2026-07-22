@@ -101,4 +101,16 @@ describe("trip-list screen (landing surface theme wiring)", () => {
     // Not just "ends up dark" — dark from the very first committed frame.
     expect(seen[0]).toBe("dark");
   });
+
+  it("renders both dev-only entries (gallery + sample trip)", async () => {
+    // Jest runs with __DEV__ true; prod exclusion is the same direct-literal
+    // Metro constant-fold pattern verified for the gallery gate.
+    await render(
+      <ThemeProvider>
+        <TripListScreen />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("trip-list-button-gallery")).toBeTruthy();
+    expect(screen.getByTestId("trip-list-button-sample-trip")).toBeTruthy();
+  });
 });

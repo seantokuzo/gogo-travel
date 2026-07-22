@@ -158,7 +158,9 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     // Into a trip (same mount — imperative router; testRouter's built-in
     // pathname asserts depend on pre-RNTL-14 `screen` internals and crash):
     // bare trip target → itinerary default (R-nav-8 seam) + trip context.
-    act(() => router.navigate("/trip-1"));
+    // Cast: typed routes only enumerate leaf routes, but bare trip URLs are
+    // a real runtime surface (deeplinks) and MUST keep resolving.
+    act(() => router.navigate("/trip-1" as Parameters<typeof router.navigate>[0]));
     const itinerary = await screen.findByTestId("itinerary-screen");
     expect(within(itinerary).getByText("Trip trip-1")).toBeOnTheScreen();
 
