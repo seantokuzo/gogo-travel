@@ -6,6 +6,7 @@ import {
   AvatarUploadTicketSchema,
   canonicalizeTravelStyles,
   DisplayNameSchema,
+  PaymentHandlesSchema,
   PaymentHandlesUpdateSchema,
   PushTokenCreateSchema,
   PushTokenSchema,
@@ -269,12 +270,16 @@ describe("userEndpoints descriptors (§3.4.2 route table)", () => {
   });
 
   it("bind the shared write/read schemas", () => {
+    expect(userEndpoints.getMe.response).toBe(UserSchema);
     expect(userEndpoints.updateMe.body).toBe(UserUpdateSchema);
     expect(userEndpoints.updateMe.response).toBe(UserSchema);
     expect(userEndpoints.updatePaymentHandles.body).toBe(PaymentHandlesUpdateSchema);
+    expect(userEndpoints.updatePaymentHandles.response).toBe(PaymentHandlesSchema);
     expect(userEndpoints.requestAvatarUpload.body).toBe(AvatarUploadRequestSchema);
+    expect(userEndpoints.requestAvatarUpload.response).toBe(AvatarUploadTicketSchema);
     expect(userEndpoints.getUserProfile.response).toBe(UserProfileSchema);
     expect(userEndpoints.registerPushToken.body).toBe(PushTokenCreateSchema);
+    expect(userEndpoints.registerPushToken.response).toBe(PushTokenSchema);
   });
 
   it("path params require uuids; 204 endpoints have no body schema", () => {

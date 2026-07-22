@@ -299,7 +299,9 @@ describe("authEndpoints descriptors", () => {
 
   it("bind the shared schemas — server and client cannot drift", () => {
     expect(authEndpoints.appleSignIn.body).toBe(AppleSignInRequestSchema);
+    expect(authEndpoints.appleSignIn.response).toBe(SignInResponseSchema);
     expect(authEndpoints.googleSignIn.body).toBe(GoogleSignInRequestSchema);
+    expect(authEndpoints.googleSignIn.response).toBe(SignInResponseSchema);
     expect(authEndpoints.refresh.body).toBe(RefreshRequestSchema);
     expect(authEndpoints.refresh.response).toBe(AuthTokensSchema);
     expect(authEndpoints.logout.body).toBe(LogoutRequestSchema);
