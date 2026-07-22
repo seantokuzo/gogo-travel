@@ -61,15 +61,25 @@ export interface NameSeed {
 
 /**
  * R-auth-5: provider name fields when present, else the email local part;
- * the user edits it at onboarding. Clamped to the `DisplayNameSchema` cap.
+ * the user edits it at onboarding. Sanitized to match the write-side
+ * `DisplayNameSchema` (no control chars, ≤ 50 chars).
  */
 export function seedDisplayName(name: NameSeed, email: string): string {
+  // Strip control chars (`\p{Cc}`, incl. NUL/tab/newline) then trim — provider
+  // name claims are attacker-influenceable and otherwise reach the row in a
+  // state PATCH can never produce.
+  const clean = (value: string): string => value.replace(/\p{Cc}/gu, "").trim();
   const fromParts = [name.givenName, name.familyName]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .map((part) => part.trim())
+    .map((part) => (typeof part === "string" ? clean(part) : ""))
+    .filter((part) => part.length > 0)
     .join(" ");
-  const candidate = name.fullName?.trim() || fromParts || email.split("@")[0]?.trim() || "Traveler";
-  return candidate.slice(0, 50);
+  const candidate =
+    clean(name.fullName ?? "") || fromParts || clean(email.split("@")[0] ?? "") || "Traveler";
+  // Code-point-safe clamp: `slice(0, 50)` on UTF-16 code units can split a
+  // surrogate pair straddling index 50 and leave a lone surrogate, which
+  // Postgres UTF-8 REJECTS → a valid first sign-in 500s. Spread to code
+  // points, then clamp. ("Traveler" anchors the fallback, so never empty.)
+  return [...candidate].slice(0, 50).join("");
 }
 
 function subColumn(provider: VerifiedIdentity["provider"]) {
