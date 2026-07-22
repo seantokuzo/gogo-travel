@@ -69,15 +69,25 @@ export async function buildAuthDepsFromEnv(env: Env): Promise<AuthRouterDeps | n
     throw new Error("auth configuration incomplete");
   }
 
+  const googleAudiences = GOOGLE_CLIENT_IDS.split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  if (googleAudiences.length === 0) {
+    // Non-empty env that parses to zero ids (e.g. "," or " , ") clears the
+    // all-or-nothing gate but yields an empty audience allowlist. jose fails
+    // CLOSED on `audience: []` → every Google sign-in 401s with no boot-time
+    // signal, indistinguishable from user error in prod logs. Fail loudly
+    // here instead (name only, never values — Law #1).
+    throw new Error("auth configuration invalid — GOOGLE_CLIENT_IDS parsed to zero client ids");
+  }
+
   return {
     db: getDb(),
     verifier: {
       appleJwks: createRemoteJWKSet(new URL(APPLE_JWKS_URL)),
       googleJwks: createRemoteJWKSet(new URL(GOOGLE_JWKS_URL)),
       appleAudience: APPLE_CLIENT_ID,
-      googleAudiences: GOOGLE_CLIENT_IDS.split(",")
-        .map((id) => id.trim())
-        .filter((id) => id.length > 0),
+      googleAudiences,
     },
     signer: {
       privateKey: await importPKCS8(pem(AUTH_ES256_PRIVATE_KEY), "ES256"),
