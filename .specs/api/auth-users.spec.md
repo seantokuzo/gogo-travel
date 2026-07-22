@@ -56,7 +56,13 @@ Out of scope: see §3.8.
 - **R-auth-3 (nonce binding):** WHEN a provider token is verified THE SYSTEM
   SHALL require the request's `raw_nonce` to match the token's `nonce` claim
   (Apple: `nonce = SHA-256(raw_nonce)`; Google: raw match) — a token minted
-  for a different sign-in attempt SHALL be rejected 401.
+  for a different sign-in attempt SHALL be rejected 401. *(Synced
+  2026-07-22, post-T-5.2: the Apple binding is `SHA-256(raw_nonce)`
+  encoded as LOWERCASE hex — a cross-workspace wire contract the T-5.7
+  mobile client MUST match (hashing to uppercase hex fails every Apple
+  sign-in); Google compares `raw_nonce` verbatim. Both sides are hashed
+  before the constant-time compare, so nonce length never
+  short-circuits.)*
 - **R-auth-4 (returning user):** WHEN a verified token's `sub` matches an
   existing `users.apple_sub` / `users.google_sub` THE SYSTEM SHALL sign in
   that user — never create a second account for a known sub.
@@ -66,7 +72,14 @@ Out of scope: see §3.8.
   (mirror of schema spec R-db-5) and return `is_new_user: true`.
   `display_name` seeds from the provider name fields when present (Apple
   sends them only on first authorization — client MUST forward them), else
-  from the email local part; the user edits it at onboarding.
+  from the email local part; the user edits it at onboarding. *(Synced
+  2026-07-22, post-T-5.2: an unknown-`sub` token whose email is
+  UNVERIFIED or ABSENT is DENIED 401, never created — the creation-side
+  twin of R-auth-6's gate. This preserves the invariant that every
+  stored `users.email` was verified at intake, which R-auth-6 auto-link
+  silently depends on: an account planted on an unverified email would
+  let a victim's later verified sign-in auto-link into an attacker's
+  account, §3.6.2.)*
 - **R-auth-6 (email collision — auto-link):** WHEN a verified token's `sub`
   is unknown AND `lower(email)` matches an existing account THE SYSTEM SHALL
   auto-link the new provider identity to that account (set the missing
@@ -74,7 +87,13 @@ Out of scope: see §3.8.
   — provided the incoming email is verified (Google: `email_verified` claim
   true; Apple: verified by construction). Unverified email → 401, no link.
   Resolved at `.specs/database/schema.spec.md`:§3.3.1 `users` (Gate 2,
-  2026-07-09): auto-link on verified matching email.
+  2026-07-09): auto-link on verified matching email. *(Synced
+  2026-07-22, post-T-5.2: if the email-matched account already holds a
+  DIFFERENT `sub` in the incoming provider's slot, the sign-in is
+  REJECTED 401 — the slot is NEVER overwritten (silent overwrite =
+  identity takeover; a second account is impossible under `lower(email)`
+  uniqueness, and v1 has no recovery flow). Only a genuinely empty slot
+  is linked.)*
 - **R-auth-7 (Apple revocation credential):** WHEN Apple sign-in completes
   THE SYSTEM SHALL exchange the request's `authorization_code` with Apple's
   token endpoint and store the returned Apple refresh token encrypted

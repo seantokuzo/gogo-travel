@@ -297,7 +297,12 @@ The seam that keeps hooks platform-agnostic (R-shared-9):
   params?: ZodSchema, query?: ZodSchema, body?: ZodSchema,
   response: ZodSchema }`. Each domain module exports its endpoints'
   descriptors alongside its schemas (the API specs in `.specs/api/` define
-  the routes; descriptors are their machine-readable mirror).
+  the routes; descriptors are their machine-readable mirror). *(Synced
+  2026-07-22, post-T-5.2: descriptor `path`s are base-relative — e.g.
+  `/auth/apple`. `apps/server` mounts the routers under an `/api` base
+  (alongside `/api/health`), so the concrete URL is `/api/auth/apple`; the
+  `apps/mobile` `ApiClient` base URL is therefore `origin + '/api'` and
+  prepends it to every descriptor `path`.)*
 - **`ApiClient` interface** (in shared, types only):
   `request<D extends EndpointDescriptor>(d: D, input: InferInput<D>) =>
   Promise<InferResponse<D>>` — implementations parse the response with
