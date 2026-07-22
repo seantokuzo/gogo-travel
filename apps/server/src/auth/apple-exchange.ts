@@ -37,8 +37,21 @@ export interface AppleExchangeConfig {
 /** Client secrets are short-lived — minted per exchange, 5 minutes is ample. */
 const CLIENT_SECRET_TTL_SECONDS = 5 * 60;
 
-async function signClientSecret(config: AppleExchangeConfig, now: Date): Promise<string> {
-  const key = await importPKCS8(config.privateKeyPem, "ES256");
+/**
+ * Cap the Apple token-endpoint round-trip. R-auth-7 says exchange FAILURE
+ * never fails the sign-in — but a hang is not a failure until it times out,
+ * and undici's default (~300s) would pin every Apple sign-in on a degraded
+ * endpoint (the credential store is awaited before token issuance). Aborting
+ * at 5s turns a stall into the specced caught-and-logged failure so sign-in
+ * proceeds and the credential is retried next sign-in.
+ */
+const EXCHANGE_TIMEOUT_MS = 5_000;
+
+async function signClientSecret(
+  key: Awaited<ReturnType<typeof importPKCS8>>,
+  config: AppleExchangeConfig,
+  now: Date,
+): Promise<string> {
   const iat = Math.floor(now.getTime() / 1000);
   return new SignJWT({})
     .setProtectedHeader({ alg: "ES256", kid: config.keyId })
@@ -54,10 +67,15 @@ export function createAppleCodeExchanger(
   config: AppleExchangeConfig,
   fetchImpl: typeof fetch = fetch,
   now: () => Date = () => new Date(),
+  timeoutMs: number = EXCHANGE_TIMEOUT_MS,
 ): AppleCodeExchanger {
+  // Hoisted: the .p8 PEM is static for the exchanger's lifetime, and key
+  // import is the expensive step of the signing path — do it ONCE at wire
+  // time (mirroring the access-token signer, wire.ts), not on every sign-in.
+  const signingKey = importPKCS8(config.privateKeyPem, "ES256");
   return {
     async exchange(authorizationCode: string): Promise<string> {
-      const clientSecret = await signClientSecret(config, now());
+      const clientSecret = await signClientSecret(await signingKey, config, now());
       const response = await fetchImpl(APPLE_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -67,6 +85,8 @@ export function createAppleCodeExchanger(
           client_id: config.clientId,
           client_secret: clientSecret,
         }).toString(),
+        // A hung endpoint aborts here → caught by the caller, sign-in continues.
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!response.ok) {
         // Status only — Apple's error body is not echoed (hygiene).
