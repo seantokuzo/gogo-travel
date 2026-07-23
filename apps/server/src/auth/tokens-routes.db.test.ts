@@ -16,7 +16,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createLocalJWKSet, generateKeyPair, jwtVerify, SignJWT } from "jose";
@@ -30,7 +30,7 @@ import {
 import { paginatedSchema, type Paginated } from "@gogo/shared/api/envelope";
 import type { Hono } from "hono";
 import { createApp } from "../app.js";
-import { JWT_AUDIENCE, JWT_ISSUER, REFRESH_TOKEN_TTL_MS } from "../config.js";
+import { JWT_AUDIENCE, JWT_ISSUER, REFRESH_TOKEN_TTL_MS, SESSIONS_PAGE_SIZE } from "../config.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { sha256Hex } from "./crypto.js";
@@ -488,6 +488,75 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
     expect(page.items.map((s) => s.id)).toEqual([keep.sessionId]);
   });
 
+  it("sessions list: page 1 + page 2 via nextCursor cover every session — no overlap, no skip (µs-precise keyset)", async () => {
+    const user = await seedUser();
+    const current = await seedSession(user.id, "current");
+    // 50 more sessions, all within the SAME millisecond but MICROSECOND-distinct
+    // — precisely the sub-ms gap a JS-Date (ms) cursor would skip across a page
+    // boundary. Seeded in one statement via generate_series.
+    await db.execute(sql`
+      INSERT INTO auth_sessions (user_id, platform, device_name, created_at)
+      SELECT ${user.id}::uuid, 'ios', 'bulk-' || g,
+             timestamptz '2026-01-01 00:00:00+00' + (g || ' microseconds')::interval
+      FROM generate_series(1, 50) AS g
+    `);
+
+    // Ground truth: all 51 live session ids for this user.
+    const allRows = await db
+      .select({ id: schema.authSessions.id })
+      .from(schema.authSessions)
+      .where(eq(schema.authSessions.userId, user.id));
+    const allIds = new Set(allRows.map((r) => r.id));
+    expect(allIds.size).toBe(51);
+
+    // Page 1 — a full page plus a cursor.
+    const p1 = paginatedSchema(AuthSessionInfoSchema).parse(
+      await (await getSessions(current.accessToken)).json(),
+    ) as Paginated<AuthSessionInfo>;
+    expect(p1.items).toHaveLength(SESSIONS_PAGE_SIZE);
+    expect(p1.nextCursor).toBeTruthy();
+
+    // Page 2 — the remainder, no further cursor. (Old ms-truncating cursor
+    // would skip the sub-ms boundary row → page 2 empty → union ≠ 51.)
+    const p2 = paginatedSchema(AuthSessionInfoSchema).parse(
+      await (await getSessions(current.accessToken, p1.nextCursor!)).json(),
+    ) as Paginated<AuthSessionInfo>;
+    expect(p2.items).toHaveLength(1);
+    expect(p2.nextCursor).toBeNull();
+
+    const union = [...p1.items.map((s) => s.id), ...p2.items.map((s) => s.id)];
+    expect(new Set(union).size).toBe(union.length); // no overlap
+    expect(new Set(union)).toEqual(allIds); // no skip — exactly the 51
+    // `current` marks the caller's own session exactly once across the set.
+    expect(union.filter((id) => id === current.sessionId)).toHaveLength(1);
+    expect(p1.items.filter((s) => s.current)).toHaveLength(1);
+  });
+
+  it("sessions list: a malformed cursor is ignored (degrades to page 1, never 500/400)", async () => {
+    const user = await seedUser();
+    const s = await seedSession(user.id, "only");
+    const b64 = (raw: string) => Buffer.from(raw, "utf8").toString("base64url");
+
+    // Each would have reached a `::bigint`/`::uuid`/`::timestamptz` cast in the
+    // pre-fix code (→ 500). All must degrade to page 1 instead.
+    const malformed = [
+      "not-base64url-with-no-separator",
+      b64("123456|not-a-uuid"), // valid micros, non-UUID id
+      b64("not-a-number|11111111-1111-4111-8111-111111111111"), // non-int micros
+      b64("999|zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz"), // garbage uuid
+      b64("|"), // empty parts
+    ];
+
+    for (const cursor of malformed) {
+      const res = await getSessions(s.accessToken, cursor);
+      expect(res.status).toBe(200); // NOT 500, NOT 400
+      const page = paginatedSchema(AuthSessionInfoSchema).parse(
+        await res.json(),
+      ) as Paginated<AuthSessionInfo>;
+      expect(page.items.map((i) => i.id)).toEqual([s.sessionId]);
+    }
+  });
+
   // -------------------------------------------------------------------------
   // DELETE /auth/sessions/:id (R-auth-13, R-auth-12)
   // -------------------------------------------------------------------------
@@ -500,6 +569,25 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
     expect((await deleteSession(current.accessToken, other.sessionId)).status).toBe(204);
     expect((await sessionRow(other.sessionId))!.revokedAt).toBeInstanceOf(Date);
     await expect401(await postRefresh(other.refreshToken));
+  });
+
+  it("revoke: the revoked session's still-unexpired access token keeps working until exp (R-auth-12 bounded latency)", async () => {
+    const user = await seedUser();
+    const current = await seedSession(user.id, "current");
+    const other = await seedSession(user.id, "other");
+
+    expect((await deleteSession(current.accessToken, other.sessionId)).status).toBe(204);
+    expect((await sessionRow(other.sessionId))!.revokedAt).toBeInstanceOf(Date);
+    // Its refresh dies immediately (checked at the refresh boundary)...
+    await expect401(await postRefresh(other.refreshToken));
+
+    // ...but its UNEXPIRED access token STILL authenticates through requireAuth:
+    // stateless verify does zero DB reads, so revocation lands only at the next
+    // refresh (≤ ACCESS_TOKEN_TTL) — the accepted R-auth-12 latency, and the one
+    // behavior a naive "revoke also kills the access token" regression breaks.
+    const res = await getSessions(other.accessToken);
+    expect(res.status).toBe(200);
+    paginatedSchema(AuthSessionInfoSchema).parse(await res.json());
   });
 
   it("revoke: unknown session id → 404", async () => {
@@ -549,6 +637,43 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
         expect401,
       ),
     );
+    for (const body of bodies) {
+      expect(body.error.message).toBe(bodies[0]!.error.message);
+      expect(body.error.details).toBeUndefined();
+    }
+  });
+
+  it("refresh no-oracle: unknown / expired / rotated-reuse / revoked-session are byte-identical 401s (§3.6.4)", async () => {
+    // Every refresh rejection must be indistinguishable — same message, no
+    // `details` — so no oracle leaks WHICH check failed on this theft-probing
+    // surface. Mirrors the requireAuth twin above; guards against a future
+    // per-branch hint (e.g. a helpful "expired") reintroducing an oracle.
+
+    // unknown
+    const unknown = await postRefresh(`never-issued-${uniq()}`);
+
+    // expired (never rotated)
+    const expUser = await seedUser();
+    const expIssued = await seedSession(expUser.id);
+    await db
+      .update(schema.refreshTokens)
+      .set({ expiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(schema.refreshTokens.tokenHash, sha256Hex(expIssued.refreshToken)));
+    const expired = await postRefresh(expIssued.refreshToken);
+
+    // rotated-reuse (replay an already-rotated token)
+    const reuseUser = await seedUser();
+    const reuseIssued = await seedSession(reuseUser.id);
+    await postRefresh(reuseIssued.refreshToken); // A → B
+    const reuse = await postRefresh(reuseIssued.refreshToken); // replay A
+
+    // revoked-session (logout, then present the never-rotated token)
+    const revUser = await seedUser();
+    const revIssued = await seedSession(revUser.id);
+    expect((await postLogout(revIssued.accessToken)).status).toBe(204);
+    const revoked = await postRefresh(revIssued.refreshToken);
+
+    const bodies = await Promise.all([unknown, expired, reuse, revoked].map(expect401));
     for (const body of bodies) {
       expect(body.error.message).toBe(bodies[0]!.error.message);
       expect(body.error.details).toBeUndefined();

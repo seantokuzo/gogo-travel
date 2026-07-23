@@ -73,6 +73,28 @@ describe("verifyAccessToken", () => {
     );
   });
 
+  it("rejects a validly-signed token that carries NO exp claim (exp required-present)", async () => {
+    // jose validates `exp` only WHEN present, so a signed-but-exp-less token
+    // would otherwise verify as non-expiring. `requiredClaims: ["exp"]` (R-auth-12)
+    // rejects it. Minted via raw SignJWT with no `.setExpirationTime(...)`.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const noExp = await new SignJWT({ sid: SESSION_ID })
+      .setProtectedHeader({ alg: "ES256", kid: KID })
+      .setIssuer(JWT_ISSUER)
+      .setAudience(JWT_AUDIENCE)
+      .setSubject(USER_ID)
+      .setIssuedAt(nowSec)
+      .sign(signer.privateKey);
+
+    const err = await verifyAccessToken(verifier, noExp).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AccessTokenInvalidError);
+    // The specific failure — jose's missing-required-claim on `exp`, not some
+    // other rejection — so this test can't pass for the wrong reason.
+    const cause = (err as AccessTokenInvalidError).cause as { code?: string; claim?: string };
+    expect(cause?.code).toBe("ERR_JWT_CLAIM_VALIDATION_FAILED");
+    expect(cause?.claim).toBe("exp");
+  });
+
   it("rejects a wrong issuer", async () => {
     const token = await mint({ iss: "https://evil.example" });
     await expect(verifyAccessToken(verifier, token)).rejects.toBeInstanceOf(
