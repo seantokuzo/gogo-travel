@@ -10,6 +10,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
+import type { TripMemberRole } from "@gogo/shared/enums";
 import { ERROR_STATUS, type ApiError, type ErrorCode } from "@gogo/shared/api/envelope";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
@@ -20,6 +21,15 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
  */
 export const UNAUTHENTICATED_MESSAGE = "authentication failed";
 
+/**
+ * The ONE message every `requireTripMember` 404 carries. A non-member and a
+ * nonexistent trip return this identical body (§3.6.4 / R-authz-2 / Law #3):
+ * membership absence alone drives the 404, so the response can never reveal
+ * that a trip exists. A single constant makes the indistinguishability a
+ * compile-time fact, not a per-call-site coincidence.
+ */
+export const NOT_FOUND_MESSAGE = "not found";
+
 /** The identity `requireAuth` attaches to an authenticated request (R-auth-12). */
 export interface AuthIdentity {
   /** `sub` claim — `users.id`. */
@@ -28,16 +38,56 @@ export interface AuthIdentity {
   sessionId: string;
 }
 
-/** Hono context variables the auth router sets. */
+/** The trip context `requireTripMember` attaches once membership is proven (R-authz-2). */
+export interface TripContext {
+  tripId: string;
+  role: TripMemberRole;
+}
+
+/** The quota context `requireAiQuota` attaches once the caller is under-cap (R-ent-2). */
+export interface AiQuotaContext {
+  feature: string;
+  /** Effective `ai_calls_per_day` for the caller (resolveEntitlements). */
+  cap: number;
+  /** Counted calls already used today (UTC). */
+  used: number;
+}
+
+/** Hono context variables the app-wide middleware set. */
 export interface RequestVars {
   Variables: {
     requestId: string;
     /**
-     * Set by `requireAuth` on authenticated routes only (AU-4 local guard;
-     * AU-5 promotes the app-wide convention). Absent on public routes.
+     * Set by the app-wide `requireAuth` on every non-allowlisted route
+     * (R-authz-1). Absent on the public allowlist (health, sign-in, refresh).
      */
     auth?: AuthIdentity;
+    /** Set by `requireTripMember` on `/trips/:tripId/*` routes (R-authz-2). */
+    trip?: TripContext;
+    /** Set by `requireAiQuota` on metered AI routes (R-ent-2). */
+    aiQuota?: AiQuotaContext;
   };
+}
+
+/**
+ * A typed, throwable API failure. Handlers and middleware `throw new
+ * HttpError(code, message, details?)` and the app-wide error serializer
+ * (`http/app-middleware.ts`) turns it into the shared `ApiError` envelope with
+ * the code's fixed status — no handler emits an ad-hoc body, no stack ever
+ * reaches the wire (R-shared-4 / R-authz-4). The `apiError` helper below is the
+ * return-based twin for the common `return apiError(...)` form; both funnel
+ * through the identical envelope.
+ */
+export class HttpError extends Error {
+  readonly code: ErrorCode;
+  readonly details: unknown;
+
+  constructor(code: ErrorCode, message: string, details?: unknown) {
+    super(message);
+    this.name = "HttpError";
+    this.code = code;
+    this.details = details;
+  }
 }
 
 /**

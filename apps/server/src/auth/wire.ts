@@ -14,9 +14,18 @@ import { createRemoteJWKSet, importPKCS8 } from "jose";
 import { APPLE_JWKS_URL, GOOGLE_JWKS_URL } from "../config.js";
 import { getDb } from "../db/index.js";
 import type { Env } from "../env.js";
+import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import { createAppleCodeExchanger } from "./apple-exchange.js";
 import { parseAesKey } from "./crypto.js";
 import type { AuthRouterDeps } from "./routes.js";
+
+/**
+ * Process-wide rate-limit store (§3.6.3). Single-instance in-memory is the
+ * spec's accepted v1 backing until there are ≥ 2 server instances, at which
+ * point this becomes a shared counter behind the same seam. One instance per
+ * process so all auth surfaces share the window state.
+ */
+const authRateLimitStore = new InMemoryRateLimitStore();
 
 /** Env vars may carry PEMs with escaped newlines — normalize before import. */
 function pem(value: string): string {
@@ -107,5 +116,8 @@ export async function buildAuthDepsFromEnv(env: Env): Promise<AuthRouterDeps | n
       privateKeyPem: pem(APPLE_PRIVATE_KEY),
     }),
     appleCredentialsKey: parseAesKey(APPLE_CREDENTIALS_KEY),
+    // Rate limiting always ON in prod (§3.6.3); `ipOf` defaults to the socket
+    // peer (`clientIp`) in the router — never a spoofable XFF header.
+    rateLimit: { store: authRateLimitStore },
   };
 }

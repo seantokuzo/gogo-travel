@@ -12,13 +12,13 @@
  * requestId middleware land with AU-5; `/auth/refresh`, `/auth/logout`, and
  * session list/revoke land with AU-4.
  */
-import { randomUUID } from "node:crypto";
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, sql } from "drizzle-orm";
 import { Hono, type Context, type Env } from "hono";
-import { HTTPException } from "hono/http-exception";
+import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { authEndpoints, type AuthTokens, type SignInResponse } from "@gogo/shared/domains/auth";
+import { RATE_LIMITS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import {
@@ -27,9 +27,16 @@ import {
   UNAUTHENTICATED_MESSAGE,
   type RequestVars,
 } from "../http/errors.js";
+import {
+  clientIp,
+  rateLimit,
+  type RateLimitRule,
+  type RateLimitStore,
+} from "../http/rate-limit.js";
+import { authContextOf } from "../http/require-auth.js";
 import type { AccessTokenVerifier } from "./access-verify.js";
 import type { AppleCodeExchanger } from "./apple-exchange.js";
-import { encryptSecret } from "./crypto.js";
+import { encryptSecret, sha256Hex } from "./crypto.js";
 import {
   verifyAppleToken,
   verifyGoogleToken,
@@ -37,7 +44,6 @@ import {
   type ProviderVerifierDeps,
   type VerifiedIdentity,
 } from "./provider-verify.js";
-import { authContextOf, createRequireAuth } from "./require-auth.js";
 import { listUserSessions, revokeOwnedSession, revokeSession } from "./session-service.js";
 import { resolveSignIn, SignInRejectedError, type SignInResolution } from "./sign-in.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "./token-issuer.js";
@@ -46,6 +52,19 @@ import { toUserWire } from "./serialize.js";
 
 export interface AuthLogger {
   warn(message: string): void;
+}
+
+/**
+ * Rate-limit wiring for the public auth surfaces (§3.6.3, R-auth-14). Absent =
+ * limiting OFF (unit/integration suites that assert other behavior stay clean);
+ * prod wiring (`wire.ts`) always supplies it. `now` is MILLISECONDS (the store
+ * clock — distinct from the token `now: () => Date` below).
+ */
+export interface AuthRateLimitConfig {
+  store: RateLimitStore;
+  now?: () => number;
+  /** IP resolver — defaults to the socket peer (`clientIp`), never XFF. */
+  ipOf?: (c: Context<RequestVars>) => string;
 }
 
 export interface AuthRouterDeps {
@@ -59,6 +78,8 @@ export interface AuthRouterDeps {
   /** AES-256-GCM key for `apple_credentials` ciphertext (§3.3.3). */
   appleCredentialsKey: Buffer;
   logger?: AuthLogger;
+  /** Rate limiting for `/auth/apple|google|refresh` (§3.6.3). Absent = off. */
+  rateLimit?: AuthRateLimitConfig;
   /** Clock seam for tests. */
   now?: () => Date;
 }
@@ -88,30 +109,72 @@ function failureReason(error: unknown): string {
   return "unknown";
 }
 
+/**
+ * Resolve a presented refresh token to its session id (or null) for the
+ * per-session rate-limit key (§3.6.3). Read-only hash lookup — it never mutates
+ * and only keys a counter, so it is not an existence oracle. A rotated token
+ * still resolves (its row survives with `rotated_at` set), so reuse-probing is
+ * rate-limited too.
+ */
+async function sessionIdForRefreshToken(db: DbClient, token: string): Promise<string | null> {
+  const [row] = await db
+    .select({ sessionId: schema.refreshTokens.sessionId })
+    .from(schema.refreshTokens)
+    .where(eq(schema.refreshTokens.tokenHash, sha256Hex(token)));
+  return row?.sessionId ?? null;
+}
+
 export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   const logger = deps.logger ?? console;
   const router = new Hono<RequestVars>();
-  // AU-4 local guard for this router's Auth: Required routes (AU-5 promotes it
-  // app-wide with the public allowlist + rate limiting).
-  const requireAuth = createRequireAuth({ verifier: deps.accessVerify, logger });
 
-  // Correlation id on every request/response (AU-5 promotes this app-wide).
-  router.use("*", async (c, next) => {
-    c.set("requestId", randomUUID());
-    c.header("x-request-id", c.get("requestId"));
+  // requireAuth (app-wide, mounted in app.ts), the correlation-id middleware,
+  // and the error serializer are ALL promoted to the app at AU-5 — this router
+  // only reads the auth context (`authContextOf`) its Auth: Required routes
+  // need. It defines NO onError (that would shadow the app-wide one, Hono
+  // wraps custom sub-app error handlers).
+
+  // Rate limiting for the public surfaces (§3.6.3). Each limiter is a SINGLE
+  // middleware (real limiter when `deps.rateLimit` is set, else a pass-through)
+  // so the route arity stays fixed — spreading a conditional array would defeat
+  // Hono's `zValidator` type inference (`c.req.valid` → `never`).
+  const rl = deps.rateLimit;
+  const ipOf = rl?.ipOf ?? clientIp;
+  const passThrough = createMiddleware<RequestVars>(async (_c, next) => {
     await next();
   });
+  const rlDeps = rl ? { store: rl.store, ...(rl.now ? { now: rl.now } : {}) } : undefined;
 
-  // Malformed JSON / wrong content type surface as HTTPException(400) from
-  // the json body parser before Zod runs; everything else is INTERNAL. All
-  // errors leave as the ApiError envelope — no stack traces on the wire.
-  router.onError((error, c) => {
-    if (error instanceof HTTPException && error.status === 400) {
-      return apiError(c, "VALIDATION_FAILED", "malformed request body");
-    }
-    logger.warn(`[auth] unhandled error (requestId=${requestIdOf(c)})`);
-    return apiError(c, "INTERNAL", "internal error");
-  });
+  // apple/google — per-IP: 10/min AND 50/day (credential grinding).
+  const signInLimiter =
+    rl && rlDeps
+      ? rateLimit(
+          RATE_LIMITS.signIn.map((w, i): RateLimitRule => ({
+            name: `signin-${i}`,
+            limit: w.limit,
+            windowMs: w.windowMs,
+            keyOf: ipOf,
+          })),
+          rlDeps,
+        )
+      : passThrough;
+
+  // refresh — per-IP 60/hour at the edge; the per-session 30/hour is charged
+  // in-handler (it needs the token resolved to its `sid`, §3.6.3).
+  const refreshIpLimiter =
+    rl && rlDeps
+      ? rateLimit(
+          [
+            {
+              name: "refresh-ip",
+              limit: RATE_LIMITS.refreshPerIp.limit,
+              windowMs: RATE_LIMITS.refreshPerIp.windowMs,
+              keyOf: ipOf,
+            },
+          ],
+          rlDeps,
+        )
+      : passThrough;
 
   const unauthenticated = (c: AuthContext, error: unknown): Response => {
     logger.warn(
@@ -199,6 +262,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   // default shape).
   router.post(
     authEndpoints.appleSignIn.path,
+    signInLimiter,
     zValidator("json", authEndpoints.appleSignIn.body, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
@@ -224,6 +288,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
 
   router.post(
     authEndpoints.googleSignIn.path,
+    signInLimiter,
     zValidator("json", authEndpoints.googleSignIn.body, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
@@ -250,11 +315,34 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   // ---------------------------------------------------------------------------
   router.post(
     authEndpoints.refresh.path,
+    refreshIpLimiter,
     zValidator("json", authEndpoints.refresh.body, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
     async (c) => {
       const body = c.req.valid("json");
+
+      // Per-session rate limit (§3.6.3: 30/hour, keyed by `sid` via token row).
+      // Resolving the sid needs the token, so it's charged here — read-only,
+      // BEFORE any rotation, so a limited request mutates nothing (R-auth-14).
+      // An unknown token maps to no session → session window skipped (the IP
+      // window already bounds unknown-token floods) and the handler 401s below.
+      if (rl) {
+        const sid = await sessionIdForRefreshToken(deps.db, body.refresh_token);
+        if (sid) {
+          const nowMs = rl.now ? rl.now() : Date.now();
+          const hit = rl.store.hit(
+            `refresh-session:${sid}`,
+            RATE_LIMITS.refreshPerSession.limit,
+            RATE_LIMITS.refreshPerSession.windowMs,
+            nowMs,
+          );
+          if (!hit.allowed) {
+            c.header("Retry-After", String(hit.retryAfterSeconds));
+            return apiError(c, "RATE_LIMITED", "rate limit exceeded");
+          }
+        }
+      }
 
       let issued;
       try {
@@ -289,7 +377,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   // ---------------------------------------------------------------------------
   router.post(
     authEndpoints.logout.path,
-    requireAuth,
     zValidator("json", authEndpoints.logout.body, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
@@ -321,7 +408,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   // ---------------------------------------------------------------------------
   router.get(
     authEndpoints.listSessions.path,
-    requireAuth,
     zValidator("query", authEndpoints.listSessions.query, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
@@ -339,7 +425,6 @@ export function createAuthRouter(deps: AuthRouterDeps): Hono<RequestVars> {
   // ---------------------------------------------------------------------------
   router.delete(
     authEndpoints.revokeSession.path,
-    requireAuth,
     zValidator("param", authEndpoints.revokeSession.params, (result, c) =>
       result.success ? undefined : rejectInvalidBody(c, result.error),
     ),
