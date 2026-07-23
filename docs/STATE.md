@@ -59,9 +59,25 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   interpretations, contracts §3.6 /api base). Prettier reflows locked
   .md/.yaml on edit — apply spec/YAML syncs SURGICALLY via Bash, the
   Write/Edit hook matcher doesn't catch it.
-- **T-5.3 ACTIVE** (engineer subagent): token issuance/rotation/sessions
-  [AU-4] — rotating refresh + reuse-theft family revocation, session
-  lifecycle. Branch `P-5/T-5-3-tokens`.
+- **T-5.3 MERGED (3abfac4)** — refresh rotation, reuse-theft family
+  revocation (session-scoped: rotate A→B, replay A ⇒ whole family dies),
+  atomic CAS double-spend guard (`WHERE rotated_at IS NULL`), STATELESS
+  requireAuth (ES256 verify, zero DB/request), session list/revoke,
+  /auth/refresh + /auth/logout. Server 143→179. New modules:
+  access-verify / token-rotation / session-service / require-auth.
+  5-lane 0-blocking SHIP (security ~60 probes cleared cascade + CAS +
+  alg-confusion); 6 advisories fixed (require `exp` present on verify;
+  session cursor → integer epoch-MICROSECONDS, crash-safe on malformed
+  input, closes a sub-ms keyset skip; +pagination/latency/no-oracle
+  tests); judge merge/high, large-diff escalation WAIVED (crypto core
+  untouched by fixes). Session cursor lesson: keyset must carry full
+  µs precision, NOT a JS-Date ISO round-trip (ms-truncates → skips rows).
+- **T-5.4 ACTIVE** (engineer subagent): middleware trio + error envelope
+  - rate limits [AU-5], branch `P-5/T-5-4-middleware`. **PROMOTE-AND-
+    REPLACE** the local `auth/require-auth.ts` from T-5.3 (don't rebuild);
+    add requireTripMember + requireAiQuota, app-wide error serializer,
+    public allowlist, refresh rate-limit (§3.6.3). Judge-flagged as the
+    high-value target for Sean's remaining `/code-review ultra` (2 left).
 
 ### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
 
