@@ -4,7 +4,10 @@
  * Verifies our own ES256 access tokens with NO database read: pinned
  * algorithm allowlist `[ES256]` (`none`/HS-family rejected at the `jwtVerify`
  * boundary before any claim is read — algorithm-confusion defense), `iss`/
- * `aud` match, `exp` valid. On success it returns exactly the two claims
+ * `aud` match, and `exp` **present and valid** (R-auth-12 lists `exp` as a
+ * required check; jose only validates `exp` when it is present, so we pin its
+ * presence with `requiredClaims: ["exp"]` — an `exp`-less token would otherwise
+ * verify as non-expiring). On success it returns exactly the two claims
  * `requireAuth` attaches to the request context (`sub` → userId, `sid` →
  * sessionId); nothing else escapes.
  *
@@ -64,9 +67,13 @@ export async function verifyAccessToken(
       algorithms: [...ACCESS_TOKEN_ALGORITHMS],
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
+      // jose enforces `exp` only when present; require its presence so a
+      // signed-but-`exp`-less token can't verify as non-expiring (R-auth-12).
+      requiredClaims: ["exp"],
     }));
   } catch (cause) {
-    // Signature, alg allowlist, iss, aud, exp, malformed compact form — one bucket.
+    // Signature, alg allowlist, iss, aud, missing/invalid exp, malformed
+    // compact form — one bucket.
     throw new AccessTokenInvalidError(cause);
   }
 

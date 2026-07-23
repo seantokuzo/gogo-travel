@@ -59,25 +59,46 @@ export async function revokeOwnedSession(
   return rows.length > 0;
 }
 
-/** Opaque keyset cursor over `(created_at, id)` — the page's last row. */
+/**
+ * Opaque keyset cursor over `(created_at, id)` — the page's last row. The
+ * timestamp rides as integer epoch-MICROSECONDS, not a JS-Date ISO string: a
+ * `Date` is millisecond-precision, so an ISO round-trip truncates the
+ * microsecond `timestamptz` and the next-page predicate could skip a row whose
+ * true `created_at` falls in the sub-millisecond gap. Micros preserves full
+ * precision (and is a plain integer → the `::bigint` cast can never 500).
+ */
 interface SessionCursor {
-  createdAt: string;
+  /** `created_at` as exact microseconds since the Unix epoch (see encodeCursor). */
+  micros: string;
   id: string;
 }
 
-function encodeCursor(row: { createdAt: Date; id: string }): string {
-  return Buffer.from(`${row.createdAt.toISOString()}|${row.id}`, "utf8").toString("base64url");
+/** Canonical hyphenated UUID — what `defaultRandom()` mints and `::uuid` accepts. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** ≤ 18 digits ⇒ always a valid, non-overflowing bigint (int64 max is 19 digits). */
+const MICROS_RE = /^\d{1,18}$/;
+
+function encodeCursor(row: { micros: string; id: string }): string {
+  return Buffer.from(`${row.micros}|${row.id}`, "utf8").toString("base64url");
 }
 
-/** Decode a client cursor; a malformed cursor yields `null` (treated as page 1). */
+/**
+ * Decode a client cursor; a malformed cursor yields `null` (treated as page 1).
+ * The cursor is an opaque, server-minted token — a non-integer `micros` or
+ * non-UUID `id` (bad base64, tampering, corruption) is not a distinct error but
+ * a fall-back to the first page (the endpoint's only documented error is 401 —
+ * spec §3.4.1 lists no 400 for cursors). Validating both parts here is also
+ * what keeps the `::bigint`/`::uuid` casts in listUserSessions from ever
+ * throwing an `invalid input syntax` 500 on a crafted cursor.
+ */
 function decodeCursor(cursor: string): SessionCursor | null {
   const decoded = Buffer.from(cursor, "base64url").toString("utf8");
   const sep = decoded.indexOf("|");
   if (sep === -1) return null;
-  const createdAt = decoded.slice(0, sep);
+  const micros = decoded.slice(0, sep);
   const id = decoded.slice(sep + 1);
-  if (!createdAt || !id || Number.isNaN(Date.parse(createdAt))) return null;
-  return { createdAt, id };
+  if (!MICROS_RE.test(micros) || !UUID_RE.test(id)) return null;
+  return { micros, id };
 }
 
 export interface SessionPage {
@@ -103,10 +124,14 @@ export async function listUserSessions(
     isNull(schema.authSessions.revokedAt),
   ];
   if (decoded) {
-    // Row-value keyset: strictly older page. Types pinned via casts so param
-    // inference can't drift (uuid vs text, timestamptz vs unknown-literal).
+    // Row-value keyset for the strictly-older page, compared in epoch-micros
+    // space (Postgres 14+ `extract` returns numeric, so ×1e6 → bigint is
+    // lossless). This mirrors the `created_at DESC, id DESC` ordering — micros
+    // is monotonic in created_at — while carrying full timestamptz precision so
+    // no sub-millisecond row is skipped. Both operands are pre-validated
+    // (integer / uuid) so the casts are crash-proof, not a 500 vector.
     predicates.push(
-      sql`(${schema.authSessions.createdAt}, ${schema.authSessions.id}) < (${decoded.createdAt}::timestamptz, ${decoded.id}::uuid)`,
+      sql`((extract(epoch from ${schema.authSessions.createdAt}) * 1000000)::bigint, ${schema.authSessions.id}) < (${decoded.micros}::bigint, ${decoded.id}::uuid)`,
     );
   }
 
@@ -117,6 +142,9 @@ export async function listUserSessions(
       platform: schema.authSessions.platform,
       createdAt: schema.authSessions.createdAt,
       lastUsedAt: schema.authSessions.lastUsedAt,
+      // Exact epoch-microseconds of created_at — the cursor's full-precision
+      // sort key. postgres-js returns a bigint column as a string.
+      cursorMicros: sql<string>`(extract(epoch from ${schema.authSessions.createdAt}) * 1000000)::bigint`,
     })
     .from(schema.authSessions)
     .where(and(...predicates))
@@ -133,7 +161,10 @@ export async function listUserSessions(
   }));
 
   const last = rows[rows.length - 1];
-  const nextCursor = rows.length === SESSIONS_PAGE_SIZE && last ? encodeCursor(last) : null;
+  const nextCursor =
+    rows.length === SESSIONS_PAGE_SIZE && last
+      ? encodeCursor({ micros: last.cursorMicros, id: last.id })
+      : null;
 
   return { items, nextCursor };
 }
