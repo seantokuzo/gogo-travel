@@ -753,6 +753,10 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
 
       const bRes = await postPushToken(b.accessToken, { token, platform: "android" });
       const bRow = PushTokenSchema.parse(await bRes.json());
+      const [bStored] = await db
+        .select()
+        .from(schema.pushTokens)
+        .where(eq(schema.pushTokens.token, token));
 
       const aRes = await postPushToken(a.accessToken, { token, platform: "android" });
       expect(aRes.status).toBe(200);
@@ -765,6 +769,12 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
         .where(eq(schema.pushTokens.token, token));
       expect(rows).toHaveLength(1);
       expect(rows[0]!.userId).toBe(a.user.id);
+      // The upsert set-clause bumps updated_at by hand (sql now()) because
+      // $onUpdate does NOT fire through onConflictDoUpdate (_shared.ts landmine).
+      // Drop that line and the moved row's updated_at freezes at B's insert →
+      // this strict-greater assertion fails. DB now() advances across the two
+      // sequential requests, so it's deterministic without a real sleep.
+      expect(rows[0]!.updatedAt.getTime()).toBeGreaterThan(bStored!.updatedAt.getTime());
     });
 
     it("malformed tokens → 400 (Expo shape enforced at the boundary)", async () => {
