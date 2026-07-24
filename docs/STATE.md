@@ -72,12 +72,31 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   tests); judge merge/high, large-diff escalation WAIVED (crypto core
   untouched by fixes). Session cursor lesson: keyset must carry full
   µs precision, NOT a JS-Date ISO round-trip (ms-truncates → skips rows).
-- **T-5.4 ACTIVE** (engineer subagent): middleware trio + error envelope
-  - rate limits [AU-5], branch `P-5/T-5-4-middleware`. **PROMOTE-AND-
-    REPLACE** the local `auth/require-auth.ts` from T-5.3 (don't rebuild);
-    add requireTripMember + requireAiQuota, app-wide error serializer,
-    public allowlist, refresh rate-limit (§3.6.3). Judge-flagged as the
-    high-value target for Sean's remaining `/code-review ultra` (2 left).
+- **T-5.4 MERGED (d422cf0)** — authz middleware trio + error envelope +
+  rate limits. requireAuth promoted app-wide (clean git rename auth/→http/,
+  ONE impl); requireTripMember with **404-indistinguishable authz** (one
+  `trip_members` query, never touches `trips` → no existence/timing oracle;
+  non-member and ghost-trip byte-identical 404; 403 only after proven
+  membership) — the fixture every later trip/expense/photo domain inherits;
+  requireAiQuota check seam (kill-switch 503 / cap 429, both before model
+  call); app error serializer (only error.name logged); public allowlist
+  (health + apple/google/refresh); rate limits (§3.6.3, IP=socket peer never
+  XFF, sweep-bounded). requireTripMember + requireAiQuota are DORMANT
+  (defined + DB-tested, mounted on zero live routes until trips/AI phases).
+  Server 179→219. 5-lane 0-blocking SHIP (security max-depth red-team, 12
+  path-smuggling probes fail-closed) → 2 in-scope advisories fixed → judge
+  merge/high. **Ultra WAIVED by Sean (Fable can self-review locally) → deep
+  local self-review (ultra substitute) caught HEAD /api/health→401 (LB probe
+  marks instance unhealthy; fail-closed, not a bypass) → fixed + allowlist
+  drift-guard tests.** 4 advisories → QUEUE (P-10 atomic AI-increment is a
+  P0 blocker for P-10; ai_usage composite index; trusted-proxy ipOf at
+  deploy; NAT lockout accepted §3.6.3).
+- **T-5.5 ACTIVE** (engineer subagent): profile/avatar/handles/push-tokens +
+  entitlements read [AU-6, AU-7], branch `P-5/T-5-5-profile`.
+- Review-mode note: local 5-lane pipeline + fresh judge is the standard
+  gate; Sean's `/code-review ultra` is optional (2 free left) and can be
+  substituted by a deep local self-review agent (whole-diff, adversarial,
+  reads changed files in full) when Sean waives it — as done for T-5.4.
 
 ### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
 
