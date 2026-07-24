@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { app, PUBLIC_ALLOWLIST } from "./app.js";
+import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
+import type { UsersRouterDeps } from "./users/routes.js";
 
 // Same createRequire pattern app.ts uses — the test asserts against the real manifest.
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -35,5 +36,24 @@ describe("public allowlist (R-authz-1)", () => {
     expect(PUBLIC_ALLOWLIST.has("POST /api/auth/logout")).toBe(false);
     expect(PUBLIC_ALLOWLIST.has("GET /api/auth/sessions")).toBe(false);
     expect(PUBLIC_ALLOWLIST.size).toBe(5);
+  });
+});
+
+describe("createApp wiring guard", () => {
+  it("throws when the users router is mounted without auth deps", () => {
+    // Every /users/* route is Auth: Required; mounting the surface without
+    // `auth` (no app-wide requireAuth guard) is a wiring bug, rejected loudly
+    // at construction so it can never become a silently-unguarded surface. The
+    // guard fires before the deps are read, so a stub value never runs.
+    let error: unknown;
+    try {
+      createApp({ users: {} as UsersRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    // Names the missing dep so the wiring bug is diagnosable — no secret values.
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
   });
 });
