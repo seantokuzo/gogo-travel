@@ -14,9 +14,8 @@
  */
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, sql } from "drizzle-orm";
-import { Hono, type Context, type Env } from "hono";
+import { Hono, type Context } from "hono";
 import { createMiddleware } from "hono/factory";
-import { z } from "zod";
 import { authEndpoints, type AuthTokens, type SignInResponse } from "@gogo/shared/domains/auth";
 import { RATE_LIMITS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
@@ -34,6 +33,7 @@ import {
   type RateLimitStore,
 } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
+import { rejectInvalidBody } from "../http/validation.js";
 import type { AccessTokenVerifier } from "./access-verify.js";
 import type { AppleCodeExchanger } from "./apple-exchange.js";
 import { encryptSecret, sha256Hex } from "./crypto.js";
@@ -85,23 +85,6 @@ export interface AuthRouterDeps {
 }
 
 type AuthContext = Context<RequestVars>;
-
-/**
- * Shared zValidator failure hook body: a body that fails schema validation
- * becomes the `VALIDATION_FAILED` envelope (never zValidator's default 400
- * shape). Extracted so the single `c`-to-`AuthContext` cast — hook contexts
- * arrive typed with Hono's base `Env`, not our `RequestVars` (`requestIdOf`
- * mints the id if the requestId middleware hasn't run) — lives here once, not
- * copied per route.
- */
-function rejectInvalidBody<T>(c: Context<Env>, error: z.core.$ZodError<T>): Response {
-  return apiError(
-    c as unknown as AuthContext,
-    "VALIDATION_FAILED",
-    "request body failed validation",
-    z.flattenError(error),
-  );
-}
 
 function failureReason(error: unknown): string {
   if (error instanceof ProviderVerificationError) return error.reason;
