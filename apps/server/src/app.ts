@@ -21,8 +21,11 @@ const API_BASE = "/api";
  * the guard's allowlist can never drift from the routes it fronts. Every other
  * route in the app runs behind `requireAuth`.
  */
-const PUBLIC_ALLOWLIST: ReadonlySet<string> = new Set([
+export const PUBLIC_ALLOWLIST: ReadonlySet<string> = new Set([
   `GET ${API_BASE}/health`,
+  // Hono auto-serves HEAD for the GET health route; allowlist it too so LB /
+  // uptime probes (which commonly use HEAD) aren't 401'd into "unhealthy".
+  `HEAD ${API_BASE}/health`,
   `${authEndpoints.appleSignIn.method} ${API_BASE}${authEndpoints.appleSignIn.path}`,
   `${authEndpoints.googleSignIn.method} ${API_BASE}${authEndpoints.googleSignIn.path}`,
   `${authEndpoints.refresh.method} ${API_BASE}${authEndpoints.refresh.path}`,
