@@ -4,8 +4,7 @@
  * lives in `auth/serialize.ts` (`toUserWire`, shared with sign-in); these are
  * the AU-6 additions.
  */
-import type { PaymentHandles, UserProfile } from "@gogo/shared/domains/user";
-import type { PushToken } from "@gogo/shared/domains/user";
+import type { PaymentHandles, PushToken, UserProfile } from "@gogo/shared/domains/user";
 import type * as schema from "../db/schema/index.js";
 
 type UserRow = typeof schema.users.$inferSelect;
