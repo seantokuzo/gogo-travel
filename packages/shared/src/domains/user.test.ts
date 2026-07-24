@@ -151,6 +151,17 @@ describe("DisplayName", () => {
     expect(DisplayNameSchema.safeParse("").success).toBe(false);
     expect(DisplayNameSchema.safeParse("x".repeat(51)).success).toBe(false);
   });
+  it("bounds by code points, not UTF-16 code units — an astral name ≤50 code points round-trips", () => {
+    // 30 emoji = 30 code points but 60 UTF-16 code units. The old `.max(50)`
+    // (String.length) 400'd this; the code-point cap accepts it, so a
+    // system-seeded astral name re-saves through PATCH /users/me verbatim.
+    const astral = "\u{1F600}".repeat(30);
+    expect(astral.length).toBe(60); // UTF-16 code units
+    expect([...astral]).toHaveLength(30); // code points
+    expect(DisplayNameSchema.parse(astral)).toBe(astral); // accepted, stored verbatim
+    // The cap IS code points: 51 emoji (51 code points) is still rejected.
+    expect(DisplayNameSchema.safeParse("\u{1F600}".repeat(51)).success).toBe(false);
+  });
   it("rejects control characters", () => {
     expect(DisplayNameSchema.safeParse("Sean\u0007").success).toBe(false);
   });

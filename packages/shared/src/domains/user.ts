@@ -189,11 +189,21 @@ export type UserProfile = z.infer<typeof UserProfileSchema>;
 
 const CONTROL_CHARS_REGEX = /[\p{Cc}]/u;
 
+/**
+ * 1–50 characters, trimmed, no control chars (spec §3.4.2 / R-user-2:
+ * "1–50 chars"). The upper bound counts CODE POINTS, not UTF-16 code units —
+ * `.max(50)` would measure `String.length` (code units), which disagrees with
+ * the surrogate-safe seed clamp in `auth/sign-in.ts` (`[...name].slice(0, 50)`,
+ * code points). Without the code-point cap, a system-seeded astral display
+ * name (e.g. 30 emoji = 30 code points but 60 code units) seeds fine yet 400s
+ * when re-submitted verbatim through `PATCH /users/me` — it can't round-trip.
+ * Code points is the sane reading of "chars" and the unit both sides now use.
+ */
 export const DisplayNameSchema = z
   .string()
   .trim()
   .min(1)
-  .max(50)
+  .refine((v) => [...v].length <= 50, { message: "display name may be at most 50 characters" })
   .refine((v) => !CONTROL_CHARS_REGEX.test(v), { message: "control characters are not allowed" });
 
 /** `PATCH /users/me` — `prefs` is a whole-object replace, unknown keys stripped. */
