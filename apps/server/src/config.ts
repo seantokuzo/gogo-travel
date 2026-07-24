@@ -37,6 +37,20 @@ export const ACCESS_TOKEN_ALGORITHMS = ["ES256"] as const;
 export const SESSIONS_PAGE_SIZE = 50;
 
 // ---------------------------------------------------------------------------
+// Avatar presign flow (auth-users spec §3.4.2, R-user-3) — AU-6
+// ---------------------------------------------------------------------------
+
+/** Presigned avatar upload-ticket TTL — spec pins "≤ 10 min"; this IS 10 min. */
+export const AVATAR_TICKET_TTL_SECONDS = 10 * 60;
+
+/**
+ * Outbound `HEAD https://cash.app/$<cashtag>` timeout (R-user-6). Short on
+ * purpose: the check is best-effort UX sugar and fails OPEN — a save must
+ * never hang on a third party (spec §3.4.2).
+ */
+export const CASHTAG_HEAD_TIMEOUT_MS = 4_000;
+
+// ---------------------------------------------------------------------------
 // Provider verification (auth-users spec §2.1, R-auth-1/2)
 // ---------------------------------------------------------------------------
 

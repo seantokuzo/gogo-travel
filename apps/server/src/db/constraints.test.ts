@@ -29,7 +29,7 @@ import * as schema from "./schema/index.js";
 
 const dockerAvailable = await (async () => {
   try {
-    await promisify(execFile)("docker", ["info"], { timeout: 15_000 });
+    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
     return true;
   } catch {
     return false;

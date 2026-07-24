@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
 import { createRequireAuth } from "./http/require-auth.js";
 import type { RequestVars } from "./http/errors.js";
@@ -39,9 +40,20 @@ export interface CreateAppOptions {
    * guard mounts too.
    */
   auth?: AuthRouterDeps;
+  /**
+   * Users/entitlements router dependencies (T-5.5). Every route on that
+   * surface is Auth: Required, so mounting it without `auth` (no
+   * `requireAuth` guard, no verifier) is a wiring bug — rejected loudly at
+   * construction, never a silently-unguarded surface.
+   */
+  users?: UsersRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
+  if (options.users && !options.auth) {
+    throw new Error("users router requires auth deps — it must sit behind requireAuth");
+  }
+
   const app = new Hono<RequestVars>();
   const logger = options.auth?.logger;
 
@@ -68,6 +80,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     // Descriptor paths (`/auth/apple`, …) mount under the same `/api` base
     // as the health check — the mobile ApiClient's base URL ends in `/api`.
     app.route(API_BASE, createAuthRouter(options.auth));
+  }
+
+  if (options.users) {
+    app.route(API_BASE, createUsersRouter(options.users));
   }
 
   return app;

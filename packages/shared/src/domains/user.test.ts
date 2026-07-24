@@ -151,6 +151,17 @@ describe("DisplayName", () => {
     expect(DisplayNameSchema.safeParse("").success).toBe(false);
     expect(DisplayNameSchema.safeParse("x".repeat(51)).success).toBe(false);
   });
+  it("bounds by code points, not UTF-16 code units — an astral name ≤50 code points round-trips", () => {
+    // 30 emoji = 30 code points but 60 UTF-16 code units. The old `.max(50)`
+    // (String.length) 400'd this; the code-point cap accepts it, so a
+    // system-seeded astral name re-saves through PATCH /users/me verbatim.
+    const astral = "\u{1F600}".repeat(30);
+    expect(astral.length).toBe(60); // UTF-16 code units
+    expect([...astral]).toHaveLength(30); // code points
+    expect(DisplayNameSchema.parse(astral)).toBe(astral); // accepted, stored verbatim
+    // The cap IS code points: 51 emoji (51 code points) is still rejected.
+    expect(DisplayNameSchema.safeParse("\u{1F600}".repeat(51)).success).toBe(false);
+  });
   it("rejects control characters", () => {
     expect(DisplayNameSchema.safeParse("Sean\u0007").success).toBe(false);
   });
@@ -236,6 +247,27 @@ describe("Push token schemas (R-user-8)", () => {
     ).toBe("ExponentPushToken[abc]");
     expect(PushTokenCreateSchema.safeParse({ token: "", platform: "ios" }).success).toBe(false);
     expect(PushTokenCreateSchema.safeParse({ token: "t", platform: "web" }).success).toBe(false);
+  });
+  it("accepts both Expo token prefixes", () => {
+    for (const token of ["ExponentPushToken[abc-123]", "ExpoPushToken[xYz_9]"]) {
+      expect(PushTokenCreateSchema.safeParse({ token, platform: "ios" }).success).toBe(true);
+    }
+  });
+  it("rejects non-Expo-shaped tokens (spec §3.4.2: malformed token → 400)", () => {
+    const malformed = [
+      "t", // opaque junk
+      "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2", // raw APNs hex
+      "ExponentPushToken[", // unterminated
+      "ExponentPushToken[]", // empty payload
+      "ExponentPushToken[a b]", // whitespace in payload
+      "ExponentPushToken[a]extra", // trailing junk
+      "exponentpushtoken[abc]", // wrong case
+      "ExponentPushToken[a\u0000b]", // control char in payload (escaped, never raw bytes)
+      `ExponentPushToken[${"x".repeat(600)}]`, // over the length cap
+    ];
+    for (const token of malformed) {
+      expect(PushTokenCreateSchema.safeParse({ token, platform: "ios" }).success).toBe(false);
+    }
   });
   it("row shape round-trips with ISO last_seen_at", () => {
     const parsed = PushTokenSchema.parse({

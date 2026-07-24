@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
 
 // A local .env is loaded natively via `--env-file-if-exists=.env` (Node >=22.9,
@@ -18,7 +19,15 @@ if (!authDeps) {
   console.warn("[boot] auth env not configured — /auth routes NOT mounted (health-only boot)");
 }
 
-const app = createApp(authDeps ? { auth: authDeps } : {});
+// Users surface (T-5.5) mounts iff auth does — its routes are Auth: Required
+// and sit behind the app-wide requireAuth guard. Object storage has no
+// provider yet (parked escalation): avatar presign 500s, avatar commit 400s,
+// everything else on the surface is live.
+if (authDeps) {
+  console.warn("[boot] object storage not configured — avatar presign is unavailable");
+}
+
+const app = createApp(authDeps ? { auth: authDeps, users: buildUsersDepsFromEnv() } : {});
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   // eslint-disable-next-line no-console -- boot banner is the one allowed log
