@@ -30,7 +30,6 @@ import {
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { SignInResponseSchema, type SignInResponse } from "@gogo/shared/domains/auth";
-import type { Hono } from "hono";
 import { createApp } from "../app.js";
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -87,7 +86,7 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
   let container: StartedPostgreSqlContainer;
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
-  let app: Hono;
+  let app: ReturnType<typeof createApp>;
   let providerKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
   let accessPublicKey: Awaited<ReturnType<typeof generateKeyPair>>["publicKey"];
   const credentialsKey = parseAesKey(Buffer.alloc(32, 9).toString("base64"));

@@ -28,7 +28,6 @@ import {
   type AuthSessionInfo,
 } from "@gogo/shared/domains/auth";
 import { paginatedSchema, type Paginated } from "@gogo/shared/api/envelope";
-import type { Hono } from "hono";
 import { createApp } from "../app.js";
 import { JWT_AUDIENCE, JWT_ISSUER, REFRESH_TOKEN_TTL_MS, SESSIONS_PAGE_SIZE } from "../config.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
@@ -76,7 +75,7 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
   let container: StartedPostgreSqlContainer;
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
-  let app: Hono;
+  let app: ReturnType<typeof createApp>;
   let signer: AccessTokenSigner;
   let accessPublicKey: Awaited<ReturnType<typeof generateKeyPair>>["publicKey"];
   const warnings: string[] = [];
