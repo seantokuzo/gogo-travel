@@ -6,6 +6,7 @@
  * pinned here. End-to-end resolution flows live in `signin-routes.db.test.ts`.
  */
 import { describe, expect, it } from "vitest";
+import { DisplayNameSchema } from "@gogo/shared/domains/user";
 import type { DbClient } from "../db/create-user.js";
 import type * as schema from "../db/schema/index.js";
 import type { VerifiedIdentity } from "./provider-verify.js";
@@ -66,8 +67,21 @@ describe("seedDisplayName", () => {
     expect(name.slice(0, 50)).not.toBe(seeded);
   });
 
+  it("an astral seeded name (>50 code units, ≤50 code points) re-parses through DisplayNameSchema", () => {
+    // seedDisplayName clamps to 50 code POINTS; the write schema now also caps
+    // code points. 30 emoji = 30 code points but 60 UTF-16 code units: the seed
+    // leaves it whole and the write schema re-accepts it, so the system-
+    // generated name round-trips through PATCH /users/me verbatim.
+    const seeded = seedDisplayName({ fullName: "\u{1F600}".repeat(30) }, "s@example.com");
+    expect([...seeded]).toHaveLength(30); // not clamped (≤50 code points)
+    expect(seeded.length).toBe(60); // 60 UTF-16 code units
+    expect(DisplayNameSchema.parse(seeded)).toBe(seeded); // write schema accepts it verbatim
+  });
+
   it("strips control characters from provider name claims (write-side parity)", () => {
-    expect(seedDisplayName({ fullName: "Sean\u0000\tTokuzo\n" }, "s@example.com")).toBe("SeanTokuzo");
+    expect(seedDisplayName({ fullName: "Sean\u0000\tTokuzo\n" }, "s@example.com")).toBe(
+      "SeanTokuzo",
+    );
   });
 });
 

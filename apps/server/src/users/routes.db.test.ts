@@ -363,6 +363,23 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
       expect(row!.prefs).toEqual({ units: "imperial", travel_style: ["foodie"] });
     });
 
+    it("accepts an astral display_name (>50 code units, ≤50 code points) and stores it verbatim", async () => {
+      const { user, accessToken } = await seedUser();
+      // 30 emoji = 30 code points but 60 UTF-16 code units. seedDisplayName
+      // clamps to 50 code POINTS, so a system-seeded astral name MUST round-
+      // trip through the write schema (which now caps code points too), not
+      // 400 on `String.length`. Proves the seed ↔ PATCH agreement.
+      const astral = "\u{1F600}".repeat(30);
+      expect(astral.length).toBe(60);
+      const res = await patchMe(accessToken, { display_name: astral });
+      expect(res.status).toBe(200);
+      const body = UserSchema.parse(await res.json());
+      expect(body.display_name).toBe(astral); // returned verbatim
+
+      const [row] = await db.select().from(schema.users).where(eq(schema.users.id, user.id));
+      expect(row!.displayName).toBe(astral); // stored verbatim
+    });
+
     it("prefs is a whole-object REPLACE, not a merge", async () => {
       const { accessToken } = await seedUser();
       await patchMe(accessToken, { prefs: { units: "metric", home_currency: "JPY" } });

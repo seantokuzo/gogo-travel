@@ -62,7 +62,9 @@ export interface NameSeed {
 /**
  * R-auth-5: provider name fields when present, else the email local part;
  * the user edits it at onboarding. Sanitized to match the write-side
- * `DisplayNameSchema` (no control chars, ≤ 50 chars).
+ * `DisplayNameSchema` (no control chars, ≤ 50 CODE POINTS) — both sides
+ * measure code points, so a system-seeded name round-trips through
+ * `PATCH /users/me` verbatim.
  */
 export function seedDisplayName(name: NameSeed, email: string): string {
   // Strip control chars (`\p{Cc}`, incl. NUL/tab/newline) then trim — provider
