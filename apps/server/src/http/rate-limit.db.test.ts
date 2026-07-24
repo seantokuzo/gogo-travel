@@ -126,6 +126,18 @@ describe.skipIf(!dockerAvailable)("auth rate-limit wiring (integration)", () => 
       headers: { "content-type": "application/json", "x-test-ip": ip },
       body: appleBody(),
     });
+  const googleBody = () =>
+    JSON.stringify({
+      id_token: "not-a-real-jwt",
+      raw_nonce: "nonce",
+      device: { platform: "android" },
+    });
+  const postGoogle = (ip: string) =>
+    app.request("/api/auth/google", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-ip": ip },
+      body: googleBody(),
+    });
   const postRefresh = (ip: string, refreshToken: string) =>
     app.request("/api/auth/refresh", {
       method: "POST",
@@ -168,6 +180,34 @@ describe.skipIf(!dockerAvailable)("auth rate-limit wiring (integration)", () => 
 
     clock.ms += 60_000; // one minute later
     expect((await postApple(ip)).status).toBe(401); // fresh window
+  });
+
+  it("sign-in limiter is ONE shared budget across apple AND google (§3.6.3: same row, same IP)", async () => {
+    // §3.6.3 lists apple + google on a SINGLE row (10/min, 50/day, per IP) and
+    // the router mounts ONE `signInLimiter` instance on both routes → the budget
+    // is COMBINED across the two endpoints, not one bucket each (stricter/safer).
+    // This locks that intent so a future split can't happen silently.
+    const ip = "10.0.0.50";
+    const perMinute = RATE_LIMITS.signIn[0].limit; // 10
+    // Spend the whole per-minute budget as a MIX of both endpoints on one IP,
+    // alternating so NEITHER endpoint individually reaches `perMinute`
+    // (5 apple + 5 google). Each is under the cap → reaches verification → 401.
+    for (let i = 0; i < perMinute; i++) {
+      const res = i % 2 === 0 ? await postApple(ip) : await postGoogle(ip);
+      expect(res.status).toBe(401);
+    }
+    // Budget now exhausted by the COMBINED count, though each endpoint alone made
+    // only 5 (< 10). Separate buckets → both would still be 401; the OTHER
+    // endpoint being 429 proves the two share one per-IP bucket.
+    const nextGoogle = await postGoogle(ip);
+    expect(nextGoogle.status).toBe(429);
+    expect(Number(nextGoogle.headers.get("retry-after"))).toBeGreaterThan(0);
+    // And back to apple: also 429 on the same shared, exhausted bucket.
+    expect((await postApple(ip)).status).toBe(429);
+
+    // A different peer still has the full shared budget → this was the IP key,
+    // not global cross-talk.
+    expect((await postGoogle("10.0.0.51")).status).toBe(401);
   });
 
   // -------------------------------------------------------------------------
