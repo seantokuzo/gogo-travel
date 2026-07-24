@@ -10,7 +10,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
-import type { TripMemberRole } from "@gogo/shared/enums";
+import type { AiFeature, TripMemberRole } from "@gogo/shared/enums";
 import { ERROR_STATUS, type ApiError, type ErrorCode } from "@gogo/shared/api/envelope";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
@@ -46,7 +46,7 @@ export interface TripContext {
 
 /** The quota context `requireAiQuota` attaches once the caller is under-cap (R-ent-2). */
 export interface AiQuotaContext {
-  feature: string;
+  feature: AiFeature;
   /** Effective `ai_calls_per_day` for the caller (resolveEntitlements). */
   cap: number;
   /** Counted calls already used today (UTC). */
