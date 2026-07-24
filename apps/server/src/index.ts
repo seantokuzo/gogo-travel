@@ -27,7 +27,7 @@ if (authDeps) {
   console.warn("[boot] object storage not configured — avatar presign is unavailable");
 }
 
-const app = createApp(authDeps ? { auth: authDeps, users: buildUsersDepsFromEnv() } : {});
+const app = createApp(authDeps ? { auth: authDeps, users: await buildUsersDepsFromEnv(env) } : {});
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   // eslint-disable-next-line no-console -- boot banner is the one allowed log
