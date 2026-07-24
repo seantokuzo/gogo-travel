@@ -237,6 +237,27 @@ describe("Push token schemas (R-user-8)", () => {
     expect(PushTokenCreateSchema.safeParse({ token: "", platform: "ios" }).success).toBe(false);
     expect(PushTokenCreateSchema.safeParse({ token: "t", platform: "web" }).success).toBe(false);
   });
+  it("accepts both Expo token prefixes", () => {
+    for (const token of ["ExponentPushToken[abc-123]", "ExpoPushToken[xYz_9]"]) {
+      expect(PushTokenCreateSchema.safeParse({ token, platform: "ios" }).success).toBe(true);
+    }
+  });
+  it("rejects non-Expo-shaped tokens (spec §3.4.2: malformed token → 400)", () => {
+    const malformed = [
+      "t", // opaque junk
+      "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2a3b4c5d6a7b8c9d0e1f2", // raw APNs hex
+      "ExponentPushToken[", // unterminated
+      "ExponentPushToken[]", // empty payload
+      "ExponentPushToken[a b]", // whitespace in payload
+      "ExponentPushToken[a]extra", // trailing junk
+      "exponentpushtoken[abc]", // wrong case
+      "ExponentPushToken[a\u0000b]", // control char in payload (escaped, never raw bytes)
+      `ExponentPushToken[${"x".repeat(600)}]`, // over the length cap
+    ];
+    for (const token of malformed) {
+      expect(PushTokenCreateSchema.safeParse({ token, platform: "ios" }).success).toBe(false);
+    }
+  });
   it("row shape round-trips with ISO last_seen_at", () => {
     const parsed = PushTokenSchema.parse({
       id: "6f9d9d31-6d4a-4b7a-9df6-9b4a3f6d2e1c",

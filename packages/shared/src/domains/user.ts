@@ -235,8 +235,23 @@ export type AvatarUploadTicket = z.infer<typeof AvatarUploadTicketSchema>;
 // Push tokens (auth-users spec §3.4.2)
 // ---------------------------------------------------------------------------
 
+/**
+ * Expo push-token wire shape (spec §3.4.2: a non-Expo-shaped token is 400
+ * `VALIDATION_FAILED`). Expo mints `ExponentPushToken[…]` (the server SDK's
+ * `isExpoPushToken` also accepts the `ExpoPushToken[…]` prefix — mirror it).
+ * The bracket payload is opaque but bounded: no whitespace, brackets, or
+ * control characters inside, and a length cap so raw APNs/FCM device tokens
+ * and junk never reach storage.
+ */
+export const EXPO_PUSH_TOKEN_REGEX = /^Expo(nent)?PushToken\[[^\s[\]\p{Cc}]+\]$/u;
+
+export const ExpoPushTokenSchema = z
+  .string()
+  .max(512)
+  .regex(EXPO_PUSH_TOKEN_REGEX, { message: "not an Expo push token" });
+
 export const PushTokenCreateSchema = z.object({
-  token: z.string().min(1),
+  token: ExpoPushTokenSchema,
   platform: PushPlatformSchema,
 });
 export type PushTokenCreate = z.infer<typeof PushTokenCreateSchema>;
