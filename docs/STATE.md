@@ -91,8 +91,28 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   drift-guard tests.** 4 advisories → QUEUE (P-10 atomic AI-increment is a
   P0 blocker for P-10; ai_usage composite index; trusted-proxy ipOf at
   deploy; NAT lockout accepted §3.6.3).
-- **T-5.5 ACTIVE** (engineer subagent): profile/avatar/handles/push-tokens +
-  entitlements read [AU-6, AU-7], branch `P-5/T-5-5-profile`.
+- **T-5.5 MERGED (d408cac)** — GET/PATCH /users/me (code-point display-name
+  clamp both sides now), member profile GET /users/:userId (404-
+  indistinguishable, shared-trip gated, member-safe fields only), avatar
+  presign+commit (namespace-check-before-objectExists; own-key-only),
+  payment-handle normalize (cashtag checker host-PINNED to cash.app +
+  redirect:manual + fail-open; no Venmo fetch; merged-row zelle guard),
+  push-token upsert-move (updated_at manual, $onUpdate-upsert landmine
+  handled), entitlements read (shared resolveEntitlements, not forked).
+  Server 219→271, shared 317→320. 5-lane 0-blocking SHIP (~50 security
+  probes cleared avatar-traversal / cashtag-SSRF / push-move / IDOR);
+  4 advisories fixed; judge merge/high.
+  **Avatar object-storage provider = OPEN Sean escalation** (blocked row,
+  P1): spec §3.8 pre-designated infra escalation; port ships fail-safe
+  (UNCONFIGURED_OBJECT_STORAGE). Recommend Cloudflare R2 (zero egress,
+  S3-compat) — same store serves trip photos P-12. ~10-line wire + ADR.
+- **T-5.6 ACTIVE** (engineer subagent): account deletion [AU-8] — soft-
+  delete + PII scrub, sole-owner-trip 409 transfer-first, Apple token
+  revocation (R-user-9, uses apple_credentials from T-5.2), branch
+  `P-5/T-5-6-deletion`.
+- Infra note: 9+ testcontainers DB suites now contend on the 10s port-bind
+  timeout under vitest file-parallelism (serial passes clean) — QUEUE row
+  for shared-globalSetup-container or CI --no-file-parallelism.
 - Review-mode note: local 5-lane pipeline + fresh judge is the standard
   gate; Sean's `/code-review ultra` is optional (2 free left) and can be
   substituted by a deep local self-review agent (whole-diff, adversarial,
