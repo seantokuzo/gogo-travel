@@ -2,17 +2,18 @@ import { ThemeProvider, useTheme } from "@gogo/tokens/react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
+import { AuthGate } from "@/navigation/AuthGate";
 import { useStackScreenOptions } from "@/navigation/stack-options";
 import { systemAppearance, themeStorage } from "@/theme";
 
 /**
- * Root layout (navigation.spec §2.1) — owns providers and the root Stack.
+ * Root layout (navigation.spec §2.1) — owns providers, the root Stack, and the
+ * NAV-2 auth gate.
  *
- * NAV-2 seams (deliberately NOT wired — no session store exists yet, and the
- * mobile landmine forbids gating screens on state nothing sets):
- * - splash-hold until session hydration (R-nav-3)
- * - redirect gate: unauthed → /(auth)/sign-in with stashed destination
- *   (R-nav-1), first-run → onboarding (R-nav-2), sign-out reset (R-nav-4)
+ * `AuthGate` (T-5.7) wires the seams T-4.4 left documented: splash-hold until
+ * session hydration (R-nav-3); redirect gate — unauthed → /(auth)/sign-in with
+ * stashed destination (R-nav-1), first-run → onboarding (R-nav-2), sign-out
+ * reset (R-nav-4) — all off the real `useSessionStore`.
  *
  * Modal presentation (R-nav-21) is registered in each modal's OWNING stack
  * layout — expo-router configures `presentation` where the screen is a direct
@@ -29,7 +30,9 @@ function ThemedShell() {
     <>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />
       {/* PageHeader owns all screen chrome (§2.9) — native headers stay off. */}
-      <Stack screenOptions={useStackScreenOptions()} />
+      <AuthGate>
+        <Stack screenOptions={useStackScreenOptions()} />
+      </AuthGate>
     </>
   );
 }
