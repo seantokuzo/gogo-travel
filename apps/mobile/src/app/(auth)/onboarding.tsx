@@ -20,11 +20,12 @@ import {
   type TravelStyle,
   type UserPrefs,
 } from "@gogo/shared";
-import { createStyles } from "@gogo/tokens/react";
+import { createStyles, useTheme } from "@gogo/tokens/react";
 import { useCallback, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { useSessionStore } from "@/auth";
+import { ApiRequestError, useSessionStore } from "@/auth";
 import { AppText, Button, ErrorBanner, Input, PageHeader } from "@/components";
 import { usePaymentHandlesUpdate, useUpdateMe } from "@/data";
 import {
@@ -35,6 +36,19 @@ import {
 } from "@/features/onboarding";
 
 const STEP_COUNT = 4;
+
+/**
+ * Handle-write failures surface the server's field-level message when there is
+ * one (a bad Venmo/Zelle handle 400s with a reason); transport/unknown failures
+ * fall back to generic copy. Kept distinct from the profile-save message so the
+ * user knows the handles — not their name/prefs — are what needs fixing.
+ */
+function handlesErrorMessage(err: unknown): string {
+  if (err instanceof ApiRequestError && err.code !== "NETWORK" && err.message.length > 0) {
+    return `Couldn't save your payment handles: ${err.message}`;
+  }
+  return "Couldn't save your payment handles. Please check them and try again.";
+}
 
 const STEP_META = [
   {
@@ -68,6 +82,8 @@ const useStyles = createStyles((t) =>
 
 export default function OnboardingScreen() {
   const s = useStyles();
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
@@ -125,13 +141,26 @@ export default function OnboardingScreen() {
     }
     const hasHandles = Object.keys(handles).length > 0;
 
+    // Two writes, distinct failure surfaces: the profile PATCH lands first, so a
+    // handle failure (e.g. a bad Zelle handle 400ing on the 2nd write) must NOT
+    // read as "profile save failed" — prefs are already persisted. Onboarding is
+    // only completed once BOTH writes succeed (a failure leaves firstRun true so
+    // the gate keeps the user here to retry).
     try {
       await updateMe.mutateAsync({ display_name: name.trim(), prefs });
-      if (hasHandles) await updateHandles.mutateAsync(handles);
-      useSessionStore.getState().completeOnboarding();
     } catch {
       setError("Couldn't save your profile. Please try again.");
+      return;
     }
+    if (hasHandles) {
+      try {
+        await updateHandles.mutateAsync(handles);
+      } catch (err) {
+        setError(handlesErrorMessage(err));
+        return;
+      }
+    }
+    useSessionStore.getState().completeOnboarding();
   }, [
     zelleNameMissing,
     zelleSet,
@@ -257,7 +286,9 @@ export default function OnboardingScreen() {
           ) : null}
         </ScrollView>
 
-        <View style={s.footer}>
+        {/* Pinned bar (outside the scroll) — pad past the home indicator so the
+            primary button never sits under it on notch devices (§2.8 safe-area). */}
+        <View style={[s.footer, { paddingBottom: insets.bottom + theme.space[4] }]}>
           {step > 0 ? (
             <Button
               title="Back"

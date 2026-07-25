@@ -16,7 +16,13 @@ import { ApiRequestError } from "@/auth/api-client";
 /** A few minutes — profile/session/entitlement reads are not hot data. */
 const DEFAULT_STALE_TIME = 1000 * 60 * 5;
 
-/** Stable query keys — one home per cached resource. */
+/**
+ * Stable query keys — one home per cached resource. These are UNSCOPED
+ * (`["me"]`/`["sessions"]`/`["entitlements"]`, no user id), which is safe ONLY
+ * because `signOut()` calls `queryClient.clear()` (nav §2.2): any future
+ * user-switch path that bypasses signOut() would leak the previous user's cache
+ * and MUST either clear the cache or scope these keys by user id.
+ */
 export const queryKeys = {
   me: ["me"] as const,
   entitlements: ["entitlements"] as const,

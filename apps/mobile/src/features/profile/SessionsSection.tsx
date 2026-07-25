@@ -99,6 +99,15 @@ export function SessionsSection() {
 
   return (
     <Section title="Sessions" testID="profile-section-sessions">
+      {/* Revoke is fire-and-forget; a failed revoke must NOT read as success
+          (the row stays) — surface it so the user knows to retry. */}
+      {revoke.isError ? (
+        <ErrorBanner
+          message="Couldn't revoke that session. Please try again."
+          onDismiss={() => revoke.reset()}
+          testID="profile-revoke-error"
+        />
+      ) : null}
       {body}
       <ConfirmDialog
         visible={revokeId !== null}

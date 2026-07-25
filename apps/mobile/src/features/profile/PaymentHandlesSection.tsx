@@ -18,8 +18,14 @@ import { usePaymentHandlesUpdate } from "@/data";
 
 import { Section } from "./Section";
 
-/** Empty now → clear if it had a value (null), else untouched (undefined). */
-function diffField(current: string, original: string | null): string | null | undefined {
+/**
+ * The absent-vs-null wire rule (auth spec §3.4.2), isolated + exported for a
+ * direct unit test:
+ * - non-empty now                  → the trimmed value
+ * - empty now, HAD a value before  → `null` (clear it — the user removed it)
+ * - empty now, was already empty   → `undefined` (omit → untouched)
+ */
+export function diffField(current: string, original: string | null): string | null | undefined {
   const trimmed = current.trim();
   if (trimmed.length > 0) return trimmed;
   return original !== null ? null : undefined;

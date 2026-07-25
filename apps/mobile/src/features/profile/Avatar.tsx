@@ -33,7 +33,7 @@ const useStyles = createStyles((t) =>
     avatar: {
       width: 72,
       height: 72,
-      borderRadius: 36,
+      borderRadius: t.radius.full,
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: t.color.bg.inset,

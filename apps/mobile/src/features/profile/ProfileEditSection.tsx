@@ -18,7 +18,7 @@ import { Section } from "./Section";
 const useStyles = createStyles((t) =>
   StyleSheet.create({
     identity: { flexDirection: "row", alignItems: "center", gap: t.space[3] },
-    identityText: { flex: 1, gap: 2 },
+    identityText: { flex: 1, gap: t.space[1] },
     form: { gap: t.space[3] },
   }),
 );
