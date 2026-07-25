@@ -106,13 +106,28 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   P1): spec §3.8 pre-designated infra escalation; port ships fail-safe
   (UNCONFIGURED_OBJECT_STORAGE). Recommend Cloudflare R2 (zero egress,
   S3-compat) — same store serves trip photos P-12. ~10-line wire + ADR.
-- **T-5.6 ACTIVE** (engineer subagent): account deletion [AU-8] — soft-
-  delete + PII scrub, sole-owner-trip 409 transfer-first, Apple token
-  revocation (R-user-9, uses apple_credentials from T-5.2), branch
-  `P-5/T-5-6-deletion`.
-- Infra note: 9+ testcontainers DB suites now contend on the 10s port-bind
-  timeout under vitest file-parallelism (serial passes clean) — QUEUE row
-  for shared-globalSetup-container or CI --no-file-parallelism.
+- **T-5.6 MERGED (e82618b)** — DELETE /users/me: soft-delete + FULL PII
+  scrub (every users column, security-enumerated vs spec list) in one
+  atomic txn on the WS-Pool driver; sole-owner-409 blocks before any write;
+  all sessions/refresh revoked (no resurrection — refresh→401 post-delete);
+  Apple token revocation POST-commit (failure logged, can't roll back the
+  local deletion — R-db-16 governs); idempotent 204; device_name erased.
+  Server 271→288. 5-lane 0-blocking SHIP; judge merge/high. Extracted
+  shared apple-client-secret signer (revoker+exchanger share JWT construction).
+  **ALL P-5 SERVER TASKS DONE (T-5.1..T-5.6).**
+- **T-5.7 ACTIVE** (mobile engineer subagent): client auth gate + sign-in
+  screen [NAV-2] — Zustand session store, refresh token in **expo-secure-
+  store ONLY** (never AsyncStorage/MMKV), redirect gate (unauthed→/(auth)/
+  sign-in, first-run→onboarding, R-nav-1/2/4 seams from T-4.4), Apple+Google
+  sign-in buttons wired to the API. Branch `P-5/T-5-7-auth-gate`. FIRST P-5
+  CLIENT task → then T-5.8 (onboarding+profile screens) closes the phase,
+  and Apple/Google sign-in reaches Sean's phone.
+- **Testcontainers contention ESCALATING** — now WEDGES the Docker daemon
+  (500s) under parallel container boots, not just port-bind timeouts.
+  Workaround: server suite `--no-file-parallelism`. Bumped to QUEUE P1
+  (shared globalSetup container the real fix). Every DB-suite task hits it.
+- **Object storage DEFERRED by Sean 2026-07-24** — revisit at P-12 (trip
+  photos); port stays parked, fails safe. QUEUE blocked row updated.
 - Review-mode note: local 5-lane pipeline + fresh judge is the standard
   gate; Sean's `/code-review ultra` is optional (2 free left) and can be
   substituted by a deep local self-review agent (whole-diff, adversarial,
