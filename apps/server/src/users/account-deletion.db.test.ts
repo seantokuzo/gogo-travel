@@ -308,6 +308,48 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
   });
 
   // ---------------------------------------------------------------------------
+  // Multi-device: revoke ALL sessions + delete ALL push tokens (R-user-9). The
+  // impl scopes by userId, not the caller's sid — a regression narrowing it to
+  // the current session (leaving another device logged in) must fail here. Also
+  // proves device_name is erased on the revoked rows (deletion-time PII scrub).
+  // ---------------------------------------------------------------------------
+  it("revokes BOTH sessions + deletes BOTH push tokens across two devices, erasing device_name", async () => {
+    const u = await seedUser();
+    // Give device #1 (seeded session) a client-supplied name so the erasure is
+    // observable; add a SECOND device with its own session + refresh token.
+    await db
+      .update(schema.authSessions)
+      .set({ deviceName: "iPhone 17" })
+      .where(eq(schema.authSessions.id, u.sessionId));
+    const second = await createSessionWithTokens(db, {
+      userId: u.user.id,
+      device: { deviceName: "iPad Pro", platform: "ios" },
+      signer,
+    });
+    await seedPushToken(u.user.id);
+    await seedPushToken(u.user.id);
+
+    // Precondition: genuinely two sessions + two push tokens before deletion.
+    expect(await sessionsOf(u.user.id)).toHaveLength(2);
+    expect(await pushOf(u.user.id)).toHaveLength(2);
+
+    expect((await deleteMe(u.accessToken)).status).toBe(204);
+
+    // BOTH sessions revoked (not just the caller's) AND device_name nulled.
+    const sessions = await sessionsOf(u.user.id);
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((s) => s.revokedAt !== null)).toBe(true);
+    expect(sessions.every((s) => s.deviceName === null)).toBe(true);
+
+    // BOTH refresh tokens are dead — neither device can rotate a new token.
+    expect((await refresh(u.refreshToken)).status).toBe(401);
+    expect((await refresh(second.refreshToken)).status).toBe(401);
+
+    // ALL push tokens gone, not just one device's.
+    expect(await pushOf(u.user.id)).toHaveLength(0);
+  });
+
+  // ---------------------------------------------------------------------------
   // Sole-owner-trip guard (R-user-9 / schema §3.3.5) — the 409 scrubs NOTHING.
   // ---------------------------------------------------------------------------
   it("sole owner of a trip with other members → 409, and nothing is revoked or scrubbed", async () => {
