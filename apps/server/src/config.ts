@@ -60,6 +60,11 @@ export const APPLE_ISSUER = "https://appleid.apple.com";
 export const APPLE_JWKS_URL = "https://appleid.apple.com/auth/keys";
 /** Apple's code-exchange endpoint (R-auth-7). */
 export const APPLE_TOKEN_URL = "https://appleid.apple.com/auth/token";
+/**
+ * Apple's token-revocation endpoint (R-user-9 / App Store guideline
+ * 5.1.1(v)) — consumes the stored Apple refresh token at account deletion.
+ */
+export const APPLE_REVOKE_URL = "https://appleid.apple.com/auth/revoke";
 
 /** Google ID tokens: `iss` ∈ this set (R-auth-2). */
 export const GOOGLE_ISSUERS = ["accounts.google.com", "https://accounts.google.com"] as const;

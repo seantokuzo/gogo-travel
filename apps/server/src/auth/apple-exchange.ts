@@ -15,27 +15,19 @@
  * authorization code, client secret, and returned tokens NEVER appear in an
  * error message or log line.
  */
-import { importPKCS8, SignJWT } from "jose";
-import { APPLE_ISSUER, APPLE_TOKEN_URL } from "../config.js";
+import { APPLE_TOKEN_URL } from "../config.js";
+import {
+  createAppleClientSecretSigner,
+  type AppleClientSecretConfig,
+} from "./apple-client-secret.js";
 
 export interface AppleCodeExchanger {
   /** Resolves to Apple's refresh token; throws on any failure (caller logs + continues, R-auth-7). */
   exchange(authorizationCode: string): Promise<string>;
 }
 
-export interface AppleExchangeConfig {
-  /** Our bundle id — the token request's `client_id`. */
-  clientId: string;
-  /** Apple developer team id — client-secret `iss`. */
-  teamId: string;
-  /** Apple Sign-in key id — client-secret `kid`. */
-  keyId: string;
-  /** The .p8 private key, PKCS#8 PEM. */
-  privateKeyPem: string;
-}
-
-/** Client secrets are short-lived — minted per exchange, 5 minutes is ample. */
-const CLIENT_SECRET_TTL_SECONDS = 5 * 60;
+/** Alias of the shared client-secret config — exchange needs nothing more. */
+export type AppleExchangeConfig = AppleClientSecretConfig;
 
 /**
  * Cap the Apple token-endpoint round-trip. R-auth-7 says exchange FAILURE
@@ -47,39 +39,21 @@ const CLIENT_SECRET_TTL_SECONDS = 5 * 60;
  */
 const EXCHANGE_TIMEOUT_MS = 5_000;
 
-async function signClientSecret(
-  key: Awaited<ReturnType<typeof importPKCS8>>,
-  config: AppleExchangeConfig,
-  now: Date,
-): Promise<string> {
-  const iat = Math.floor(now.getTime() / 1000);
-  return new SignJWT({})
-    .setProtectedHeader({ alg: "ES256", kid: config.keyId })
-    .setIssuer(config.teamId)
-    .setSubject(config.clientId)
-    .setAudience(APPLE_ISSUER)
-    .setIssuedAt(iat)
-    .setExpirationTime(iat + CLIENT_SECRET_TTL_SECONDS)
-    .sign(key);
-}
-
 export async function createAppleCodeExchanger(
   config: AppleExchangeConfig,
   fetchImpl: typeof fetch = fetch,
   now: () => Date = () => new Date(),
   timeoutMs: number = EXCHANGE_TIMEOUT_MS,
 ): Promise<AppleCodeExchanger> {
-  // Import the .p8 PEM ONCE, and AWAIT it HERE at wire time — the key is static
-  // for the exchanger's lifetime and import is the expensive signing step, so
-  // hoisting saves per-sign-in work. The await is load-bearing: a malformed
-  // APPLE_PRIVATE_KEY must fail LOUDLY at boot (mirroring the ES256 signer key,
-  // wire.ts) — deferring the parse into exchange() would let a bad key reject
-  // inside the error-swallowed store path on every Apple sign-in, leaving
-  // apple_credentials empty and silently breaking App-Store revocation (R-user-9).
-  const signingKey = await importPKCS8(config.privateKeyPem, "ES256");
+  // Sign the client secret off a key imported ONCE at wire time (the shared
+  // signer awaits `importPKCS8` — a malformed APPLE_PRIVATE_KEY fails LOUD at
+  // boot, not inside the error-swallowed store path on first sign-in; see
+  // apple-client-secret.ts). This construction-time await preserves that
+  // fail-loud posture through the exchanger.
+  const signClientSecret = await createAppleClientSecretSigner(config);
   return {
     async exchange(authorizationCode: string): Promise<string> {
-      const clientSecret = await signClientSecret(signingKey, config, now());
+      const clientSecret = await signClientSecret(now());
       const response = await fetchImpl(APPLE_TOKEN_URL, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },

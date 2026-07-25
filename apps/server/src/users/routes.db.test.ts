@@ -171,6 +171,11 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
       db,
       storage,
       cashtagChecker,
+      // T-5.6 deletion deps — this suite exercises no deletion, so a no-op
+      // revoker + dummy key satisfy the shape (deletion is covered in
+      // account-deletion.db.test.ts).
+      appleRevoker: { revoke: () => Promise.resolve() },
+      appleCredentialsKey: Buffer.alloc(32, 7),
       now: () => frozenNow ?? new Date(),
     };
     app = createApp({ auth: authDeps, users: usersDeps });
@@ -876,6 +881,8 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
           db,
           storage,
           cashtagChecker,
+          appleRevoker: { revoke: () => Promise.resolve() },
+          appleCredentialsKey: Buffer.alloc(32, 7),
           rateLimit: { store: new InMemoryRateLimitStore(), now: () => nowMs },
         },
       });

@@ -35,12 +35,24 @@ import { resolveEntitlements } from "@gogo/shared/config/entitlements";
 import { AVATAR_TICKET_TTL_SECONDS, RATE_LIMITS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
-import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
+import {
+  apiError,
+  HttpError,
+  NOT_FOUND_MESSAGE,
+  requestIdOf,
+  type RequestVars,
+} from "../http/errors.js";
 import { rateLimit, type RateLimitStore } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { toUserWire } from "../auth/serialize.js";
+import type { AppleTokenRevoker } from "../auth/apple-revoke.js";
 import { mintAvatarKey, parseAvatarKey, type ObjectStorage } from "../storage/object-storage.js";
+import {
+  deleteAccount,
+  OwnerTransferRequiredError,
+  type AccountDeletionResult,
+} from "./account-deletion.js";
 import type { CashtagChecker } from "./cashtag.js";
 import { toPaymentHandlesWire, toPushTokenWire, toUserProfileWire } from "./serialize.js";
 
@@ -67,8 +79,16 @@ export interface UsersRouterDeps {
   storage: ObjectStorage;
   /** R-user-6 seam — prod HEADs cash.app, tests inject fakes. */
   cashtagChecker: CashtagChecker;
+  /**
+   * R-user-9 seam — Apple token revocation at account deletion. Prod hits
+   * Apple's REST endpoint, tests inject a fake; a revocation failure never
+   * blocks the (already-committed) deletion.
+   */
+  appleRevoker: AppleTokenRevoker;
+  /** AES-256-GCM key decrypting the stored Apple refresh token (§3.3.3, R-user-9). */
+  appleCredentialsKey: Buffer;
   logger?: UsersLogger;
-  /** Rate limiting for avatar-upload + payment-handles. Absent = off. */
+  /** Rate limiting for avatar-upload + payment-handles + account deletion. Absent = off. */
   rateLimit?: UsersRateLimitConfig;
   /** Clock seam for tests. */
   now?: () => Date;
@@ -115,6 +135,19 @@ export function createUsersRouter(deps: UsersRouterDeps): Hono<RequestVars> {
             name: "payment-handles",
             limit: RATE_LIMITS.paymentHandles.limit,
             windowMs: RATE_LIMITS.paymentHandles.windowMs,
+            keyOf: userKey,
+          },
+        ],
+        rlDeps,
+      )
+    : passThrough;
+  const deleteAccountLimiter = rlDeps
+    ? rateLimit(
+        [
+          {
+            name: "delete-account",
+            limit: RATE_LIMITS.deleteAccount.limit,
+            windowMs: RATE_LIMITS.deleteAccount.windowMs,
             keyOf: userKey,
           },
         ],
@@ -192,6 +225,53 @@ export function createUsersRouter(deps: UsersRouterDeps): Hono<RequestVars> {
       return c.json(toUserWire(updated));
     },
   );
+
+  // -------------------------------------------------------------------------
+  // DELETE /users/me — account deletion (R-user-9). Rate-limited 3/day/user.
+  // Owner-scoped by construction (the token's `sub`, no parameterization). The
+  // whole DB effect (sole-owner guard → PII scrub + deleted_at → session revoke
+  // → push-token delete → apple_credentials consume) is ONE transaction
+  // (account-deletion.ts); Apple's network revocation runs AFTER commit so its
+  // failure can't roll back the deletion (R-user-9 / R-db-16).
+  // -------------------------------------------------------------------------
+  router.delete(userEndpoints.deleteMe.path, deleteAccountLimiter, async (c) => {
+    const { userId } = authContextOf(c);
+
+    let result: AccountDeletionResult;
+    try {
+      result = await deleteAccount(
+        { db: deps.db, appleCredentialsKey: deps.appleCredentialsKey },
+        userId,
+        nowOf(),
+      );
+    } catch (error) {
+      // Sole owner of a trip with other members → transfer first (409). The
+      // transaction already rolled back, so nothing was revoked or scrubbed.
+      if (error instanceof OwnerTransferRequiredError) {
+        return apiError(c, "CONFLICT", error.message, { reason: "owner_transfer_required" });
+      }
+      throw error;
+    }
+
+    // Apple revocation is best-effort and OUTSIDE the committed transaction: a
+    // non-2xx / network failure is logged (reason only, never token material)
+    // and the deletion STANDS — the local scrub is the source of truth, and the
+    // App Store account-deletion mandate is satisfied by it (R-user-9 / R-db-16).
+    if (result.status === "deleted" && result.appleRefreshToken !== null) {
+      try {
+        await deps.appleRevoker.revoke(result.appleRefreshToken);
+      } catch (error) {
+        const reason = error instanceof Error ? error.name : "unknown";
+        deps.logger?.warn(
+          `[users] apple token revoke failed — account already deleted (requestId=${requestIdOf(c)}, reason=${reason})`,
+        );
+      }
+    }
+
+    // Idempotent: a live account is scrubbed; an already-scrubbed one is a
+    // no-op. Either way the account is gone — 204 (the spec lists no 404 here).
+    return c.body(null, 204);
+  });
 
   // -------------------------------------------------------------------------
   // POST /users/me/avatar-upload — presign ticket via the ObjectStorage port
