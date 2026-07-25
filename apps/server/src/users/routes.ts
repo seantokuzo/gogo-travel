@@ -48,7 +48,11 @@ import { rejectInvalidBody } from "../http/validation.js";
 import { toUserWire } from "../auth/serialize.js";
 import type { AppleTokenRevoker } from "../auth/apple-revoke.js";
 import { mintAvatarKey, parseAvatarKey, type ObjectStorage } from "../storage/object-storage.js";
-import { deleteAccount, OwnerTransferRequiredError } from "./account-deletion.js";
+import {
+  deleteAccount,
+  OwnerTransferRequiredError,
+  type AccountDeletionResult,
+} from "./account-deletion.js";
 import type { CashtagChecker } from "./cashtag.js";
 import { toPaymentHandlesWire, toPushTokenWire, toUserProfileWire } from "./serialize.js";
 
@@ -233,7 +237,7 @@ export function createUsersRouter(deps: UsersRouterDeps): Hono<RequestVars> {
   router.delete(userEndpoints.deleteMe.path, deleteAccountLimiter, async (c) => {
     const { userId } = authContextOf(c);
 
-    let result;
+    let result: AccountDeletionResult;
     try {
       result = await deleteAccount(
         { db: deps.db, appleCredentialsKey: deps.appleCredentialsKey },
