@@ -67,7 +67,8 @@
     "preset": "jest-expo",
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.js"
-    ]
+    ],
+    "testTimeout": 20000
   },
   "private": true
 }

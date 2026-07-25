@@ -141,23 +141,23 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     await screen.findByTestId("trip-list-screen");
 
     // Trip-list header: profile entry (Gate-2 header contract) + back.
-    fireEvent.press(screen.getByTestId("trip-list-button-profile"));
+    await fireEvent.press(screen.getByTestId("trip-list-button-profile"));
     expect(await screen.findByTestId("profile-screen")).toBeOnTheScreen();
-    fireEvent.press(screen.getByTestId("profile-header-back"));
+    await fireEvent.press(screen.getByTestId("profile-header-back"));
     await waitFor(() => expect(screen.queryByTestId("profile-screen")).toBeNull());
 
     // Header capture entry (R-nav-24 trips-level inbox) + back.
-    fireEvent.press(screen.getByTestId("trip-list-button-capture"));
+    await fireEvent.press(screen.getByTestId("trip-list-button-capture"));
     expect(await screen.findByTestId("capture-queue-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/capture");
-    fireEvent.press(screen.getByTestId("capture-queue-header-back"));
+    await fireEvent.press(screen.getByTestId("capture-queue-header-back"));
     await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
 
     // EmptyState CTA → create-trip modal route (R-nav-21 form modal) + back.
-    fireEvent.press(screen.getByTestId("trip-list-button-create"));
+    await fireEvent.press(screen.getByTestId("trip-list-button-create"));
     expect(await screen.findByTestId("trip-new-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/new");
-    fireEvent.press(screen.getByTestId("trip-new-header-back"));
+    await fireEvent.press(screen.getByTestId("trip-new-header-back"));
     await waitFor(() => expect(screen.queryByTestId("trip-new-screen")).toBeNull());
 
     // Into a trip (same mount — imperative router; testRouter's built-in
@@ -165,40 +165,44 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     // bare trip target → itinerary default (R-nav-8 seam) + trip context.
     // Cast: typed routes only enumerate leaf routes, but bare trip URLs are
     // a real runtime surface (deeplinks) and MUST keep resolving.
-    act(() => router.navigate("/trip-1" as Parameters<typeof router.navigate>[0]));
+    // Awaited async act: RNTL v14's act is async, so a bare `act(() => …)` that
+    // schedules an update leaks a floating act — await it (determinism, B-2).
+    await act(async () => {
+      router.navigate("/trip-1" as Parameters<typeof router.navigate>[0]);
+    });
     const itinerary = await screen.findByTestId("itinerary-screen");
     expect(within(itinerary).getByText("Trip trip-1")).toBeOnTheScreen();
 
     // Tab switches through the design-system TabNav (§2.7 rule-3 IDs) —
     // trip context reaches navigator-instantiated tabs.
-    fireEvent.press(screen.getByTestId("tab-bar-today"));
+    await fireEvent.press(screen.getByTestId("tab-bar-today"));
     const today = await screen.findByTestId("today-screen");
     expect(within(today).getByText("Trip trip-1")).toBeOnTheScreen();
 
-    fireEvent.press(screen.getByTestId("tab-bar-money"));
+    await fireEvent.press(screen.getByTestId("tab-bar-money"));
     await screen.findByTestId("money-screen");
     // Money's segmented control derives its §2.7 `segment` children.
     expect(screen.getByTestId("money-segment-budget")).toBeOnTheScreen();
     expect(screen.getByTestId("money-segment-balances")).toBeOnTheScreen();
 
     // Per-tab stack push (R-nav-10 structure).
-    fireEvent.press(screen.getByTestId("tab-bar-more"));
+    await fireEvent.press(screen.getByTestId("tab-bar-more"));
     await screen.findByTestId("more-screen");
-    fireEvent.press(screen.getByTestId("more-list-item-photos"));
+    await fireEvent.press(screen.getByTestId("more-list-item-photos"));
     expect(await screen.findByTestId("photos-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/trip-1/more/photos");
 
     // R-nav-10 BEHAVIOR: per-tab history survives tab switches. Pathname is
     // the proof — visited screens stay mounted in the tab tree, so testID
     // presence alone can't distinguish "focused" from "kept alive".
-    fireEvent.press(screen.getByTestId("tab-bar-today"));
+    await fireEvent.press(screen.getByTestId("tab-bar-today"));
     await waitFor(() => expect(result.getPathname()).toBe("/trip-1/today"));
-    fireEvent.press(screen.getByTestId("tab-bar-more"));
+    await fireEvent.press(screen.getByTestId("tab-bar-more"));
     await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more/photos"));
     expect(screen.getByTestId("photos-screen")).toBeOnTheScreen();
 
     // PageHeader back pop (R-nav-10 structure).
-    fireEvent.press(screen.getByTestId("photos-header-back"));
+    await fireEvent.press(screen.getByTestId("photos-header-back"));
     await waitFor(() => expect(screen.queryByTestId("photos-screen")).toBeNull());
     expect(await screen.findByTestId("more-screen")).toBeOnTheScreen();
 
@@ -208,18 +212,18 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     // the queue is pushed onto history, it does not reset it. (An earlier
     // comment claimed back lands on the trip list — empirically false; this
     // assertion pins the real behavior.)
-    fireEvent.press(screen.getByTestId("more-list-item-capture"));
+    await fireEvent.press(screen.getByTestId("more-list-item-capture"));
     expect(await screen.findByTestId("capture-queue-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/capture");
-    fireEvent.press(screen.getByTestId("capture-queue-header-back"));
+    await fireEvent.press(screen.getByTestId("capture-queue-header-back"));
     await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
     await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more"));
 
     // Itinerary FAB → add-item modal route in the tab-local stack (R-nav-21).
     // (Back landed us on the More tab — switch tabs like a user would.)
-    fireEvent.press(screen.getByTestId("tab-bar-itinerary"));
+    await fireEvent.press(screen.getByTestId("tab-bar-itinerary"));
     await screen.findByTestId("itinerary-screen");
-    fireEvent.press(screen.getByTestId("itinerary-fab-add"));
+    await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
     expect(await screen.findByTestId("itinerary-item-new-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/trip-1/itinerary/item/new");
   });

@@ -95,6 +95,8 @@ function mockApi(overrides: Record<string, () => Promise<unknown>> = {}): jest.M
 afterEach(() => {
   jest.restoreAllMocks();
   queryClient.clear();
+  // Defensive: real timers even if a sibling renderRouter suite leaked fake ones.
+  jest.useRealTimers();
 });
 
 describe("ProfileScreen", () => {

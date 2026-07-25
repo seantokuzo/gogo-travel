@@ -34,6 +34,8 @@ function spyRequest(): jest.Mock {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  // Defensive: real timers even if a sibling renderRouter suite leaked fake ones.
+  jest.useRealTimers();
 });
 
 describe("diffField", () => {

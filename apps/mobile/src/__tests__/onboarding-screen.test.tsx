@@ -41,6 +41,9 @@ function mockApi(): jest.Mock {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  // Defensive: guarantee REAL timers even if a sibling renderRouter suite in the
+  // same worker left fake ones installed (determinism, B-2).
+  jest.useRealTimers();
 });
 
 describe("OnboardingScreen", () => {

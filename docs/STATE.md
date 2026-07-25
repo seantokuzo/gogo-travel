@@ -25,123 +25,27 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-5 — Auth, profiles & entitlements (ACTIVE since 2026-07-22)
+### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
 
-- **Sensitive path: auth — every review round auto-escalates.** 8 tasks
-  T-5.1..T-5.8 (PLANNING § P-5). Specs: `api/auth-users`,
-  `client/navigation` (NAV-2), `shared/contracts`. Ledger F-018..F-029.
-- Security invariants from the approved spec set: Apple + Google OAuth only,
-  ES256 access + rotating refresh tokens w/ reuse-theft family revocation,
-  refresh token in expo-secure-store ONLY (never AsyncStorage/MMKV),
-  middleware trio `requireAuth`/`requireTripMember`/`requireAiQuota`,
-  404-indistinguishable authz, zero passwords stored.
-- **T-5.1 MERGED (de98def)** — 15 endpoint descriptors (auth 6 / users 8 /
-  entitlements 1), credential length caps, `pruneAuthRows` (strict-lt,
-  revoked_at-anchored, mutation-pinned), shared 317 + server 63 tests.
-  Reconciliation: AU-1 schemas + AU-2 tables pre-existed spec-exact
-  (T-3.2/T-3.3); drizzle zero-delta verified by engineer AND correctness
-  lane — no migration owed. 5-lane 0-blocking SHIP (14 advisories: 7 fixed,
-  4 deferred w/ QUEUE rows, 1 parked for Sean, 2 spec syncs); judge
-  merge/high. **Judge directive: spend Sean's /code-review ultra on T-5.2
-  (provider verify) or T-5.4 (middleware) — the real crypto/authz surface.**
-- **T-5.2 MERGED (bc58180)** — Apple/Google JWKS verify, nonce binding
-  (Apple SHA-256(raw_nonce) lowercase hex / Google raw), auto-link,
-  AES-256-GCM Apple-credential store, ES256 access + CSPRNG refresh
-  issuance. Server 63→143. **First HITL gate exercised end-to-end**:
-  round-1 fix-then-ship (5 blocking fixed) → judge routed to human →
-  Sean ran `/code-review ultra` (1st of 3 free) → bug_001 (unawaited
-  Apple key import: malformed key passed boot, every Apple sign-in
-  silently skipped credential store → App-Store revocation broken) →
-  fixed 3deb831 (await import at boot, mirror ES256 key) + re-judged
-  merge/high. jose@6.2.4 + @hono/zod-validator@0.9.0 added. Landmines
-  codified in rules/server.md (boot-parse-secrets-awaited; no raw
-  control bytes in test literals). Spec syncs applied (R-auth-3/5/6
-  interpretations, contracts §3.6 /api base). Prettier reflows locked
-  .md/.yaml on edit — apply spec/YAML syncs SURGICALLY via Bash, the
-  Write/Edit hook matcher doesn't catch it.
-- **T-5.3 MERGED (3abfac4)** — refresh rotation, reuse-theft family
-  revocation (session-scoped: rotate A→B, replay A ⇒ whole family dies),
-  atomic CAS double-spend guard (`WHERE rotated_at IS NULL`), STATELESS
-  requireAuth (ES256 verify, zero DB/request), session list/revoke,
-  /auth/refresh + /auth/logout. Server 143→179. New modules:
-  access-verify / token-rotation / session-service / require-auth.
-  5-lane 0-blocking SHIP (security ~60 probes cleared cascade + CAS +
-  alg-confusion); 6 advisories fixed (require `exp` present on verify;
-  session cursor → integer epoch-MICROSECONDS, crash-safe on malformed
-  input, closes a sub-ms keyset skip; +pagination/latency/no-oracle
-  tests); judge merge/high, large-diff escalation WAIVED (crypto core
-  untouched by fixes). Session cursor lesson: keyset must carry full
-  µs precision, NOT a JS-Date ISO round-trip (ms-truncates → skips rows).
-- **T-5.4 MERGED (d422cf0)** — authz middleware trio + error envelope +
-  rate limits. requireAuth promoted app-wide (clean git rename auth/→http/,
-  ONE impl); requireTripMember with **404-indistinguishable authz** (one
-  `trip_members` query, never touches `trips` → no existence/timing oracle;
-  non-member and ghost-trip byte-identical 404; 403 only after proven
-  membership) — the fixture every later trip/expense/photo domain inherits;
-  requireAiQuota check seam (kill-switch 503 / cap 429, both before model
-  call); app error serializer (only error.name logged); public allowlist
-  (health + apple/google/refresh); rate limits (§3.6.3, IP=socket peer never
-  XFF, sweep-bounded). requireTripMember + requireAiQuota are DORMANT
-  (defined + DB-tested, mounted on zero live routes until trips/AI phases).
-  Server 179→219. 5-lane 0-blocking SHIP (security max-depth red-team, 12
-  path-smuggling probes fail-closed) → 2 in-scope advisories fixed → judge
-  merge/high. **Ultra WAIVED by Sean (Fable can self-review locally) → deep
-  local self-review (ultra substitute) caught HEAD /api/health→401 (LB probe
-  marks instance unhealthy; fail-closed, not a bypass) → fixed + allowlist
-  drift-guard tests.** 4 advisories → QUEUE (P-10 atomic AI-increment is a
-  P0 blocker for P-10; ai_usage composite index; trusted-proxy ipOf at
-  deploy; NAT lockout accepted §3.6.3).
-- **T-5.5 MERGED (d408cac)** — GET/PATCH /users/me (code-point display-name
-  clamp both sides now), member profile GET /users/:userId (404-
-  indistinguishable, shared-trip gated, member-safe fields only), avatar
-  presign+commit (namespace-check-before-objectExists; own-key-only),
-  payment-handle normalize (cashtag checker host-PINNED to cash.app +
-  redirect:manual + fail-open; no Venmo fetch; merged-row zelle guard),
-  push-token upsert-move (updated_at manual, $onUpdate-upsert landmine
-  handled), entitlements read (shared resolveEntitlements, not forked).
-  Server 219→271, shared 317→320. 5-lane 0-blocking SHIP (~50 security
-  probes cleared avatar-traversal / cashtag-SSRF / push-move / IDOR);
-  4 advisories fixed; judge merge/high.
-  **Avatar object-storage provider = OPEN Sean escalation** (blocked row,
-  P1): spec §3.8 pre-designated infra escalation; port ships fail-safe
-  (UNCONFIGURED_OBJECT_STORAGE). Recommend Cloudflare R2 (zero egress,
-  S3-compat) — same store serves trip photos P-12. ~10-line wire + ADR.
-- **T-5.6 MERGED (e82618b)** — DELETE /users/me: soft-delete + FULL PII
-  scrub (every users column, security-enumerated vs spec list) in one
-  atomic txn on the WS-Pool driver; sole-owner-409 blocks before any write;
-  all sessions/refresh revoked (no resurrection — refresh→401 post-delete);
-  Apple token revocation POST-commit (failure logged, can't roll back the
-  local deletion — R-db-16 governs); idempotent 204; device_name erased.
-  Server 271→288. 5-lane 0-blocking SHIP; judge merge/high. Extracted
-  shared apple-client-secret signer (revoker+exchanger share JWT construction).
-  **ALL P-5 SERVER TASKS DONE (T-5.1..T-5.6).**
-- **T-5.7 MERGED (afeb862)** — client auth gate + sign-in screen [NAV-2]:
-  Zustand session store (refresh token **expo-secure-store ONLY**), ApiClient
-  single-flight refresh-on-401, redirect gate (unauthed→sign-in,
-  new-user→onboarding), Apple+Google sign-in. Mobile 152→212. Round-1
-  fix-then-ship, 2 blocking — **both masked by green CI**: (1) `useGoogleSignIn()`
-  threw during render when Google unconfigured → whole sign-in screen crashed →
-  render-gated via `GoogleSignInButton` subcomponent, **revert-proven** by the
-  judge; (2) untested sign-in composition hid #1 → real-tree renderRouter test.
-  +6 advisories (await rotated-token persist, logout-first signOut, https guard,
-  retry-401 branch, testID). Judge merge/high. Codified crash-masked-by-mocks
-  landmine → `rules/mobile.md`.
-- **T-5.8 ACTIVE** (mobile): onboarding + profile screens — first-run
-  onboarding (post-sign-in → set display name/handle → trip list) + profile
-  screen wired to GET/PATCH /users/me (T-5.5 endpoints), sign-out +
-  delete-account entry, entitlements read. **LAST P-5 task** — closes the phase;
-  after merge real Apple/Google sign-in reaches Sean's phone (pending OAuth
-  credentials + server env). Scoping agent mapping the spec surface.
-- **Testcontainers contention ESCALATING** — now WEDGES the Docker daemon
-  (500s) under parallel container boots, not just port-bind timeouts.
-  Workaround: server suite `--no-file-parallelism`. Bumped to QUEUE P1
-  (shared globalSetup container the real fix). Every DB-suite task hits it.
-- **Object storage DEFERRED by Sean 2026-07-24** — revisit at P-12 (trip
-  photos); port stays parked, fails safe. QUEUE blocked row updated.
-- Review-mode note: local 5-lane pipeline + fresh judge is the standard
-  gate; Sean's `/code-review ultra` is optional (2 free left) and can be
-  substituted by a deep local self-review agent (whole-diff, adversarial,
-  reads changed files in full) when Sean waives it — as done for T-5.4.
+- **P-5 done, ledger pending QA.** T-5.1..T-5.8 merged CI-green — full server +
+  client auth stack. Archived: [PHASE-005](history/PHASE-005-auth-profiles-entitlements.md).
+  **Ledger F-018..F-029 stays `passes:false`** — verification = the feature
+  exercised in the running app (Law #7), which needs Sean's OAuth credentials
+  (Apple Sign-In entitlement + `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`) + server env
+  (`APPLE_CLIENT_ID` / `GOOGLE_CLIENT_IDS` + ES256/Apple keys). Flips after
+  on-device QA (same pattern as P-4's F-010..F-017).
+- **Deferred (tracked in QUEUE):** avatar UPLOAD → P-12 (object storage,
+  Sean-deferred 2026-07-24; client ships avatar *display* only) — carry the
+  `avatar_key`→server-signed-read-URL security note into the P-12 wire;
+  notification-priming onboarding step → P-6 push seam. F-024/F-025 land
+  partially, verify fully at P-12.
+- **Testcontainers contention (QUEUE P1, LIVE cross-phase):** 9+ DB suites boot
+  Postgres in parallel → port-bind timeout + WEDGES the Docker daemon. Workaround:
+  server suite `--no-file-parallelism`; real fix = shared globalSetup container.
+  Hits every future DB-suite task.
+- Review-mode: local 5-lane pipeline + fresh impartial judge is the standard gate;
+  `/code-review ultra` optional (2 free left), substitutable by a deep local
+  self-review when Sean waives it.
 
 ### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
 

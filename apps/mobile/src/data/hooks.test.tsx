@@ -63,13 +63,15 @@ describe("useMe", () => {
   it("fetches GET /users/me", async () => {
     const request = spyRequest();
     request.mockResolvedValue(TEST_USER);
-    const { result } = await renderHook(() => useMe(), {
+    const { result, unmount } = await renderHook(() => useMe(), {
       wrapper: makeWrapper(makeTestQueryClient()),
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(TEST_USER);
     expect(request).toHaveBeenCalledWith(userEndpoints.getMe, {});
+    // Close the settle→cleanup gap in act so no trailing query update escapes.
+    await unmount();
   });
 });
 
@@ -79,7 +81,9 @@ describe("useUpdateMe", () => {
     const updated = { ...TEST_USER, display_name: "New Name" };
     request.mockResolvedValue(updated);
     const client = makeTestQueryClient();
-    const { result } = await renderHook(() => useUpdateMe(), { wrapper: makeWrapper(client) });
+    const { result, unmount } = await renderHook(() => useUpdateMe(), {
+      wrapper: makeWrapper(client),
+    });
 
     await act(async () => {
       await result.current.mutateAsync({ display_name: "New Name" });
@@ -89,6 +93,7 @@ describe("useUpdateMe", () => {
       body: { display_name: "New Name" },
     });
     expect(client.getQueryData(queryKeys.me)).toEqual(updated);
+    await unmount();
   });
 });
 
@@ -104,7 +109,7 @@ describe("usePaymentHandlesUpdate", () => {
     });
     const client = makeTestQueryClient();
     const invalidate = jest.spyOn(client, "invalidateQueries");
-    const { result } = await renderHook(() => usePaymentHandlesUpdate(), {
+    const { result, unmount } = await renderHook(() => usePaymentHandlesUpdate(), {
       wrapper: makeWrapper(client),
     });
 
@@ -116,6 +121,7 @@ describe("usePaymentHandlesUpdate", () => {
       body: { venmo_username: "@sean" },
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.me });
+    await unmount();
   });
 });
 
@@ -123,13 +129,14 @@ describe("useEntitlements", () => {
   it("fetches GET /users/me/entitlements", async () => {
     const request = spyRequest();
     request.mockResolvedValue(ENTITLEMENTS);
-    const { result } = await renderHook(() => useEntitlements(), {
+    const { result, unmount } = await renderHook(() => useEntitlements(), {
       wrapper: makeWrapper(makeTestQueryClient()),
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(ENTITLEMENTS);
     expect(request).toHaveBeenCalledWith(entitlementEndpoints.getMyEntitlements, {});
+    await unmount();
   });
 });
 
@@ -138,13 +145,14 @@ describe("useSessions", () => {
     const request = spyRequest();
     const page = { items: [SESSION], nextCursor: null };
     request.mockResolvedValue(page);
-    const { result } = await renderHook(() => useSessions(), {
+    const { result, unmount } = await renderHook(() => useSessions(), {
       wrapper: makeWrapper(makeTestQueryClient()),
     });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(page);
     expect(request).toHaveBeenCalledWith(authEndpoints.listSessions, { query: {} });
+    await unmount();
   });
 });
 
@@ -154,7 +162,9 @@ describe("useRevokeSession", () => {
     request.mockResolvedValue(undefined);
     const client = makeTestQueryClient();
     const invalidate = jest.spyOn(client, "invalidateQueries");
-    const { result } = await renderHook(() => useRevokeSession(), { wrapper: makeWrapper(client) });
+    const { result, unmount } = await renderHook(() => useRevokeSession(), {
+      wrapper: makeWrapper(client),
+    });
 
     await act(async () => {
       await result.current.mutateAsync("sess-9");
@@ -164,6 +174,7 @@ describe("useRevokeSession", () => {
       params: { sessionId: "sess-9" },
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.sessions });
+    await unmount();
   });
 });
 
