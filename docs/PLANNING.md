@@ -342,9 +342,11 @@ pnpm test && pnpm build`
 
 ### P-5 — Auth, profiles & entitlements
 
-- **Status:** in-progress since 2026-07-22 · **Priority:** P0 ·
-  **Depends on:** P-3, P-4 ·
-  **~6 PRs** · **Sensitive path: auth — auto-escalated review**
+- **Status:** code-complete 2026-07-25 (T-5.1..T-5.8 merged, CI-green) ·
+  ledger F-018..F-029 pending on-device QA (blocked on OAuth credentials +
+  server env — Sean) · **Priority:** P0 · **Depends on:** P-3, P-4 ·
+  **8 PRs** · **Sensitive path: auth — auto-escalated review** ·
+  archive: [PHASE-005](history/PHASE-005-auth-profiles-entitlements.md)
 - **Goal:** Sign in with Apple + Google end-to-end: JWKS verification, ES256
   access + rotating refresh tokens with theft response, the middleware trio
   every other domain runs under (`requireAuth`, `requireTripMember`,
