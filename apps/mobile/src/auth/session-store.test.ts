@@ -151,6 +151,28 @@ describe("session store — sign-in / onboarding / sign-out", () => {
     expect(storage.clearRefreshToken).toHaveBeenCalledTimes(1);
   });
 
+  it("signOut fires the onSignedOut seam AFTER clearing (query-cache clear, nav §2.2)", async () => {
+    const storage = {
+      getRefreshToken: jest.fn<Promise<string | null>, []>().mockResolvedValue(null),
+      setRefreshToken: jest.fn().mockResolvedValue(undefined),
+      clearRefreshToken: jest.fn().mockResolvedValue(undefined),
+    };
+    const api = { request: jest.fn().mockResolvedValue(undefined) };
+    const onSignedOut = jest.fn();
+    const deps: SessionDeps = { storage, api, onSignedOut };
+    const store = createStore<SessionState>()(createSessionSlice(deps));
+    await store.getState().applySignIn(signInResponse(false));
+
+    await store.getState().signOut();
+
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(store.getState().user).toBeNull();
+    // Ordering: the local token clear happens before the cache clear.
+    expect(onSignedOut.mock.invocationCallOrder[0]).toBeGreaterThan(
+      storage.clearRefreshToken.mock.invocationCallOrder[0],
+    );
+  });
+
   it("stash/consume round-trips the intended destination once", () => {
     const { store } = makeStore();
     store.getState().stashDestination("/trip-1/money");

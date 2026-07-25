@@ -24,6 +24,8 @@ import {
 } from "@gogo/shared";
 import { create, type StateCreator } from "zustand";
 
+import { queryClient } from "@/data/query-client";
+
 import { ApiRequestError, createApiClient } from "./api-client";
 import { resolveApiBaseUrl } from "./config";
 import { secureTokenStorage, type SecureTokenStorage } from "./secure-storage";
@@ -61,6 +63,14 @@ export interface SessionState {
 export interface SessionDeps {
   storage: SecureTokenStorage;
   api: ApiClient;
+  /**
+   * Fired on local sign-out AFTER identity + tokens are cleared — the singleton
+   * wires this to `queryClient.clear()` so cached server state (profile,
+   * sessions, entitlements) never leaks across accounts (navigation.spec §2.2:
+   * "clear session store + query cache"). Optional so the pure store stays
+   * testable without a query client.
+   */
+  onSignedOut?: () => void;
 }
 
 /** The store initializer — shared by the singleton and the test factory. */
@@ -144,6 +154,9 @@ export const createSessionSlice =
         resetting: true,
       });
       await deps.storage.clearRefreshToken();
+      // Drop all cached server state so the next account never sees this one's
+      // profile/sessions/entitlements (navigation.spec §2.2).
+      deps.onSignedOut?.();
     },
 
     stashDestination(path) {
@@ -173,5 +186,9 @@ export const apiClient: ApiClient = createApiClient({
 });
 
 export const useSessionStore = create<SessionState>()(
-  createSessionSlice({ storage: secureTokenStorage, api: apiClient }),
+  createSessionSlice({
+    storage: secureTokenStorage,
+    api: apiClient,
+    onSignedOut: () => queryClient.clear(),
+  }),
 );
