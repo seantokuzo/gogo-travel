@@ -33,6 +33,7 @@ import {
 } from "expo-router/testing-library";
 
 import { SCREEN_ROUTES } from "@/test-utils/screen-routes";
+import { seedSessionForUrl } from "@/test-utils/session-fixtures";
 
 // Tab switches fire the `selection` haptic through the DS TabNav — keep the
 // expo-haptics native call out of the loop (convention verified in
@@ -45,6 +46,10 @@ async function renderApp(initialUrl: string) {
   // Quirk 2: reset the previous mount + clock before rendering fresh.
   await cleanup();
   jest.useRealTimers();
+  // NAV-2: the root auth gate now reads the real session store — seed it to
+  // match the URL's auth reachability so these structural tests render the
+  // requested tree instead of bouncing to sign-in.
+  seedSessionForUrl(initialUrl);
   const result = renderRouter(APP_DIR, { initialUrl });
   // Quirk 1: await the async commit…
   await result;
