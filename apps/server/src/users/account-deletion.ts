@@ -110,6 +110,12 @@ export async function deleteAccount(
       .limit(1);
     if (blocking.length > 0) throw new OwnerTransferRequiredError();
 
+    // FUTURE (P-11 capture / utilities documents): capture_senders, capture_inbox,
+    // documents use ON DELETE CASCADE on user_id, but soft-delete NEVER fires the
+    // cascade — when those features land, this transaction MUST explicitly purge
+    // their rows or the "deleted" account's PII survives. See QUEUE. (Same reason
+    // apple_credentials/push_tokens below are dropped explicitly, not by cascade.)
+
     // 2. Consume apple_credentials — decrypt for post-commit revocation, then
     //    drop the row (never left behind for a scrubbed account). A corrupt /
     //    undecryptable ciphertext must NOT block the deletion: we simply can't
@@ -137,10 +143,13 @@ export async function deleteAccount(
       .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)));
 
     // 4. Revoke every live session (family kill for all refresh tokens,
-    //    R-auth-11) and delete every push token.
+    //    R-auth-11) and delete every push token. Also null `device_name` — a
+    //    deletion-time erasure of client-supplied data (e.g. "Sean's iPhone
+    //    17"), slightly beyond the §3.3.1 scrub list, so no identifying label
+    //    lingers on the revoked rows until the 90-day prune (§3.3.2).
     await tx
       .update(schema.authSessions)
-      .set({ revokedAt: now })
+      .set({ revokedAt: now, deviceName: null })
       .where(and(eq(schema.authSessions.userId, userId), isNull(schema.authSessions.revokedAt)));
     await tx.delete(schema.pushTokens).where(eq(schema.pushTokens.userId, userId));
 
