@@ -373,7 +373,7 @@ pnpm test && pnpm build`
 
 ### P-6 — Trips, collaboration & places spine
 
-- **Status:** queued · **Priority:** P0 · **Depends on:** P-5 · **~6 PRs**
+- **Status:** in-progress since 2026-07-25 · **Priority:** P0 · **Depends on:** P-5 · **~6 PRs** · tasks T-6.1..T-6.9 (see QUEUE)
 - **Goal:** The app's spine: trip CRUD with the §3.2 permission matrix (the
   authz source of truth for every domain), members/roles/ownership transfer,
   multi-use invites with deep links, the push-invalidation event seam, the

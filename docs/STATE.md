@@ -25,6 +25,51 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
+### P-6 — Trips, collaboration & places spine (ACTIVE since 2026-07-25)
+
+- **The app's spine** (~6 PRs, 9 tasks). Trip CRUD + §3.2 permission matrix
+  (authz source of truth for every later domain), members/roles/ownership
+  transfer, multi-use invites + deep links, push-invalidation emitter seam,
+  open-data places spine (region ingest + search), trips client screens +
+  entry-redirect/default-tab. Ledger **F-030..F-042**. Specs: `api/trips`,
+  `api/places`, `client/navigation` (NAV-3/4/5), `shared/contracts`.
+- **NO blocking escalations** (scoped 2026-07-25): places spine ingests OPEN
+  datasets only (Overture + FSQ-OS GeoParquet via DuckDB, $0/no-key/no-account;
+  Foursquare premium DEFERRED out of MVP → dormant R-places-11..14). Invites
+  ship on `gogo://` + a `LINK_DOMAIN` placeholder; universal-link domain stays
+  a P-14 Sean item. Permission matrix + transfer are fully specced (no
+  security-model divergence). **No migration owed** — the P-3 baseline
+  (`0000_certain_texas_twister.sql`) already has trips/trip_members/invites/
+  places/saved_places/place_ingest_regions + `pg_trgm` GIN.
+- **Task breakdown + build order (waves):**
+  - **T-6.1** (S) trip CRUD router (POST/GET/GET:id/PATCH/DELETE `/trips`) —
+    **first real consumer of the dormant `require-trip-member.ts`**; adds
+    `TripListItem` shared shape + `expect_updated_at` conflict helper + status
+    reconciliation + `base_currency` lock. Flips F-030/031/033, establishes
+    F-038 IDOR harness. NO migration. **← first build.**
+  - **Wave 2 (parallel, need only T-6.1):** T-6.2 (S, members + invites
+    lifecycle, transfer), T-6.4 (S, places ingest pipeline).
+  - **Wave 3:** T-6.3 (S, post-commit push emitter — ids-only, actor-excluded,
+    member fan-out), T-6.5 (S, `/places/search` + custom places).
+  - **Wave 4:** T-6.6 (M, entry-redirect + default-tab + tab-memory + `[tripId]`
+    guard/no-access + deep-link registry).
+  - **Wave 5 (parallel):** T-6.7 (M, trip list + create modal), T-6.8 (M,
+    invite-join + members), T-6.9 (M, settings + collab client layer).
+- **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
+  404-indistinguishable, `createRequireTripMember`); `apps/server/src/app.ts`
+  (only auth+users mounted at :82/:86 — T-6.1 mounts `/trips`);
+  `packages/shared/src/domains/trip.ts` (`deriveTripStatus` done; ADD
+  `TripListItem`/`InvitePreview`/`OwnershipTransfer`/`PlaceCreate`/
+  `coarseCategory`/`LINK_DOMAIN`); P-4 mobile placeholders in
+  `apps/mobile/src/app/(trips)/` + `[tripId]/_layout.tsx` (NAV-3/4 seams marked).
+- **Carry-forwards to resolve here (QUEUE):** sole-owner-ghost deadlock +
+  invite-accept TOCTOU (→ T-6.1/T-6.2, account-deletion txn must reconcile trip
+  membership); notification-priming wires to the T-6.3 push seam (transport
+  still P-13, stays partial). Txn landmine: atomic multi-writes (owner+member,
+  transfer, invite-accept) MUST use the WS `Pool`/`postgres-js`, never Neon-HTTP.
+- **Status:** scoped + phase docs set up 2026-07-25; T-6.1 is next build. Auth
+  on-device QA (P-5 ledger) runs in parallel whenever Sean wires OAuth.
+
 ### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
 
 - **P-5 done, ledger pending QA.** T-5.1..T-5.8 merged CI-green — full server +
@@ -35,7 +80,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   (`APPLE_CLIENT_ID` / `GOOGLE_CLIENT_IDS` + ES256/Apple keys). Flips after
   on-device QA (same pattern as P-4's F-010..F-017).
 - **Deferred (tracked in QUEUE):** avatar UPLOAD → P-12 (object storage,
-  Sean-deferred 2026-07-24; client ships avatar *display* only) — carry the
+  Sean-deferred 2026-07-24; client ships avatar _display_ only) — carry the
   `avatar_key`→server-signed-read-URL security note into the P-12 wire;
   notification-priming onboarding step → P-6 push seam. F-024/F-025 land
   partially, verify fully at P-12.
