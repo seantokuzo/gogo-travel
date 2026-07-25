@@ -68,11 +68,15 @@ it("drives cancel → error → success through the real sign-in composition", a
 
   const result = renderRouter("src/app", { initialUrl: "/sign-in" });
   await result;
+  // Presses are AWAITED below (RNTL v14 `fireEvent` is async) so each act
+  // settles instead of leaving a floating act() that interleaves across suites
+  // under CI contention (determinism, B-2). Fake timers (renderRouter's) stay
+  // so navigation transition timeouts don't linger as open handles.
   await screen.findByTestId("sign-in-screen");
 
   // 1) Cancel — the provider sheet is dismissed → no POST, no error, no auth.
   apple.mockResolvedValueOnce(null);
-  fireEvent.press(screen.getByTestId("sign-in-button-apple"));
+  await fireEvent.press(screen.getByTestId("sign-in-button-apple"));
   await waitFor(() => expect(apple).toHaveBeenCalledTimes(1));
   expect(requestSpy).not.toHaveBeenCalled();
   expect(screen.queryByTestId("sign-in-error")).toBeNull();
@@ -81,7 +85,7 @@ it("drives cancel → error → success through the real sign-in composition", a
   // 2) Error — the sign-in POST rejects → the DS error banner shows, still no auth.
   apple.mockResolvedValueOnce(applePayload);
   requestSpy.mockRejectedValueOnce(new ApiRequestError(401, "UNAUTHENTICATED", "denied"));
-  fireEvent.press(screen.getByTestId("sign-in-button-apple"));
+  await fireEvent.press(screen.getByTestId("sign-in-button-apple"));
   await waitFor(() => expect(screen.getByTestId("sign-in-error")).toBeOnTheScreen());
   expect(useSessionStore.getState().user).toBeNull();
 
@@ -90,7 +94,7 @@ it("drives cancel → error → success through the real sign-in composition", a
   // the proof applySignIn received the SignInResponse the POST resolved.
   apple.mockResolvedValueOnce(applePayload);
   requestSpy.mockResolvedValueOnce(newUserResponse);
-  fireEvent.press(screen.getByTestId("sign-in-button-apple"));
+  await fireEvent.press(screen.getByTestId("sign-in-button-apple"));
 
   await waitFor(() => expect(screen.getByTestId("onboarding-screen")).toBeOnTheScreen());
   expect(requestSpy).toHaveBeenCalledWith(authEndpoints.appleSignIn, { body: applePayload });

@@ -49,9 +49,24 @@ async function renderApp(url: string) {
   return result;
 }
 
-afterEach(() => {
+// This suite renders the REAL route tree, so it uses the PROD queryClient
+// singleton (mounted by src/app/_layout). Neutralize its production timing for
+// tests — gcTime/staleTime 0 + retry off — so no lingering GC timeout or stale
+// cache bleeds timing into later suites (determinism, B-2). Real store +
+// real api-client stay untouched; only the client's timing config is test-safe.
+beforeAll(() => {
+  queryClient.setDefaultOptions({
+    queries: { retry: false, gcTime: 0, staleTime: 0 },
+    mutations: { retry: false, gcTime: 0 },
+  });
+});
+
+afterEach(async () => {
   jest.restoreAllMocks();
+  await queryClient.cancelQueries();
   queryClient.clear();
+  await cleanup();
+  jest.useRealTimers();
 });
 
 describe("render safety — real route tree", () => {
