@@ -115,13 +115,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   Server 271→288. 5-lane 0-blocking SHIP; judge merge/high. Extracted
   shared apple-client-secret signer (revoker+exchanger share JWT construction).
   **ALL P-5 SERVER TASKS DONE (T-5.1..T-5.6).**
-- **T-5.7 ACTIVE** (mobile engineer subagent): client auth gate + sign-in
-  screen [NAV-2] — Zustand session store, refresh token in **expo-secure-
-  store ONLY** (never AsyncStorage/MMKV), redirect gate (unauthed→/(auth)/
-  sign-in, first-run→onboarding, R-nav-1/2/4 seams from T-4.4), Apple+Google
-  sign-in buttons wired to the API. Branch `P-5/T-5-7-auth-gate`. FIRST P-5
-  CLIENT task → then T-5.8 (onboarding+profile screens) closes the phase,
-  and Apple/Google sign-in reaches Sean's phone.
+- **T-5.7 MERGED (afeb862)** — client auth gate + sign-in screen [NAV-2]:
+  Zustand session store (refresh token **expo-secure-store ONLY**), ApiClient
+  single-flight refresh-on-401, redirect gate (unauthed→sign-in,
+  new-user→onboarding), Apple+Google sign-in. Mobile 152→212. Round-1
+  fix-then-ship, 2 blocking — **both masked by green CI**: (1) `useGoogleSignIn()`
+  threw during render when Google unconfigured → whole sign-in screen crashed →
+  render-gated via `GoogleSignInButton` subcomponent, **revert-proven** by the
+  judge; (2) untested sign-in composition hid #1 → real-tree renderRouter test.
+  +6 advisories (await rotated-token persist, logout-first signOut, https guard,
+  retry-401 branch, testID). Judge merge/high. Codified crash-masked-by-mocks
+  landmine → `rules/mobile.md`.
+- **T-5.8 ACTIVE** (mobile): onboarding + profile screens — first-run
+  onboarding (post-sign-in → set display name/handle → trip list) + profile
+  screen wired to GET/PATCH /users/me (T-5.5 endpoints), sign-out +
+  delete-account entry, entitlements read. **LAST P-5 task** — closes the phase;
+  after merge real Apple/Google sign-in reaches Sean's phone (pending OAuth
+  credentials + server env). Scoping agent mapping the spec surface.
 - **Testcontainers contention ESCALATING** — now WEDGES the Docker daemon
   (500s) under parallel container boots, not just port-bind timeouts.
   Workaround: server suite `--no-file-parallelism`. Bumped to QUEUE P1
