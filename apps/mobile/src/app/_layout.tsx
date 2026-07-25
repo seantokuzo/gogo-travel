@@ -1,7 +1,9 @@
 import { ThemeProvider, useTheme } from "@gogo/tokens/react";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
+import { queryClient } from "@/data";
 import { AuthGate } from "@/navigation/AuthGate";
 import { useStackScreenOptions } from "@/navigation/stack-options";
 import { systemAppearance, themeStorage } from "@/theme";
@@ -40,9 +42,15 @@ function ThemedShell() {
 export default function RootLayout() {
   // Both adapters are module-level singletons (src/theme) — referentially
   // stable across renders, per the ThemeProviderProps contract.
+  //
+  // QueryClientProvider (T-5.8) wraps the whole app so every screen shares the
+  // one `queryClient`; sign-out clears it via the session store's `onSignedOut`
+  // seam (navigation.spec §2.2).
   return (
-    <ThemeProvider storage={themeStorage} systemAppearance={systemAppearance}>
-      <ThemedShell />
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider storage={themeStorage} systemAppearance={systemAppearance}>
+        <ThemedShell />
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }
