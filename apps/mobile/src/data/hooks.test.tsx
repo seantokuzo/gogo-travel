@@ -81,6 +81,12 @@ describe("useUpdateMe", () => {
     const updated = { ...TEST_USER, display_name: "New Name" };
     request.mockResolvedValue(updated);
     const client = makeTestQueryClient();
+    // Determinism guard: onSuccess writes the `me` entry with NO observer
+    // mounted (only useUpdateMe renders here), and the harness's gcTime:0
+    // schedules immediate GC of observer-less entries — whether the assertion
+    // below beats that timer is a race (it flipped with unrelated module-load
+    // timing, T-6.1). Infinity = no GC timer at all, so no leaked handle.
+    client.setQueryDefaults(queryKeys.me, { gcTime: Infinity });
     const { result, unmount } = await renderHook(() => useUpdateMe(), {
       wrapper: makeWrapper(client),
     });

@@ -6,17 +6,31 @@
  * a privacy hole (Law #3), so every write here is atomic:
  *
  *   1. Sole-owner-trip guard — BEFORE any write. If the caller solely owns a
- *      trip that still has OTHER members they must transfer ownership first
- *      (schema §3.3.5); we throw `OwnerTransferRequiredError` → the transaction
- *      rolls back → the route returns 409 having scrubbed NOTHING.
- *   2. Consume `apple_credentials` — decrypt the stored Apple refresh token for
+ *      trip that still has OTHER **live** members they must transfer ownership
+ *      first (schema §3.3.5); we throw `OwnerTransferRequiredError` → the
+ *      transaction rolls back → the route returns 409 having scrubbed NOTHING.
+ *      Only LIVE members block (P-6/T-6.1 sole-owner-ghost fix): a soft-deleted
+ *      co-member is not a valid transfer target (R-trips-10 requires a member
+ *      who can still act), so counting ghosts would deadlock the owner's own
+ *      deletion forever — 409 with nobody to transfer to.
+ *   2. Trip-membership reconcile (P-6/T-6.1 carry-forward). After the guard,
+ *      every trip the caller still OWNS has zero other live members — keeping
+ *      such a trip would orphan it (the membership gate is its only door,
+ *      R-trips-1, and no live member remains to pass it). Owned trips are
+ *      deleted with the same cascade semantics as `DELETE /trips/:tripId`
+ *      (R-trips-8 / schema §3.6). The caller's remaining (non-owner)
+ *      memberships are removed — account deletion is their final "leave"
+ *      (§3.2 "Leave trip": self) — while their expenses/shares/settlements
+ *      survive untouched (R-trips-12: financial history references `users`
+ *      rows, never membership rows) and render as "Deleted user" (R-db-16).
+ *   3. Consume `apple_credentials` — decrypt the stored Apple refresh token for
  *      the caller (returned for post-commit revocation) and delete the row. The
  *      row is soft-delete-invisible: `apple_credentials` cascades on a *hard*
  *      user delete, but we never hard-delete, so it is dropped explicitly.
- *   3. Scrub the `users` row (schema §3.3.1 scrub list) + set `deleted_at`. The
+ *   4. Scrub the `users` row (schema §3.3.1 scrub list) + set `deleted_at`. The
  *      `users_identity_or_scrubbed_ck` CHECK holds because `deleted_at` is set
  *      as the subs go NULL.
- *   4. Revoke every session (kills all refresh-token families, R-auth-11) and
+ *   5. Revoke every session (kills all refresh-token families, R-auth-11) and
  *      delete every push token.
  *
  * Idempotent: an already-scrubbed account short-circuits to `already-deleted`
@@ -27,7 +41,7 @@
  * transaction (R-user-9): a network failure must not roll back the deletion,
  * and a DB transaction must never straddle a third-party round-trip.
  */
-import { and, eq, isNull, ne } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { decryptSecret } from "../auth/crypto.js";
 import type { DbClient } from "../db/create-user.js";
@@ -95,8 +109,11 @@ export async function deleteAccount(
 
     // 1. Sole-owner-trip guard (R-user-9 / schema §3.3.5). `uq_trip_single_owner`
     //    guarantees at most one owner per trip, so a caller `role = 'owner'` row
-    //    IS the sole owner — block iff any such trip has ≥1 OTHER member. Throw
-    //    BEFORE any write so the rollback scrubs nothing.
+    //    IS the sole owner — block iff any such trip has ≥1 OTHER **live**
+    //    member. Ghost members (soft-deleted accounts, users.deleted_at set)
+    //    never block: they cannot receive a transfer, so counting them would
+    //    deadlock this deletion permanently (P-6/T-6.1 sole-owner-ghost fix).
+    //    Throw BEFORE any write so the rollback scrubs nothing.
     const ownerRow = alias(schema.tripMembers, "owner_row");
     const otherRow = alias(schema.tripMembers, "other_row");
     const blocking = await tx
@@ -106,9 +123,27 @@ export async function deleteAccount(
         otherRow,
         and(eq(otherRow.tripId, ownerRow.tripId), ne(otherRow.userId, ownerRow.userId)),
       )
+      .innerJoin(
+        schema.users,
+        and(eq(schema.users.id, otherRow.userId), isNull(schema.users.deletedAt)),
+      )
       .where(and(eq(ownerRow.userId, userId), eq(ownerRow.role, "owner")))
       .limit(1);
     if (blocking.length > 0) throw new OwnerTransferRequiredError();
+
+    // 1b. Trip-membership reconcile (P-6/T-6.1 carry-forward; see module doc
+    //     step 2). The guard just proved every owned trip has no other live
+    //     member — delete those trips outright (children cascade per schema
+    //     §3.6, exactly as DELETE /trips/:tripId would, R-trips-8) so no trip
+    //     is left orphaned behind an unreachable membership gate. Then drop
+    //     the caller's remaining (non-owner) membership rows — the final
+    //     "leave" (§3.2) — leaving all financial history intact (R-trips-12).
+    const ownedTripIds = tx
+      .select({ tripId: schema.tripMembers.tripId })
+      .from(schema.tripMembers)
+      .where(and(eq(schema.tripMembers.userId, userId), eq(schema.tripMembers.role, "owner")));
+    await tx.delete(schema.trips).where(inArray(schema.trips.id, ownedTripIds));
+    await tx.delete(schema.tripMembers).where(eq(schema.tripMembers.userId, userId));
 
     // FUTURE (P-11 capture / utilities documents): capture_senders, capture_inbox,
     // documents use ON DELETE CASCADE on user_id, but soft-delete NEVER fires the
@@ -116,7 +151,7 @@ export async function deleteAccount(
     // their rows or the "deleted" account's PII survives. See QUEUE. (Same reason
     // apple_credentials/push_tokens below are dropped explicitly, not by cascade.)
 
-    // 2. Consume apple_credentials — decrypt for post-commit revocation, then
+    // 3. Consume apple_credentials — decrypt for post-commit revocation, then
     //    drop the row (never left behind for a scrubbed account). A corrupt /
     //    undecryptable ciphertext must NOT block the deletion: we simply can't
     //    revoke what we can't decrypt (the local scrub remains authoritative).
@@ -134,7 +169,7 @@ export async function deleteAccount(
       await tx.delete(schema.appleCredentials).where(eq(schema.appleCredentials.userId, userId));
     }
 
-    // 3. Scrub the user row (PII → null/tombstone, deleted_at set). The
+    // 4. Scrub the user row (PII → null/tombstone, deleted_at set). The
     //    `isNull(deletedAt)` predicate keeps this write single-shot even under a
     //    concurrent duplicate request.
     await tx
@@ -142,7 +177,7 @@ export async function deleteAccount(
       .set(scrubValues(userId, now))
       .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)));
 
-    // 4. Revoke every live session (family kill for all refresh tokens,
+    // 5. Revoke every live session (family kill for all refresh tokens,
     //    R-auth-11) and delete every push token. Also null `device_name` — a
     //    deletion-time erasure of client-supplied data (e.g. "Sean's iPhone
     //    17"), slightly beyond the §3.3.1 scrub list, so no identifying label

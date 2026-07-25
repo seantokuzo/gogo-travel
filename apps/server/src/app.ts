@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
 import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
 import { createRequireAuth } from "./http/require-auth.js";
@@ -47,11 +48,20 @@ export interface CreateAppOptions {
    * construction, never a silently-unguarded surface.
    */
   users?: UsersRouterDeps;
+  /**
+   * Trips router dependencies (T-6.1). Same pairing rule as `users`: every
+   * trip route is Auth: Required (and `/:tripId` routes additionally sit
+   * behind the trip-membership gate), so trips-without-auth is a wiring bug.
+   */
+  trips?: TripsRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   if (options.users && !options.auth) {
     throw new Error("users router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.trips && !options.auth) {
+    throw new Error("trips router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -84,6 +94,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.users) {
     app.route(API_BASE, createUsersRouter(options.users));
+  }
+
+  if (options.trips) {
+    app.route(API_BASE, createTripsRouter(options.trips));
   }
 
   return app;

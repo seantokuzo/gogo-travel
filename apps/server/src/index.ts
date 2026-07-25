@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
 
@@ -27,7 +28,11 @@ if (authDeps) {
   console.warn("[boot] object storage not configured — avatar presign is unavailable");
 }
 
-const app = createApp(authDeps ? { auth: authDeps, users: await buildUsersDepsFromEnv(env) } : {});
+const app = createApp(
+  authDeps
+    ? { auth: authDeps, users: await buildUsersDepsFromEnv(env), trips: buildTripsDeps() }
+    : {},
+);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   // eslint-disable-next-line no-console -- boot banner is the one allowed log

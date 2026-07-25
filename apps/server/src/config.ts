@@ -125,6 +125,17 @@ export const RATE_LIMITS = {
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
 
 // ---------------------------------------------------------------------------
+// Trips surface (trips spec §3.3) — T-6.1
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /trips` default page size when the client omits `limit` (trips spec
+ * §3.3: page-size caps are server-defined). The hard cap (100) lives in the
+ * shared `TripListQuerySchema` — client and server validate the same bound.
+ */
+export const TRIPS_PAGE_SIZE_DEFAULT = 50;
+
+// ---------------------------------------------------------------------------
 // Trip role ladder (auth-users spec §2.5 R-authz-3; `requireTripMember`)
 // ---------------------------------------------------------------------------
 
