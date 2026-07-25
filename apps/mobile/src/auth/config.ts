@@ -20,6 +20,35 @@ function withApiSuffix(url: string): string {
   return trimmed.endsWith(API_BASE_PATH) ? trimmed : `${trimmed}${API_BASE_PATH}`;
 }
 
+/** Loopback hosts where cleartext http is always fine (simulator / same box). */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
+
+/** True for loopback + RFC-1918 LAN + mDNS hosts — the Metro dev surfaces. */
+function isLocalOrPrivateHost(host: string): boolean {
+  if (LOOPBACK_HOSTS.has(host)) return true;
+  if (host.endsWith(".local")) return true; // mDNS / Bonjour dev host
+  if (/^10\./.test(host)) return true; // 10.0.0.0/8
+  if (/^192\.168\./.test(host)) return true; // 192.168.0.0/16
+  return /^172\.(1[6-9]|2\d|3[01])\./.test(host); // 172.16.0.0/12
+}
+
+/**
+ * Transport guard (T-5.7 r1 security): refuse a cleartext base URL in a release
+ * build. A non-https endpoint to a non-local host would carry the 30-day
+ * refresh token (and every bearer) in the clear. Metro's loopback/LAN dev hosts
+ * stay allowed so `npx expo start` on a device keeps working, and any https URL
+ * always passes. Called at ApiClient construction (via `resolveApiBaseUrl`).
+ */
+export function assertSecureBaseUrl(url: string, dev: boolean = __DEV__): string {
+  if (url.startsWith("https://")) return url;
+  const host = url.replace(/^https?:\/\//, "").split(/[:/]/)[0] ?? "";
+  if (dev || isLocalOrPrivateHost(host)) return url;
+  throw new Error(
+    "Insecure API base URL: a non-https endpoint is refused in release builds " +
+      "(the refresh token would travel in cleartext). Set EXPO_PUBLIC_API_URL to an https URL.",
+  );
+}
+
 /**
  * Resolve the API base URL (always normalized to end in `/api`). Priority:
  * 1. `EXPO_PUBLIC_API_URL` — explicit override (staging/prod/tunnel).
@@ -30,14 +59,14 @@ function withApiSuffix(url: string): string {
  */
 export function resolveApiBaseUrl(): string {
   const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit && explicit.length > 0) return withApiSuffix(explicit);
+  if (explicit && explicit.length > 0) return assertSecureBaseUrl(withApiSuffix(explicit));
 
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
     const host = hostUri.split(":")[0];
-    if (host) return `http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`;
+    if (host) return assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
   }
-  return `http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`;
+  return assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`);
 }
 
 /**
