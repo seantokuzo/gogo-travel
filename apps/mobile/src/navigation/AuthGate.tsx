@@ -37,7 +37,7 @@ const useStyles = createStyles((t) =>
 function SplashHold() {
   const s = useStyles();
   return (
-    <View style={s.splash} testID="auth-splash">
+    <View style={s.splash} testID="sign-in-splash">
       <ActivityIndicator />
     </View>
   );

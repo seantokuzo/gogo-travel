@@ -68,7 +68,7 @@ describe("AuthGate", () => {
         <Child />
       </AuthGate>,
     );
-    expect(screen.getByTestId("auth-splash")).toBeOnTheScreen();
+    expect(screen.getByTestId("sign-in-splash")).toBeOnTheScreen();
     expect(screen.queryByTestId("protected")).toBeNull();
     expect(mockReplace).not.toHaveBeenCalled();
   });
