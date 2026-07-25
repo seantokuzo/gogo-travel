@@ -176,6 +176,23 @@ describe("createApiClient — refresh-on-401 rotation", () => {
     expect(onAuthLost).toHaveBeenCalledTimes(1);
   });
 
+  it("signs out when the refresh succeeds but the retried request still 401s", async () => {
+    // Distinct from refresh-itself-fails: the rotation SUCCEEDS (onTokensRefreshed
+    // fires), but the server rejects even the retried, freshly-bearer'd request
+    // (revoked mid-flight) → the explicit auth-loss exit at the retry branch.
+    const { client, fetchImpl, onTokensRefreshed, onAuthLost } = setup();
+    fetchImpl.mockImplementation(
+      async (url: string) =>
+        url.endsWith("/auth/refresh")
+          ? httpResponse(200, TOKENS) // rotation succeeds
+          : httpResponse(401, apiError("UNAUTHENTICATED")), // original + retry both 401
+    );
+
+    await expect(client.request(userEndpoints.getMe, {})).rejects.toMatchObject({ status: 401 });
+    expect(onTokensRefreshed).toHaveBeenCalledTimes(1);
+    expect(onAuthLost).toHaveBeenCalledTimes(1);
+  });
+
   it("never refresh-retries a request that carried no access token (public route)", async () => {
     const { client, fetchImpl, onAuthLost } = setup({ getAccessToken: () => null });
     fetchImpl.mockResolvedValue(httpResponse(401, apiError("UNAUTHENTICATED")));
