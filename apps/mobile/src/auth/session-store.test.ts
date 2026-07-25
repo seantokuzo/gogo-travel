@@ -160,3 +160,83 @@ describe("session store — sign-in / onboarding / sign-out", () => {
     expect(store.getState().consumeDestination()).toBeNull();
   });
 });
+
+describe("session store — mid-session token rotation (applyRefreshedTokens)", () => {
+  const rotated: AuthTokens = {
+    access_token: "access-rotated",
+    refresh_token: "refresh-next",
+    expires_in: 900,
+  };
+
+  it("persists the rotated refresh token and swaps the in-memory access token", async () => {
+    const { store, storage } = makeStore();
+    store.setState({ accessToken: "access-old" });
+
+    await store.getState().applyRefreshedTokens(rotated);
+
+    expect(store.getState().accessToken).toBe("access-rotated");
+    expect(storage.setRefreshToken).toHaveBeenCalledWith("refresh-next");
+    // Invariant preserved: the access token is never written to secure storage.
+    expect(storage.setRefreshToken).not.toHaveBeenCalledWith("access-rotated");
+  });
+
+  it("does not resolve until the secure-store write lands (single-flight ordering)", async () => {
+    const { store, storage } = makeStore();
+    let releaseWrite: () => void = () => undefined;
+    storage.setRefreshToken.mockImplementation(
+      () => new Promise<void>((resolve) => (releaseWrite = resolve)),
+    );
+
+    let settled = false;
+    const pending = store
+      .getState()
+      .applyRefreshedTokens(rotated)
+      .then(() => {
+        settled = true;
+      });
+
+    // The persist promise is still pending → applyRefreshedTokens must not have
+    // resolved (this is what lets the ApiClient single-flight wait before it
+    // clears refreshInFlight, closing the pre-rotation-read window).
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    releaseWrite();
+    await pending;
+    expect(settled).toBe(true);
+  });
+});
+
+describe("session store — sign-out calls /auth/logout (best-effort, spec §3.6.1)", () => {
+  it("attempts /auth/logout before clearing local state when a token is present", async () => {
+    const { store, storage, api } = makeStore();
+    api.request.mockResolvedValue(undefined);
+    store.setState({ user: USER, accessToken: "access-live" });
+
+    await store.getState().signOut();
+
+    expect(api.request).toHaveBeenCalledWith(authEndpoints.logout, { body: {} });
+    expect(store.getState()).toMatchObject({ user: null, accessToken: null, resetting: true });
+    expect(storage.clearRefreshToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("still clears local state when /auth/logout fails (a dead session must not block)", async () => {
+    const { store, storage, api } = makeStore();
+    api.request.mockRejectedValue(new ApiRequestError(401, "UNAUTHENTICATED", "revoked"));
+    store.setState({ user: USER, accessToken: "access-live" });
+
+    await expect(store.getState().signOut()).resolves.toBeUndefined();
+
+    expect(store.getState()).toMatchObject({ user: null, accessToken: null, resetting: true });
+    expect(storage.clearRefreshToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips /auth/logout when there is no access token (nothing to revoke)", async () => {
+    const { store, api } = makeStore();
+    store.setState({ user: null, accessToken: null });
+
+    await store.getState().signOut();
+
+    expect(api.request).not.toHaveBeenCalled();
+  });
+});

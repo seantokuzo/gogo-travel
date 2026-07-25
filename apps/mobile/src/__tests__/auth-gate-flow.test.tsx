@@ -11,10 +11,10 @@
  * Harness note: all navigation lives in this single mount (navigation-skeleton
  * quirk 3 — a navigating mount wedges later mounts in the same file).
  */
-import type { SignInResponse } from "@gogo/shared";
+import { authEndpoints, type SignInResponse } from "@gogo/shared";
 import { act, cleanup, renderRouter, screen, waitFor } from "expo-router/testing-library";
 
-import { useSessionStore } from "@/auth";
+import { apiClient, useSessionStore } from "@/auth";
 import { seedUnauthenticated, TEST_USER } from "@/test-utils/session-fixtures";
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
@@ -40,6 +40,9 @@ it("gates the unauthed → onboarding → resume → sign-out lifecycle on the r
   // Seeded state stands in for boot hydration; keep hydrate a no-op.
   useSessionStore.setState({ hydrate: async () => undefined });
   seedUnauthenticated();
+  // signOut now fires a best-effort /auth/logout (spec §3.6.1) — stub the one
+  // real ApiClient call so R-nav-4 stays a pure store/navigation assertion.
+  const requestSpy = jest.spyOn(apiClient, "request").mockResolvedValue(undefined as never);
 
   const result = renderRouter("src/app", { initialUrl: "/trip-1/today" });
   await result;
@@ -66,4 +69,8 @@ it("gates the unauthed → onboarding → resume → sign-out lifecycle on the r
     await useSessionStore.getState().signOut();
   });
   await waitFor(() => expect(screen.getByTestId("sign-in-screen")).toBeOnTheScreen());
+  // R-nav-4 sign-out attempts the best-effort logout before clearing.
+  expect(requestSpy).toHaveBeenCalledWith(authEndpoints.logout, { body: {} });
+
+  requestSpy.mockRestore();
 });

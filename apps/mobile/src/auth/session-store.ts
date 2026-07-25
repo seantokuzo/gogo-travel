@@ -11,8 +11,8 @@
  *
  * The store is the single writer of token state: `applySignIn` /
  * `applyRefreshedTokens` persist the rotated refresh token and swap the access
- * token; `signOut` clears everything locally (best-effort, never blocks on
- * network — auth-users spec §3.6.1).
+ * token; `signOut` fires a best-effort `/auth/logout` (never blocks on its
+ * failure), then clears everything locally (auth-users spec §3.6.1).
  */
 import {
   authEndpoints,
@@ -46,8 +46,8 @@ export interface SessionState {
   hydrate(): Promise<void>;
   /** Store a completed sign-in (persists refresh token + sets identity). */
   applySignIn(response: SignInResponse): Promise<void>;
-  /** Persist a rotated token pair from a refresh (single writer). */
-  applyRefreshedTokens(tokens: AuthTokens): void;
+  /** Persist a rotated token pair from a refresh (single writer, awaited). */
+  applyRefreshedTokens(tokens: AuthTokens): Promise<void>;
   /** First-run onboarding finished → leave the onboarding branch. */
   completeOnboarding(): void;
   /** Local sign-out reset (R-nav-4): clear identity, token, and stashes. */
@@ -110,10 +110,13 @@ export const createSessionSlice =
       });
     },
 
-    applyRefreshedTokens(tokens) {
-      // Persist the rotated refresh token (secure store) off the request hot
-      // path; the in-memory access token is what the next request reads.
-      void deps.storage.setRefreshToken(tokens.refresh_token);
+    async applyRefreshedTokens(tokens) {
+      // Persist the rotated refresh token BEFORE resolving: the ApiClient
+      // single-flight awaits this bridge, then clears `refreshInFlight`. If the
+      // write is fire-and-forget, a later 401 can re-enter refresh and read the
+      // PRE-rotation token from secure store → server reuse-detection nukes the
+      // family (R-auth-11) → forced logout. Await closes that ordering hole.
+      await deps.storage.setRefreshToken(tokens.refresh_token);
       set({ accessToken: tokens.access_token });
     },
 
@@ -122,6 +125,17 @@ export const createSessionSlice =
     },
 
     async signOut() {
+      // Logout-first (auth-users spec §3.6.1): best-effort server-side session
+      // revocation while the access token is still valid, THEN clear locally.
+      // Swallow any failure — a dead/offline session must never block the local
+      // sign-out (R-nav-4). Skipped when there's no token (nothing to revoke).
+      if (get().accessToken !== null) {
+        try {
+          await deps.api.request(authEndpoints.logout, { body: {} });
+        } catch {
+          // best-effort: ignore an already-revoked session or a network failure
+        }
+      }
       set({
         user: null,
         accessToken: null,
