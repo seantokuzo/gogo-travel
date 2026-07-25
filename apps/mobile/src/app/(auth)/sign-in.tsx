@@ -7,6 +7,15 @@
  * on iOS); Google uses the sanctioned expo-auth-session provider. The nonce
  * mechanics that satisfy the server (Apple: SHA-256(raw_nonce); Google: raw
  * match) live in `@/auth/apple` + `@/auth/google`.
+ *
+ * Google render-gate (T-5.7 r1 blocker): `useGoogleSignIn` calls
+ * expo-auth-session's `useIdTokenAuthRequest`, which THROWS during render when
+ * no client id is provisioned (`EXPO_PUBLIC_GOOGLE_*` unset — the phase-close
+ * state). A thrown hook takes the WHOLE screen down (Apple button included).
+ * React forbids calling a hook conditionally, but rendering a COMPONENT
+ * conditionally is legal — so the hook lives in `GoogleSignInButton`, mounted
+ * only when `isGoogleConfigured()`. Unconfigured, a disabled placeholder holds
+ * its place so the gate is visible and Apple always works.
  */
 import { authEndpoints, type SignInResponse } from "@gogo/shared";
 import { createStyles, useTheme } from "@gogo/tokens/react";
@@ -18,6 +27,7 @@ import {
   apiClient,
   buildGoogleSignInRequest,
   isAppleAuthAvailable,
+  isGoogleConfigured,
   signInWithApple,
   useGoogleSignIn,
   useSessionStore,
@@ -26,6 +36,14 @@ import { AppText, Button, ErrorBanner, PageHeader } from "@/components";
 
 type Provider = "apple" | "google";
 const GENERIC_ERROR = "Sign-in failed. Please try again.";
+
+/** Required `onPress` for the disabled Google placeholder (never invoked). */
+const noop = (): void => undefined;
+
+// Structural views of the auth-session hook result (kept in sync with
+// `@/auth/google`) so this route never imports expo-auth-session directly.
+type GoogleResult = { type: string; params?: Record<string, string> };
+type GoogleRequestLike = { nonce?: string } | null | undefined;
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -37,6 +55,48 @@ const useStyles = createStyles((t) =>
   }),
 );
 
+/**
+ * The Google button — isolated so `useGoogleSignIn()` (which throws at render
+ * when unconfigured) is only ever called once the caller has confirmed
+ * `isGoogleConfigured()`. `onStart` clears error + marks busy before the
+ * prompt; `onResult` handles the resolved auth-session outcome.
+ */
+function GoogleSignInButton({
+  busy,
+  onStart,
+  onResult,
+}: {
+  busy: Provider | null;
+  onStart: () => void;
+  onResult: (response: GoogleResult, request: GoogleRequestLike) => void;
+}) {
+  const { request, response, promptAsync } = useGoogleSignIn();
+
+  // The auth-session result arrives as a VALUE, not a subscription — reacting
+  // to it in an effect is the documented Expo Google pattern; the setState
+  // lives in the parent's `onResult`, not this effect body.
+  useEffect(() => {
+    if (response) onResult(response, request);
+  }, [response, request, onResult]);
+
+  const onPress = useCallback(() => {
+    onStart();
+    void promptAsync();
+  }, [onStart, promptAsync]);
+
+  return (
+    <Button
+      title="Continue with Google"
+      variant="secondary"
+      fullWidth
+      onPress={onPress}
+      loading={busy === "google"}
+      disabled={busy !== null || !request}
+      testID="sign-in-button-google"
+    />
+  );
+}
+
 export default function SignInScreen() {
   const s = useStyles();
   const { scheme } = useTheme();
@@ -45,8 +105,6 @@ export default function SignInScreen() {
   // iOS 13+ effectively always supports Apple sign-in — show optimistically so
   // the button is there on the first frame, then correct via the native check.
   const [appleAvailable, setAppleAvailable] = useState(Platform.OS === "ios");
-
-  const { request: googleRequest, response: googleResponse, promptAsync } = useGoogleSignIn();
 
   useEffect(() => {
     let active = true;
@@ -83,15 +141,10 @@ export default function SignInScreen() {
     [],
   );
 
-  // Handle a resolved Google auth-session result (success → POST; error →
-  // banner; cancel/dismiss → just clear busy). Extracted from the effect so
-  // the state updates live in a callback, not the effect body
-  // (react-hooks/set-state-in-effect).
+  // Google's resolved auth-session outcome (success → POST; error → banner;
+  // cancel/dismiss → clear busy). Handed to `GoogleSignInButton` as `onResult`.
   const finishGoogle = useCallback(
-    (
-      response: { type: string; params?: Record<string, string> },
-      request: { nonce?: string } | null | undefined,
-    ) => {
+    (response: GoogleResult, request: GoogleRequestLike) => {
       if (response.type !== "success") {
         if (response.type === "error") setError(GENERIC_ERROR);
         setBusy(null);
@@ -106,14 +159,11 @@ export default function SignInScreen() {
     [submit],
   );
 
-  // Google's result arrives asynchronously through the auth-session hook. The
-  // hook surfaces the outcome as a VALUE (not a subscription), so reacting to
-  // it in an effect is the documented Expo Google pattern — the eventual
-  // setState (success → POST, error → banner) lives in `finishGoogle`.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: auth-session result is a hook value, not a subscription callback
-    if (googleResponse) finishGoogle(googleResponse, googleRequest);
-  }, [googleResponse, googleRequest, finishGoogle]);
+  // Clear error + mark busy the instant the Google prompt opens (`onStart`).
+  const startGoogle = useCallback(() => {
+    setError(null);
+    setBusy("google");
+  }, []);
 
   const onApple = useCallback(
     () =>
@@ -124,12 +174,6 @@ export default function SignInScreen() {
       }),
     [submit],
   );
-
-  const onGoogle = useCallback(() => {
-    setError(null);
-    setBusy("google");
-    void promptAsync();
-  }, [promptAsync]);
 
   const appleStyle =
     scheme === "dark"
@@ -161,15 +205,22 @@ export default function SignInScreen() {
             />
           ) : null}
 
-          <Button
-            title="Continue with Google"
-            variant="secondary"
-            fullWidth
-            onPress={onGoogle}
-            loading={busy === "google"}
-            disabled={busy !== null || !googleRequest}
-            testID="sign-in-button-google"
-          />
+          {isGoogleConfigured() ? (
+            <GoogleSignInButton busy={busy} onStart={startGoogle} onResult={finishGoogle} />
+          ) : (
+            // Unconfigured (no Google client id yet): a visible, disabled gate.
+            // Rendering the placeholder — rather than the hook-bearing button —
+            // is what keeps the unprovisioned build from crashing on render.
+            <Button
+              title="Continue with Google"
+              variant="secondary"
+              fullWidth
+              disabled
+              onPress={noop}
+              testID="sign-in-button-google"
+              accessibilityLabel="Google sign-in unavailable"
+            />
+          )}
         </View>
 
         <AppText role="caption" color="muted" style={s.legal}>
