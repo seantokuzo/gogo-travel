@@ -10,7 +10,7 @@
 import { userEndpoints } from "@gogo/shared";
 import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 
-import { apiClient, useSessionStore } from "@/auth";
+import { apiClient, ApiRequestError, useSessionStore } from "@/auth";
 import OnboardingScreen from "@/app/(auth)/onboarding";
 import { renderWithProviders } from "@/test-utils/render";
 import { TEST_USER, seedAuthenticated } from "@/test-utils/session-fixtures";
@@ -116,5 +116,48 @@ describe("OnboardingScreen", () => {
     expect(request).toHaveBeenCalledWith(userEndpoints.updatePaymentHandles, {
       body: { zelle_handle: "sean@example.com", zelle_display_name: "Sean" },
     });
+  });
+
+  it("surfaces an error and does NOT complete onboarding when the profile write fails", async () => {
+    seedAuthenticated({ firstRun: true });
+    (jest.spyOn(apiClient, "request") as unknown as jest.Mock).mockRejectedValue(
+      new ApiRequestError(500, "UNKNOWN", "boom"),
+    );
+    await renderWithProviders(<OnboardingScreen />);
+
+    await fireEvent.changeText(screen.getByTestId("onboarding-input-name"), "Alice");
+    await fireEvent.press(screen.getByTestId("onboarding-button-continue")); // → currency
+    await fireEvent.press(screen.getByTestId("onboarding-button-skip")); // → styles
+    await fireEvent.press(screen.getByTestId("onboarding-button-skip")); // → handles
+    await fireEvent.press(screen.getByTestId("onboarding-button-finish"));
+
+    expect(await screen.findByTestId("onboarding-error")).toBeOnTheScreen();
+    // Not completed: the gate keeps the user on onboarding to retry.
+    expect(useSessionStore.getState().firstRun).toBe(true);
+  });
+
+  it("distinguishes a handles-write failure from a profile-write failure", async () => {
+    seedAuthenticated({ firstRun: true });
+    const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/users/me") return Promise.resolve(TEST_USER); // profile OK
+      // handles write 400s with a field-level reason (a bad Zelle handle).
+      return Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "invalid zelle handle"));
+    });
+    await renderWithProviders(<OnboardingScreen />);
+
+    await fireEvent.changeText(screen.getByTestId("onboarding-input-name"), "Alice");
+    await fireEvent.press(screen.getByTestId("onboarding-button-continue")); // → currency
+    await fireEvent.press(screen.getByTestId("onboarding-button-continue")); // → styles
+    await fireEvent.press(screen.getByTestId("onboarding-button-continue")); // → handles
+    await fireEvent.changeText(screen.getByTestId("onboarding-input-zelle"), "sean@example.com");
+    await fireEvent.changeText(screen.getByTestId("onboarding-input-zelle-name"), "Sean");
+    await fireEvent.press(screen.getByTestId("onboarding-button-finish"));
+
+    const banner = await screen.findByTestId("onboarding-error");
+    // The copy names the handles (not the profile) and carries the server reason.
+    expect(banner).toHaveTextContent(/payment handles/i);
+    expect(banner).toHaveTextContent(/invalid zelle handle/i);
+    expect(useSessionStore.getState().firstRun).toBe(true);
   });
 });

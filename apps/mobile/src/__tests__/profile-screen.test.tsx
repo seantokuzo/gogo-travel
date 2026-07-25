@@ -58,11 +58,17 @@ const HANDLES = {
   zelle_display_name: null,
 };
 
-/** Route the mocked network by `METHOD path` (path is the descriptor pattern). */
-function mockApi(): jest.Mock {
+/**
+ * Route the mocked network by `METHOD path` (path is the descriptor pattern).
+ * `overrides` replaces individual routes — used to inject partial failures.
+ */
+function mockApi(overrides: Record<string, () => Promise<unknown>> = {}): jest.Mock {
   const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
   request.mockImplementation((descriptor: { method: string; path: string }) => {
-    switch (`${descriptor.method} ${descriptor.path}`) {
+    const key = `${descriptor.method} ${descriptor.path}`;
+    const override = overrides[key];
+    if (override) return override();
+    switch (key) {
       case "GET /users/me":
         return Promise.resolve(TEST_USER);
       case "PATCH /users/me":
@@ -197,5 +203,49 @@ describe("ProfileScreen", () => {
     await renderWithProviders(<ProfileScreen />);
 
     expect(await screen.findByTestId("profile-error")).toBeOnTheScreen();
+  });
+
+  it("shows the sessions error on a partial failure (profile OK, sessions read fails)", async () => {
+    seedAuthenticated();
+    // getMe + entitlements resolve so the sections mount; ONLY the sessions read
+    // fails — the realistic partial failure the sessions-error branch exists for.
+    mockApi({
+      "GET /auth/sessions": () => Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
+    });
+    await renderWithProviders(<ProfileScreen />);
+
+    expect(await screen.findByTestId("profile-sessions-error")).toBeOnTheScreen();
+  });
+
+  it("surfaces a revoke failure instead of silently claiming success", async () => {
+    seedAuthenticated();
+    mockApi({
+      "DELETE /auth/sessions/:sessionId": () =>
+        Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
+    });
+    await renderWithProviders(<ProfileScreen />);
+    await screen.findByTestId(`profile-session-${SESSION_OTHER.id}`);
+
+    await fireEvent.press(screen.getByTestId(`profile-revoke-${SESSION_OTHER.id}`));
+    await fireEvent.press(screen.getByTestId("profile-revoke-dialog-confirm"));
+
+    expect(await screen.findByTestId("profile-revoke-error")).toBeOnTheScreen();
+  });
+
+  it("keeps the user signed in and surfaces an error when account deletion fails", async () => {
+    seedAuthenticated();
+    mockApi({
+      "DELETE /users/me": () => Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
+    });
+    await renderWithProviders(<ProfileScreen />);
+    await screen.findByTestId("profile-button-delete");
+
+    await fireEvent.press(screen.getByTestId("profile-button-delete"));
+    await fireEvent.press(screen.getByTestId("profile-delete-dialog-confirm"));
+
+    expect(await screen.findByTestId("profile-delete-error")).toBeOnTheScreen();
+    // Deletion failed → still authenticated, and the button returns from loading.
+    expect(useSessionStore.getState().user).not.toBeNull();
+    expect(screen.getByTestId("profile-button-delete")).toBeEnabled();
   });
 });
