@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
+  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
+} from "../config/places.js";
+import {
   coarseCategory,
   coarseCategoryTokens,
   PlaceCreateSchema,
@@ -121,6 +125,16 @@ describe("PlaceCreate / PlaceUpdate (R-places-9/10; T-6.1 string-cap convention)
     ).toBe(false);
   });
 
+  it("accepts the cap boundaries exactly: 200-char name and category", () => {
+    const parsed = PlaceCreateSchema.parse({
+      ...valid,
+      name: "n".repeat(200),
+      category: "c".repeat(200),
+    });
+    expect(parsed.name).toHaveLength(200);
+    expect(parsed.category).toHaveLength(200);
+  });
+
   it("update is partial; category:null clears; same caps apply", () => {
     expect(PlaceUpdateSchema.parse({}).name).toBeUndefined();
     expect(PlaceUpdateSchema.parse({ category: null }).category).toBeNull();
@@ -167,6 +181,41 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
     }
   });
 
+  it("rejects an antimeridian-crossing bbox explicitly (minLng > maxLng across ±180)", () => {
+    // A viewport straddling the date line arrives inverted in the v1
+    // encoding — malformed by contract (no wrap; two calls instead).
+    expect(PlaceSearchQuerySchema.safeParse({ bbox: "170,10,-170,20" }).success).toBe(false);
+  });
+
+  it("CLAMPS an oversized bbox to the max span per axis, centered (never rejects)", () => {
+    const world = PlaceSearchQuerySchema.parse({ bbox: "-170,-80,170,80" });
+    // Center (0, 0) → a PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES window each way.
+    expect(world.bbox).toEqual({
+      min_lng: -PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES / 2,
+      min_lat: -PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES / 2,
+      max_lng: PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES / 2,
+      max_lat: PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES / 2,
+    });
+
+    // One oversized axis clamps alone; an off-center box keeps its center.
+    const wide = PlaceSearchQuerySchema.parse({ bbox: "5,38,15,39" });
+    expect(wide.bbox).toEqual({ min_lng: 9, min_lat: 38, max_lng: 11, max_lat: 39 });
+  });
+
+  it("text-only floor: q < 4 chars needs a geo bound; with one, the 2-char floor holds", () => {
+    // Rejected: 2- and 3-char q with NO geo bound (trgm candidate blowup —
+    // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS doc).
+    expect(PlaceSearchQuerySchema.safeParse({ q: "ab" }).success).toBe(false);
+    expect(PlaceSearchQuerySchema.safeParse({ q: "abc" }).success).toBe(false);
+    expect(PLACES_SEARCH_TEXT_ONLY_MIN_CHARS).toBe(4);
+
+    // Accepted: exactly the text-only floor, and exactly the 2-char spec
+    // floor when near/bbox bounds the scan.
+    expect(PlaceSearchQuerySchema.parse({ q: "abcd" }).q).toBe("abcd");
+    expect(PlaceSearchQuerySchema.parse({ q: "ab", near: "38.7,-9.14" }).q).toBe("ab");
+    expect(PlaceSearchQuerySchema.parse({ q: "abc", bbox: "-9.5,38.5,-9,39" }).q).toBe("abc");
+  });
+
   it("near parses lat,lng; radius_m is bounded and requires near", () => {
     const parsed = PlaceSearchQuerySchema.parse({ near: "38.7,-9.14", radius_m: "2500" });
     expect(parsed.near).toEqual({ lat: 38.7, lng: -9.14 });
@@ -174,6 +223,10 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
 
     expect(PlaceSearchQuerySchema.safeParse({ near: "91,-9" }).success).toBe(false);
     expect(PlaceSearchQuerySchema.safeParse({ near: "38.7" }).success).toBe(false);
+    // The max itself is valid (boundary-accept).
+    expect(
+      PlaceSearchQuerySchema.parse({ near: "38.7,-9.14", radius_m: 50_000 }).radius_m,
+    ).toBe(50_000);
     expect(
       PlaceSearchQuerySchema.safeParse({ near: "38.7,-9.14", radius_m: 50_001 }).success,
     ).toBe(false);

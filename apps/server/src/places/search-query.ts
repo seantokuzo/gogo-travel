@@ -90,9 +90,14 @@ export interface PlacesSearchParams {
   limit: number;
 }
 
-/** The `near` prefilter box: radius → degrees, pole-clamped; the exact
- * distance residual makes over-coverage harmless. Longitude does NOT wrap —
- * the v1 posture the shared bbox schema pins (no antimeridian viewports). */
+/** The `near` prefilter box: radius → degrees, pole-clamped. In general the
+ * box OVER-covers and the exact distance residual trims the corners —
+ * EXCEPT above |lat| ≈ 89.43° (where cos(lat) < the 0.01 clamp): there the
+ * lng half-width is an UNDER-estimate and the polar sliver beyond it is
+ * DELIBERATELY excluded (the alternative is near-full-ring lng spans for a
+ * search area that contains nothing). Longitude also never wraps across
+ * ±180 — the v1 posture the shared bbox schema pins (no antimeridian
+ * viewports); a circle straddling the date line loses its far side. */
 export function nearPrefilterBox(lat: number, lng: number, radiusM: number): SearchBox {
   const latHalf = radiusM / METERS_PER_DEGREE_LAT;
   const lngHalf =
@@ -175,6 +180,13 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
       sql`${distanceM} <= ${params.near.radiusM}::float8`,
     );
   }
+
+  // BLEND (q + geo together) is DELIBERATELY NOT plan-pinned (round-1 #11):
+  // with both predicate families present the planner must stay free to
+  // drive from the trgm GIN, the lat/lng btree, or a BitmapAnd of both as
+  // row statistics evolve — pinning today's pick would turn a future
+  // planner improvement into a red test. Only the single-mode drivers are
+  // EXPLAIN-pinned (routes.db.test.ts).
 
   if (params.coarse !== undefined) {
     predicates.push(sql`${coarseCategorySqlExpr(places.category)} = ${params.coarse}`);

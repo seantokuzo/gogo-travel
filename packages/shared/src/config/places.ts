@@ -50,6 +50,32 @@ export function spineSourcesAbove(source: SpineSource): readonly SpineSource[] {
 }
 
 // ---------------------------------------------------------------------------
+// Search scale bounds (§3.3 GET /places/search) — T-6.5 round-1 findings
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum `q` length for a TEXT-ONLY search (no bbox/near). A 2-char query
+ * yields only 3 padded trigrams ("  x", " xy", "xy ") — against a multi-
+ * million-row spine the trgm GIN's candidate set is every row sharing any
+ * of them, O(10^5–10^6) heap rechecks + similarity() calls per page,
+ * re-paid on every cursor step. ≥ 4 chars ⇒ ≥ 5 trigrams and real
+ * selectivity. 2–3-char typeahead stays legal WHEN a geo bound is present
+ * (the map surface always has one) — the lat/lng window bounds the
+ * candidate set instead. Enforced by `PlaceSearchQuerySchema`.
+ */
+export const PLACES_SEARCH_TEXT_ONLY_MIN_CHARS = 4;
+
+/**
+ * Max bbox span per axis, degrees. Oversized boxes (world-zoom "search this
+ * area") are CLAMPED — not rejected — to this window around the box center
+ * (`PlaceSearchQuerySchema`), mirroring the 9-cell center-out philosophy of
+ * the ingest cap: the v1 map degrades gracefully to "results near where
+ * you're looking" instead of licensing a full-table scan per request. 2° ≈
+ * a 220 km × ≤220 km window — beyond any city-scale viewport.
+ */
+export const PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES = 2;
+
+// ---------------------------------------------------------------------------
 // Coarse-category mapping tables (§3.2.3) — T-6.5 / PL-2
 // ---------------------------------------------------------------------------
 

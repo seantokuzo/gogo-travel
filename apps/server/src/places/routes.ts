@@ -49,7 +49,7 @@ import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "./ingest-queue.js";
 import { intersectBoxes, staleSearchCells } from "./search-coverage.js";
 import { nearPrefilterBox, placesSearchQuery, type SearchBox } from "./search-query.js";
-import { toPlaceWire } from "./serialize.js";
+import { toPlaceWire, type PlaceRow } from "./serialize.js";
 
 export interface PlacesRouterDeps {
   db: DbClient;
@@ -66,12 +66,20 @@ export interface PlacesRouterDeps {
     now?: () => number;
   };
   /**
-   * Search-miss ingest seam (T-6.4, R-places-7): fired post-query with the
-   * area's stale cells — best-effort, throttled + budget-bounded inside the
-   * queue. Optional: absent (tests/dev without the pipeline) skips the
+   * Search-miss ingest seam (T-6.4, R-places-7): fired post-response with
+   * the area's stale cells — best-effort, throttled + budget-bounded inside
+   * the queue. Optional: absent (tests/dev without the pipeline) skips the
    * trigger; search NEVER fails because of it.
    */
   placesIngest?: PlacesIngestTrigger;
+  /**
+   * TEST settle seam (round-1 #9): receives each search's background
+   * coverage task — already error-swallowed, resolved when the coverage
+   * probe + enqueue have finished. Tests await the collected promises so
+   * positive AND negative enqueue assertions are deterministic. Prod
+   * wiring leaves it unset: fire-and-forget stays fire-and-forget.
+   */
+  trackCoverageTask?: (task: Promise<void>) => void;
 }
 
 /** FK constraints that RESTRICT custom-place deletion → the §3.3 409 reason
@@ -79,21 +87,30 @@ export interface PlacesRouterDeps {
  * and `photos` reference places with SET NULL and can never fire. */
 const DELETE_RESTRICT_TABLES = new Set(["saved_places", "itinerary_items", "tour_guide_bundles"]);
 
-/** Postgres foreign_key_violation (23503), possibly wrapped — walk `cause`
- * (the sign-in 23505 walker's shape). Returns the referencing table. */
-function fkViolationTable(error: unknown): string | null {
+/**
+ * Postgres foreign_key_violation (23503), possibly wrapped — walk `cause`
+ * (the sign-in 23505 walker's shape). Returns the referencing table.
+ *
+ * 🔴 DRIVER TRAP (round-1 blocking #1, the Neon-parity family): postgres-js
+ * — the TEST driver — exposes the wire field as `table_name`; pg-protocol's
+ * `DatabaseError` — what the PROD Neon serverless driver throws — exposes
+ * `table`. Reading only one shape means prod answers `by: "unknown"`
+ * forever while every test stays green. Accept BOTH; exported so the unit
+ * test can pin the prod shape no container ever produces.
+ */
+export function fkViolationTable(error: unknown): string | null {
   let current: unknown = error;
   while (current instanceof Error) {
-    const candidate = current as { code?: unknown; table_name?: unknown };
+    const candidate = current as { code?: unknown; table_name?: unknown; table?: unknown };
     if (candidate.code === "23503") {
-      return typeof candidate.table_name === "string" ? candidate.table_name : "unknown";
+      if (typeof candidate.table_name === "string") return candidate.table_name;
+      if (typeof candidate.table === "string") return candidate.table;
+      return "unknown";
     }
     current = current.cause;
   }
   return null;
 }
-
-type PlaceRow = typeof schema.places.$inferSelect;
 
 type CustomPlaceAccess =
   | { kind: "not_found" }
@@ -230,23 +247,26 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
           ? encodeKeysetCursor({ micros: last.rankKey, id: last.place.id })
           : null;
 
-      // R-places-7 secondary trigger: a geo-scoped search over stale/absent
-      // coverage answers from whatever the spine holds AND backfills — the
-      // enqueue is best-effort and hard-capped per search (center-out cell
-      // selection; the queue adds per-cell throttle + global budget). Never
-      // an error, never a block: any failure here is swallowed by contract.
+      // R-places-7 secondary trigger — OFF the response path (round-1 #9):
+      // the coverage probe is a full DB round trip (~5–15 ms on Neon) and
+      // this is the hottest read in the app, so the search answers first
+      // and the backfill check runs fire-and-forget behind it. Best-effort
+      // by contract: hard-capped per search (center-out cell selection; the
+      // queue adds per-cell throttle + global budget), and every failure —
+      // including a bad-area RangeError — is swallowed. Never an error,
+      // never a block, never response latency.
       if (bbox || near) {
-        try {
-          const nearBox = near ? nearPrefilterBox(near.lat, near.lng, near.radiusM) : undefined;
-          const area =
-            bbox && nearBox ? intersectBoxes(bbox, nearBox) : (bbox ?? nearBox ?? null);
-          if (area) {
+        const nearBox = near ? nearPrefilterBox(near.lat, near.lng, near.radiusM) : undefined;
+        const area = bbox && nearBox ? intersectBoxes(bbox, nearBox) : (bbox ?? nearBox ?? null);
+        if (area) {
+          const task = (async () => {
             const cells = regionCellsForBbox(area, PLACES_SEARCH_MISS_MAX_CELLS);
             const stale = await staleSearchCells(deps.db, cells, nowOf());
             if (stale.length > 0) deps.placesIngest?.enqueueSearchMiss(stale);
-          }
-        } catch {
-          // Deliberately swallowed (R-places-7): backfill must never fail a search.
+          })().catch(() => {
+            // Deliberately swallowed (R-places-7): backfill never fails a search.
+          });
+          deps.trackCoverageTask?.(task);
         }
       }
 

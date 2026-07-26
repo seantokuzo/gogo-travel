@@ -7,7 +7,11 @@
 import { z } from "zod";
 import type { EndpointDescriptor } from "../api/descriptor.js";
 import { CursorQuerySchema, NoContentSchema, paginatedSchema } from "../api/envelope.js";
-import { COARSE_CATEGORY_RULES } from "../config/places.js";
+import {
+  COARSE_CATEGORY_RULES,
+  PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
+  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
+} from "../config/places.js";
 import {
   CoarseCategorySchema,
   PlaceSourceSchema,
@@ -162,11 +166,25 @@ const finiteCsvParts = (val: string, expected: number): number[] | null => {
   return nums;
 };
 
+/** CLAMP an axis to the max search span, centered — never rejects (the
+ * bounded window keeps a world-zoom "search this area" from licensing a
+ * full-table scan; see PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES). A clamped
+ * center stays in range: span > max ⇒ |center| ≤ axis_bound − span/2. */
+const clampSpan = (min: number, max: number): [number, number] => {
+  if (max - min <= PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES) return [min, max];
+  const center = (min + max) / 2;
+  const half = PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES / 2;
+  return [center - half, center + half];
+};
+
 /**
  * `bbox=minLng,minLat,maxLng,maxLat` (spec §3.3 — Mapbox bounds order on the
  * wire; parsed into named fields so nobody downstream re-derives the order).
  * Inverted boxes are malformed — v1 has no antimeridian-crossing viewport
  * (map spec renders within [-180, 180]); a wrap-around search is two calls.
+ * Oversized boxes CLAMP per axis to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES
+ * around the box center (degrade-not-reject: results follow where the user
+ * is looking, and the scan stays index-bounded).
  */
 const BboxQuerySchema = z
   .string()
@@ -183,7 +201,14 @@ const BboxQuerySchema = z
       return reject("bbox out of range");
     }
     if (minLat > maxLat || minLng > maxLng) return reject("bbox min must not exceed max");
-    return { min_lng: minLng, min_lat: minLat, max_lng: maxLng, max_lat: maxLat };
+    const [clampedMinLat, clampedMaxLat] = clampSpan(minLat, maxLat);
+    const [clampedMinLng, clampedMaxLng] = clampSpan(minLng, maxLng);
+    return {
+      min_lng: clampedMinLng,
+      min_lat: clampedMinLat,
+      max_lng: clampedMaxLng,
+      max_lat: clampedMaxLat,
+    };
   });
 
 /** `near=lat,lng` (spec §3.3). */
@@ -225,6 +250,23 @@ export const PlaceSearchQuerySchema = CursorQuerySchema.extend({
       message: "at least one of q, bbox, near is required",
     });
   }
+  // TEXT-ONLY floor (round-1 perf finding): a 2–3-char q against the trgm
+  // GIN alone is an O(10^5–10^6)-candidate scan at spine scale — see
+  // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS for the math. With a geo bound the
+  // lat/lng window bounds the candidates instead, so map typeahead keeps
+  // its 2-char floor.
+  if (
+    val.q !== undefined &&
+    val.q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS &&
+    val.bbox === undefined &&
+    val.near === undefined
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: `text-only search requires q of at least ${PLACES_SEARCH_TEXT_ONLY_MIN_CHARS} characters (add a geo bound for shorter typeahead)`,
+      path: ["q"],
+    });
+  }
   if (val.radius_m !== undefined && val.near === undefined) {
     ctx.addIssue({
       code: "custom",
@@ -254,7 +296,11 @@ export const placeEndpoints = {
   /**
    * Spine-only search (R-places-6): text (pg_trgm) / geo (bbox|near) /
    * blend; ranked deterministically for cursor stability. Coverage misses
-   * degrade + backfill (R-places-7) — never an error.
+   * degrade + backfill (R-places-7) — never an error. Scale bounds
+   * (config/places.ts): text-ONLY searches need `q` ≥
+   * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (2–3-char typeahead requires a geo
+   * bound); bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per
+   * axis around the box center (degrade, not reject).
    */
   searchPlaces: {
     method: "GET",

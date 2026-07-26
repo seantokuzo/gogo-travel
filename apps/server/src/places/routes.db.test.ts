@@ -97,6 +97,15 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
 
   /** Search-miss trigger stub — every enqueue call captured, in order. */
   const enqueued: RegionCell[][] = [];
+  /** Background coverage tasks (round-1 #9: the probe runs OFF the response
+   * path) — collected via the router's settle seam so enqueue assertions,
+   * positive AND negative, are deterministic. */
+  const coverageTasks: Promise<void>[] = [];
+  /** Await every outstanding coverage task (strays from earlier searches
+   * included) — call before snapshotting AND before asserting `enqueued`. */
+  const settleCoverage = async () => {
+    await Promise.all(coverageTasks.splice(0));
+  };
 
   let seq = 0;
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -140,6 +149,9 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
           enqueueSearchMiss: (cells) => {
             enqueued.push([...cells]);
           },
+        },
+        trackCoverageTask: (task) => {
+          coverageTasks.push(task);
         },
       },
     });
@@ -394,6 +406,83 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     expect(walked.map((p) => p.id)).toEqual(full.items.map((p) => p.id));
   });
 
+  it("tied-rank pagination: identical rank keys page exactly on the id tiebreak (row-compare pin)", async () => {
+    // Five IDENTICALLY-NAMED rows under a text-only search share ONE rank
+    // key — the page boundary falls entirely on the id half of the
+    // (rank, id) row-value predicate. This pins the tuple comparison
+    // against reverts to a rank-only (or non-strict) cursor predicate,
+    // which the distance-walk test can never catch.
+    const user = await seedUserWithToken();
+    for (let i = 0; i < 5; i++) {
+      await seedSpinePlace({
+        source: "overture",
+        sourceId: `ovt-dup-${i}`,
+        name: "Duplicate Diner",
+        lat: -33.9 + 0.001 * i,
+        lng: 18.4,
+        category: "restaurant",
+      });
+    }
+
+    const full = await searchOk(user.accessToken, "q=duplicate&limit=10");
+    expect(full.items).toHaveLength(5);
+    expect(new Set(full.items.map((p) => p.name))).toEqual(new Set(["Duplicate Diner"]));
+
+    const walked: Place[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await searchOk(
+        user.accessToken,
+        `q=duplicate&limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      walked.push(...page.items);
+      cursor = page.nextCursor;
+      pages += 1;
+      expect(pages).toBeLessThanOrEqual(4); // 2+2+1 → 3 pages, never loops
+    } while (cursor !== null);
+
+    // Exact: no duplicate, no drop, same order as the single-page truth.
+    expect(walked.map((p) => p.id)).toEqual(full.items.map((p) => p.id));
+  });
+
+  it("short q (2–3 chars) is accepted WITH a geo bound; rejected text-only (scale floor)", async () => {
+    const user = await seedUserWithToken();
+    // Map typeahead: 2-char q + near → valid request (spec's 2-char floor).
+    const withGeo = await search(user.accessToken, `q=be&near=${TOWER.lat},${TOWER.lng}`);
+    expect(withGeo.status).toBe(200);
+    // The same q without any geo bound: 400 (trgm candidate blowup guard).
+    const textOnly = await search(user.accessToken, "q=abc");
+    expect(textOnly.status).toBe(400);
+    expect(((await textOnly.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("oversized bbox CLAMPS to the centered max-span window instead of scanning the world", async () => {
+    const user = await seedUserWithToken();
+    // Isolated corner of the Indian Ocean: one row inside the clamp window,
+    // one inside the ORIGINAL box but outside the window.
+    const inWindow = await seedSpinePlace({
+      source: "overture",
+      sourceId: "ovt-clamp-in",
+      name: "Clamp Window Reef",
+      lat: -30,
+      lng: 70,
+      category: null,
+    });
+    await seedSpinePlace({
+      source: "overture",
+      sourceId: "ovt-clamp-out",
+      name: "Clamp Outside Atoll",
+      lat: -25,
+      lng: 75,
+      category: null,
+    });
+
+    // 20°×20° box centered on (70, -30) → clamped window ±1° around center.
+    const { items } = await searchOk(user.accessToken, "bbox=60,-40,80,-20");
+    expect(items.map((p) => p.id)).toEqual([inWindow.id]);
+  });
+
   it("malformed cursor falls back to page 1 (opaque token — trips precedent)", async () => {
     const user = await seedUserWithToken();
     const query = `near=${TOKYO.lat},${TOKYO.lng}&radius_m=1000&limit=2`;
@@ -413,6 +502,7 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
       "q=belem&radius_m=100", // radius without near
       "q=belem&limit=51", // page-size cap
       "q=a", // sub-minimum text
+      "q=abc", // sub-text-only-floor without a geo bound
     ]) {
       const res = await search(user.accessToken, query);
       expect(res.status).toBe(400);
@@ -436,8 +526,10 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     expect(cellKey).toBe("r:71:279");
 
     // 1) Never-ingested area: results from whatever the spine holds + enqueue.
+    await settleCoverage(); // drain strays from earlier geo searches
     let before = enqueued.length;
     const missed = await searchOk(user.accessToken, query);
+    await settleCoverage();
     expect(missed.items.length).toBeGreaterThan(0); // degrades, never errors
     expect(enqueued.length).toBe(before + 1);
     expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
@@ -458,6 +550,7 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     }
     before = enqueued.length;
     await searchOk(user.accessToken, query);
+    await settleCoverage();
     expect(enqueued.length).toBe(before);
 
     // 3) Past the refresh window (R-places-5): stale again → enqueue again.
@@ -467,26 +560,46 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
       .where(eq(schema.placeIngestRegions.regionKey, cellKey));
     before = enqueued.length;
     await searchOk(user.accessToken, query);
+    await settleCoverage();
     expect(enqueued.length).toBe(before + 1);
     expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
   });
 
   it("a single source stale ⇒ still a miss (full-source coverage required)", async () => {
     const user = await seedUserWithToken();
-    // Reuse the r:71:279 rows: overture fresh again, fsq_os left stale.
-    await db
-      .update(schema.placeIngestRegions)
-      .set({ ingestedAt: FROZEN_NOW })
-      .where(eq(schema.placeIngestRegions.source, "overture"));
+    // This test's OWN cell (round-1 #8: self-seeded, no cross-test row
+    // mutation): overture fresh, fsq_os stale from the start.
+    const cellKey = regionCellAt(34.68, 138.76).key;
+    expect(cellKey).toBe("r:69:277");
+    await db.insert(schema.placeIngestRegions).values(
+      SPINE_SOURCE_PRIORITY.map((source) => ({
+        regionKey: cellKey,
+        source,
+        minLat: "34.5",
+        minLng: "138.5",
+        maxLat: "35",
+        maxLng: "139",
+        status: "ready",
+        ingestedAt:
+          source === "overture" ? FROZEN_NOW : new Date(FROZEN_NOW.getTime() - 91 * DAY_MS),
+        rowCount: 0,
+      })),
+    );
+
+    await settleCoverage();
     const before = enqueued.length;
-    await searchOk(user.accessToken, "bbox=139.75,35.67,139.77,35.69");
+    await searchOk(user.accessToken, "bbox=138.75,34.67,138.77,34.69");
+    await settleCoverage();
     expect(enqueued.length).toBe(before + 1);
+    expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
   });
 
   it("globe-pan bbox is hard-capped at PLACES_SEARCH_MISS_MAX_CELLS cells (enqueue-volume bound)", async () => {
     const user = await seedUserWithToken();
+    await settleCoverage();
     const before = enqueued.length;
     await searchOk(user.accessToken, "bbox=-170,-80,170,80");
+    await settleCoverage();
     expect(enqueued.length).toBe(before + 1);
     const cells = enqueued[enqueued.length - 1]!;
     expect(cells.length).toBe(PLACES_SEARCH_MISS_MAX_CELLS);
@@ -494,8 +607,10 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
 
   it("text-only search never enqueues (R-places-7 is geo-scoped)", async () => {
     const user = await seedUserWithToken();
+    await settleCoverage();
     const before = enqueued.length;
     await searchOk(user.accessToken, "q=bel%C3%A9m");
+    await settleCoverage();
     expect(enqueued.length).toBe(before);
   });
 
@@ -804,6 +919,22 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     expect(((await visitedRes.json()) as ErrorEnvelope).error.details).toEqual({
       reason: "place_referenced",
       by: "itinerary_items",
+    });
+
+    // Third RESTRICT referencer (R-places-10's full set): tour guide bundles.
+    const bundled = await createPlaceVia(user.accessToken, {
+      name: "Bundled Spot",
+      lat: 35.675,
+      lng: 139.675,
+    });
+    await db
+      .insert(schema.tourGuideBundles)
+      .values({ tripId: trip.id, placeId: bundled.id });
+    const bundledRes = await deletePlace(bundled.id, user.accessToken);
+    expect(bundledRes.status).toBe(409);
+    expect(((await bundledRes.json()) as ErrorEnvelope).error.details).toEqual({
+      reason: "place_referenced",
+      by: "tour_guide_bundles",
     });
   });
 
