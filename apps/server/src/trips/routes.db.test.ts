@@ -302,6 +302,19 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     expect(((await res.json()) as ErrorEnvelope).error.code).toBe("UNAUTHENTICATED");
   });
 
+  it("POST: an overlong name (cap+1) → 400 at the boundary (DoS-headroom caps)", async () => {
+    const owner = await seedUserWithToken();
+    const res = await postTrip(owner.accessToken, { ...VALID_CREATE, name: "n".repeat(201) });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    // Nothing reached the DB.
+    const rows = await db
+      .select({ id: schema.trips.id })
+      .from(schema.trips)
+      .where(eq(schema.trips.createdBy, owner.userId));
+    expect(rows).toEqual([]);
+  });
+
   // ===========================================================================
   // GET /trips (R-trips-4)
   // ===========================================================================
@@ -322,6 +335,24 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       await (await listTrips(viewer.accessToken)).json(),
     );
     expect(viewerPage.items[0]?.role).toBe("viewer");
+  });
+
+  it("GET list: member_count counts LIVE members only — a legacy ghost membership row is excluded", async () => {
+    const { owner, trip } = await seedCollabTrip(); // 3 live members
+    // Legacy pre-T-6.1 state: a member's account was scrubbed but their
+    // membership row survived. The count must not inflate for ghosts (same
+    // live-member semantics as the account-deletion sole-owner guard).
+    const ghost = await seedUserWithToken();
+    await addMember(trip.id, ghost.userId, "viewer");
+    await db
+      .update(schema.users)
+      .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
+      .where(eq(schema.users.id, ghost.userId));
+
+    const page = PaginatedTripListSchema.parse(
+      await (await listTrips(owner.accessToken)).json(),
+    );
+    expect(page.items.find((t) => t.id === trip.id)?.member_count).toBe(3);
   });
 
   it("GET list: excludes trips the caller was removed from (per-request gate truth)", async () => {
@@ -429,8 +460,17 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
   // Status reconciliation seam (§3.4, R-trips-7)
   // ===========================================================================
 
-  /** Seed a trip row directly with a stale stored status (drift simulation). */
-  async function seedDriftedTrip(ownerId: string) {
+  /**
+   * Seed a trip row directly with a stale stored status (drift simulation).
+   * Default dates are fully past vs frozen today (2026-07-25) → derived 'past'.
+   */
+  async function seedDriftedTrip(
+    ownerId: string,
+    dates: { startDate: string; endDate: string } = {
+      startDate: "2026-07-01",
+      endDate: "2026-07-10",
+    },
+  ) {
     const [row] = await db
       .insert(schema.trips)
       .values({
@@ -438,8 +478,8 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
         destinationName: "Porto",
         destinationLat: "41.157944",
         destinationLng: "-8.629105",
-        startDate: "2026-07-01",
-        endDate: "2026-07-10", // fully in the past vs frozen today 2026-07-25
+        startDate: dates.startDate,
+        endDate: dates.endDate,
         status: "planning", // stale stored value
         createdBy: ownerId,
       })
@@ -470,6 +510,31 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     );
     expect(page.items.find((t) => t.id === seeded.id)?.status).toBe("past");
     expect((await dbTrip(seeded.id))?.status).toBe("past");
+  });
+
+  it("one list call reconciles MULTIPLE drifted rows to DIFFERENT targets (per-status batching)", async () => {
+    const owner = await seedUserWithToken();
+    // Both stored 'planning'; derivation disagrees in different directions:
+    const toPast = await seedDriftedTrip(owner.userId); // ended 07-10 → 'past'
+    const toActive = await seedDriftedTrip(owner.userId, {
+      startDate: "2026-07-20",
+      endDate: "2026-07-30", // spans frozen today → 'active'
+    });
+
+    const page = PaginatedTripListSchema.parse(
+      await (await listTrips(owner.accessToken)).json(),
+    );
+    expect(page.items.find((t) => t.id === toPast.id)?.status).toBe("past");
+    expect(page.items.find((t) => t.id === toActive.id)?.status).toBe("active");
+
+    // Each row converged to ITS OWN derived value — no cross-contamination
+    // from the grouped UPDATE batches — and updated_at never moved.
+    const pastRow = await dbTrip(toPast.id);
+    const activeRow = await dbTrip(toActive.id);
+    expect(pastRow?.status).toBe("past");
+    expect(activeRow?.status).toBe("active");
+    expect(pastRow?.updatedAt.toISOString()).toBe(toPast.updatedAt.toISOString());
+    expect(activeRow?.updatedAt.toISOString()).toBe(toActive.updatedAt.toISOString());
   });
 
   it("a manual override wins over derivation on read — no reconcile write happens", async () => {
@@ -642,6 +707,35 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     const { editor, trip } = await seedCollabTrip();
     expect((await patchTrip(trip.id, editor.accessToken, { status: "past" })).status).toBe(403);
     expect((await dbTrip(trip.id))?.statusOverride).toBeNull();
+  });
+
+  it("PATCH: key PRESENCE is the owner-only touch — editor 403s on { status: null } and on a same-value base_currency", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // `null` clears the override — still an owner-only touch even though the
+    // value is falsy (pins the presence check against a truthiness refactor).
+    const clearProbe = await patchTrip(trip.id, editor.accessToken, { status: null });
+    expect(clearProbe.status).toBe(403);
+
+    // Echoing the CURRENT base_currency is not a change (R-trips-22) but IS a
+    // touch (R-trips-20) — authz keys on presence, never on value diffing.
+    expect(trip.base_currency).toBe("USD");
+    const sameValueProbe = await patchTrip(trip.id, editor.accessToken, {
+      base_currency: trip.base_currency,
+    });
+    expect(sameValueProbe.status).toBe(403);
+
+    const after = await dbTrip(trip.id);
+    expect(after?.statusOverride).toBeNull();
+    expect(after?.baseCurrency).toBe("USD");
+  });
+
+  it("PATCH: an overlong theme (cap+1) → 400 at the boundary (DoS-headroom caps)", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    const res = await patchTrip(trip.id, owner.accessToken, { theme: "t".repeat(65) });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    expect((await dbTrip(trip.id))?.theme).toBeNull();
   });
 
   it("PATCH: merged date-order violation → 400 (partial update can't sneak start > end)", async () => {

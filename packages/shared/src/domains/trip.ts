@@ -3,7 +3,7 @@
  */
 import { z } from "zod";
 import type { EndpointDescriptor } from "../api/descriptor.js";
-import { NoContentSchema, paginatedSchema } from "../api/envelope.js";
+import { CursorQuerySchema, NoContentSchema, paginatedSchema } from "../api/envelope.js";
 import { TripMemberRoleSchema, TripStatusSchema, type TripStatus } from "../enums.js";
 import {
   CentsSchema,
@@ -40,6 +40,16 @@ export const TripSchema = z.object({
 });
 export type Trip = z.infer<typeof TripSchema>;
 
+/**
+ * Free-text caps — DoS headroom, same convention as the credential caps in
+ * `auth.ts` and `DisplayNameSchema` in `user.ts`: generous for any real
+ * input, bounded so no write surface accepts megabyte strings. `theme` is a
+ * key into `packages/tokens` themes (schema §3.3.4) — 64 is roomy for a key.
+ */
+const TripNameSchema = z.string().trim().min(1).max(200);
+const DestinationNameSchema = z.string().trim().min(1).max(200);
+const ThemeKeySchema = z.string().max(64);
+
 const dateOrderRule = (
   val: { start_date?: ISODate | undefined; end_date?: ISODate | undefined },
   ctx: z.core.$RefinementCtx,
@@ -60,14 +70,14 @@ const dateOrderRule = (
  */
 export const TripCreateSchema = z
   .object({
-    name: z.string().trim().min(1),
-    destination_name: z.string().trim().min(1),
+    name: TripNameSchema,
+    destination_name: DestinationNameSchema,
     destination_lat: LatSchema,
     destination_lng: LngSchema,
     start_date: ISODateSchema,
     end_date: ISODateSchema,
     base_currency: CurrencyCodeSchema.optional(),
-    theme: z.string().optional(),
+    theme: ThemeKeySchema.optional(),
   })
   .superRefine(dateOrderRule);
 export type TripCreate = z.infer<typeof TripCreateSchema>;
@@ -81,13 +91,13 @@ export type TripCreate = z.infer<typeof TripCreateSchema>;
  */
 export const TripUpdateSchema = z
   .object({
-    name: z.string().trim().min(1).optional(),
-    destination_name: z.string().trim().min(1).optional(),
+    name: TripNameSchema.optional(),
+    destination_name: DestinationNameSchema.optional(),
     destination_lat: LatSchema.optional(),
     destination_lng: LngSchema.optional(),
     start_date: ISODateSchema.optional(),
     end_date: ISODateSchema.optional(),
-    theme: z.string().nullable().optional(),
+    theme: ThemeKeySchema.nullable().optional(),
     base_currency: CurrencyCodeSchema.optional(),
     status: TripStatusSchema.nullable().optional(),
     expect_updated_at: ISODateTimeSchema.optional(),
@@ -116,13 +126,12 @@ export const TripListItemSchema = TripSchema.extend({
 export type TripListItem = z.infer<typeof TripListItemSchema>;
 
 /**
- * `GET /trips` query (trips spec §3.3: `{ cursor?, limit? }`). `cursor` is the
- * opaque `nextCursor` from the previous page; `limit` is coerced (query params
- * arrive as strings) and server-capped — the bounds here ARE the server's cap
- * (page-size caps are server-defined, contracts §3.5).
+ * `GET /trips` query (trips spec §3.3: `{ cursor?, limit? }`) — the standard
+ * `CursorQuerySchema` list shape (envelope §3.5) plus `limit`, which is
+ * coerced (query params arrive as strings) and server-capped — the bounds
+ * here ARE the server's cap (page-size caps are server-defined).
  */
-export const TripListQuerySchema = z.object({
-  cursor: z.string().optional(),
+export const TripListQuerySchema = CursorQuerySchema.extend({
   limit: z.coerce.number().int().min(1).max(100).optional(),
 });
 export type TripListQuery = z.infer<typeof TripListQuerySchema>;

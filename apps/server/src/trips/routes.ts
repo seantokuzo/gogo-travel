@@ -160,12 +160,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
 
       // Fetch pageSize + 1: the sentinel row tells us whether a next page
       // exists without ever minting a cursor that dereferences to an empty
-      // page. member_count is a correlated subquery — one round trip.
+      // page. member_count is a correlated subquery — one round trip — and
+      // counts LIVE members only (users.deleted_at IS NULL), the same
+      // semantics as the account-deletion sole-owner guard: legacy ghost
+      // membership rows (pre-T-6.1 deletions) must not inflate the count.
       const rows = await deps.db
         .select({
           trip: schema.trips,
           role: schema.tripMembers.role,
-          memberCount: sql<number>`(select count(*)::int from trip_members tm where tm.trip_id = ${schema.trips.id})`,
+          memberCount: sql<number>`(select count(*)::int from trip_members tm join users u on u.id = tm.user_id and u.deleted_at is null where tm.trip_id = ${schema.trips.id})`,
           cursorMicros: sql<string>`(extract(epoch from ${schema.trips.createdAt}) * 1000000)::bigint`,
         })
         .from(schema.trips)

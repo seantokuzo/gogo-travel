@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CursorQuerySchema } from "../api/envelope.js";
 import {
   deriveTripStatus,
   TripCreateSchema,
@@ -59,6 +60,24 @@ describe("TripCreate", () => {
     expect(TripCreateSchema.safeParse({ ...valid, destination_lat: 91 }).success).toBe(false);
     expect(TripCreateSchema.safeParse({ ...valid, base_currency: "usd" }).success).toBe(false);
   });
+
+  it("caps free-text fields at the DoS-headroom bounds (max passes, max+1 fails)", () => {
+    // name / destination_name: 200; theme: 64 (same convention as auth.ts caps).
+    expect(TripCreateSchema.safeParse({ ...valid, name: "n".repeat(200) }).success).toBe(true);
+    expect(TripCreateSchema.safeParse({ ...valid, name: "n".repeat(201) }).success).toBe(false);
+    expect(
+      TripCreateSchema.safeParse({ ...valid, destination_name: "d".repeat(200) }).success,
+    ).toBe(true);
+    expect(
+      TripCreateSchema.safeParse({ ...valid, destination_name: "d".repeat(201) }).success,
+    ).toBe(false);
+    expect(TripCreateSchema.safeParse({ ...valid, theme: "t".repeat(64) }).success).toBe(true);
+    expect(TripCreateSchema.safeParse({ ...valid, theme: "t".repeat(65) }).success).toBe(false);
+    // The update twin enforces the same bounds.
+    expect(TripUpdateSchema.safeParse({ name: "n".repeat(201) }).success).toBe(false);
+    expect(TripUpdateSchema.safeParse({ theme: "t".repeat(65) }).success).toBe(false);
+    expect(TripUpdateSchema.safeParse({ theme: "t".repeat(64) }).success).toBe(true);
+  });
 });
 
 describe("TripUpdate", () => {
@@ -115,6 +134,13 @@ describe("TripListQuery", () => {
     expect(TripListQuerySchema.safeParse({ limit: "0" }).success).toBe(false);
     expect(TripListQuerySchema.safeParse({ limit: "101" }).success).toBe(false);
     expect(TripListQuerySchema.safeParse({ limit: "2.5" }).success).toBe(false);
+  });
+
+  it("is CursorQuerySchema + limit — the standard list-query shape (envelope §3.5)", () => {
+    // Wire shape: exactly { cursor?, limit? }, cursor semantics inherited.
+    expect(Object.keys(TripListQuerySchema.shape).sort()).toEqual(["cursor", "limit"]);
+    expect(TripListQuerySchema.shape.cursor).toBe(CursorQuerySchema.shape.cursor);
+    expect(TripListQuerySchema.parse({ cursor: "abc" }).cursor).toBe("abc");
   });
 });
 

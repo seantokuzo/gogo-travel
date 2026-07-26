@@ -5,6 +5,7 @@ paths: ["apps/server/**"]
 # apps/server — Hono/Drizzle Conventions
 
 - Validate EVERY body/param/query at the boundary with `@gogo/shared` schemas via `@hono/zod-validator` — before any handler logic.
+  - Exception: `:tripId` under `requireTripMember` is gate-validated (UUID pre-check folds malformed ids into the indistinguishable 404); do NOT add a param zValidator — a 400 would open a distinguishable door vs the IDOR posture (trips §1, T-6.1).
 - Errors: shared `ApiError` envelope + `ErrorCode` enum, non-2xx. No bare `throw`, no stack traces on the wire. Success = documented schema directly; lists = `Paginated<T>`.
 - **Money is integer cents** (Law #2). Expense + splits + settlements write atomically.
 - 🔴 **Neon HTTP driver has NO transactions** — `.transaction()` throws in prod while `postgres-js` tests pass. Atomic multi-writes need the WebSocket `Pool` or `postgres-js`.
