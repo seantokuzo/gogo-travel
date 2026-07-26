@@ -25,6 +25,7 @@ import {
 import { create, type StateCreator } from "zustand";
 
 import { queryClient } from "@/data/query-client";
+import { resetTabMemory } from "@/navigation/tab-memory";
 
 import { ApiRequestError, createApiClient } from "./api-client";
 import { resolveApiBaseUrl } from "./config";
@@ -189,6 +190,11 @@ export const useSessionStore = create<SessionState>()(
   createSessionSlice({
     storage: secureTokenStorage,
     api: apiClient,
-    onSignedOut: () => queryClient.clear(),
+    onSignedOut: () => {
+      // Nav §2.2: clear session store + query cache; R-nav-4 also resets the
+      // in-session tab memory — the next account starts from default tabs.
+      queryClient.clear();
+      resetTabMemory();
+    },
   }),
 );

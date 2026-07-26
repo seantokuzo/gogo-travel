@@ -6,6 +6,8 @@
 import {
   authEndpoints,
   entitlementEndpoints,
+  inviteEndpoints,
+  tripEndpoints,
   userEndpoints,
   type AuthSessionInfo,
   type EffectiveEntitlements,
@@ -19,14 +21,19 @@ import {
   queryKeys,
   shouldRetry,
   useEntitlements,
+  useInvitePreview,
   useMe,
   usePaymentHandlesUpdate,
   useRevokeSession,
   useSessions,
+  useTrip,
+  useTrips,
   useUpdateMe,
 } from "@/data";
+import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient } from "@/test-utils/render";
 import { TEST_USER } from "@/test-utils/session-fixtures";
+import { makeInvitePreview, makePlanningTrip } from "@/test-utils/trip-fixtures";
 
 const SESSION: AuthSessionInfo = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -180,6 +187,85 @@ describe("useRevokeSession", () => {
       params: { sessionId: "sess-9" },
     });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.sessions });
+    await unmount();
+  });
+});
+
+describe("useTrips (T-6.6)", () => {
+  it("fetches GET /trips with the 100-cap first page", async () => {
+    const request = spyRequest();
+    const page = { items: [makePlanningTrip(TEST_TRIP_ID)], nextCursor: null };
+    request.mockResolvedValue(page);
+    const { result, unmount } = await renderHook(() => useTrips(), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(page);
+    expect(request).toHaveBeenCalledWith(tripEndpoints.listTrips, { query: { limit: 100 } });
+    await unmount();
+  });
+
+  it("never fires while disabled (the entry redirect's unauthed hold)", async () => {
+    const request = spyRequest();
+    const { result, unmount } = await renderHook(() => useTrips({ enabled: false }), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+    expect(result.current.status).toBe("pending");
+    expect(request).not.toHaveBeenCalled();
+    await unmount();
+  });
+});
+
+describe("useTrip (T-6.6)", () => {
+  it("fetches GET /trips/:tripId under the ['trips', id] key", async () => {
+    const request = spyRequest();
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    request.mockResolvedValue(trip);
+    const client = makeTestQueryClient();
+    client.setQueryDefaults(queryKeys.trip(TEST_TRIP_ID), { gcTime: Infinity });
+    const { result, unmount } = await renderHook(() => useTrip(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(trip);
+    expect(request).toHaveBeenCalledWith(tripEndpoints.getTrip, {
+      params: { tripId: TEST_TRIP_ID },
+    });
+    expect(client.getQueryData(queryKeys.trip(TEST_TRIP_ID))).toEqual(trip);
+    await unmount();
+  });
+
+  it("surfaces the guard's 404 as the query error (no retry — 4xx)", async () => {
+    const request = spyRequest();
+    request.mockRejectedValue(new ApiRequestError(404, "NOT_FOUND", "not found"));
+    const { result, unmount } = await renderHook(() => useTrip(TEST_TRIP_ID), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error).toBeInstanceOf(ApiRequestError);
+    expect((result.current.error as ApiRequestError).status).toBe(404);
+    expect(request).toHaveBeenCalledTimes(1);
+    await unmount();
+  });
+});
+
+describe("useInvitePreview (T-6.6)", () => {
+  it("fetches GET /invites/:token", async () => {
+    const request = spyRequest();
+    const preview = makeInvitePreview();
+    request.mockResolvedValue(preview);
+    const { result, unmount } = await renderHook(() => useInvitePreview("tok-1"), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(preview);
+    expect(request).toHaveBeenCalledWith(inviteEndpoints.previewInvite, {
+      params: { token: "tok-1" },
+    });
     await unmount();
   });
 });

@@ -23,11 +23,16 @@ const APP_DIR = join(__dirname, "..", "app");
  * fail the audit) and must carry its reason.
  */
 const ALLOWLIST: Record<string, string> = {
-  "index.tsx": "entry redirect (R-nav-5) — exercised by the entry-redirect test ('/' → trip list)",
+  "index.tsx":
+    "entry redirect (R-nav-5/6/23) — exercised by entry-redirect-flow.test.tsx, not URL-audited",
   "(trips)/index.tsx":
-    "trip-list screen — asserted by the entry-redirect test and the walkthrough, not URL-audited",
+    "trip-list screen — asserted by the entry-redirect tests and the walkthrough, not URL-audited",
   "gallery.tsx":
     "dev-only DS gallery (DS-10) — __DEV__-gated, outside spec §2.1; covered by gallery-screen.test.tsx",
+  "+native-intent.tsx":
+    "NOT a route — expo-router's native URL hook (ignored by route generation); covered by deep-links.test.ts",
+  "+not-found.tsx":
+    "unmatched-route sweeper (R-nav-17) — redirects, renders no screen; covered by deep-link-flow.test.tsx",
 };
 
 function walkRouteFiles(dir: string): string[] {

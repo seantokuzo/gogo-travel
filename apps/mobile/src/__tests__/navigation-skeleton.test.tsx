@@ -1,80 +1,57 @@
 /**
- * Navigation skeleton integration suite (T-4.4, NAV-1..7 at skeleton depth).
+ * Navigation skeleton integration suite (T-4.4, NAV-1..7 at skeleton depth;
+ * trip URLs guard-aware since T-6.6).
  *
  * Renders the REAL `src/app` route tree through expo-router's testing
  * library (ExpoRoot + the actual layouts, providers, and screens — no route
  * stubs), so these tests break the moment the shipped topology drifts from
  * navigation.spec §2.1.
  *
- * HARNESS QUIRKS (expo-router 57 testing-library × RNTL v14 — all verified
- * empirically in this repo; revisit on upgrades):
- * 1. `renderRouter` treats RNTL's now-async `render` as sync — it returns
- *    the unresolved render promise with the router helpers assigned onto it.
- *    `renderApp` awaits the commit and re-wraps the helpers.
- * 2. `renderRouter` installs jest fake timers and never restores them;
- *    `renderApp` unmounts the previous tree and hands real timers back
- *    before mounting fresh.
- * 3. A test that PRESSES (navigates) leaves scheduled transition work that
- *    wedges any LATER mount in the same file — no afterEach flush variant
- *    fixes it. Therefore every interactive flow lives in the single
- *    walkthrough test at the END of this file (one mount, many presses —
- *    presses within one mount are fine); all other tests are pure-URL
- *    renders, which sequence cleanly.
+ * Harness quirks live in src/test-utils/render-app.ts (shared renderApp).
+ * Since T-6.6 the `[tripId]` layout runs the membership guard, so every
+ * trip-URL render needs the descriptor-routed network mock (mockNavApi) and
+ * a UUID trip id the mock recognizes.
  */
 import { router } from "expo-router";
-import {
-  act,
-  cleanup,
-  fireEvent,
-  renderRouter,
-  screen,
-  waitFor,
-  within,
-} from "expo-router/testing-library";
+import { act, fireEvent, screen, waitFor, within } from "expo-router/testing-library";
 
+import { queryClient } from "@/data";
+import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
+import { resetTabMemory } from "@/navigation/tab-memory";
+import { TEST_INVITE_TOKEN, TEST_TRIP_ID } from "@/test-utils/ids";
+import { renderApp } from "@/test-utils/render-app";
 import { SCREEN_ROUTES } from "@/test-utils/screen-routes";
-import { seedSessionForUrl } from "@/test-utils/session-fixtures";
+import { makeInvitePreview, mockNavApi } from "@/test-utils/trip-fixtures";
 
 // Tab switches fire the `selection` haptic through the DS TabNav — keep the
 // expo-haptics native call out of the loop (convention verified in
 // TabNav.test.tsx / haptics.test.ts).
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
-const APP_DIR = "src/app";
+beforeEach(() => {
+  // Default universe: the planning fixture trip + a live invite preview —
+  // enough for every SCREEN_ROUTES URL to render its real screen.
+  mockNavApi({ invitePreviews: { [TEST_INVITE_TOKEN]: makeInvitePreview() } });
+});
 
-async function renderApp(initialUrl: string) {
-  // Quirk 2: reset the previous mount + clock before rendering fresh.
-  await cleanup();
-  jest.useRealTimers();
-  // NAV-2: the root auth gate now reads the real session store — seed it to
-  // match the URL's auth reachability so these structural tests render the
-  // requested tree instead of bouncing to sign-in.
-  seedSessionForUrl(initialUrl);
-  const result = renderRouter(APP_DIR, { initialUrl });
-  // Quirk 1: await the async commit…
-  await result;
-  // …and wrap: returning the thenable from this async fn would re-await it,
-  // unwrapping to the bare RenderResult and dropping the router helpers.
-  return {
-    getPathname: () => result.getPathname(),
-    getSegments: () => result.getSegments(),
-    getRouterState: () => result.getRouterState(),
-  };
-}
+afterEach(() => {
+  jest.restoreAllMocks();
+  // Singleton client (real _layout) — drop cached trip state between tests.
+  queryClient.clear();
+  resetTabMemory();
+  clearLastViewedTrip();
+});
 
-// SCREEN_ROUTES (imported above) lives in src/test-utils/screen-routes.ts so
-// route-audit.test.ts can fs-walk src/app/** against the same table.
-
-describe("entry redirect (NAV-1 skeleton of R-nav-5)", () => {
-  it("lands on the trip list", async () => {
+describe("entry redirect (R-nav-5 default)", () => {
+  it("lands on the trip list when no trip is active", async () => {
     await renderApp("/");
     expect(await screen.findByTestId("trip-list-screen")).toBeOnTheScreen();
   });
 });
 
 describe("trip tab shell (NAV-1: R-nav-10 structure, §2.7 rule-3 tab IDs)", () => {
-  it("opens a bare trip URL on the itinerary tab (planning default, R-nav-8 seam) with all five tabs", async () => {
-    await renderApp("/trip-1");
+  it("opens a bare trip URL on the itinerary tab (planning default, R-nav-8) with all five tabs", async () => {
+    await renderApp(`/${TEST_TRIP_ID}`);
     expect(await screen.findByTestId("itinerary-screen")).toBeOnTheScreen();
     // Initial-tab proof must not ride solely on lazy-mount semantics: under
     // the vendored tabs' `lazy: true` default a never-visited tab renders
@@ -88,7 +65,7 @@ describe("trip tab shell (NAV-1: R-nav-10 structure, §2.7 rule-3 tab IDs)", () 
     // Trip context reaches navigator-instantiated tabs (the layout provides
     // it — §2.1; local params would be empty here).
     const itinerary = screen.getByTestId("itinerary-screen");
-    expect(within(itinerary).getByText("Trip trip-1")).toBeOnTheScreen();
+    expect(within(itinerary).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
   });
 });
 
@@ -102,23 +79,24 @@ describe("auth group scaffolds (NAV-2 targets exist unguarded)", () => {
 });
 
 describe("dynamic segments thread their params (deep-link plumbing for NAV-5)", () => {
-  it("invite token reaches the join screen — echoed TRUNCATED (bearer credential)", async () => {
-    await renderApp("/join/tok-1234567890");
+  it("invite token reaches the join screen — preview shown, token NEVER echoed (bearer credential)", async () => {
+    await renderApp(`/join/${TEST_INVITE_TOKEN}`);
     const join = await screen.findByTestId("invite-join-screen");
-    // Tokens are bearer credentials (security R1): first 8 chars + ellipsis
-    // only, and the full token must never appear on screen.
-    expect(within(join).getByText("Invite tok-1234…")).toBeOnTheScreen();
-    expect(within(join).queryByText(/tok-1234567890/)).toBeNull();
+    // The screen proves param plumbing by fetching the token's preview; the
+    // token itself is a bearer credential (security R1) and must never
+    // appear on screen — not even truncated, since T-6.6 renders the preview.
+    expect(await within(join).findByText("Kyoto")).toBeOnTheScreen();
+    expect(within(join).queryByText(new RegExp(TEST_INVITE_TOKEN))).toBeNull();
   });
 
   it("itinerary item id reaches the detail screen", async () => {
-    await renderApp("/trip-1/itinerary/item/item-9");
+    await renderApp(`/${TEST_TRIP_ID}/itinerary/item/item-9`);
     const detail = await screen.findByTestId("itinerary-item-screen");
     expect(within(detail).getByText("Item item-9")).toBeOnTheScreen();
   });
 
   it("settle-request id reaches the request screen (R-nav-13 target)", async () => {
-    await renderApp("/trip-1/money/request/req-5");
+    await renderApp(`/${TEST_TRIP_ID}/money/request/req-5`);
     const request = await screen.findByTestId("settle-request-screen");
     expect(within(request).getByText("Request req-5")).toBeOnTheScreen();
   });
@@ -162,22 +140,22 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
 
     // Into a trip (same mount — imperative router; testRouter's built-in
     // pathname asserts depend on pre-RNTL-14 `screen` internals and crash):
-    // bare trip target → itinerary default (R-nav-8 seam) + trip context.
+    // bare trip target → itinerary default (R-nav-8) + trip context.
     // Cast: typed routes only enumerate leaf routes, but bare trip URLs are
     // a real runtime surface (deeplinks) and MUST keep resolving.
     // Awaited async act: RNTL v14's act is async, so a bare `act(() => …)` that
     // schedules an update leaks a floating act — await it (determinism, B-2).
     await act(async () => {
-      router.navigate("/trip-1" as Parameters<typeof router.navigate>[0]);
+      router.navigate(`/${TEST_TRIP_ID}` as Parameters<typeof router.navigate>[0]);
     });
     const itinerary = await screen.findByTestId("itinerary-screen");
-    expect(within(itinerary).getByText("Trip trip-1")).toBeOnTheScreen();
+    expect(within(itinerary).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
 
     // Tab switches through the design-system TabNav (§2.7 rule-3 IDs) —
     // trip context reaches navigator-instantiated tabs.
     await fireEvent.press(screen.getByTestId("tab-bar-today"));
     const today = await screen.findByTestId("today-screen");
-    expect(within(today).getByText("Trip trip-1")).toBeOnTheScreen();
+    expect(within(today).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByTestId("tab-bar-money"));
     await screen.findByTestId("money-screen");
@@ -190,15 +168,15 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     await screen.findByTestId("more-screen");
     await fireEvent.press(screen.getByTestId("more-list-item-photos"));
     expect(await screen.findByTestId("photos-screen")).toBeOnTheScreen();
-    expect(result.getPathname()).toBe("/trip-1/more/photos");
+    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/more/photos`);
 
     // R-nav-10 BEHAVIOR: per-tab history survives tab switches. Pathname is
     // the proof — visited screens stay mounted in the tab tree, so testID
     // presence alone can't distinguish "focused" from "kept alive".
     await fireEvent.press(screen.getByTestId("tab-bar-today"));
-    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/today"));
+    await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/today`));
     await fireEvent.press(screen.getByTestId("tab-bar-more"));
-    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more/photos"));
+    await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/more/photos`));
     expect(screen.getByTestId("photos-screen")).toBeOnTheScreen();
 
     // PageHeader back pop (R-nav-10 structure).
@@ -217,7 +195,7 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     expect(result.getPathname()).toBe("/capture");
     await fireEvent.press(screen.getByTestId("capture-queue-header-back"));
     await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
-    await waitFor(() => expect(result.getPathname()).toBe("/trip-1/more"));
+    await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/more`));
 
     // Itinerary FAB → add-item modal route in the tab-local stack (R-nav-21).
     // (Back landed us on the More tab — switch tabs like a user would.)
@@ -225,6 +203,6 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     await screen.findByTestId("itinerary-screen");
     await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
     expect(await screen.findByTestId("itinerary-item-new-screen")).toBeOnTheScreen();
-    expect(result.getPathname()).toBe("/trip-1/itinerary/item/new");
+    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/new`);
   });
 });

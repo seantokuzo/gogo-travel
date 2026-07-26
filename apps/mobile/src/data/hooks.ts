@@ -19,12 +19,17 @@ import {
 import {
   authEndpoints,
   entitlementEndpoints,
+  inviteEndpoints,
+  tripEndpoints,
   userEndpoints,
   type AuthSessionInfo,
   type EffectiveEntitlements,
+  type InvitePreview,
   type Paginated,
   type PaymentHandles,
   type PaymentHandlesUpdate,
+  type TripListItem,
+  type TripWithRole,
   type User,
   type UserUpdate,
 } from "@gogo/shared";
@@ -81,6 +86,53 @@ export function useSessions(): UseQueryResult<Paginated<AuthSessionInfo>, Error>
   return useQuery({
     queryKey: queryKeys.sessions,
     queryFn: () => apiClient.request(authEndpoints.listSessions, { query: {} }),
+  });
+}
+
+/**
+ * `GET /trips` first page (T-6.6 / NAV-3) — the entry redirect's "which trips
+ * are active" read (R-nav-5/6/23) and the trip switcher's active set.
+ *
+ * One page at the server's cap (`TripListQuerySchema` max = 100): the launch
+ * decision needs the caller's active set, and 100 memberships is far beyond
+ * the MVP ceiling. Real list pagination (infinite query over `nextCursor`)
+ * is the trip-list screen's concern (T-6.7), not the redirect's.
+ */
+const TRIPS_PAGE_LIMIT = 100;
+
+export function useTrips(options?: {
+  enabled?: boolean;
+}): UseQueryResult<Paginated<TripListItem>, Error> {
+  return useQuery({
+    queryKey: queryKeys.trips,
+    queryFn: () => apiClient.request(tripEndpoints.listTrips, { query: { limit: TRIPS_PAGE_LIMIT } }),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/**
+ * `GET /trips/:tripId` (T-6.6 / NAV-4) — the `[tripId]` layout's membership
+ * gate (R-nav-20). The server's 404 is indistinguishable across nonexistent /
+ * non-member / malformed ids (R-trips-1); the guard maps it to the no-access
+ * state (R-nav-15) without any client-side existence oracle.
+ */
+export function useTrip(tripId: string): UseQueryResult<TripWithRole, Error> {
+  return useQuery({
+    queryKey: queryKeys.trip(tripId),
+    queryFn: () => apiClient.request(tripEndpoints.getTrip, { params: { tripId } }),
+  });
+}
+
+/**
+ * `GET /invites/:token` (T-6.6 / NAV-5) — join-screen preview (R-nav-11).
+ * Token is the capability; a dead token comes back either as a 404 (unknown)
+ * or with a non-`active` `state` (expired/revoked/max-uses) — the screen
+ * folds both into the same error surface.
+ */
+export function useInvitePreview(token: string): UseQueryResult<InvitePreview, Error> {
+  return useQuery({
+    queryKey: queryKeys.invitePreview(token),
+    queryFn: () => apiClient.request(inviteEndpoints.previewInvite, { params: { token } }),
   });
 }
 

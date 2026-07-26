@@ -7,10 +7,11 @@
 import { DEFAULT_THEME, getTheme } from "@gogo/tokens";
 import { STORAGE_KEYS, ThemeProvider, useTheme } from "@gogo/tokens/react";
 import type { ThemeStorage } from "@gogo/tokens/react";
-import { render, screen, within } from "@testing-library/react-native";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react-native";
 import { useEffect } from "react";
 
 import TripListScreen from "@/app/(trips)/index";
+import { useLinkNoticeStore } from "@/navigation/link-notice";
 import { systemAppearance, themeStorage } from "@/theme";
 
 // Screen-level render without a router host — stub the hook surface the
@@ -112,5 +113,29 @@ describe("trip-list screen (landing surface theme wiring)", () => {
     );
     expect(screen.getByTestId("trip-list-button-gallery")).toBeTruthy();
     expect(screen.getByTestId("trip-list-button-sample-trip")).toBeTruthy();
+  });
+
+  it("R-nav-17: shows the link notice as a dismissible warning banner", async () => {
+    useLinkNoticeStore.getState().show();
+    await render(
+      <ThemeProvider>
+        <TripListScreen />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("trip-list-link-notice")).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByTestId("trip-list-link-notice-dismiss"));
+    await waitFor(() => expect(screen.queryByTestId("trip-list-link-notice")).toBeNull());
+    expect(useLinkNoticeStore.getState().message).toBeNull();
+  });
+
+  it("renders no banner when no link notice is pending", async () => {
+    useLinkNoticeStore.setState({ message: null });
+    await render(
+      <ThemeProvider>
+        <TripListScreen />
+      </ThemeProvider>,
+    );
+    expect(screen.queryByTestId("trip-list-link-notice")).toBeNull();
   });
 });

@@ -1,0 +1,14 @@
+{
+  "comment": "T-6.6 / NAV-5: serve this file byte-for-byte at https://<LINK_DOMAIN>/.well-known/apple-app-site-association (Content-Type: application/json, no redirect). LINK_DOMAIN is the shared-config placeholder until the P-14 domain pick; TEAMID_PLACEHOLDER is Sean's Apple Team ID (P-14). Path components mirror the nav-spec §2.3 registry exactly — the drift guard is src/__tests__/link-config-audit.test.ts.",
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID_PLACEHOLDER.com.anonymous.gogo-travel"],
+        "components": [
+          { "/": "/invite/*", "comment": "invite links -> /(trips)/join/[token] (R-nav-11)" },
+          { "/": "/t/*", "comment": "trip + settle-request links -> [tripId] surfaces (R-nav-13/15)" }
+        ]
+      }
+    ]
+  }
+}
