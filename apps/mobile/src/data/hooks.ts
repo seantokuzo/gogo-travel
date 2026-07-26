@@ -4,6 +4,11 @@
  * input)` over a `@gogo/shared` endpoint descriptor, so the wire shape stays the
  * backend's (both-direction runtime validation happens inside the ApiClient).
  *
+ * Every QUERY forwards TanStack's `{ signal }` into the client (T-6.6 R1):
+ * cancellation propagates to the fetch, and the client caps each request at
+ * `REQUEST_TIMEOUT_MS` so a stalled network settles into error surfaces
+ * instead of pinning boot/guard holds forever.
+ *
  * Mutations keep the cache honest:
  * - `useUpdateMe` writes the returned `User` straight into the `me` cache.
  * - `usePaymentHandlesUpdate` invalidates `me` (handles live on the User row).
@@ -42,7 +47,7 @@ import { queryKeys } from "./query-client";
 export function useMe(): UseQueryResult<User, Error> {
   return useQuery({
     queryKey: queryKeys.me,
-    queryFn: () => apiClient.request(userEndpoints.getMe, {}),
+    queryFn: ({ signal }) => apiClient.request(userEndpoints.getMe, {}, { signal }),
   });
 }
 
@@ -77,7 +82,7 @@ export function usePaymentHandlesUpdate(): UseMutationResult<
 export function useEntitlements(): UseQueryResult<EffectiveEntitlements, Error> {
   return useQuery({
     queryKey: queryKeys.entitlements,
-    queryFn: () => apiClient.request(entitlementEndpoints.getMyEntitlements, {}),
+    queryFn: ({ signal }) => apiClient.request(entitlementEndpoints.getMyEntitlements, {}, { signal }),
   });
 }
 
@@ -85,7 +90,7 @@ export function useEntitlements(): UseQueryResult<EffectiveEntitlements, Error> 
 export function useSessions(): UseQueryResult<Paginated<AuthSessionInfo>, Error> {
   return useQuery({
     queryKey: queryKeys.sessions,
-    queryFn: () => apiClient.request(authEndpoints.listSessions, { query: {} }),
+    queryFn: ({ signal }) => apiClient.request(authEndpoints.listSessions, { query: {} }, { signal }),
   });
 }
 
@@ -105,7 +110,8 @@ export function useTrips(options?: {
 }): UseQueryResult<Paginated<TripListItem>, Error> {
   return useQuery({
     queryKey: queryKeys.trips,
-    queryFn: () => apiClient.request(tripEndpoints.listTrips, { query: { limit: TRIPS_PAGE_LIMIT } }),
+    queryFn: ({ signal }) =>
+      apiClient.request(tripEndpoints.listTrips, { query: { limit: TRIPS_PAGE_LIMIT } }, { signal }),
     enabled: options?.enabled ?? true,
   });
 }
@@ -119,7 +125,13 @@ export function useTrips(options?: {
 export function useTrip(tripId: string): UseQueryResult<TripWithRole, Error> {
   return useQuery({
     queryKey: queryKeys.trip(tripId),
-    queryFn: () => apiClient.request(tripEndpoints.getTrip, { params: { tripId } }),
+    queryFn: ({ signal }) =>
+      apiClient.request(tripEndpoints.getTrip, { params: { tripId } }, { signal }),
+    // R-nav-20 (round-1 review): membership is re-verified on EVERY mount of
+    // the guard — a cached "member" verdict can be revoked server-side at any
+    // moment, so a fresh cache entry must never skip the verification request.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 
@@ -132,7 +144,8 @@ export function useTrip(tripId: string): UseQueryResult<TripWithRole, Error> {
 export function useInvitePreview(token: string): UseQueryResult<InvitePreview, Error> {
   return useQuery({
     queryKey: queryKeys.invitePreview(token),
-    queryFn: () => apiClient.request(inviteEndpoints.previewInvite, { params: { token } }),
+    queryFn: ({ signal }) =>
+      apiClient.request(inviteEndpoints.previewInvite, { params: { token } }, { signal }),
   });
 }
 

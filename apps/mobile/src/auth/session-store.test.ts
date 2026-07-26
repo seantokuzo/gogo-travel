@@ -13,8 +13,27 @@ import {
 } from "@gogo/shared";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import { readLastViewedTrip, stampLastViewedTrip } from "@/navigation/last-viewed-trip";
+import { recallTab, rememberTab } from "@/navigation/tab-memory";
+
 import { ApiRequestError } from "./api-client";
-import { createSessionSlice, type SessionDeps, type SessionState } from "./session-store";
+import {
+  createSessionSlice,
+  useSessionStore,
+  type SessionDeps,
+  type SessionState,
+} from "./session-store";
+
+// In-memory Keychain for the SINGLETON path below — the slice tests inject
+// fake storage, but the real store's signOut clears the real secure-storage
+// adapter, which must not reach native under jest.
+jest.mock("expo-secure-store", () => ({
+  __esModule: true,
+  AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY: "afterFirstUnlock",
+  getItemAsync: jest.fn().mockResolvedValue(null),
+  setItemAsync: jest.fn().mockResolvedValue(undefined),
+  deleteItemAsync: jest.fn().mockResolvedValue(undefined),
+}));
 
 const USER: User = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -260,5 +279,27 @@ describe("session store — sign-out calls /auth/logout (best-effort, spec §3.6
     await store.getState().signOut();
 
     expect(api.request).not.toHaveBeenCalled();
+  });
+});
+
+describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.6 R1)", () => {
+  it("sign-out on the REAL useSessionStore clears tab memory AND the last-viewed stamp", async () => {
+    // Round-1 finding: the slice tests inject a jest.fn onSignedOut, so the
+    // PRODUCTION wiring (queryClient.clear + resetTabMemory +
+    // clearLastViewedTrip) could silently revert while every test stayed
+    // green. This pins the real singleton's reset.
+    rememberTab("trip-x", "map");
+    stampLastViewedTrip("trip-x");
+    expect(recallTab("trip-x")).toBe("map");
+    expect(readLastViewedTrip()?.tripId).toBe("trip-x");
+
+    // No access token → the best-effort /auth/logout is skipped (that branch
+    // is slice-tested above); this test is about the onSignedOut wiring.
+    useSessionStore.setState({ user: USER, accessToken: null, hydrated: true });
+    await useSessionStore.getState().signOut();
+
+    expect(recallTab("trip-x")).toBeUndefined();
+    expect(readLastViewedTrip()).toBeNull();
+    expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
   });
 });

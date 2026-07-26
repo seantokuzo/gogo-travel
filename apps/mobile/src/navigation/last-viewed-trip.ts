@@ -52,7 +52,13 @@ export function readLastViewedTrip(): LastViewedTrip | null {
   return null;
 }
 
-/** Test isolation; no product flow clears the stamp (stale stamps are inert). */
+/**
+ * Sign-out reset (R-nav-4, wired in the session-store singleton): the next
+ * account must never inherit this one's recency. Also used for test
+ * isolation. Stale stamps are otherwise inert (entry only honors a stamp
+ * inside the CURRENT account's fetched active set), so this is hygiene plus
+ * defense in depth, not the sole guard.
+ */
 export function clearLastViewedTrip(): void {
   storage.remove(LAST_VIEWED_TRIP_KEY);
 }

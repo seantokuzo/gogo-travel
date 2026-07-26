@@ -26,6 +26,49 @@ import {
   type InferResponse,
 } from "@gogo/shared";
 
+/**
+ * Per-request abort cap (round-1 review, T-6.6): RN's Android OkHttp stack
+ * ships with timeouts DISABLED — a captive-portal/black-hole stall would
+ * otherwise hang a request forever (iOS worst case ≈ 3 min), pinning boot
+ * surfaces like the entry redirect on their splash with no escape. 12s is
+ * generous for a mobile API round-trip; a capped failure converts into the
+ * built error surfaces (entry → trip list, guard → retry).
+ */
+export const REQUEST_TIMEOUT_MS = 12_000;
+
+/** Per-call options (TanStack queryFn cancellation rides through here). */
+export interface RequestOptions {
+  /** External cancellation, composed with the `REQUEST_TIMEOUT_MS` cap. */
+  signal?: AbortSignal;
+}
+
+/**
+ * Compose the external signal with the timeout cap. Hand-rolled on plain
+ * AbortController + setTimeout: Hermes/RN's AbortSignal has no reliable
+ * `AbortSignal.timeout`/`AbortSignal.any` statics — don't reach for them.
+ * `cleanup()` MUST run when the request settles or the timer leaks (open
+ * handle under jest; wasted wakeup on device).
+ */
+function composeAbort(external: AbortSignal | undefined): {
+  signal: AbortSignal;
+  cleanup(): void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const onExternalAbort = () => controller.abort();
+  if (external !== undefined) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", onExternalAbort);
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      external?.removeEventListener("abort", onExternalAbort);
+    },
+  };
+}
+
 /** Non-2xx (or transport failure) surfaced from a request. */
 export class ApiRequestError extends Error {
   constructor(
@@ -92,7 +135,21 @@ function safeJsonParse(text: string): unknown {
   }
 }
 
-export function createApiClient(config: ApiClientConfig): ApiClient {
+/**
+ * The mobile adapter's client — the shared `ApiClient` port plus the
+ * per-call `RequestOptions` third argument (external cancellation). Callers
+ * typed against the shared port keep working; the query layer forwards its
+ * TanStack signal through the wider signature.
+ */
+export interface MobileApiClient extends ApiClient {
+  request<D extends EndpointDescriptor>(
+    descriptor: D,
+    input: InferInput<D>,
+    options?: RequestOptions,
+  ): Promise<InferResponse<D>>;
+}
+
+export function createApiClient(config: ApiClientConfig): MobileApiClient {
   const REFRESH_PATH = authEndpoints.refresh.path;
   let refreshInFlight: Promise<AuthTokens> | null = null;
 
@@ -101,6 +158,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     descriptor: D,
     input: InferInput<D>,
     withAuth: boolean,
+    externalSignal?: AbortSignal,
   ): Promise<InferResponse<D>> {
     const parts = input as RequestInput;
     const url = `${config.baseUrl}${buildPath(descriptor.path, parts.params)}${buildQuery(parts.query)}`;
@@ -116,12 +174,23 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       if (token) headers.Authorization = `Bearer ${token}`;
     }
 
+    const abort = composeAbort(externalSignal);
     let res: Response;
     try {
-      res = await config.fetchImpl(url, { method: descriptor.method, headers, body: bodyInit });
+      res = await config.fetchImpl(url, {
+        method: descriptor.method,
+        headers,
+        body: bodyInit,
+        signal: abort.signal,
+      });
     } catch {
       // Never surface the transport error verbatim — it can echo the URL.
+      // Aborts (timeout cap or external cancel) land here too: a transient
+      // transport failure either way (TanStack ignores rejections from its
+      // own cancelled signal).
       throw new ApiRequestError(0, "NETWORK", "network request failed");
+    } finally {
+      abort.cleanup();
     }
 
     if (res.status === 204 || res.status === 205) {
@@ -165,10 +234,10 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
   }
 
   return {
-    async request(descriptor, input) {
+    async request(descriptor, input, options?: RequestOptions) {
       const hadToken = config.getAccessToken() !== null;
       try {
-        return await send(descriptor, input, true);
+        return await send(descriptor, input, true, options?.signal);
       } catch (err) {
         const is401 = err instanceof ApiRequestError && err.status === 401;
         // Only authed requests refresh-retry; never the refresh call itself,
@@ -183,7 +252,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         }
 
         try {
-          return await send(descriptor, input, true);
+          return await send(descriptor, input, true, options?.signal);
         } catch (retryErr) {
           if (retryErr instanceof ApiRequestError && retryErr.status === 401) {
             await config.onAuthLost();

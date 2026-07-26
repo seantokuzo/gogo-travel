@@ -17,7 +17,7 @@
  * the affordance is additive chrome, never a blocker.
  */
 import type { TripListItem, TripWithRole } from "@gogo/shared";
-import { createStyles } from "@gogo/tokens/react";
+import { createStyles, useTheme } from "@gogo/tokens/react";
 import { useRouter, type Href } from "expo-router";
 import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -39,7 +39,7 @@ const useStyles = createStyles((t) =>
       backgroundColor: t.color.bg.surface,
       borderBottomWidth: 1,
       borderBottomColor: t.color.border.subtle,
-      minHeight: 44,
+      minHeight: t.touchTarget,
     },
     name: { flex: 1 },
   }),
@@ -47,6 +47,7 @@ const useStyles = createStyles((t) =>
 
 export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) {
   const s = useStyles();
+  const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -72,7 +73,7 @@ export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) 
   return (
     <>
       <Pressable
-        style={[s.bar, { paddingTop: insets.top + 8 }]}
+        style={[s.bar, { paddingTop: insets.top + theme.space[2] }]}
         onPress={() => setOpen(true)}
         accessibilityRole="button"
         accessibilityLabel={`Switch active trip. Current: ${currentTrip.name}`}

@@ -76,7 +76,7 @@ describe("useMe", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(TEST_USER);
-    expect(request).toHaveBeenCalledWith(userEndpoints.getMe, {});
+    expect(request).toHaveBeenCalledWith(userEndpoints.getMe, {}, { signal: expect.any(AbortSignal) });
     // Close the settle→cleanup gap in act so no trailing query update escapes.
     await unmount();
   });
@@ -148,7 +148,7 @@ describe("useEntitlements", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(ENTITLEMENTS);
-    expect(request).toHaveBeenCalledWith(entitlementEndpoints.getMyEntitlements, {});
+    expect(request).toHaveBeenCalledWith(entitlementEndpoints.getMyEntitlements, {}, { signal: expect.any(AbortSignal) });
     await unmount();
   });
 });
@@ -164,7 +164,7 @@ describe("useSessions", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(page);
-    expect(request).toHaveBeenCalledWith(authEndpoints.listSessions, { query: {} });
+    expect(request).toHaveBeenCalledWith(authEndpoints.listSessions, { query: {} }, { signal: expect.any(AbortSignal) });
     await unmount();
   });
 });
@@ -202,7 +202,11 @@ describe("useTrips (T-6.6)", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(page);
-    expect(request).toHaveBeenCalledWith(tripEndpoints.listTrips, { query: { limit: 100 } });
+    expect(request).toHaveBeenCalledWith(
+      tripEndpoints.listTrips,
+      { query: { limit: 100 } },
+      { signal: expect.any(AbortSignal) },
+    );
     await unmount();
   });
 
@@ -230,9 +234,11 @@ describe("useTrip (T-6.6)", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(trip);
-    expect(request).toHaveBeenCalledWith(tripEndpoints.getTrip, {
-      params: { tripId: TEST_TRIP_ID },
-    });
+    expect(request).toHaveBeenCalledWith(
+      tripEndpoints.getTrip,
+      { params: { tripId: TEST_TRIP_ID } },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(client.getQueryData(queryKeys.trip(TEST_TRIP_ID))).toEqual(trip);
     await unmount();
   });
@@ -263,10 +269,34 @@ describe("useInvitePreview (T-6.6)", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(preview);
-    expect(request).toHaveBeenCalledWith(inviteEndpoints.previewInvite, {
-      params: { token: "tok-1" },
-    });
+    expect(request).toHaveBeenCalledWith(
+      inviteEndpoints.previewInvite,
+      { params: { token: "tok-1" } },
+      { signal: expect.any(AbortSignal) },
+    );
     await unmount();
+  });
+});
+
+describe("query cancellation (T-6.6 R1)", () => {
+  it("forwards TanStack's abort signal — unmounting mid-flight aborts the request", async () => {
+    const request = spyRequest();
+    let captured: AbortSignal | undefined;
+    request.mockImplementation((_d: unknown, _i: unknown, opts?: { signal?: AbortSignal }) => {
+      captured = opts?.signal;
+      return new Promise(() => undefined); // in flight forever
+    });
+    const { unmount } = await renderHook(() => useTrips(), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    await waitFor(() => expect(captured).toBeDefined());
+    expect(captured?.aborted).toBe(false);
+    // The queryFn CONSUMED the signal, so v5 cancels the query when its last
+    // observer unmounts — the abort must reach the client (and the fetch cap
+    // composition, api-client.test.ts).
+    await unmount();
+    await waitFor(() => expect(captured?.aborted).toBe(true));
   });
 });
 

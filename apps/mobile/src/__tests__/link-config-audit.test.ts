@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { LINK_DOMAIN } from "@gogo/shared";
+import { APP_SCHEME, LINK_DOMAIN } from "@gogo/shared";
 
 const MOBILE_ROOT = join(__dirname, "..", "..");
 
@@ -35,8 +35,10 @@ interface AppJson {
 const appJson = readJson(join(MOBILE_ROOT, "app.json")) as AppJson;
 
 describe("app.json ↔ shared LINK_DOMAIN", () => {
-  it("declares the gogo:// scheme (nav §2.3 fallback transport)", () => {
-    expect(appJson.expo.scheme).toBe("gogo");
+  it("declares the shared APP_SCHEME (nav §2.3 fallback transport)", () => {
+    // Pinned to the CONSTANT, not a literal — a shared-config scheme change
+    // must fail here, or every gogo:// link silently degrades.
+    expect(appJson.expo.scheme).toBe(APP_SCHEME);
   });
 
   it("iOS associated domains carry exactly the applinks entry for LINK_DOMAIN", () => {

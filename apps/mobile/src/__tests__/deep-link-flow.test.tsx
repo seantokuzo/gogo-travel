@@ -85,7 +85,11 @@ it("R-nav-15 + NAV-5: a trip deep link for a non-member renders no-access with z
     ([descriptor]) => (descriptor as { path: string }).path.startsWith("/trips"),
   );
   expect(tripCalls).toEqual([
-    [expect.objectContaining({ path: "/trips/:tripId" }), { params: { tripId: TRIP_B_ID } }],
+    [
+      expect.objectContaining({ path: "/trips/:tripId" }),
+      { params: { tripId: TRIP_B_ID } },
+      { signal: expect.any(AbortSignal) },
+    ],
   ]);
 });
 
