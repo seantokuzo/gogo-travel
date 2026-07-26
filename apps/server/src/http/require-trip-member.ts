@@ -28,8 +28,14 @@ import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars, type TripContext } from "./errors.js";
 import { authContextOf } from "./require-auth.js";
 
-/** Canonical hyphenated UUID — what `gen_random_uuid()` mints and `::uuid` accepts. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Canonical hyphenated UUID — what `gen_random_uuid()` mints and `::uuid`
+ * accepts. Exported for sibling route params (`:userId`, `:inviteId`) that
+ * fold malformed ids into the same indistinguishable 404 (a param zValidator
+ * 400 would open a distinguishable door — server rule; the users' `:userId`
+ * 400-vs-404 convergence is the parked P3 QUEUE row).
+ */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface RequireTripMemberDeps {
   db: DbClient;

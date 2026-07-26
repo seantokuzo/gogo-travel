@@ -37,6 +37,13 @@ import {
   expectUpdatedAtPrecondition,
   throwGuardedUpdateMiss,
 } from "../http/expect-updated-at.js";
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  epochMicrosExpr,
+  keysetCursorPredicate,
+} from "../http/keyset-cursor.js";
+import type { RateLimitStore } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
 import { createRequireTripMember, tripContextOf } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
@@ -45,39 +52,25 @@ import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.
 
 export interface TripsRouterDeps {
   db: DbClient;
-  /** Clock seam for tests (status boundary days). */
+  /** Clock seam for tests (status boundary days, invite expiry). */
   now?: () => Date;
+  /**
+   * Rate limiting for the `/invites/:token*` token-guessing guard (trips
+   * spec §3.3; consumed by `invites-routes.ts` — the CRUD routes here don't
+   * charge it). Absent = no limiter (unit/integration tests); prod wiring
+   * (`wire.ts`) always supplies it. `now` is MILLISECONDS (the store's clock),
+   * independent of the seconds-grade `Date` seam above.
+   */
+  rateLimit?: {
+    store: RateLimitStore;
+    now?: () => number;
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Keyset cursor over (created_at DESC, id DESC) — same shape and rationale as
-// auth/session-service.ts: micros (not ISO-ms) so no sub-millisecond row is
-// ever skipped; both parts pre-validated so the ::bigint/::uuid casts can
-// never 500 on a crafted cursor; malformed cursors fall back to page 1 (the
-// endpoint's documented errors don't include a cursor 400 — §3.3 GET /trips).
-// ---------------------------------------------------------------------------
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MICROS_RE = /^\d{1,18}$/;
-
-interface TripCursor {
-  micros: string;
-  id: string;
-}
-
-function encodeCursor(row: TripCursor): string {
-  return Buffer.from(`${row.micros}|${row.id}`, "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor: string): TripCursor | null {
-  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-  const sep = decoded.indexOf("|");
-  if (sep === -1) return null;
-  const micros = decoded.slice(0, sep);
-  const id = decoded.slice(sep + 1);
-  if (!MICROS_RE.test(micros) || !UUID_RE.test(id)) return null;
-  return { micros, id };
-}
+// Keyset cursor over (created_at DESC, id DESC): the shared
+// `http/keyset-cursor.ts` codec (extracted at T-6.2; behavior unchanged) —
+// malformed cursors fall back to page 1 (the endpoint's documented errors
+// don't include a cursor 400 — §3.3 GET /trips).
 
 export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
@@ -149,13 +142,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { userId } = authContextOf(c);
       const { cursor, limit } = c.req.valid("query");
       const pageSize = limit ?? TRIPS_PAGE_SIZE_DEFAULT;
-      const decoded = cursor ? decodeCursor(cursor) : null;
+      const decoded = cursor ? decodeKeysetCursor(cursor) : null;
 
       const predicates: SQL[] = [eq(schema.tripMembers.userId, userId)];
       if (decoded) {
-        predicates.push(
-          sql`((extract(epoch from ${schema.trips.createdAt}) * 1000000)::bigint, ${schema.trips.id}) < (${decoded.micros}::bigint, ${decoded.id}::uuid)`,
-        );
+        predicates.push(keysetCursorPredicate(schema.trips.createdAt, schema.trips.id, decoded));
       }
 
       // Fetch pageSize + 1: the sentinel row tells us whether a next page
@@ -169,7 +160,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           trip: schema.trips,
           role: schema.tripMembers.role,
           memberCount: sql<number>`(select count(*)::int from trip_members tm join users u on u.id = tm.user_id and u.deleted_at is null where tm.trip_id = ${schema.trips.id})`,
-          cursorMicros: sql<string>`(extract(epoch from ${schema.trips.createdAt}) * 1000000)::bigint`,
+          cursorMicros: epochMicrosExpr(schema.trips.createdAt),
         })
         .from(schema.trips)
         .innerJoin(schema.tripMembers, eq(schema.tripMembers.tripId, schema.trips.id))
@@ -195,7 +186,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const last = page[page.length - 1];
       const nextCursor =
         rows.length > pageSize && last
-          ? encodeCursor({ micros: last.cursorMicros, id: last.trip.id })
+          ? encodeKeysetCursor({ micros: last.cursorMicros, id: last.trip.id })
           : null;
 
       const body: Paginated<TripListItem> = { items, nextCursor };

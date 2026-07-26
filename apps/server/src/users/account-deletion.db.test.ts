@@ -17,7 +17,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createLocalJWKSet, generateKeyPair } from "jose";
@@ -34,6 +34,8 @@ import type { AppleTokenRevoker } from "../auth/apple-revoke.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { ObjectStorage } from "../storage/object-storage.js";
+import { generateInviteToken } from "../trips/invite-token.js";
+import { deleteAccount, OwnerTransferRequiredError } from "./account-deletion.js";
 import type { CashtagChecker } from "./cashtag.js";
 import type { UsersRouterDeps } from "./routes.js";
 
@@ -136,7 +138,9 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
       appleCredentialsKey: APPLE_CREDENTIALS_KEY,
       logger: { warn: () => undefined },
     };
-    app = createApp({ auth: authDeps, users: usersDeps });
+    // Trips deps mount the invites router too (T-6.2) — the deletion-vs-
+    // acceptance race tests below exercise BOTH real routes on one app.
+    app = createApp({ auth: authDeps, users: usersDeps, trips: { db } });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -535,6 +539,189 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     await expect(
       db.update(schema.users).set({ deletedAt: null }).where(eq(schema.users.id, u.user.id)),
     ).rejects.toThrow();
+  });
+
+  // ---------------------------------------------------------------------------
+  // T-6.2: `SELECT … FOR UPDATE` on the sole-owner guard (T-6.1 round-1
+  // security defer). The guard + reconcile must see ONE membership state —
+  // an acceptance committing between guard SELECT and cascade delete must
+  // never be destroyed with the trip.
+  // ---------------------------------------------------------------------------
+
+  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  async function seedInvite(tripId: string, createdBy: string) {
+    const [invite] = await db
+      .insert(schema.invites)
+      .values({
+        tripId,
+        token: generateInviteToken(),
+        role: "editor",
+        createdBy,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      })
+      .returning();
+    return invite!;
+  }
+
+  it("an IN-FLIGHT acceptance blocks the deletion, which then SEES the new member → 409, nothing scrubbed", async () => {
+    const owner = await seedUser();
+    const tripId = await seedTrip(owner.user.id); // solo owner — guard would pass
+    const joiner = await seedUser();
+
+    // Hold open a transaction that mirrors the accept route's critical
+    // section (trips/invites-routes.ts): FOR SHARE on the trip's owner
+    // membership row, then the membership INSERT — uncommitted. (The fully-
+    // real both-routes race is the next test; this one pins the lock
+    // semantics deterministically.)
+    let releaseTxn!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTxn = resolve;
+    });
+    let locksTaken!: () => void;
+    const locksReady = new Promise<void>((resolve) => {
+      locksTaken = resolve;
+    });
+    const txnPromise = db.transaction(async (tx) => {
+      await tx
+        .select({ userId: schema.tripMembers.userId })
+        .from(schema.tripMembers)
+        .where(
+          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")),
+        )
+        .for("share");
+      await tx
+        .insert(schema.tripMembers)
+        .values({ tripId, userId: joiner.user.id, role: "editor" });
+      locksTaken();
+      await gate;
+    });
+    await locksReady;
+
+    // Fire the REAL deletion. Its first membership touch is `FOR UPDATE` on
+    // the caller's rows → it parks on our FOR SHARE. The wait below is a
+    // LOCK wait, not a timing guess: while we hold the transaction open the
+    // deletion cannot resolve.
+    const outcome = deleteAccount(
+      { db, appleCredentialsKey: APPLE_CREDENTIALS_KEY },
+      owner.user.id,
+      new Date(),
+    ).then(
+      () => "deleted" as const,
+      (error: unknown) => {
+        if (error instanceof OwnerTransferRequiredError) return "conflict" as const;
+        throw error;
+      },
+    );
+
+    const during = await Promise.race([outcome, delay(250).then(() => "blocked" as const)]);
+    expect(during).toBe("blocked");
+
+    releaseTxn();
+    await txnPromise;
+
+    // The deletion resumed AFTER the acceptance committed — the guard read
+    // the post-accept state, saw a live co-member, and refused. Without the
+    // FOR UPDATE it would have read the pre-accept state, returned
+    // "deleted", and cascaded the joiner's trip away.
+    expect(await outcome).toBe("conflict");
+    expect((await userRow(owner.user.id)).deletedAt).toBeNull();
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(
+      1,
+    );
+    expect(await membersOf(joiner.user.id)).toHaveLength(1);
+  });
+
+  it("an acceptance arriving while the deletion holds its locks lands AFTER the cascade → 404, no member row into a doomed trip", async () => {
+    const owner = await seedUser();
+    const tripId = await seedTrip(owner.user.id);
+    const joiner = await seedUser();
+    const invite = await seedInvite(tripId, owner.user.id);
+
+    // Hold a transaction that mirrors account-deletion steps 1 + 1b: lock
+    // the owner's membership rows FOR UPDATE, then (on release) delete the
+    // owned trip and the memberships — exactly what the reconcile commits.
+    let releaseTxn!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTxn = resolve;
+    });
+    let locksTaken!: () => void;
+    const locksReady = new Promise<void>((resolve) => {
+      locksTaken = resolve;
+    });
+    const txnPromise = db.transaction(async (tx) => {
+      await tx
+        .select({ tripId: schema.tripMembers.tripId })
+        .from(schema.tripMembers)
+        .where(eq(schema.tripMembers.userId, owner.user.id))
+        .for("update");
+      locksTaken();
+      await gate;
+      await tx.delete(schema.trips).where(eq(schema.trips.id, tripId));
+      await tx.delete(schema.tripMembers).where(eq(schema.tripMembers.userId, owner.user.id));
+    });
+    await locksReady;
+
+    // The REAL accept route: it must park on its owner-row FOR SHARE (which
+    // our FOR UPDATE blocks) instead of inserting into the doomed trip.
+    const acceptPromise = Promise.resolve(
+      app.request(`/api/invites/${invite.token}/accept`, {
+        method: "POST",
+        headers: authHeaders(joiner.accessToken),
+      }),
+    );
+    const during = await Promise.race([
+      acceptPromise.then(() => "resolved" as const),
+      delay(250).then(() => "blocked" as const),
+    ]);
+    expect(during).toBe("blocked");
+
+    releaseTxn();
+    await txnPromise;
+
+    // The accept resumed against the post-delete world: the invite died in
+    // the cascade → the indistinguishable 404; the joiner never became a
+    // member of a trip that no longer exists.
+    const res = await acceptPromise;
+    expect(res.status).toBe(404);
+    expect(await membersOf(joiner.user.id)).toEqual([]);
+  });
+
+  it("TRUE RACE — real deletion route vs real accept route: a 200 acceptance is NEVER destroyed by the cascade", async () => {
+    for (let round = 0; round < 5; round++) {
+      const owner = await seedUser();
+      const tripId = await seedTrip(owner.user.id);
+      const joiner = await seedUser();
+      const invite = await seedInvite(tripId, owner.user.id);
+
+      const [delRes, acceptRes] = await Promise.all([
+        deleteMe(owner.accessToken),
+        app.request(`/api/invites/${invite.token}/accept`, {
+          method: "POST",
+          headers: authHeaders(joiner.accessToken),
+        }),
+      ]);
+
+      const tripExists =
+        (await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).length === 1;
+      const joinerMemberships = await membersOf(joiner.user.id);
+
+      if (acceptRes.status === 200) {
+        // Acceptance won the lock — deletion MUST have seen the member and
+        // refused; the joiner's trip is intact. (The forbidden outcome —
+        // accept 200 with the trip gone — fails all three asserts.)
+        expect(delRes.status).toBe(409);
+        expect(tripExists).toBe(true);
+        expect(joinerMemberships).toHaveLength(1);
+      } else {
+        // Deletion won — the invite died with the trip; nobody joined a
+        // ghost. The accept converges on the unknown-token 404.
+        expect(acceptRes.status).toBe(404);
+        expect(delRes.status).toBe(204);
+        expect(tripExists).toBe(false);
+        expect(joinerMemberships).toEqual([]);
+      }
+    }
   });
 
   // ---------------------------------------------------------------------------

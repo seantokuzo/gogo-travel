@@ -17,6 +17,12 @@ import type { AuthSessionInfo } from "@gogo/shared/domains/auth";
 import { SESSIONS_PAGE_SIZE } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  epochMicrosExpr,
+  keysetCursorPredicate,
+} from "../http/keyset-cursor.js";
 
 /**
  * Kill a session unconditionally (reuse-theft response, logout, account
@@ -59,47 +65,10 @@ export async function revokeOwnedSession(
   return rows.length > 0;
 }
 
-/**
- * Opaque keyset cursor over `(created_at, id)` — the page's last row. The
- * timestamp rides as integer epoch-MICROSECONDS, not a JS-Date ISO string: a
- * `Date` is millisecond-precision, so an ISO round-trip truncates the
- * microsecond `timestamptz` and the next-page predicate could skip a row whose
- * true `created_at` falls in the sub-millisecond gap. Micros preserves full
- * precision (and is a plain integer → the `::bigint` cast can never 500).
- */
-interface SessionCursor {
-  /** `created_at` as exact microseconds since the Unix epoch (see encodeCursor). */
-  micros: string;
-  id: string;
-}
-
-/** Canonical hyphenated UUID — what `defaultRandom()` mints and `::uuid` accepts. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** ≤ 18 digits ⇒ always a valid, non-overflowing bigint (int64 max is 19 digits). */
-const MICROS_RE = /^\d{1,18}$/;
-
-function encodeCursor(row: { micros: string; id: string }): string {
-  return Buffer.from(`${row.micros}|${row.id}`, "utf8").toString("base64url");
-}
-
-/**
- * Decode a client cursor; a malformed cursor yields `null` (treated as page 1).
- * The cursor is an opaque, server-minted token — a non-integer `micros` or
- * non-UUID `id` (bad base64, tampering, corruption) is not a distinct error but
- * a fall-back to the first page (the endpoint's only documented error is 401 —
- * spec §3.4.1 lists no 400 for cursors). Validating both parts here is also
- * what keeps the `::bigint`/`::uuid` casts in listUserSessions from ever
- * throwing an `invalid input syntax` 500 on a crafted cursor.
- */
-function decodeCursor(cursor: string): SessionCursor | null {
-  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-  const sep = decoded.indexOf("|");
-  if (sep === -1) return null;
-  const micros = decoded.slice(0, sep);
-  const id = decoded.slice(sep + 1);
-  if (!MICROS_RE.test(micros) || !UUID_RE.test(id)) return null;
-  return { micros, id };
-}
+// Keyset cursor: the shared `http/keyset-cursor.ts` codec (micros + id,
+// malformed → page-1 fallback — the endpoint's only documented error is 401,
+// spec §3.4.1 lists no 400 for cursors). Extracted at T-6.2; behavior
+// unchanged.
 
 export interface SessionPage {
   items: AuthSessionInfo[];
@@ -117,21 +86,15 @@ export async function listUserSessions(
   currentSessionId: string,
   cursor: string | undefined,
 ): Promise<SessionPage> {
-  const decoded = cursor ? decodeCursor(cursor) : null;
+  const decoded = cursor ? decodeKeysetCursor(cursor) : null;
 
   const predicates = [
     eq(schema.authSessions.userId, userId),
     isNull(schema.authSessions.revokedAt),
   ];
   if (decoded) {
-    // Row-value keyset for the strictly-older page, compared in epoch-micros
-    // space (Postgres 14+ `extract` returns numeric, so ×1e6 → bigint is
-    // lossless). This mirrors the `created_at DESC, id DESC` ordering — micros
-    // is monotonic in created_at — while carrying full timestamptz precision so
-    // no sub-millisecond row is skipped. Both operands are pre-validated
-    // (integer / uuid) so the casts are crash-proof, not a 500 vector.
     predicates.push(
-      sql`((extract(epoch from ${schema.authSessions.createdAt}) * 1000000)::bigint, ${schema.authSessions.id}) < (${decoded.micros}::bigint, ${decoded.id}::uuid)`,
+      keysetCursorPredicate(schema.authSessions.createdAt, schema.authSessions.id, decoded),
     );
   }
 
@@ -144,7 +107,7 @@ export async function listUserSessions(
       lastUsedAt: schema.authSessions.lastUsedAt,
       // Exact epoch-microseconds of created_at — the cursor's full-precision
       // sort key. postgres-js returns a bigint column as a string.
-      cursorMicros: sql<string>`(extract(epoch from ${schema.authSessions.createdAt}) * 1000000)::bigint`,
+      cursorMicros: epochMicrosExpr(schema.authSessions.createdAt),
     })
     .from(schema.authSessions)
     .where(and(...predicates))
@@ -163,7 +126,7 @@ export async function listUserSessions(
   const last = rows[rows.length - 1];
   const nextCursor =
     rows.length === SESSIONS_PAGE_SIZE && last
-      ? encodeCursor({ micros: last.cursorMicros, id: last.id })
+      ? encodeKeysetCursor({ micros: last.cursorMicros, id: last.id })
       : null;
 
   return { items, nextCursor };
