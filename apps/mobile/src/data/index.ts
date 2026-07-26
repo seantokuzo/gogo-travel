@@ -16,3 +16,20 @@ export {
   useTrip,
   useInvitePreview,
 } from "./hooks";
+export {
+  collabInvalidationTargets,
+  evictTripSubtree,
+  handleCollabEvent,
+  useAppForegroundRefetch,
+  useScreenFocusRefetch,
+} from "./collab";
+export type { CollabDeps, CollabResult, InvalidationTarget } from "./collab";
+export {
+  buildTripPatch,
+  isBaseCurrencyLocked,
+  isStaleUpdatedAt,
+  useDeleteTrip,
+  useLeaveTrip,
+  useUpdateTrip,
+} from "./trip-settings";
+export type { TripSettingsEdits } from "./trip-settings";

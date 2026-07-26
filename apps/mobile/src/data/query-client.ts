@@ -31,6 +31,14 @@ export const queryKeys = {
   trips: ["trips"] as const,
   /** `GET /trips/:tripId` — the `[tripId]` membership guard's query (R-nav-20). */
   trip: (tripId: string) => ["trips", tripId] as const,
+  /**
+   * `GET /trips/:tripId/members` — members list (trips spec §2.5). Lives under
+   * the trip's key so `trip.deleted` eviction drops the whole subtree in one
+   * `removeQueries` (§2.6; the collab layer in `./collab.ts` owns the mapping).
+   */
+  tripMembers: (tripId: string) => ["trips", tripId, "members"] as const,
+  /** `GET /trips/:tripId/invites` — active-invite list (trips spec §2.5), same subtree rule. */
+  tripInvites: (tripId: string) => ["trips", tripId, "invites"] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */
   invitePreview: (token: string) => ["invites", token, "preview"] as const,
 } as const;
