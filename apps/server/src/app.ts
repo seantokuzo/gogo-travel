@@ -2,6 +2,8 @@ import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import { createInvitesRouter } from "./trips/invites-routes.js";
+import { createMembersRouter } from "./trips/members-routes.js";
 import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
 import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
@@ -49,9 +51,10 @@ export interface CreateAppOptions {
    */
   users?: UsersRouterDeps;
   /**
-   * Trips router dependencies (T-6.1). Same pairing rule as `users`: every
-   * trip route is Auth: Required (and `/:tripId` routes additionally sit
-   * behind the trip-membership gate), so trips-without-auth is a wiring bug.
+   * Trips-surface dependencies (T-6.1 trips CRUD; T-6.2 members + invites —
+   * one dep set, three routers). Same pairing rule as `users`: every route
+   * is Auth: Required (and the `/:tripId` routes additionally sit behind the
+   * trip-membership gate), so trips-without-auth is a wiring bug.
    */
   trips?: TripsRouterDeps;
 }
@@ -98,6 +101,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.trips) {
     app.route(API_BASE, createTripsRouter(options.trips));
+    app.route(API_BASE, createMembersRouter(options.trips));
+    // Also carries the non-trip-scoped `/invites/:token*` capability routes.
+    app.route(API_BASE, createInvitesRouter(options.trips));
   }
 
   return app;

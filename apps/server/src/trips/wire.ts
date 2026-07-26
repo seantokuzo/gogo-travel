@@ -12,8 +12,16 @@
  * rejects the unguarded combination loudly.
  */
 import { getDb } from "../db/index.js";
+import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import type { TripsRouterDeps } from "./routes.js";
 
+/**
+ * Process-wide store for the `/invites/:token*` token-guessing windows
+ * (trips spec §3.3). Bucket keys are rule-namespaced, so one store per
+ * process is safe (same pattern as users/wire.ts).
+ */
+const tripsRateLimitStore = new InMemoryRateLimitStore();
+
 export function buildTripsDeps(): TripsRouterDeps {
-  return { db: getDb() };
+  return { db: getDb(), rateLimit: { store: tripsRateLimitStore } };
 }

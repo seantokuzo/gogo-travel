@@ -122,6 +122,14 @@ export const RATE_LIMITS = {
   paymentHandles: { limit: 10, windowMs: HOUR_MS },
   /** `DELETE /users/me` — per user (fat-finger + abuse); AU-8. */
   deleteAccount: { limit: 3, windowMs: DAY_MS },
+  /**
+   * `GET /invites/:token` + `POST /invites/:token/accept` — token-guessing
+   * guard (trips spec §3.3: entropy already makes brute force infeasible;
+   * this is defense-in-depth). Both routes are Auth: Required, so the primary
+   * key is the authenticated user; the IP window backs it (T-6.2).
+   */
+  inviteTokenPerUser: { limit: 30, windowMs: MINUTE_MS },
+  inviteTokenPerIp: { limit: 100, windowMs: MINUTE_MS },
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
 
 // ---------------------------------------------------------------------------
@@ -134,6 +142,23 @@ export const RATE_LIMITS = {
  * shared `TripListQuerySchema` — client and server validate the same bound.
  */
 export const TRIPS_PAGE_SIZE_DEFAULT = 50;
+
+// ---------------------------------------------------------------------------
+// Members & invites surface (trips spec §3.3) — T-6.2
+// ---------------------------------------------------------------------------
+
+/**
+ * Invite token entropy: 32 random bytes = 256 bits, double the R-db-9 floor
+ * (≥128-bit), encoded base64url (URL-safe). A constant so the entropy test
+ * can assert the floor structurally.
+ */
+export const INVITE_TOKEN_BYTES = 32;
+
+/** Invite default lifetime — `expires_at` defaults to now + 7 days (Gate 2). */
+export const INVITE_DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** `GET /trips/:tripId/invites` page size (keyset-paginated, §3.3). */
+export const INVITES_PAGE_SIZE = 50;
 
 // ---------------------------------------------------------------------------
 // Places spine ingest (places spec §3.1, R-places-4/5/7) — T-6.4 / PL-1.

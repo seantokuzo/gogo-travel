@@ -42,7 +42,6 @@
  * and a DB transaction must never straddle a third-party round-trip.
  */
 import { and, eq, inArray, isNull, ne } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
 import { decryptSecret } from "../auth/crypto.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
@@ -101,35 +100,89 @@ export async function deleteAccount(
     //    already-scrubbed account (a repeat request within the ≤15-min access
     //    token window, R-auth-12) is an idempotent no-op — never a 409, since we
     //    must not re-run the owner guard against a ghost account.
+    //
+    //    FOR UPDATE (T-6.2 round-1): the users row is locked for the WHOLE
+    //    deletion, making it the first acquisition in the global lock order
+    //    (users → trip_members → invites). The invite-accept path takes this
+    //    same row FOR SHARE before writing a membership, so the caller's own
+    //    in-flight accept either commits BEFORE this lock lands (step 1b's
+    //    membership sweep then sees and removes the new row) or blocks here
+    //    and observes the scrub (401) — without this, an accept threading the
+    //    gap between the membership sweep (1b) and the scrub (4) would leave
+    //    a ghost membership on the scrubbed account.
     const [live] = await tx
       .select({ id: schema.users.id })
       .from(schema.users)
-      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)));
+      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+      .for("update");
     if (!live) return { status: "already-deleted" };
 
-    // 1. Sole-owner-trip guard (R-user-9 / schema §3.3.5). `uq_trip_single_owner`
-    //    guarantees at most one owner per trip, so a caller `role = 'owner'` row
-    //    IS the sole owner — block iff any such trip has ≥1 OTHER **live**
-    //    member. Ghost members (soft-deleted accounts, users.deleted_at set)
-    //    never block: they cannot receive a transfer, so counting them would
-    //    deadlock this deletion permanently (P-6/T-6.1 sole-owner-ghost fix).
-    //    Throw BEFORE any write so the rollback scrubs nothing.
-    const ownerRow = alias(schema.tripMembers, "owner_row");
-    const otherRow = alias(schema.tripMembers, "other_row");
-    const blocking = await tx
-      .select({ tripId: ownerRow.tripId })
-      .from(ownerRow)
-      .innerJoin(
-        otherRow,
-        and(eq(otherRow.tripId, ownerRow.tripId), ne(otherRow.userId, ownerRow.userId)),
-      )
-      .innerJoin(
-        schema.users,
-        and(eq(schema.users.id, otherRow.userId), isNull(schema.users.deletedAt)),
-      )
-      .where(and(eq(ownerRow.userId, userId), eq(ownerRow.role, "owner")))
-      .limit(1);
-    if (blocking.length > 0) throw new OwnerTransferRequiredError();
+    // 1. LOCK the caller's membership rows — `SELECT … FOR UPDATE` — before
+    //    ANY membership read (P-6/T-6.2 fix; T-6.1 round-1 security defer).
+    //    This snapshot is the ONE membership state both the guard (step 1a)
+    //    and the reconcile (step 1b) operate on; without it, a membership
+    //    write committing between guard-read and cascade-delete destroys the
+    //    writer's work — concretely:
+    //      • transfer-ownership UPDATEs these very rows (demote/promote) →
+    //        it now blocks on the lock and serializes either side of us;
+    //      • invite-accept takes FOR SHARE on the trip's OWNER row (this
+    //        caller's row, invites-routes.ts) before inserting a member → an
+    //        in-flight accept makes our lock WAIT and the guard then SEES the
+    //        new member (409 transfer-first); an accept arriving after us
+    //        blocks, then finds the invite cascade-deleted (404). The
+    //        "acceptance committing between guard SELECT and cascade delete
+    //        destroys the new member's trip" window is closed.
+    //    Lock ORDER: every explicit locker follows users → trip_members →
+    //    invites. The step-1b trips CASCADE does NOT (Postgres fires FK
+    //    triggers in creation order; 0000 creates the invites FK before the
+    //    trip_members FK, so the cascade locks invite rows BEFORE member
+    //    rows) — deadlock safety rests on THIS fence, not on cascade order:
+    //    by the time 1b's cascade runs, this transaction already holds the
+    //    caller's membership rows, in-flight accepts have committed, and new
+    //    ones are parked (owner-row FOR SHARE), so nothing else holds
+    //    trip-scoped row locks. Same fence shape as the trips DELETE route.
+    //    CROSS-TRIP ORDERING (T-6.2 round-2): this fence spans TRIPS (one
+    //    caller, many memberships), so it acquires in trip_id order — the
+    //    same deterministic-order rule every other multi-row locker follows
+    //    (trip-delete fence and transfer order by user_id WITHIN a trip).
+    //    Unordered, two deletions/fences whose row sets overlap on ≥2 trips
+    //    (4-party cross-trip interleavings) could acquire in opposite orders
+    //    and cycle; ordered, every fence→deletion wait chain is strictly
+    //    increasing in trip id and can never close a loop.
+    const lockedMemberships = await tx
+      .select({ tripId: schema.tripMembers.tripId, role: schema.tripMembers.role })
+      .from(schema.tripMembers)
+      .where(eq(schema.tripMembers.userId, userId))
+      .orderBy(schema.tripMembers.tripId)
+      .for("update");
+    const ownedTripIds = lockedMemberships
+      .filter((membership) => membership.role === "owner")
+      .map((membership) => membership.tripId);
+
+    // 1a. Sole-owner-trip guard (R-user-9 / schema §3.3.5). `uq_trip_single_
+    //     owner` guarantees at most one owner per trip, so a caller `role =
+    //     'owner'` row IS the sole owner — block iff any owned trip has ≥1
+    //     OTHER **live** member. Ghost members (soft-deleted accounts) never
+    //     block: they cannot receive a transfer, so counting them would
+    //     deadlock this deletion permanently (P-6/T-6.1 sole-owner-ghost
+    //     fix). Throw BEFORE any write so the rollback scrubs nothing.
+    if (ownedTripIds.length > 0) {
+      const blocking = await tx
+        .select({ tripId: schema.tripMembers.tripId })
+        .from(schema.tripMembers)
+        .innerJoin(
+          schema.users,
+          and(eq(schema.users.id, schema.tripMembers.userId), isNull(schema.users.deletedAt)),
+        )
+        .where(
+          and(
+            inArray(schema.tripMembers.tripId, ownedTripIds),
+            ne(schema.tripMembers.userId, userId),
+          ),
+        )
+        .limit(1);
+      if (blocking.length > 0) throw new OwnerTransferRequiredError();
+    }
 
     // 1b. Trip-membership reconcile (P-6/T-6.1 carry-forward; see module doc
     //     step 2). The guard just proved every owned trip has no other live
@@ -138,11 +191,12 @@ export async function deleteAccount(
     //     is left orphaned behind an unreachable membership gate. Then drop
     //     the caller's remaining (non-owner) membership rows — the final
     //     "leave" (§3.2) — leaving all financial history intact (R-trips-12).
-    const ownedTripIds = tx
-      .select({ tripId: schema.tripMembers.tripId })
-      .from(schema.tripMembers)
-      .where(and(eq(schema.tripMembers.userId, userId), eq(schema.tripMembers.role, "owner")));
-    await tx.delete(schema.trips).where(inArray(schema.trips.id, ownedTripIds));
+    //     Both writes consume the step-1 LOCKED snapshot (`ownedTripIds` is
+    //     the materialized list, not a re-read) — guard and reconcile cannot
+    //     disagree about which trips the caller owns.
+    if (ownedTripIds.length > 0) {
+      await tx.delete(schema.trips).where(inArray(schema.trips.id, ownedTripIds));
+    }
     await tx.delete(schema.tripMembers).where(eq(schema.tripMembers.userId, userId));
 
     // FUTURE (P-11 capture / utilities documents): capture_senders, capture_inbox,

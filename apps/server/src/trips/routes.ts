@@ -25,18 +25,31 @@
  * emitted here yet (STATE P-6 wave plan: emitter stubs land in T-6.3).
  */
 import { zValidator } from "@hono/zod-validator";
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
-import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
+import {
+  apiError,
+  HttpError,
+  NOT_FOUND_MESSAGE,
+  UNAUTHENTICATED_MESSAGE,
+  type RequestVars,
+} from "../http/errors.js";
 import {
   expectUpdatedAtPrecondition,
   throwGuardedUpdateMiss,
 } from "../http/expect-updated-at.js";
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+  epochMicrosExpr,
+  keysetCursorPredicate,
+} from "../http/keyset-cursor.js";
+import type { RateLimitStore } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
 import { createRequireTripMember, tripContextOf } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
@@ -46,8 +59,19 @@ import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.
 
 export interface TripsRouterDeps {
   db: DbClient;
-  /** Clock seam for tests (status boundary days). */
+  /** Clock seam for tests (status boundary days, invite expiry). */
   now?: () => Date;
+  /**
+   * Rate limiting for the `/invites/:token*` token-guessing guard (trips
+   * spec §3.3; consumed by `invites-routes.ts` — the CRUD routes here don't
+   * charge it). Absent = no limiter (unit/integration tests); prod wiring
+   * (`wire.ts`) always supplies it. `now` is MILLISECONDS (the store's clock),
+   * independent of the seconds-grade `Date` seam above.
+   */
+  rateLimit?: {
+    store: RateLimitStore;
+    now?: () => number;
+  };
   /**
    * Places-spine ingest enqueue seam (T-6.4, R-places-1): fired POST-COMMIT
    * on trip create and on destination change — asynchronous, fire-and-forget.
@@ -57,35 +81,10 @@ export interface TripsRouterDeps {
   placesIngest?: PlacesIngestTrigger;
 }
 
-// ---------------------------------------------------------------------------
-// Keyset cursor over (created_at DESC, id DESC) — same shape and rationale as
-// auth/session-service.ts: micros (not ISO-ms) so no sub-millisecond row is
-// ever skipped; both parts pre-validated so the ::bigint/::uuid casts can
-// never 500 on a crafted cursor; malformed cursors fall back to page 1 (the
-// endpoint's documented errors don't include a cursor 400 — §3.3 GET /trips).
-// ---------------------------------------------------------------------------
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const MICROS_RE = /^\d{1,18}$/;
-
-interface TripCursor {
-  micros: string;
-  id: string;
-}
-
-function encodeCursor(row: TripCursor): string {
-  return Buffer.from(`${row.micros}|${row.id}`, "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor: string): TripCursor | null {
-  const decoded = Buffer.from(cursor, "base64url").toString("utf8");
-  const sep = decoded.indexOf("|");
-  if (sep === -1) return null;
-  const micros = decoded.slice(0, sep);
-  const id = decoded.slice(sep + 1);
-  if (!MICROS_RE.test(micros) || !UUID_RE.test(id)) return null;
-  return { micros, id };
-}
+// Keyset cursor over (created_at DESC, id DESC): the shared
+// `http/keyset-cursor.ts` codec (extracted at T-6.2; behavior unchanged) —
+// malformed cursors fall back to page 1 (the endpoint's documented errors
+// don't include a cursor 400 — §3.3 GET /trips).
 
 export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
@@ -108,6 +107,20 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const today = todayUtc(nowOf());
 
       const trip = await deps.db.transaction(async (tx) => {
+        // Caller liveness under lock — FIRST acquisition (global order:
+        // users → trip_members → invites; the same door invite-accept
+        // holds, T-6.2 round-2 advisory #2): a scrubbed account's
+        // still-valid (≤15 min) token must not mint a ghost-owned orphan
+        // trip. Account deletion holds this row FOR UPDATE for its whole
+        // transaction (step 0), so an in-flight deletion parks this create
+        // until it commits — the live-only re-check then misses → 401.
+        const [liveCaller] = await tx
+          .select({ id: schema.users.id })
+          .from(schema.users)
+          .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+          .for("share");
+        if (!liveCaller) throw new HttpError("UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE);
+
         const [inserted] = await tx
           .insert(schema.trips)
           .values({
@@ -168,13 +181,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { userId } = authContextOf(c);
       const { cursor, limit } = c.req.valid("query");
       const pageSize = limit ?? TRIPS_PAGE_SIZE_DEFAULT;
-      const decoded = cursor ? decodeCursor(cursor) : null;
+      const decoded = cursor ? decodeKeysetCursor(cursor) : null;
 
       const predicates: SQL[] = [eq(schema.tripMembers.userId, userId)];
       if (decoded) {
-        predicates.push(
-          sql`((extract(epoch from ${schema.trips.createdAt}) * 1000000)::bigint, ${schema.trips.id}) < (${decoded.micros}::bigint, ${decoded.id}::uuid)`,
-        );
+        predicates.push(keysetCursorPredicate(schema.trips.createdAt, schema.trips.id, decoded));
       }
 
       // Fetch pageSize + 1: the sentinel row tells us whether a next page
@@ -188,7 +199,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           trip: schema.trips,
           role: schema.tripMembers.role,
           memberCount: sql<number>`(select count(*)::int from trip_members tm join users u on u.id = tm.user_id and u.deleted_at is null where tm.trip_id = ${schema.trips.id})`,
-          cursorMicros: sql<string>`(extract(epoch from ${schema.trips.createdAt}) * 1000000)::bigint`,
+          cursorMicros: epochMicrosExpr(schema.trips.createdAt),
         })
         .from(schema.trips)
         .innerJoin(schema.tripMembers, eq(schema.tripMembers.tripId, schema.trips.id))
@@ -214,7 +225,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const last = page[page.length - 1];
       const nextCursor =
         rows.length > pageSize && last
-          ? encodeCursor({ micros: last.cursorMicros, id: last.trip.id })
+          ? encodeKeysetCursor({ micros: last.cursorMicros, id: last.trip.id })
           : null;
 
       const body: Paginated<TripListItem> = { items, nextCursor };
@@ -428,10 +439,30 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   router.delete(tripEndpoints.deleteTrip.path, requireTripMember("owner"), async (c) => {
     const { tripId } = tripContextOf(c);
 
-    const deleted = await deps.db
-      .delete(schema.trips)
-      .where(eq(schema.trips.id, tripId))
-      .returning({ id: schema.trips.id });
+    const deleted = await deps.db.transaction(async (tx) => {
+      // Membership FENCE before the cascade (T-6.2 round-1 blocking #2). The
+      // RI cascade exclusive-locks this trip's INVITE rows BEFORE its member
+      // rows (Postgres fires FK triggers in creation order; 0000 creates the
+      // invites FK before the trip_members FK), inverting the global
+      // users → trip_members → invites acquisition order — an in-flight
+      // invite-accept (owner-row FOR SHARE held, invite lock wanted) would
+      // cycle with the cascade → 40P01. Taking every membership row
+      // FOR UPDATE first, in user_id order (the account-deletion step-1
+      // fence shape), parks this delete until in-flight accepts commit and
+      // blocks new ones — by cascade time no other transaction holds
+      // trip-scoped row locks, regardless of FK trigger order.
+      await tx
+        .select({ userId: schema.tripMembers.userId })
+        .from(schema.tripMembers)
+        .where(eq(schema.tripMembers.tripId, tripId))
+        .orderBy(schema.tripMembers.userId)
+        .for("update");
+
+      return tx
+        .delete(schema.trips)
+        .where(eq(schema.trips.id, tripId))
+        .returning({ id: schema.trips.id });
+    });
     if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
     return c.body(null, 204);

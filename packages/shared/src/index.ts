@@ -14,6 +14,7 @@ export * from "./api/envelope.js";
 export * from "./api/descriptor.js";
 export * from "./config/entitlements.js";
 export * from "./config/ai-pricing.js";
+export * from "./config/links.js";
 export * from "./config/places.js";
 export * from "./domains/user.js";
 export * from "./domains/auth.js";
