@@ -936,6 +936,39 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     expect(events.map((d) => d.payload.event)).toEqual(["trip.updated", "trip.status_changed"]);
   });
 
+  it("PATCH: a date change that flips the DERIVED status emits trip.updated AND trip.status_changed", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip(); // 08-01..10 → 'planning' at frozen 07-25
+    // Pull start_date behind frozen today: derived planning → active — the
+    // §3.5 "stored status changes" trigger with NO override involved.
+    expect(
+      (await patchTrip(trip.id, owner.accessToken, { start_date: "2026-07-20" })).status,
+    ).toBe(200);
+
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.updated", "trip.status_changed"]);
+    expect(pushEvents.recipientIdsOf(events[1]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+    expect((await dbTrip(trip.id))?.status).toBe("active");
+  });
+
+  it("PATCH: a write-less body on a DRIFTED trip emits trip.status_changed ONLY (no trip.updated)", async () => {
+    const owner = await seedUserWithToken();
+    const editor = await seedUserWithToken();
+    const seeded = await seedDriftedTrip(owner.userId); // stored 'planning', derived 'past'
+    await addMember(seeded.id, editor.userId, "editor");
+
+    // Empty body: no writable field committed — the in-transaction
+    // reconciliation still converged the stored status, and ONLY that event
+    // fires (a write-less request is not a client mutation, R-trips-18).
+    expect((await patchTrip(seeded.id, owner.accessToken, {})).status).toBe(200);
+
+    const events = await pushEvents.eventsFor(seeded.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.status_changed"]);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId]);
+    expect((await dbTrip(seeded.id))?.status).toBe("past");
+  });
+
   it("GET :id: derived reconciliation emits trip.status_changed to other members minus the READER", async () => {
     const owner = await seedUserWithToken();
     const editor = await seedUserWithToken();

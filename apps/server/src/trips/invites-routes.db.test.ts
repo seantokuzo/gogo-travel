@@ -5,8 +5,9 @@
  * "Tests required" bullet for the invite endpoints INCLUDING the push-event
  * bullets (T-6.3): invite.created / invite.revoked with the invite id (never
  * the token) on the wire, member.added on real acceptance only — idempotent
- * already-member answers, dead-invite 409s, the max_uses race loser, and the
- * forced-rollback accept all emit NOTHING.
+ * already-member answers, dead-invite 409s, the max_uses race loser, and
+ * forced-rollback accepts (statement-time AND commit-time aborts — the
+ * latter pins the hook as strictly post-COMMIT) all emit NOTHING.
  *
  * Headline adversarial assertions: the MANDATORY max_uses race (§4 — two
  * REAL concurrent accepts on a max_uses:1 invite; exactly one member,
@@ -533,6 +534,41 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
       await client.unsafe(`
         DROP TRIGGER IF EXISTS t62_accept_boom ON trip_members;
         DROP FUNCTION IF EXISTS t62_accept_boom();
+      `);
+    }
+  });
+
+  it("accept: a COMMIT-time abort emits NOTHING — pins post-COMMIT hook placement (round-1 advisory #2)", async () => {
+    const { owner, tripId } = await seedCollabTrip();
+    const invite = await seedInvite(tripId, owner.userId);
+    const joiner = await seedUserWithToken();
+
+    // Unlike the statement-time forced failure above, EVERY statement in the
+    // acceptance succeeds here — the raise fires at COMMIT itself
+    // (DEFERRABLE INITIALLY DEFERRED constraint trigger). An emit placed
+    // anywhere inside the transaction — even after the final write — would
+    // record a delivery for a membership that never became durable; only a
+    // strictly post-commit hook stays silent.
+    await client.unsafe(`
+      CREATE OR REPLACE FUNCTION t63_commit_boom() RETURNS trigger LANGUAGE plpgsql AS
+      $$ BEGIN RAISE EXCEPTION 'T63_FORCED_COMMIT_FAILURE'; END $$;
+      CREATE CONSTRAINT TRIGGER t63_commit_boom AFTER INSERT ON trip_members
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (NEW.user_id = '${joiner.userId}'::uuid)
+        EXECUTE FUNCTION t63_commit_boom();
+    `);
+    try {
+      const res = await accept(invite.token, joiner.accessToken);
+      expect(res.status).toBe(500);
+      // The whole transaction died at COMMIT: no membership, no use charge…
+      expect(await memberRow(tripId, joiner.userId)).toBeUndefined();
+      expect((await inviteRowOf(invite.id))?.useCount).toBe(0);
+      // …and ZERO emissions (an aborted COMMIT must never emit, R-trips-18).
+      expect(await pushEvents.eventsFor(tripId)).toEqual([]);
+    } finally {
+      await client.unsafe(`
+        DROP TRIGGER IF EXISTS t63_commit_boom ON trip_members;
+        DROP FUNCTION IF EXISTS t63_commit_boom();
       `);
     }
   });

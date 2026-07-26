@@ -51,8 +51,29 @@ import {
   type TripDomainEvent,
 } from "@gogo/shared/domains/trip";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { PUSH_EVENT_LOG_MAX_CHARS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
+
+/**
+ * Expo push tokens are quasi-capabilities (anyone holding one can address
+ * the device), and Expo SDK errors embed them verbatim
+ * ("ExponentPushToken[xxx] is not a registered push token…"). Both historic
+ * shapes are covered (`ExpoPushToken[…]` / `ExponentPushToken[…]`).
+ */
+const EXPO_PUSH_TOKEN_RE = /Expo(?:nent)?PushToken\[[^\]]*\]/g;
+
+/**
+ * Drop-path log hygiene (round-1 advisory #3; T-6.4 `redactedErrorMessage`
+ * precedent): redact any embedded push tokens, THEN cap the length — a log
+ * line is ops context, never a secret-bearing dump (Laws #1/#3 posture).
+ */
+export function redactedDropMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  return raw
+    .replace(EXPO_PUSH_TOKEN_RE, "[push-token-redacted]")
+    .slice(0, PUSH_EVENT_LOG_MAX_CHARS);
+}
 
 /** One post-commit domain-event emission (§3.5 table row + fan-out inputs). */
 export interface TripEventEmission {
@@ -91,6 +112,16 @@ export interface PushInvalidationDelivery {
 /**
  * The P-13 seam. Implementations must tolerate empty recipient/token sets.
  * Errors (sync throw or rejection) are swallowed + logged by the emitter.
+ *
+ * P-13 TRANSPORT OBLIGATIONS (round-1 advisory #4):
+ *  - `deliver()` MUST settle in bounded time. The emitter drains ONE serial
+ *    chain — a never-settling deliver wedges every later emission for the
+ *    process lifetime. Wrap network sends in a timeout (or otherwise
+ *    guarantee settlement); slow-and-settled is fine, unsettled is not.
+ *  - Rejection/throw messages MUST NOT embed push tokens (they are
+ *    quasi-capabilities). The emitter's drop log redacts
+ *    `Expo(nent)PushToken[…]` shapes belt-and-braces (`redactedDropMessage`),
+ *    but the transport is the first line of defense.
  */
 export interface PushInvalidationTransport {
   deliver(delivery: PushInvalidationDelivery): void | Promise<void>;
@@ -236,17 +267,19 @@ export function createTripEventEmitter(deps: TripEventEmitterDeps): WiredTripEve
           try {
             await resolveAndDeliver(emission, transport);
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
+            // Redacted + capped (advisory #3): transport errors may embed
+            // push tokens; the log line never does.
             logger.warn(
-              `push-invalidation: ${emission.event} for trip ${emission.tripId} dropped: ${message}`,
+              `push-invalidation: ${emission.event} for trip ${emission.tripId} dropped: ${redactedDropMessage(err)}`,
             );
           }
         });
       } catch (err) {
         // emit() itself must never throw into a request handler.
         try {
-          const message = err instanceof Error ? err.message : String(err);
-          logger.warn(`push-invalidation: emit failed synchronously: ${message}`);
+          logger.warn(
+            `push-invalidation: emit failed synchronously: ${redactedDropMessage(err)}`,
+          );
         } catch {
           // Even a throwing logger can't break the request.
         }

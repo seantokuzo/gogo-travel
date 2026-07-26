@@ -7,11 +7,13 @@
  * `invites-routes.db.test.ts`).
  */
 import { describe, expect, it } from "vitest";
+import { PUSH_EVENT_LOG_MAX_CHARS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import {
   buildDelivery,
   createTripEventEmitter,
   emitTripEvent,
+  redactedDropMessage,
   type PushInvalidationDelivery,
   type TripEventEmission,
 } from "./push-invalidation.js";
@@ -83,6 +85,29 @@ describe("buildDelivery (pure fan-out assembly)", () => {
     );
     expect(Object.keys(withEntity.payload)).toEqual(["event", "trip_id", "entity_id"]);
     expect(withEntity.payload.entity_id).toBe(U1);
+  });
+});
+
+describe("redactedDropMessage (advisory #3 — token-safe drop logs)", () => {
+  it("strips BOTH Expo token shapes and never leaks the token body", () => {
+    const message = redactedDropMessage(
+      new Error(
+        "ExponentPushToken[secret-abc] rejected; retry of ExpoPushToken[secret-xyz] also failed",
+      ),
+    );
+    expect(message).not.toContain("secret-abc");
+    expect(message).not.toContain("secret-xyz");
+    expect(message.match(/\[push-token-redacted\]/g)).toHaveLength(2);
+  });
+
+  it("caps the redacted message at the config length (redact FIRST, then cap)", () => {
+    // A token straddling the cap boundary must not survive via truncation:
+    // redaction runs before the slice.
+    const long = `${"x".repeat(PUSH_EVENT_LOG_MAX_CHARS - 10)}ExponentPushToken[tail-secret]`;
+    const message = redactedDropMessage(new Error(long));
+    expect(message.length).toBeLessThanOrEqual(PUSH_EVENT_LOG_MAX_CHARS);
+    expect(message).not.toContain("tail-secret");
+    expect(redactedDropMessage("not-an-error")).toBe("not-an-error");
   });
 });
 
@@ -187,6 +212,27 @@ describe("createTripEventEmitter", () => {
     expect(warnings[0]).toContain("trip.updated");
     expect(warnings[0]).toContain("connection reset");
     expect(recorded.map((d) => d.payload.event)).toEqual(["invite.created"]);
+  });
+
+  it("drop logs are token-safe: a transport error embedding a push token logs REDACTED (advisory #3)", async () => {
+    const warnings: string[] = [];
+    const emitter = createTripEventEmitter({
+      db: fakeDb([[{ userId: U1 }], [{ id: U1 }], [{ userId: U1, token: "tok-a" }]]),
+      transport: {
+        deliver: () => {
+          throw new Error(
+            "DeviceNotRegistered: ExponentPushToken[dev-secret-1] is not a registered push token",
+          );
+        },
+      },
+      logger: { warn: (m) => warnings.push(m) },
+    });
+    emitter.emit(emission());
+    await emitter.idle();
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("[push-token-redacted]");
+    expect(warnings[0]).not.toContain("dev-secret-1");
   });
 
   it("a throwing OR rejecting transport is swallowed + logged; emit never throws", async () => {
