@@ -47,8 +47,13 @@
  *    explicit here so a future migration reordering FKs doesn't silently
  *    change the analysis — the fence holds either way.
  *
- * Push events (invite.created / invite.revoked / member.added — §3.5) are
- * T-6.3's post-commit emitter seam — deliberately not emitted here yet.
+ * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): invite.created and
+ * invite.revoked emit post-commit with the invite id as entity_id (ids only —
+ * the TOKEN never rides in an event; R-trips-18 no-content rule); member.added
+ * emits after a COMMITTED acceptance that actually inserted a membership —
+ * the idempotent already-member answer commits no mutation and emits nothing
+ * (R-trips-15), and every 404/409 path throws pre-commit. The new member is
+ * the actor, so exclusion yields exactly the pre-existing members.
  */
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
@@ -90,6 +95,7 @@ import {
 } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { generateInviteToken, INVITE_TOKEN_RE, inviteState } from "./invite-token.js";
+import { emitTripEvent } from "./push-invalidation.js";
 import type { TripsRouterDeps } from "./routes.js";
 import { toInviteListItemWire, toInvitePreviewWire, toInviteWithUrlWire } from "./serialize.js";
 
@@ -166,6 +172,18 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         })
         .returning();
       if (!inserted) throw new HttpError("INTERNAL", "invite insert returned no row");
+
+      // POST-COMMIT push invalidation (T-6.3): §3.5 sends invite.created to
+      // ALL current members minus the actor — including viewers (they can't
+      // LIST invites, §3.2, but the event is the invite's opaque id only; the
+      // spec draws the fan-out line at membership, not at the list
+      // capability). The token never leaves this handler in an event.
+      emitTripEvent(deps.tripEvents, {
+        event: "invite.created",
+        tripId,
+        actorId: userId,
+        entityId: inserted.id,
+      });
 
       return c.json(toInviteWithUrlWire(inserted), 201);
     },
@@ -263,6 +281,16 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         reason: "already_revoked",
       });
     }
+
+    // POST-COMMIT push invalidation (T-6.3): the guarded UPDATE committed a
+    // real revocation (a raced duplicate converged on 409 above and emits
+    // nothing — one revocation, one event).
+    emitTripEvent(deps.tripEvents, {
+      event: "invite.revoked",
+      tripId,
+      actorId: userId,
+      entityId: inviteId,
+    });
 
     return c.body(null, 204);
   });
@@ -436,6 +464,22 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
 
       return { membership: inserted, alreadyMember: false };
     });
+
+    // POST-COMMIT push invalidation (T-6.3): member.added ONLY when the
+    // committed transaction actually inserted a membership — every
+    // already-member answer (idempotent re-tap, raced PK) changed nothing
+    // and emits nothing (R-trips-15); dead-invite/unknown-token paths threw
+    // inside the transaction (rollback ⇒ no event, incl. the max_uses race
+    // loser). The new member is the actor: exclusion fans out to exactly the
+    // pre-existing members (§3.3 accept bullet).
+    if (!result.alreadyMember) {
+      emitTripEvent(deps.tripEvents, {
+        event: "member.added",
+        tripId: result.membership.tripId,
+        actorId: userId,
+        entityId: userId,
+      });
+    }
 
     const body: InviteAccept = {
       trip_id: result.membership.tripId,

@@ -20,9 +20,16 @@
  * budgets on base-currency change) are REAL transactions — the prod driver
  * is the Neon WebSocket Pool, never Neon-HTTP (landmine #1).
  *
- * Push invalidation events (§3.5: trip.updated / trip.status_changed /
- * trip.deleted) are T-6.3's post-commit emitter seam — deliberately not
- * emitted here yet (STATE P-6 wave plan: emitter stubs land in T-6.3).
+ * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): every committed
+ * mutation emits its §3.5 event post-commit via the `tripEvents` seam
+ * (push-invalidation.ts) — trip.updated on PATCH writes, trip.status_changed
+ * whenever the STORED status moves (manual override or derived
+ * reconciliation, §3.4 — including the read-path self-heal), trip.deleted on
+ * DELETE with the fence transaction's pre-delete member snapshot (R-trips-8:
+ * "captured before the delete"). Hooks fire only after the transaction (or
+ * auto-commit statement) succeeds — an aborted/zero-row write never emits.
+ * POST /trips emits nothing: §3.5 has no trip.created (the creator is the
+ * sole member; there is no one to invalidate).
  */
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
@@ -54,6 +61,7 @@ import { authContextOf } from "../http/require-auth.js";
 import { createRequireTripMember, tripContextOf } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "../places/ingest-queue.js";
+import { emitTripEvent, type TripEventEmitter } from "./push-invalidation.js";
 import { effectiveTripStatus, reconcileStoredStatuses, todayUtc } from "./status.js";
 import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.js";
 
@@ -79,6 +87,14 @@ export interface TripsRouterDeps {
    * trigger; trip writes NEVER block on, or fail because of, ingestion.
    */
   placesIngest?: PlacesIngestTrigger;
+  /**
+   * Push-invalidation emitter seam (T-6.3, R-trips-18): fired POST-COMMIT on
+   * every §3.5 mutation — asynchronous, fire-and-forget, ids-only payloads.
+   * Optional: absent (unit tests / dev without the seam) simply skips
+   * emission; mutations NEVER block on, or fail because of, an emit. Prod
+   * wiring (`wire.ts`) always supplies it (dormant until P-13's transport).
+   */
+  tripEvents?: TripEventEmitter;
 }
 
 // Keyset cursor over (created_at DESC, id DESC): the shared
@@ -214,6 +230,21 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         todayUtc(nowOf()),
       );
 
+      // §3.5 trip.status_changed fires on DERIVED RECONCILIATION too ("stored
+      // status changes (derived reconciliation or manual override)"): the
+      // reconcile write above is auto-commit, so this is post-commit. The
+      // reader is the actor — their device just fetched the fresh value; the
+      // other members' caches are the stale ones.
+      for (const row of page) {
+        if ((effective.get(row.trip.id) ?? row.trip.status) !== row.trip.status) {
+          emitTripEvent(deps.tripEvents, {
+            event: "trip.status_changed",
+            tripId: row.trip.id,
+            actorId: userId,
+          });
+        }
+      }
+
       const items = page.map((row) =>
         toTripListItemWire(
           { ...row.trip, status: effective.get(row.trip.id) ?? row.trip.status },
@@ -239,6 +270,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   // -------------------------------------------------------------------------
   router.get(tripEndpoints.getTrip.path, requireTripMember(), async (c) => {
     const { tripId, role } = tripContextOf(c);
+    const { userId } = authContextOf(c);
 
     const [trip] = await deps.db
       .select()
@@ -248,9 +280,13 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     if (!trip) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
     const effective = await reconcileStoredStatuses(deps.db, [trip], todayUtc(nowOf()));
-    return c.json(
-      toTripWithRoleWire({ ...trip, status: effective.get(trip.id) ?? trip.status }, role),
-    );
+    const status = effective.get(trip.id) ?? trip.status;
+    // Derived reconciliation moved the STORED status → §3.5 trip.status_changed
+    // (post-commit: the reconcile write is auto-commit). Reader = actor.
+    if (status !== trip.status) {
+      emitTripEvent(deps.tripEvents, { event: "trip.status_changed", tripId, actorId: userId });
+    }
+    return c.json(toTripWithRoleWire({ ...trip, status }, role));
   });
 
   // -------------------------------------------------------------------------
@@ -271,12 +307,20 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     requireTripMember("editor"),
     async (c) => {
       const { tripId, role } = tripContextOf(c);
+      const { userId } = authContextOf(c);
       const body = c.req.valid("json");
       const today = todayUtc(nowOf());
 
       // Set inside the transaction iff the committed write moved the
       // destination — drives the post-commit ingest trigger (R-places-1).
       let destinationChanged = false;
+      // Post-commit event flags (T-6.3, §3.5): trip.updated iff a writable
+      // field actually committed (a write-less request is not a mutation —
+      // R-trips-18 fires "WHEN any mutation ... commits"); trip.status_changed
+      // iff the STORED status moved (override or derived reconciliation).
+      // Both only escape the closure if the transaction commits.
+      let fieldsWritten = false;
+      let storedStatusChanged = false;
 
       const updated = await deps.db.transaction(async (tx) => {
         const [current] = await tx
@@ -364,7 +408,9 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             throwGuardedUpdateMiss(true);
           }
           const effective = await reconcileStoredStatuses(tx, [current], today);
-          return { ...current, status: effective.get(current.id) ?? current.status };
+          const reconciled = effective.get(current.id) ?? current.status;
+          storedStatusChanged = reconciled !== current.status;
+          return { ...current, status: reconciled };
         }
 
         // Guarded LWW write: the precondition rides in the WHERE itself —
@@ -389,6 +435,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             .where(eq(schema.trips.id, tripId));
           throwGuardedUpdateMiss(still !== undefined);
         }
+        fieldsWritten = true;
+        storedStatusChanged = row.status !== current.status;
 
         // Pre-expense base-currency change updates budget rows' currency in
         // the SAME transaction — amounts unchanged, preserving
@@ -426,6 +474,18 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         }
       }
 
+      // POST-COMMIT push invalidation (T-6.3, §3.5): trip.updated on any
+      // committed field write ("any field incl. theme/currency"); ALSO
+      // trip.status_changed when the stored status moved (its §3.5 row is
+      // independent — a PATCH that archives emits both). The flags only
+      // escape a COMMITTED transaction; every failure path above threw.
+      if (fieldsWritten) {
+        emitTripEvent(deps.tripEvents, { event: "trip.updated", tripId, actorId: userId });
+      }
+      if (storedStatusChanged) {
+        emitTripEvent(deps.tripEvents, { event: "trip.status_changed", tripId, actorId: userId });
+      }
+
       return c.json(toTripWire(updated) satisfies Trip);
     },
   );
@@ -438,6 +498,13 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   // -------------------------------------------------------------------------
   router.delete(tripEndpoints.deleteTrip.path, requireTripMember("owner"), async (c) => {
     const { tripId } = tripContextOf(c);
+    const { userId } = authContextOf(c);
+
+    // R-trips-8: trip.deleted goes "to all other members CAPTURED BEFORE THE
+    // DELETE" — the fence SELECT below reads exactly that set, so capturing
+    // it here adds no query and no lock. Post-commit the membership rows are
+    // cascade-gone; this snapshot is the only correct recipient source.
+    let memberSnapshot: readonly string[] = [];
 
     const deleted = await deps.db.transaction(async (tx) => {
       // Membership FENCE before the cascade (T-6.2 round-1 blocking #2). The
@@ -451,12 +518,13 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       // fence shape), parks this delete until in-flight accepts commit and
       // blocks new ones — by cascade time no other transaction holds
       // trip-scoped row locks, regardless of FK trigger order.
-      await tx
+      const fencedMembers = await tx
         .select({ userId: schema.tripMembers.userId })
         .from(schema.tripMembers)
         .where(eq(schema.tripMembers.tripId, tripId))
         .orderBy(schema.tripMembers.userId)
         .for("update");
+      memberSnapshot = fencedMembers.map((row) => row.userId);
 
       return tx
         .delete(schema.trips)
@@ -464,6 +532,16 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         .returning({ id: schema.trips.id });
     });
     if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+
+    // POST-COMMIT push invalidation (T-6.3): the pre-delete member set minus
+    // the actor (R-trips-8; §3.3 DELETE bullet). Live-filtering happens in
+    // the emitter — ghost membership rows in the snapshot never get events.
+    emitTripEvent(deps.tripEvents, {
+      event: "trip.deleted",
+      tripId,
+      actorId: userId,
+      recipientsSnapshot: memberSnapshot,
+    });
 
     return c.body(null, 204);
   });

@@ -3,8 +3,11 @@
  * `/trips/:tripId/members*` + transfer-ownership end-to-end over a real
  * Postgres, behind the real app-wide `requireAuth` + `requireTripMember`
  * gates. Covers every §3.3 "Tests required" bullet for the member endpoints
- * EXCEPT the push-event bullets — the §3.5 post-commit emitter is T-6.3's
- * seam (STATE P-6 wave plan) and its emission tests land with it.
+ * INCLUDING the push-event bullets (T-6.3): member.role_changed to the
+ * target too, member.removed to remaining members AND the removed user,
+ * member.left on self-leave, ownership.transferred — plus no emission on
+ * any 4xx/rolled-back path (the forced promote failure doubles as the
+ * aborted-transaction-never-emits proof).
  *
  * Headline adversarial assertions: the F-038 IDOR harness on every route
  * (incl. target-id probes — an unknown target and a malformed target are
@@ -38,6 +41,10 @@ import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
+import {
+  createRecordingTripEvents,
+  type RecordingTripEvents,
+} from "./push-invalidation.test-util.js";
 import {
   expectIndistinguishable404s,
   NONEXISTENT_UUID,
@@ -84,6 +91,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
+  let pushEvents: RecordingTripEvents;
   let signer: AccessTokenSigner;
 
   let seq = 0;
@@ -115,7 +123,11 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
       appleCredentialsKey: Buffer.alloc(32, 7),
       logger: { warn: () => undefined },
     };
-    app = createApp({ auth: authDeps, trips: { db, now: () => FROZEN_NOW } });
+    pushEvents = createRecordingTripEvents(db);
+    app = createApp({
+      auth: authDeps,
+      trips: { db, now: () => FROZEN_NOW, tripEvents: pushEvents.tripEvents },
+    });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -568,6 +580,9 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
       // trip), the target still an editor.
       expect((await memberRow(tripId, owner.userId))?.role).toBe("owner");
       expect((await memberRow(tripId, editor.userId))?.role).toBe("editor");
+      // T-6.3: the demote COMMITTED nothing — an aborted transaction must
+      // NEVER emit (the hook sits after the transaction, post-commit only).
+      expect(await pushEvents.eventsFor(tripId)).toEqual([]);
     } finally {
       await client.unsafe(`
         DROP TRIGGER IF EXISTS t62_promote_boom ON trip_members;
@@ -659,5 +674,119 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     expect((await patchRole(tripId, editor.userId, "", { role: "viewer" })).status).toBe(401);
     expect((await removeMember(tripId, editor.userId, "")).status).toBe(401);
     expect((await transfer(tripId, "", editor.userId)).status).toBe(401);
+  });
+
+  // ===========================================================================
+  // T-6.3 push invalidation (§3.5 rule 6, R-trips-18 / API-TRIPS-4)
+  // ===========================================================================
+
+  it("PATCH role: member.role_changed → other members INCLUDING the target, minus the actor; ids-only", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    expect((await patchRole(tripId, editor.userId, owner.accessToken, { role: "viewer" })).status).toBe(
+      200,
+    );
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["member.role_changed"]);
+    // entity_id = the target's user_id (§3.5 table); no role value on the
+    // wire — receivers refetch the member list.
+    expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id", "entity_id"]);
+    expect(events[0]!.payload.entity_id).toBe(editor.userId);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("PATCH role: failure paths never emit — 403 caller, owner target 400, unknown target 404", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    expect((await patchRole(tripId, viewer.userId, editor.accessToken, { role: "editor" })).status).toBe(
+      403,
+    );
+    expect((await patchRole(tripId, owner.userId, owner.accessToken, { role: "viewer" })).status).toBe(
+      400,
+    );
+    expect(
+      (await patchRole(tripId, NONEXISTENT_UUID, owner.accessToken, { role: "viewer" })).status,
+    ).toBe(404);
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
+  });
+
+  it("DELETE: member.removed → remaining members AND the removed user (their device evicts, §3.5 rule 6)", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    expect((await removeMember(tripId, editor.userId, owner.accessToken)).status).toBe(204);
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["member.removed"]);
+    expect(events[0]!.payload.entity_id).toBe(editor.userId);
+    // The removed user is no longer a member post-commit — their inclusion
+    // can only come from the alsoNotify seam.
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+    expect(await memberRow(tripId, editor.userId)).toBeUndefined();
+  });
+
+  it("DELETE: member.left on self-leave → remaining members only (the departed IS the excluded actor)", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    expect((await removeMember(tripId, editor.userId, editor.accessToken)).status).toBe(204);
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["member.left"]);
+    expect(events[0]!.payload.entity_id).toBe(editor.userId);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [owner.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("DELETE: removing a GHOST's legacy row emits to remaining members but never to the ghost", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    const ghost = await seedUserWithToken();
+    await addMember(tripId, ghost.userId, "viewer");
+    await db
+      .update(schema.users)
+      .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
+      .where(eq(schema.users.id, ghost.userId));
+
+    expect((await removeMember(tripId, ghost.userId, owner.accessToken)).status).toBe(204);
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["member.removed"]);
+    // alsoNotify carried the ghost, but the live filter dropped them —
+    // ghosts don't get events (STATE P-6 live-member semantics).
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("DELETE: owner-leave 409s (both flavors) never emit", async () => {
+    const { owner, tripId } = await seedCollabTrip();
+    expect((await removeMember(tripId, owner.userId, owner.accessToken)).status).toBe(409);
+
+    const solo = await seedUserWithToken();
+    const soloTripId = await seedTrip(solo.userId);
+    expect((await removeMember(soloTripId, solo.userId, solo.accessToken)).status).toBe(409);
+
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
+    expect(await pushEvents.eventsFor(soloTripId)).toEqual([]);
+  });
+
+  it("transfer: ownership.transferred → everyone but the old owner; entity_id = the NEW owner", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    expect((await transfer(tripId, owner.accessToken, editor.userId)).status).toBe(200);
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["ownership.transferred"]);
+    expect(events[0]!.payload.entity_id).toBe(editor.userId);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("transfer: every 4xx path (404s, self 400, non-owner 403) never emits", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    const outsider = await seedUserWithToken();
+    expect((await transfer(tripId, owner.accessToken, outsider.userId)).status).toBe(404);
+    expect((await transfer(tripId, owner.accessToken, owner.userId)).status).toBe(400);
+    expect((await transfer(tripId, editor.accessToken, viewer.userId)).status).toBe(403);
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
   });
 });

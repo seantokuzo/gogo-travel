@@ -2,8 +2,12 @@
  * T-6.2 invites integration suite (API-TRIPS-3): create/list/revoke +
  * token preview/accept end-to-end over a real Postgres, behind the real
  * app-wide `requireAuth` + `requireTripMember` gates. Covers every §3.3
- * "Tests required" bullet for the invite endpoints EXCEPT the push-event
- * bullets — the §3.5 post-commit emitter is T-6.3's seam.
+ * "Tests required" bullet for the invite endpoints INCLUDING the push-event
+ * bullets (T-6.3): invite.created / invite.revoked with the invite id (never
+ * the token) on the wire, member.added on real acceptance only — idempotent
+ * already-member answers, dead-invite 409s, the max_uses race loser, and
+ * forced-rollback accepts (statement-time AND commit-time aborts — the
+ * latter pins the hook as strictly post-COMMIT) all emit NOTHING.
  *
  * Headline adversarial assertions: the MANDATORY max_uses race (§4 — two
  * REAL concurrent accepts on a max_uses:1 invite; exactly one member,
@@ -43,6 +47,10 @@ import * as schema from "../db/schema/index.js";
 import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
+import {
+  createRecordingTripEvents,
+  type RecordingTripEvents,
+} from "./push-invalidation.test-util.js";
 import {
   expectIndistinguishable404s,
   NONEXISTENT_UUID,
@@ -94,6 +102,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
   let app: ReturnType<typeof createApp>;
   let authDeps: AuthRouterDeps;
   let signer: AccessTokenSigner;
+  let pushEvents: RecordingTripEvents;
 
   let seq = 0;
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -124,7 +133,11 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
       appleCredentialsKey: Buffer.alloc(32, 7),
       logger: { warn: () => undefined },
     };
-    app = createApp({ auth: authDeps, trips: { db, now: () => FROZEN_NOW } });
+    pushEvents = createRecordingTripEvents(db);
+    app = createApp({
+      auth: authDeps,
+      trips: { db, now: () => FROZEN_NOW, tripEvents: pushEvents.tripEvents },
+    });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -515,10 +528,47 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
       // All-or-nothing (validate → upsert → increment): nothing landed.
       expect(await memberRow(tripId, joiner.userId)).toBeUndefined();
       expect((await inviteRowOf(invite.id))?.useCount).toBe(0);
+      // T-6.3: the rolled-back acceptance emitted NOTHING (post-commit only).
+      expect(await pushEvents.eventsFor(tripId)).toEqual([]);
     } finally {
       await client.unsafe(`
         DROP TRIGGER IF EXISTS t62_accept_boom ON trip_members;
         DROP FUNCTION IF EXISTS t62_accept_boom();
+      `);
+    }
+  });
+
+  it("accept: a COMMIT-time abort emits NOTHING — pins post-COMMIT hook placement (round-1 advisory #2)", async () => {
+    const { owner, tripId } = await seedCollabTrip();
+    const invite = await seedInvite(tripId, owner.userId);
+    const joiner = await seedUserWithToken();
+
+    // Unlike the statement-time forced failure above, EVERY statement in the
+    // acceptance succeeds here — the raise fires at COMMIT itself
+    // (DEFERRABLE INITIALLY DEFERRED constraint trigger). An emit placed
+    // anywhere inside the transaction — even after the final write — would
+    // record a delivery for a membership that never became durable; only a
+    // strictly post-commit hook stays silent.
+    await client.unsafe(`
+      CREATE OR REPLACE FUNCTION t63_commit_boom() RETURNS trigger LANGUAGE plpgsql AS
+      $$ BEGIN RAISE EXCEPTION 'T63_FORCED_COMMIT_FAILURE'; END $$;
+      CREATE CONSTRAINT TRIGGER t63_commit_boom AFTER INSERT ON trip_members
+        DEFERRABLE INITIALLY DEFERRED
+        FOR EACH ROW WHEN (NEW.user_id = '${joiner.userId}'::uuid)
+        EXECUTE FUNCTION t63_commit_boom();
+    `);
+    try {
+      const res = await accept(invite.token, joiner.accessToken);
+      expect(res.status).toBe(500);
+      // The whole transaction died at COMMIT: no membership, no use charge…
+      expect(await memberRow(tripId, joiner.userId)).toBeUndefined();
+      expect((await inviteRowOf(invite.id))?.useCount).toBe(0);
+      // …and ZERO emissions (an aborted COMMIT must never emit, R-trips-18).
+      expect(await pushEvents.eventsFor(tripId)).toEqual([]);
+    } finally {
+      await client.unsafe(`
+        DROP TRIGGER IF EXISTS t63_commit_boom ON trip_members;
+        DROP FUNCTION IF EXISTS t63_commit_boom();
       `);
     }
   });
@@ -534,6 +584,9 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     expect(body.role).toBe("viewer"); // NOT lifted to the invite's editor
     expect((await memberRow(tripId, viewer.userId))?.role).toBe("viewer");
     expect((await inviteRowOf(invite.id))?.useCount).toBe(0);
+    // T-6.3: an idempotent already-member answer committed no mutation —
+    // no member.added (R-trips-15 / R-trips-18).
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
   });
 
   it("accept: expired / revoked / maxed → 409 with the exact details.reason; unknown token → 404", async () => {
@@ -558,6 +611,9 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     expect(await memberRow(tripId, joiner.userId)).toBeUndefined();
 
     expect((await accept(generateInviteToken(), joiner.accessToken)).status).toBe(404);
+
+    // T-6.3: none of the 409/404 doors above emitted anything.
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
   });
 
   it("accept: revocation kills acceptance (revoke → accept → 409 'revoked')", async () => {
@@ -601,6 +657,16 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
         memberRow(tripId, racerB.userId),
       ]);
       expect(memberships.filter((m) => m !== undefined)).toHaveLength(1);
+
+      // T-6.3: exactly ONE member.added — the winner's; the 409 loser's
+      // rolled-back transaction emitted nothing.
+      const added = (await pushEvents.eventsFor(tripId)).filter(
+        (d) => d.payload.event === "member.added",
+      );
+      expect(added).toHaveLength(1);
+      expect(added[0]!.payload.entity_id).toBe(
+        memberships.find((m) => m !== undefined)?.userId,
+      );
     }
   });
 
@@ -798,5 +864,67 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     // The probes wrote nothing: the invite is alive, no stranger membership.
     expect((await inviteRowOf(invite.id))?.revokedAt).toBeNull();
     expect(await memberRow(tripId, stranger.userId)).toBeUndefined();
+  });
+
+  // ===========================================================================
+  // T-6.3 push invalidation (§3.5 rule 6, R-trips-18 / API-TRIPS-4)
+  // ===========================================================================
+
+  it("POST: invite.created → ALL other members incl. the viewer, minus the actor; the TOKEN never rides", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    const res = await createInvite(tripId, owner.accessToken, { role: "viewer" });
+    expect(res.status).toBe(201);
+    const invite = InviteWithUrlSchema.parse(await res.json());
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["invite.created"]);
+    // entity_id is the invite ID — the capability TOKEN must never appear in
+    // an event (ids only, R-trips-18; the token is a bearer secret).
+    expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id", "entity_id"]);
+    expect(events[0]!.payload.entity_id).toBe(invite.id);
+    expect(JSON.stringify(events[0])).not.toContain(invite.token);
+    // §3.5: fan-out is MEMBERSHIP-drawn, not list-capability-drawn — the
+    // viewer receives the event even though GET invites 403s them.
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("POST: a viewer's 403 create emits nothing", async () => {
+    const { viewer, tripId } = await seedCollabTrip();
+    expect((await createInvite(tripId, viewer.accessToken, { role: "viewer" })).status).toBe(403);
+    expect(await pushEvents.eventsFor(tripId)).toEqual([]);
+  });
+
+  it("revoke: invite.revoked once — the already-revoked 409 and an editor's 403 never emit", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    const invite = await seedInvite(tripId, owner.userId); // direct seed: no create event
+    // Editor revoking another's invite: 403, no event.
+    expect((await revokeInvite(tripId, invite.id, editor.accessToken)).status).toBe(403);
+    expect((await revokeInvite(tripId, invite.id, owner.accessToken)).status).toBe(204);
+    // Second revocation converges on 409 — still exactly one event.
+    expect((await revokeInvite(tripId, invite.id, owner.accessToken)).status).toBe(409);
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["invite.revoked"]);
+    expect(events[0]!.payload.entity_id).toBe(invite.id);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("accept: member.added → the pre-existing members; the joining actor is excluded", async () => {
+    const { owner, editor, viewer, tripId } = await seedCollabTrip();
+    const invite = await seedInvite(tripId, owner.userId);
+    const joiner = await seedUserWithToken();
+
+    expect((await accept(invite.token, joiner.accessToken)).status).toBe(200);
+
+    const events = await pushEvents.eventsFor(tripId);
+    expect(events.map((d) => d.payload.event)).toEqual(["member.added"]);
+    expect(events[0]!.payload.entity_id).toBe(joiner.userId);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [owner.userId, editor.userId, viewer.userId].sort(),
+    );
   });
 });
