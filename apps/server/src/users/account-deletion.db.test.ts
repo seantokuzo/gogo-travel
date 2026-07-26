@@ -240,6 +240,8 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     db.select().from(schema.pushTokens).where(eq(schema.pushTokens.userId, userId));
   const credsOf = (userId: string) =>
     db.select().from(schema.appleCredentials).where(eq(schema.appleCredentials.userId, userId));
+  const membersOf = (userId: string) =>
+    db.select().from(schema.tripMembers).where(eq(schema.tripMembers.userId, userId));
 
   // ---------------------------------------------------------------------------
   // Happy path — all fixed effects fire; PII actually gone (R-user-9).
@@ -376,22 +378,89 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     expect(revokeCalls).toEqual([]); // Apple never touched on a blocked delete
   });
 
-  it("owner of a SOLO trip (only member) is NOT blocked — deletes 204", async () => {
+  it("owner of a SOLO trip (only member) is NOT blocked — deletes 204 and the trip goes too (no orphans)", async () => {
     const u = await seedUser();
-    await seedTrip(u.user.id); // owner, no other members
+    const tripId = await seedTrip(u.user.id); // owner, no other members
     expect((await deleteMe(u.accessToken)).status).toBe(204);
     expect((await userRow(u.user.id)).deletedAt).not.toBeNull();
+    // T-6.1 reconcile: no live member remains, so keeping the trip would
+    // orphan it behind the membership gate — it is deleted with cascade.
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toEqual([]);
+    expect(await membersOf(u.user.id)).toEqual([]);
   });
 
-  it("a non-owner member of a shared trip is NOT blocked — deletes 204; owner untouched", async () => {
+  it("a non-owner member of a shared trip is NOT blocked — deletes 204; owner untouched; trip survives; their expenses survive (R-trips-12)", async () => {
     const owner = await seedUser();
     const viewer = await seedUser();
     const tripId = await seedTrip(owner.user.id);
     await addMember(tripId, viewer.user.id, "viewer");
+    // The departing member logged an expense — the ledger must outlive them.
+    await db.insert(schema.expenses).values({
+      tripId,
+      description: "museum tickets",
+      category: "activities",
+      paidBy: viewer.user.id,
+      amountCents: 3_000,
+      currency: "USD",
+      createdBy: viewer.user.id,
+    });
 
     expect((await deleteMe(viewer.accessToken)).status).toBe(204);
     expect((await userRow(viewer.user.id)).deletedAt).not.toBeNull();
     expect((await userRow(owner.user.id)).deletedAt).toBeNull();
+
+    // T-6.1 reconcile: deletion is the member's final "leave" (§3.2) — the
+    // membership row goes, the trip and the financial history stay.
+    expect(await membersOf(viewer.user.id)).toEqual([]);
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(
+      1,
+    );
+    const survivingExpenses = await db
+      .select()
+      .from(schema.expenses)
+      .where(eq(schema.expenses.tripId, tripId));
+    expect(survivingExpenses).toHaveLength(1);
+    expect(survivingExpenses[0]?.paidBy).toBe(viewer.user.id); // never reassigned
+  });
+
+  // ---------------------------------------------------------------------------
+  // Sole-owner-ghost deadlock (P-6/T-6.1 carry-forward, deferred at T-5.6):
+  // a soft-deleted co-member's row must never block the owner's own deletion.
+  // ---------------------------------------------------------------------------
+  it("ghost co-members do NOT block the sole owner's deletion — the T-5.6 deadlock is gone", async () => {
+    const owner = await seedUser();
+    const ghost = await seedUser();
+    const tripId = await seedTrip(owner.user.id);
+    await addMember(tripId, ghost.user.id, "editor");
+
+    // Pre-T-6.1, the ghost's membership row survived their account deletion
+    // and permanently 409'd the owner (no valid transfer target). Now the
+    // ghost's deletion removes their membership...
+    expect((await deleteMe(ghost.accessToken)).status).toBe(204);
+    expect(await membersOf(ghost.user.id)).toEqual([]);
+
+    // ...so the owner is the only member left and deletes cleanly.
+    const res = await deleteMe(owner.accessToken);
+    expect(res.status).toBe(204);
+    expect((await userRow(owner.user.id)).deletedAt).not.toBeNull();
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toEqual([]);
+  });
+
+  it("belt-and-braces: a PRE-EXISTING ghost membership row (legacy T-5.6 data) does not block either", async () => {
+    const owner = await seedUser();
+    const ghost = await seedUser();
+    const tripId = await seedTrip(owner.user.id);
+    await addMember(tripId, ghost.user.id, "viewer");
+    // Simulate the legacy state: the co-member is scrubbed but their
+    // membership row was never reconciled away (pre-T-6.1 deletions).
+    await db
+      .update(schema.users)
+      .set({ deletedAt: new Date(), googleSub: null, email: `deleted:${ghost.user.id}` })
+      .where(eq(schema.users.id, ghost.user.id));
+
+    // The guard counts LIVE members only — the owner deletes, trip cascades.
+    expect((await deleteMe(owner.accessToken)).status).toBe(204);
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------

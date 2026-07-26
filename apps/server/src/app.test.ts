@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
+import type { TripsRouterDeps } from "./trips/routes.js";
 import type { UsersRouterDeps } from "./users/routes.js";
 
 // Same createRequire pattern app.ts uses — the test asserts against the real manifest.
@@ -53,6 +54,20 @@ describe("createApp wiring guard", () => {
     }
     expect(error).toBeInstanceOf(Error);
     // Names the missing dep so the wiring bug is diagnosable — no secret values.
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the trips router is mounted without auth deps", () => {
+    // Same pairing rule as users (T-6.1): every trip route is Auth: Required
+    // and the /:tripId routes assume the authenticated identity exists.
+    let error: unknown;
+    try {
+      createApp({ trips: {} as TripsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("auth");
     expect((error as Error).message).toContain("requireAuth");
   });
