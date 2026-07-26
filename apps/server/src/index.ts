@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildPlacesIngest } from "./places/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
@@ -28,11 +29,28 @@ if (authDeps) {
   console.warn("[boot] object storage not configured — avatar presign is unavailable");
 }
 
-const app = createApp(
-  authDeps
-    ? { auth: authDeps, users: await buildUsersDepsFromEnv(env), trips: buildTripsDeps() }
-    : {},
-);
+let appOptions: Parameters<typeof createApp>[0] = {};
+if (authDeps) {
+  // Places ingest rides the trips deps: trip create / destination change
+  // fire the post-commit region-ingest trigger (T-6.4, R-places-1) — async,
+  // fire-and-forget, never blocks a request. Unconfigured dataset URLs are
+  // warned HERE (wire modules stay silent — T-5.5 object-storage precedent);
+  // affected region ingests record `failed` visibly instead of running.
+  const placesIngest = buildPlacesIngest(env);
+  if (placesIngest.unconfiguredSources.length > 0) {
+    console.warn(
+      `[boot] places ingest dataset URL(s) not configured (${placesIngest.unconfiguredSources.join(
+        ", ",
+      )}) — those region ingests will record 'failed' until PLACES_*_PARQUET_URL are set`,
+    );
+  }
+  appOptions = {
+    auth: authDeps,
+    users: await buildUsersDepsFromEnv(env),
+    trips: { ...buildTripsDeps(), placesIngest: placesIngest.trigger },
+  };
+}
+const app = createApp(appOptions);
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   // eslint-disable-next-line no-console -- boot banner is the one allowed log

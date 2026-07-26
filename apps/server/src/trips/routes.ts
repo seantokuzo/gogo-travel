@@ -47,6 +47,7 @@ import type { RateLimitStore } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
 import { createRequireTripMember, tripContextOf } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
+import type { PlacesIngestTrigger } from "../places/ingest-queue.js";
 import { effectiveTripStatus, reconcileStoredStatuses, todayUtc } from "./status.js";
 import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.js";
 
@@ -65,6 +66,13 @@ export interface TripsRouterDeps {
     store: RateLimitStore;
     now?: () => number;
   };
+  /**
+   * Places-spine ingest enqueue seam (T-6.4, R-places-1): fired POST-COMMIT
+   * on trip create and on destination change — asynchronous, fire-and-forget.
+   * Optional: absent (tests/dev without the pipeline) simply skips the
+   * trigger; trip writes NEVER block on, or fail because of, ingestion.
+   */
+  placesIngest?: PlacesIngestTrigger;
 }
 
 // Keyset cursor over (created_at DESC, id DESC): the shared
@@ -122,6 +130,17 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
 
         return inserted;
       });
+
+      // R-places-1 primary trigger, POST-COMMIT: enqueue the destination's
+      // region ingest. Fire-and-forget by contract — the trigger never
+      // throws, and this belt-and-braces catch guarantees a broken seam
+      // still can't fail the create (trip creation SHALL NOT block on, or
+      // fail because of, ingestion).
+      try {
+        deps.placesIngest?.enqueueDestination(body.destination_lat, body.destination_lng);
+      } catch {
+        // Deliberately swallowed: enqueue is best-effort (R-places-1).
+      }
 
       return c.json(toTripWithRoleWire(trip, "owner"), 201);
     },
@@ -234,6 +253,10 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { tripId, role } = tripContextOf(c);
       const body = c.req.valid("json");
       const today = todayUtc(nowOf());
+
+      // Set inside the transaction iff the committed write moved the
+      // destination — drives the post-commit ingest trigger (R-places-1).
+      let destinationChanged = false;
 
       const updated = await deps.db.transaction(async (tx) => {
         const [current] = await tx
@@ -357,8 +380,31 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             .where(eq(schema.budgets.tripId, tripId));
         }
 
+        // Destination change (R-places-1: "…or its destination changes") —
+        // VALUE-diff, not key-presence: resubmitting identical coords is not
+        // a change (numeric columns are strings; compare numerically). The
+        // flag only escapes if this transaction commits.
+        destinationChanged =
+          (body.destination_lat !== undefined &&
+            Number(current.destinationLat) !== body.destination_lat) ||
+          (body.destination_lng !== undefined &&
+            Number(current.destinationLng) !== body.destination_lng);
+
         return row;
       });
+
+      // POST-COMMIT ingest trigger for the moved destination — same
+      // fire-and-forget contract as the create hook (R-places-1).
+      if (destinationChanged) {
+        try {
+          deps.placesIngest?.enqueueDestination(
+            Number(updated.destinationLat),
+            Number(updated.destinationLng),
+          );
+        } catch {
+          // Deliberately swallowed: enqueue is best-effort (R-places-1).
+        }
+      }
 
       return c.json(toTripWire(updated) satisfies Trip);
     },
