@@ -36,43 +36,51 @@ export interface UpsertBatchResult {
 }
 
 /**
- * Which of `records` duplicate an existing higher-priority place. Runs as a
- * single set query: VALUES-join the batch against `places`, box-prefilter,
- * then the exact §3.1.4 predicate — equirectangular distance (exact to
- * centimeters at 50 m scale) + pg_trgm `similarity()` (index-backed by the
- * pg_trgm GIN from migration 0000). Candidates that already exist under
- * their OWN `(source, source_id)` are NOT dupes — they're ours; skipping
- * them would strand stale rows (upsert refreshes them instead; deletion is
- * forbidden either way, R-places-2).
+ * The cross-source duplicate probe, exported UNEXECUTED so the db suite can
+ * EXPLAIN the exact production query (plan-shape regression pin).
+ *
+ * One set query: VALUES-join the batch against `places` with a SARGABLE box
+ * prefilter — `p.lat`/`p.lng` stay UNCAST (numeric, as indexed) and the
+ * bounds are computed on the VALUES side then cast to numeric, so
+ * `places_lat_lng_idx` drives a per-candidate range probe instead of a
+ * seq scan per batch (casting the column, or wrapping it in `abs()`, kills
+ * the index). The exact §3.1.4 predicate — equirectangular distance (exact
+ * to centimeters at 50 m scale) + pg_trgm `similarity()` — then runs as a
+ * RESIDUAL filter over the ~tens of surviving rows. NOTE: `similarity()` in
+ * function form can never use the pg_trgm GIN (only the `%`/`<->` operator
+ * forms can) — that's fine, it's residual-only by design.
+ *
+ * Candidates that already exist under their OWN `(source, source_id)` are
+ * NOT dupes — they're ours; skipping them would strand stale rows (upsert
+ * refreshes them instead; deletion is forbidden either way, R-places-2).
  */
-async function findCrossSourceDuplicates(
+export function crossSourceDuplicateQuery(
   db: DbClient,
   source: SpineSource,
   records: SpineRecord[],
-): Promise<Set<string>> {
+) {
   const higher = spineSourcesAbove(source);
-  if (higher.length === 0 || records.length === 0) return new Set();
-
   const latBox = PLACES_DEDUP_DISTANCE_M / METERS_PER_DEGREE_LAT;
   const tuples = records.map(
     (r) =>
-      sql`(${r.sourceId}, ${r.name}, ${r.lat}::double precision, ${r.lng}::double precision)`,
+      sql`(${r.sourceId}::text, ${r.name}::text, ${r.lat}::double precision, ${r.lng}::double precision)`,
   );
   const higherList = sql.join(
     higher.map((s) => sql`${s}::place_source`),
     sql`, `,
   );
 
-  const rows: Array<{ sourceId: string }> = await db
+  return db
     .select({ sourceId: sql<string>`v.source_id` })
     .from(sql`(values ${sql.join(tuples, sql`, `)}) as v(source_id, name, lat, lng)`)
     .where(
       sql`exists (
         select 1 from places p
         where p.source in (${higherList})
-          and abs(p.lat::double precision - v.lat) <= ${latBox}
-          and abs(p.lng::double precision - v.lng)
-            <= ${latBox} / greatest(cos(radians(v.lat)), 0.01)
+          and p.lat between (v.lat - ${latBox})::numeric
+                        and (v.lat + ${latBox})::numeric
+          and p.lng between (v.lng - ${latBox} / greatest(cos(radians(v.lat)), 0.01))::numeric
+                        and (v.lng + ${latBox} / greatest(cos(radians(v.lat)), 0.01))::numeric
           and similarity(p.name, v.name) >= ${PLACES_DEDUP_NAME_SIMILARITY}
           and ${METERS_PER_DEGREE_LAT}::double precision * sqrt(
                 power(p.lat::double precision - v.lat, 2)
@@ -84,7 +92,15 @@ async function findCrossSourceDuplicates(
         where own.source = ${source}::place_source and own.source_id = v.source_id
       )`,
     );
+}
 
+async function findCrossSourceDuplicates(
+  db: DbClient,
+  source: SpineSource,
+  records: SpineRecord[],
+): Promise<Set<string>> {
+  if (spineSourcesAbove(source).length === 0 || records.length === 0) return new Set();
+  const rows = await crossSourceDuplicateQuery(db, source, records);
   return new Set(rows.map((row) => row.sourceId));
 }
 

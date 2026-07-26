@@ -50,26 +50,40 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
   const logger = deps.logger ?? console;
   const throttleMs = deps.searchMissThrottleMs ?? PLACES_SEARCH_MISS_THROTTLE_MS;
 
-  const queued = new Map<string, RegionCell>();
+  // Two-tier scheduling: destination cells (a user just created/moved a
+  // trip — they're about to look at this map) drain BEFORE search-miss
+  // backfill cells (opportunistic coverage). Within a tier, FIFO.
+  const queues = {
+    destination: new Map<string, RegionCell>(),
+    searchMiss: new Map<string, RegionCell>(),
+  } as const;
+  type Tier = keyof typeof queues;
   const lastSearchMissEnqueue = new Map<string, number>();
   let draining = false;
   let drainPromise: Promise<void> = Promise.resolve();
 
+  function nextEntry(): { key: string; cell: RegionCell; tier: Tier } | undefined {
+    for (const tier of ["destination", "searchMiss"] as const) {
+      const next = queues[tier].entries().next();
+      if (!next.done) return { key: next.value[0], cell: next.value[1], tier };
+    }
+    return undefined;
+  }
+
   async function drain(): Promise<void> {
     try {
       for (;;) {
-        const next = queued.entries().next();
-        if (next.done) break;
-        const [key, cell] = next.value;
+        const entry = nextEntry();
+        if (!entry) break;
         // Remove BEFORE running so a re-enqueue mid-run is not lost.
-        queued.delete(key);
+        queues[entry.tier].delete(entry.key);
         try {
-          await deps.ingestCell(cell);
+          await deps.ingestCell(entry.cell);
         } catch (err) {
           // The job records failures on the region row itself (R-places-4);
           // this catches wiring-level errors so the drain loop never dies.
           const message = err instanceof Error ? err.message : String(err);
-          logger.warn(`places-ingest: cell ${key} job error: ${message}`);
+          logger.warn(`places-ingest: cell ${entry.key} job error: ${message}`);
         }
       }
     } finally {
@@ -77,11 +91,17 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
     }
   }
 
-  function schedule(cells: readonly RegionCell[]): void {
+  function schedule(cells: readonly RegionCell[], tier: Tier): void {
     for (const cell of cells) {
-      if (!queued.has(cell.key)) queued.set(cell.key, cell);
+      if (tier === "destination") {
+        // A destination trigger outranks a pending backfill for the same cell.
+        queues.searchMiss.delete(cell.key);
+        if (!queues.destination.has(cell.key)) queues.destination.set(cell.key, cell);
+      } else if (!queues.destination.has(cell.key) && !queues.searchMiss.has(cell.key)) {
+        queues.searchMiss.set(cell.key, cell);
+      }
     }
-    if (!draining && queued.size > 0) {
+    if (!draining && nextEntry() !== undefined) {
       draining = true;
       drainPromise = drain();
     }
@@ -92,7 +112,7 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
       try {
         // Coordinate guard stays as robustness (R-places-1 resolved note):
         // invalid coords log-and-drop rather than throw into the request.
-        schedule(regionCellsForDestination(lat, lng));
+        schedule(regionCellsForDestination(lat, lng), "destination");
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(`places-ingest: destination enqueue dropped: ${message}`);
@@ -112,7 +132,7 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
           return last === undefined || nowMs - last >= throttleMs;
         });
         for (const cell of due) lastSearchMissEnqueue.set(cell.key, nowMs);
-        schedule(due);
+        schedule(due, "searchMiss");
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(`places-ingest: search-miss enqueue dropped: ${message}`);

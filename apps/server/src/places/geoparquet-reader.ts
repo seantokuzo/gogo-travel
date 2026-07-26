@@ -105,52 +105,67 @@ export interface DuckDbGeoParquetReader extends GeoParquetReader {
 }
 
 export function createDuckDbGeoParquetReader(): DuckDbGeoParquetReader {
-  let instance: DuckDBInstance | undefined;
+  // Memoize the PROMISES, not the resolved handles: with `x ??= await …`,
+  // two overlapping first calls both observe `undefined` before either
+  // create resolves and double-create (check-then-assign across an await).
+  let instancePromise: Promise<DuckDBInstance> | undefined;
+  let connectionPromise: Promise<DuckDBConnection> | undefined;
 
-  async function connect(): Promise<DuckDBConnection> {
-    instance ??= await DuckDBInstance.create(":memory:");
-    return instance.connect();
+  function getConnection(): Promise<DuckDBConnection> {
+    connectionPromise ??= (async () => {
+      instancePromise ??= DuckDBInstance.create(":memory:");
+      const connection = await (await instancePromise).connect();
+      // Parquet footers/metadata amortize across queries (the 9-cell
+      // destination fan-out hits the same snapshot files 9 times).
+      await connection.run("set enable_object_cache = true");
+      return connection;
+    })();
+    return connectionPromise;
   }
 
   return {
     async *readBatches(opts) {
-      const connection = await connect();
-      try {
-        const result = await connection.stream(sourceSelect(opts.source, opts.datasetUrl), {
-          min_lat: opts.bbox.minLat,
-          max_lat: opts.bbox.maxLat,
-          min_lng: opts.bbox.minLng,
-          max_lng: opts.bbox.maxLng,
-        });
+      // ONE long-lived connection, reused across calls (footer cache lives
+      // per connection catalog). Callers consume streams strictly
+      // sequentially — the ingest queue drains one cell at a time — so
+      // streams never interleave on the shared connection.
+      const connection = await getConnection();
+      const result = await connection.stream(sourceSelect(opts.source, opts.datasetUrl), {
+        min_lat: opts.bbox.minLat,
+        max_lat: opts.bbox.maxLat,
+        min_lng: opts.bbox.minLng,
+        max_lng: opts.bbox.maxLng,
+      });
 
-        let pending: RawSpineRecord[] = [];
-        for (;;) {
-          const chunk = await result.fetchChunk();
-          if (!chunk || chunk.rowCount === 0) break;
-          for (const row of chunk.getRows()) {
-            pending.push({
-              sourceId: asString(row[0] ?? null),
-              name: asString(row[1] ?? null),
-              lat: asNumber(row[2] ?? null),
-              lng: asNumber(row[3] ?? null),
-              category: asString(row[4] ?? null),
-              wikiRef: null,
-            });
-            if (pending.length >= opts.batchSize) {
-              yield pending;
-              pending = [];
-            }
+      let pending: RawSpineRecord[] = [];
+      for (;;) {
+        const chunk = await result.fetchChunk();
+        if (!chunk || chunk.rowCount === 0) break;
+        for (const row of chunk.getRows()) {
+          pending.push({
+            sourceId: asString(row[0] ?? null),
+            name: asString(row[1] ?? null),
+            lat: asNumber(row[2] ?? null),
+            lng: asNumber(row[3] ?? null),
+            category: asString(row[4] ?? null),
+            wikiRef: null,
+          });
+          if (pending.length >= opts.batchSize) {
+            yield pending;
+            pending = [];
           }
         }
-        if (pending.length > 0) yield pending;
-      } finally {
-        connection.closeSync();
       }
+      if (pending.length > 0) yield pending;
     },
 
     close() {
-      instance?.closeSync();
-      instance = undefined;
+      const pendingConnection = connectionPromise;
+      const pendingInstance = instancePromise;
+      connectionPromise = undefined;
+      instancePromise = undefined;
+      void pendingConnection?.then((c) => c.closeSync()).catch(() => undefined);
+      void pendingInstance?.then((i) => i.closeSync()).catch(() => undefined);
     },
   };
 }

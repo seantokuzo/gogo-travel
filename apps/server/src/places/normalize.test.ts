@@ -6,6 +6,14 @@
 import { describe, expect, it } from "vitest";
 import { normalizeSpineRecord, type RawSpineRecord } from "./normalize.js";
 
+// Control characters built at RUNTIME — a raw NUL/BEL/ESC byte in a source
+// literal flags this file binary to git and breaks grep/review tooling
+// (server rule; caught T-5.1 and again T-5.2).
+const NUL = String.fromCharCode(0);
+const BEL = String.fromCharCode(7);
+const ESC = String.fromCharCode(27);
+const TAB = String.fromCharCode(9);
+
 const valid: RawSpineRecord = {
   sourceId: "ovt-1",
   name: "Belém Tower",
@@ -28,10 +36,11 @@ describe("normalizeSpineRecord", () => {
   });
 
   it("trims and NFC-normalizes the name (§3.1.4: trim/NFC)", () => {
-    // "Bele" + combining acute (NFD) must come out as the NFC "é".
-    const nfd = "Belém Tower";
-    // The literal above IS NFD — guard it so an editor silently normalizing
-    // this file breaks the test loudly instead of hollowing it out.
+    // "Bele" + combining acute (NFD) must come out as the NFC "é". Built at
+    // runtime via normalize("NFD") — deterministic regardless of how an
+    // editor normalizes this file's literals — and guarded so the input
+    // really is a different byte form than the expected output.
+    const nfd = "Belém Tower".normalize("NFD");
     expect(nfd).not.toBe(nfd.normalize("NFC"));
     const result = normalizeSpineRecord({ ...valid, name: `  ${nfd}  ` });
     expect(result?.name).toBe("Belém Tower");
@@ -76,5 +85,27 @@ describe("normalizeSpineRecord", () => {
     expect(normalizeSpineRecord({ ...valid, wikiRef: " Q123 " })?.wikiRef).toBe("Q123");
     expect(normalizeSpineRecord({ ...valid, wikiRef: "" })?.wikiRef).toBeNull();
     expect(normalizeSpineRecord({ ...valid, wikiRef: "x".repeat(201) })?.wikiRef).toBeNull();
+  });
+
+  // Control chars (esp. NUL) are batch-killers: Postgres rejects NUL in text,
+  // so one bad upstream row would deterministically fail its whole batch
+  // statement on every retry and flip the region `failed` — the gate must eat
+  // the record, never the region (R-places-4 posture).
+  it("drops records whose identity fields carry control characters", () => {
+    expect(normalizeSpineRecord({ ...valid, name: `Bel${NUL}m Tower` })).toBeNull();
+    expect(normalizeSpineRecord({ ...valid, name: `Bell${BEL} Tower` })).toBeNull();
+    expect(normalizeSpineRecord({ ...valid, name: `Two${TAB}Words` })).toBeNull();
+    expect(normalizeSpineRecord({ ...valid, sourceId: `ovt${NUL}-1` })).toBeNull();
+    expect(normalizeSpineRecord({ ...valid, sourceId: `ovt-${ESC}[31m1` })).toBeNull();
+  });
+
+  it("nulls optional fields carrying control characters without dropping the record", () => {
+    const nulByteCategory = normalizeSpineRecord({ ...valid, category: `food${NUL}court` });
+    expect(nulByteCategory).not.toBeNull();
+    expect(nulByteCategory?.category).toBeNull();
+
+    const nulByteWikiRef = normalizeSpineRecord({ ...valid, wikiRef: `Q${NUL}12` });
+    expect(nulByteWikiRef).not.toBeNull();
+    expect(nulByteWikiRef?.wikiRef).toBeNull();
   });
 });

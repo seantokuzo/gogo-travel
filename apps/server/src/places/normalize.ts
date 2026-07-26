@@ -38,30 +38,54 @@ const MAX_NAME_CHARS = 500;
 const MAX_CATEGORY_CHARS = 500;
 const MAX_WIKI_REF_CHARS = 200;
 
+/**
+ * Control characters (incl. NUL) are a batch-killer, not just junk: Postgres
+ * rejects NUL in text outright, so ONE bad upstream row would fail its whole
+ * batch statement deterministically on every retry and flip the region
+ * `failed` — a single junk record must never defeat the region (R-places-4
+ * posture). Identity fields (source_id, name) containing them drop the
+ * record; optional fields (category, wiki_ref) just null out.
+ */
+const CONTROL_CHARS_RE = /\p{Cc}/u;
+
 function inRange(value: number | null, min: number, max: number): value is number {
   return value !== null && Number.isFinite(value) && value >= min && value <= max;
 }
 
 export function normalizeSpineRecord(raw: RawSpineRecord): SpineRecord | null {
   const sourceId = raw.sourceId?.trim() ?? "";
-  if (sourceId.length === 0 || sourceId.length > MAX_SOURCE_ID_CHARS) return null;
+  if (
+    sourceId.length === 0 ||
+    sourceId.length > MAX_SOURCE_ID_CHARS ||
+    CONTROL_CHARS_RE.test(sourceId)
+  ) {
+    return null;
+  }
 
   // NFC so byte-different encodings of the same name ("Belém" NFD vs NFC)
   // compare equal in pg_trgm dedup and type-ahead search.
   const name = raw.name?.trim().normalize("NFC") ?? "";
-  if (name.length === 0 || name.length > MAX_NAME_CHARS) return null;
+  if (name.length === 0 || name.length > MAX_NAME_CHARS || CONTROL_CHARS_RE.test(name)) {
+    return null;
+  }
 
   if (!inRange(raw.lat, -90, 90) || !inRange(raw.lng, -180, 180)) return null;
 
   const category = raw.category?.trim() ?? "";
   const wikiRef = raw.wikiRef?.trim() ?? "";
+  const categoryOk =
+    category.length > 0 &&
+    category.length <= MAX_CATEGORY_CHARS &&
+    !CONTROL_CHARS_RE.test(category);
+  const wikiRefOk =
+    wikiRef.length > 0 && wikiRef.length <= MAX_WIKI_REF_CHARS && !CONTROL_CHARS_RE.test(wikiRef);
 
   return {
     sourceId,
     name,
     lat: raw.lat,
     lng: raw.lng,
-    category: category.length > 0 && category.length <= MAX_CATEGORY_CHARS ? category : null,
-    wikiRef: wikiRef.length > 0 && wikiRef.length <= MAX_WIKI_REF_CHARS ? wikiRef : null,
+    category: categoryOk ? category : null,
+    wikiRef: wikiRefOk ? wikiRef : null,
   };
 }

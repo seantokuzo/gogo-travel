@@ -57,8 +57,17 @@ export interface SourceIngestOutcome {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function errorMessage(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
+/**
+ * Error text lands on the region row (ops-visible) — REDACT the configured
+ * dataset URLs first: reader errors embed the path/URL verbatim, and dataset
+ * delivery may become token-gated (env.ts FSQ portal note), so a credentialed
+ * URL must never persist or log verbatim (Law #1 posture).
+ */
+function redactedErrorMessage(err: unknown, datasets: RegionIngestDatasets): string {
+  let message = err instanceof Error ? err.message : String(err);
+  for (const [source, url] of Object.entries(datasets)) {
+    if (url) message = message.replaceAll(url, `<${source} dataset URL>`);
+  }
   return message.slice(0, PLACES_INGEST_ERROR_MAX_CHARS);
 }
 
@@ -164,7 +173,7 @@ async function ingestSource(
         );
       return { source, status: "ready", rowCount };
     } catch (err) {
-      lastError = errorMessage(err);
+      lastError = redactedErrorMessage(err, deps.datasets);
       if (attempt < attempts) {
         await sleep(PLACES_INGEST_RETRY_BASE_MS * 2 ** (attempt - 1));
       }

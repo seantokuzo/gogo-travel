@@ -42,8 +42,9 @@ import {
   type GeoParquetReader,
 } from "./geoparquet-reader.js";
 import type { PlacesIngestTrigger } from "./ingest-queue.js";
-import type { RawSpineRecord } from "./normalize.js";
+import type { RawSpineRecord, SpineRecord } from "./normalize.js";
 import { ingestRegionCell, type RegionIngestDeps } from "./region-ingest.js";
+import { crossSourceDuplicateQuery } from "./spine-upsert.js";
 
 const dockerAvailable = await (async () => {
   try {
@@ -228,24 +229,77 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
   );
 
   // ===========================================================================
+  // Dedup probe plan shape (round-1 blocking #1)
+  // ===========================================================================
+
+  it("the dedup probe is SARGABLE — places_lat_lng_idx drives it, not a seq scan", async () => {
+    // EXPLAIN the EXACT production query (exported unexecuted) with seq scans
+    // penalized: if the box prefilter is index-usable the planner takes
+    // places_lat_lng_idx; a non-sargable regression (cast/abs() on the
+    // column) leaves only the penalized seq scan and fails here.
+    const probe: SpineRecord[] = [
+      { sourceId: "probe-1", name: "Probe Venue", lat: 38.7067, lng: -9.1459, category: null, wikiRef: null },
+    ];
+    const { sql: text, params } = crossSourceDuplicateQuery(db, "fsq_os", probe).toSQL();
+
+    const planRows = await client.begin(async (tx) => {
+      await tx`set local enable_seqscan = off`;
+      return tx.unsafe(`explain (costs false) ${text}`, params as never[]);
+    });
+    const plan = planRows.map((row) => String(Object.values(row as object)[0])).join("\n");
+    expect(plan).toContain("places_lat_lng_idx");
+    expect(plan).not.toMatch(/Seq Scan on places\b/);
+  });
+
+  // ===========================================================================
   // Idempotent re-run + refresh window (R-places-2/5)
   // ===========================================================================
 
   it(
-    "re-run past the refresh window is idempotent: stable counts, unchanged rows untouched",
+    "re-run past the refresh window is idempotent: stable counts, refresh PROPAGATES, nothing deleted",
     { timeout: INGEST_TIMEOUT_MS },
     async () => {
       const before = await placeBySourceId("overture", "ovt-belem-tower");
       const t91 = new Date(T0.getTime() + 91 * DAY_MS);
+
+      // R-places-2 pins (round-1 blocking #2) — a byte-identical re-run can't
+      // tell DO UPDATE from DO NOTHING, and can't see deletes. So:
+      // (a) STALE one row — the re-run must heal it (upsert propagates);
+      const [staled] = await db
+        .update(schema.places)
+        .set({ name: "STALE NAME SENTINEL" })
+        .where(
+          and(eq(schema.places.source, "overture"), eq(schema.places.sourceId, "ovt-castelo")),
+        )
+        .returning();
+      expect(staled?.name).toBe("STALE NAME SENTINEL");
+      // (b) GHOST a row — upstream disappearance is NOT row removal; a
+      // sync-to-snapshot deleter would kill it and still pass count checks
+      // that only compare re-run to re-run.
+      await db.insert(schema.places).values({
+        source: "overture",
+        sourceId: "ovt-ghost-vanished",
+        name: "Ghost Venue (gone upstream)",
+        lat: "38.600000",
+        lng: "-9.300000",
+      });
 
       for (const cell of lisbonCells) {
         const outcomes = await ingestRegionCell(depsWith({ now: () => t91 }), cell);
         expect(outcomes.every((o) => o.status === "ready")).toBe(true);
       }
 
-      // Row counts stable (PL-1 acceptance) — upsert, never insert-dupes,
-      // never deletes.
-      expect(await placesCount()).toBe(10);
+      // Row counts stable (PL-1 acceptance): 10 fixture rows + the surviving
+      // ghost — upsert never insert-dupes, refresh never deletes (R-places-2).
+      expect(await placesCount()).toBe(11);
+      expect(await placeBySourceId("overture", "ovt-ghost-vanished")).toBeDefined();
+
+      // Refresh PROPAGATED: the staled row healed back to the dataset value
+      // and its updated_at moved (a DO NOTHING regression fails here).
+      const healed = await placeBySourceId("overture", "ovt-castelo");
+      expect(healed?.name).toBe("Castelo de São Jorge".normalize("NFC"));
+      expect(healed?.updatedAt.getTime()).not.toBe(staled?.updatedAt.getTime());
+
       // An unchanged row was not even touched (upsert setWhere): updated_at
       // did not move.
       const after = await placeBySourceId("overture", "ovt-belem-tower");
@@ -271,7 +325,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect((await regionRowOf(centerCell.key, "overture"))?.ingestedAt?.getTime()).toBe(
         t91.getTime(),
       );
-      expect(await placesCount()).toBe(10);
+      expect(await placesCount()).toBe(11);
     },
   );
 
@@ -301,6 +355,9 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect(outcomes[1]?.source).toBe("fsq_os");
       expect(outcomes[1]?.status).toBe("failed");
       expect(outcomes[1]?.error).toBeTruthy();
+      // Redaction (round-1 advisory #5): the configured dataset location
+      // never persists verbatim — delivery may become token-gated.
+      expect(outcomes[1]?.error).not.toContain(CORRUPT_FIXTURE);
 
       // Backoff: 3 attempts ⇒ 2 sleeps, exponential (§3.1.4 step 6).
       expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1_000, 2_000]);
@@ -310,9 +367,10 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       const failedRow = await regionRowOf(centerCell.key, "fsq_os");
       expect(failedRow?.status).toBe("failed");
       expect(failedRow?.error).toBeTruthy();
+      expect(failedRow?.error).not.toContain(CORRUPT_FIXTURE);
       expect(failedRow?.ingestedAt?.getTime()).toBe(t91.getTime());
       expect(failedRow?.rowCount).toBe(4);
-      expect(await placesCount()).toBe(10);
+      expect(await placesCount()).toBe(11);
       expect(await placeBySourceId("fsq_os", "fsq-pasteis")).toBeDefined();
     },
   );
@@ -332,7 +390,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect(healed?.status).toBe("ready");
       expect(healed?.error).toBeNull();
       expect(healed?.ingestedAt?.getTime()).toBe(t183.getTime());
-      expect(await placesCount()).toBe(10);
+      expect(await placesCount()).toBe(11);
     },
   );
 
@@ -378,7 +436,9 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
             { sourceId: "ovt-syd-2", name: "Royal Botanic Garden", lat: -33.8642, lng: 151.2166, category: "garden", wikiRef: null },
           ];
           yield batch;
-          throw new Error("mid-stream explosion");
+          // Real reader errors embed the dataset location — deterministic
+          // input for the URL-redaction assertion below (advisory #5).
+          throw new Error(`mid-stream explosion reading ${opts.datasetUrl}`);
         },
       };
 
@@ -389,6 +449,10 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
 
       expect(outcomes[0]?.status).toBe("failed");
       expect(outcomes[0]?.error).toContain("mid-stream explosion");
+      // The configured URL was REDACTED to a source placeholder before the
+      // message hit the row (delivery may become token-gated; Law #1 posture).
+      expect(outcomes[0]?.error).toContain("<overture dataset URL>");
+      expect(outcomes[0]?.error).not.toContain(OVERTURE_FIXTURE);
       expect(outcomes[1]).toMatchObject({ source: "fsq_os", status: "ready", rowCount: 0 });
 
       // The batch that committed BEFORE the failure is intact (R-places-4:
@@ -396,7 +460,10 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       // all-or-nothing per region.
       expect(await placeBySourceId("overture", "ovt-syd-1")).toBeDefined();
       expect(await placeBySourceId("overture", "ovt-syd-2")).toBeDefined();
-      expect((await regionRowOf(sydneyCell.key, "overture"))?.status).toBe("failed");
+      const failedRow = await regionRowOf(sydneyCell.key, "overture");
+      expect(failedRow?.status).toBe("failed");
+      expect(failedRow?.error).toContain("<overture dataset URL>");
+      expect(failedRow?.error).not.toContain(OVERTURE_FIXTURE);
     },
   );
 
@@ -431,6 +498,66 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect(row?.status).toBe("ready");
       expect(row?.error).toBeNull();
       expect(await placeBySourceId("overture", "ovt-paris-1")).toBeDefined();
+    },
+  );
+
+  it(
+    "an own-(source,source_id) row REFRESHES on re-ingest even once it duplicates a new higher-priority place",
+    { timeout: INGEST_TIMEOUT_MS },
+    async () => {
+      // REVERSE landing order (round-1 advisory #9): fsq_os arrives FIRST
+      // (overture snapshot down), then overture heals — the fsq twin now
+      // matches the dedup predicate (identical name, ~2 m apart) but already
+      // exists under its own (source, source_id): it must take the UPSERT
+      // branch (payload refreshes) rather than dedup-skip into staleness.
+      // Skip-inserting governs NEW candidates only (R-places-3); deletion is
+      // forbidden either way (R-places-2).
+      const romeCell = regionCellsForDestination(41.9028, 12.4964)[0]!;
+      let overtureHealthy = false;
+      let fsqCategory = "Retail > Market v1";
+      const reorderReader: GeoParquetReader = {
+        async *readBatches(opts) {
+          await Promise.resolve();
+          if (opts.source === "overture") {
+            if (!overtureHealthy) throw new Error("overture snapshot unavailable");
+            yield [
+              { sourceId: "ovt-rome-market", name: "Mercato Centrale Roma", lat: 41.90101, lng: 12.50121, category: "market", wikiRef: null },
+            ] satisfies RawSpineRecord[];
+            return;
+          }
+          yield [
+            { sourceId: "fsq-rome-twin", name: "Mercato Centrale Roma", lat: 41.901, lng: 12.5012, category: fsqCategory, wikiRef: null },
+          ] satisfies RawSpineRecord[];
+        },
+      };
+
+      // Run 1: overture fails all attempts; the fsq twin lands unopposed.
+      const run1 = await ingestRegionCell(depsWith({ reader: reorderReader }), romeCell);
+      expect(run1[0]?.status).toBe("failed");
+      expect(run1[1]).toMatchObject({ source: "fsq_os", status: "ready", rowCount: 1 });
+      expect((await placeBySourceId("fsq_os", "fsq-rome-twin"))?.category).toBe(
+        "Retail > Market v1",
+      );
+
+      // Run 2 (past the window): overture heals; fsq re-ingests a CHANGED
+      // payload for the same source_id.
+      overtureHealthy = true;
+      fsqCategory = "Retail > Market v2";
+      const t91 = new Date(T0.getTime() + 91 * DAY_MS);
+      const run2 = await ingestRegionCell(
+        depsWith({ reader: reorderReader, now: () => t91 }),
+        romeCell,
+      );
+      expect(run2[0]).toMatchObject({ source: "overture", status: "ready", rowCount: 1 });
+      // rowCount 1 (upserted), not 0 (dedup-skipped) — the discriminator.
+      expect(run2[1]).toMatchObject({ source: "fsq_os", status: "ready", rowCount: 1 });
+
+      // The twin REFRESHED (new payload visible) and both rows exist; a
+      // dedup-skip regression would strand v1 here.
+      expect((await placeBySourceId("fsq_os", "fsq-rome-twin"))?.category).toBe(
+        "Retail > Market v2",
+      );
+      expect(await placeBySourceId("overture", "ovt-rome-market")).toBeDefined();
     },
   );
 

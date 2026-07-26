@@ -25,4 +25,32 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ DATABASE_URL: "nope" })).toThrowError(/DATABASE_URL/);
     expect(() => loadEnv({ DATABASE_URL: "nope" })).not.toThrowError(/nope/);
   });
+
+  // T-6.4: places-ingest dataset locations — plain strings (s3:// globs AND
+  // local fixture paths are valid values), optional at boot (unset ⇒ ingests
+  // record `failed` visibly; nothing else breaks).
+  it("passes places dataset URLs through verbatim and leaves them undefined when unset", () => {
+    const env = loadEnv({
+      PLACES_OVERTURE_PARQUET_URL:
+        "s3://overturemaps-us-west-2/release/2026-07-22.0/theme=places/type=place/*",
+      PLACES_FSQ_OS_PARQUET_URL: "/var/data/fsq-os-places/*.parquet",
+    });
+    expect(env.PLACES_OVERTURE_PARQUET_URL).toBe(
+      "s3://overturemaps-us-west-2/release/2026-07-22.0/theme=places/type=place/*",
+    );
+    expect(env.PLACES_FSQ_OS_PARQUET_URL).toBe("/var/data/fsq-os-places/*.parquet");
+
+    const bare = loadEnv({});
+    expect(bare.PLACES_OVERTURE_PARQUET_URL).toBeUndefined();
+    expect(bare.PLACES_FSQ_OS_PARQUET_URL).toBeUndefined();
+  });
+
+  it("rejects empty-string places dataset URLs (unset ≠ empty)", () => {
+    expect(() => loadEnv({ PLACES_OVERTURE_PARQUET_URL: "" })).toThrowError(
+      /PLACES_OVERTURE_PARQUET_URL/,
+    );
+    expect(() => loadEnv({ PLACES_FSQ_OS_PARQUET_URL: "" })).toThrowError(
+      /PLACES_FSQ_OS_PARQUET_URL/,
+    );
+  });
 });

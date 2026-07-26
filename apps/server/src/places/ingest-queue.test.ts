@@ -107,6 +107,37 @@ describe("createPlacesIngestQueue", () => {
     expect(deps.ran).toEqual([cell.key, cell.key]);
   });
 
+  it("destination cells outrank queued search-miss cells (two-tier drain)", async () => {
+    const deps = recordingDeps();
+    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const backfillA = regionCellAt(41.9028, 12.4964); // Rome
+    const backfillB = regionCellAt(-33.8688, 151.2093); // Sydney
+
+    // A starts draining immediately; B is still queued when the destination
+    // trigger lands — the 9 destination cells must jump ahead of B.
+    queue.enqueueSearchMiss([backfillA, backfillB]);
+    queue.enqueueDestination(LISBON.lat, LISBON.lng);
+    await queue.idle();
+
+    const destinationKeys = regionCellsForDestination(LISBON.lat, LISBON.lng).map((c) => c.key);
+    expect(deps.ran).toEqual([backfillA.key, ...destinationKeys, backfillB.key]);
+  });
+
+  it("a destination enqueue PROMOTES a cell already queued as search-miss (no double run)", async () => {
+    const deps = recordingDeps();
+    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const blocker = regionCellAt(41.9028, 12.4964); // keeps the drain busy
+    const lisbonCenter = regionCellAt(LISBON.lat, LISBON.lng);
+
+    queue.enqueueSearchMiss([blocker, lisbonCenter]);
+    queue.enqueueDestination(LISBON.lat, LISBON.lng); // includes lisbonCenter
+    await queue.idle();
+
+    // The center cell ran exactly once, from the destination tier.
+    expect(deps.ran.filter((key) => key === lisbonCenter.key)).toHaveLength(1);
+    expect(deps.ran).toHaveLength(1 + 9); // blocker + the 9 destination cells
+  });
+
   it("throttle is per cell — a second cell is not blocked by the first", async () => {
     const deps = recordingDeps();
     const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
