@@ -100,10 +100,21 @@ export async function deleteAccount(
     //    already-scrubbed account (a repeat request within the ≤15-min access
     //    token window, R-auth-12) is an idempotent no-op — never a 409, since we
     //    must not re-run the owner guard against a ghost account.
+    //
+    //    FOR UPDATE (T-6.2 round-1): the users row is locked for the WHOLE
+    //    deletion, making it the first acquisition in the global lock order
+    //    (users → trip_members → invites). The invite-accept path takes this
+    //    same row FOR SHARE before writing a membership, so the caller's own
+    //    in-flight accept either commits BEFORE this lock lands (step 1b's
+    //    membership sweep then sees and removes the new row) or blocks here
+    //    and observes the scrub (401) — without this, an accept threading the
+    //    gap between the membership sweep (1b) and the scrub (4) would leave
+    //    a ghost membership on the scrubbed account.
     const [live] = await tx
       .select({ id: schema.users.id })
       .from(schema.users)
-      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)));
+      .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+      .for("update");
     if (!live) return { status: "already-deleted" };
 
     // 1. LOCK the caller's membership rows — `SELECT … FOR UPDATE` — before
@@ -121,8 +132,15 @@ export async function deleteAccount(
     //        blocks, then finds the invite cascade-deleted (404). The
     //        "acceptance committing between guard SELECT and cascade delete
     //        destroys the new member's trip" window is closed.
-    //    Lock order is GLOBAL (membership rows → invite rows via the trips
-    //    cascade) and matches the accept path — no deadlock cycle.
+    //    Lock ORDER: every explicit locker follows users → trip_members →
+    //    invites. The step-1b trips CASCADE does NOT (Postgres fires FK
+    //    triggers in creation order; 0000 creates the invites FK before the
+    //    trip_members FK, so the cascade locks invite rows BEFORE member
+    //    rows) — deadlock safety rests on THIS fence, not on cascade order:
+    //    by the time 1b's cascade runs, this transaction already holds the
+    //    caller's membership rows, in-flight accepts have committed, and new
+    //    ones are parked (owner-row FOR SHARE), so nothing else holds
+    //    trip-scoped row locks. Same fence shape as the trips DELETE route.
     const lockedMemberships = await tx
       .select({ tripId: schema.tripMembers.tripId, role: schema.tripMembers.role })
       .from(schema.tripMembers)

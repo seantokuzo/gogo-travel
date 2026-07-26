@@ -19,6 +19,7 @@
  */
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { UUID_RE } from "./require-trip-member.js";
 
 export interface KeysetCursor {
   /** `created_at` as exact microseconds since the Unix epoch. */
@@ -26,8 +27,6 @@ export interface KeysetCursor {
   id: string;
 }
 
-/** Canonical hyphenated UUID — what `defaultRandom()` mints and `::uuid` accepts. */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** ≤ 18 digits ⇒ always a valid, non-overflowing bigint (int64 max is 19 digits). */
 const MICROS_RE = /^\d{1,18}$/;
 

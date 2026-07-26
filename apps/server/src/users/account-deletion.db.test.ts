@@ -687,6 +687,71 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     expect(await membersOf(joiner.user.id)).toEqual([]);
   });
 
+  it("a caller mid-scrub cannot mint a ghost membership — accept serializes on the users row and dies 401", async () => {
+    const owner = await seedUser();
+    const tripId = await seedTrip(owner.user.id);
+    const joiner = await seedUser();
+    const invite = await seedInvite(tripId, owner.user.id);
+
+    // Hold deletion's step-0 shape open against the JOINER's account: users
+    // row FOR UPDATE, then (on release) the scrub — mirroring deleteAccount
+    // steps 0 → 4. The joiner's own membership sweep (1b) has nothing to
+    // sweep, which is exactly the gap the accept-side liveness lock closes.
+    let releaseTxn!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTxn = resolve;
+    });
+    let locksTaken!: () => void;
+    const locksReady = new Promise<void>((resolve) => {
+      locksTaken = resolve;
+    });
+    const txnPromise = db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, joiner.user.id))
+        .for("update");
+      locksTaken();
+      await gate;
+      await tx
+        .update(schema.users)
+        .set({ deletedAt: new Date(), googleSub: null, email: `deleted:${joiner.user.id}` })
+        .where(eq(schema.users.id, joiner.user.id));
+    });
+    await locksReady;
+
+    // The REAL accept by the being-deleted joiner (their ≤15-min access token
+    // is still valid): it must park at its caller-liveness FOR SHARE — which
+    // our FOR UPDATE blocks — instead of racing a membership in.
+    const acceptPromise = Promise.resolve(
+      app.request(`/api/invites/${invite.token}/accept`, {
+        method: "POST",
+        headers: authHeaders(joiner.accessToken),
+      }),
+    );
+    const during = await Promise.race([
+      acceptPromise.then(() => "resolved" as const),
+      delay(250).then(() => "blocked" as const),
+    ]);
+    expect(during).toBe("blocked");
+
+    releaseTxn();
+    await txnPromise;
+
+    // The accept resumed against the scrubbed row: deleted_at is set, the
+    // liveness re-check missed → 401, and NO membership row exists for the
+    // ghost account.
+    const res = await acceptPromise;
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as Envelope).error.code).toBe("UNAUTHENTICATED");
+    expect(await membersOf(joiner.user.id)).toEqual([]);
+    const [inviteAfter] = await db
+      .select()
+      .from(schema.invites)
+      .where(eq(schema.invites.id, invite.id));
+    expect(inviteAfter?.useCount).toBe(0);
+  });
+
   it("TRUE RACE — real deletion route vs real accept route: a 200 acceptance is NEVER destroyed by the cascade", async () => {
     for (let round = 0; round < 5; round++) {
       const owner = await seedUser();

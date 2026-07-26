@@ -605,6 +605,82 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
   });
 
   // ===========================================================================
+  // Trip-delete membership fence (T-6.2 round-1 blocking #2)
+  // ===========================================================================
+
+  const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  it("DELETE /trips takes the membership fence BEFORE the cascade — no 40P01 with an in-flight accept", async () => {
+    const { owner, tripId } = await seedCollabTrip();
+    const invite = await seedInvite(tripId, owner.userId);
+
+    let releaseGate1!: () => void;
+    const gate1 = new Promise<void>((resolve) => {
+      releaseGate1 = resolve;
+    });
+    let stage1Reached!: () => void;
+    const stage1 = new Promise<void>((resolve) => {
+      stage1Reached = resolve;
+    });
+    let stage2Reached!: () => void;
+    const stage2 = new Promise<void>((resolve) => {
+      stage2Reached = resolve;
+    });
+    let releaseGate2!: () => void;
+    const gate2 = new Promise<void>((resolve) => {
+      releaseGate2 = resolve;
+    });
+
+    const txnPromise = db.transaction(async (tx) => {
+      // Accept's mid-flight state: owner-row FOR SHARE held, invite row not
+      // yet locked (the exact window the cascade deadlock needs).
+      await tx
+        .select({ userId: schema.tripMembers.userId })
+        .from(schema.tripMembers)
+        .where(
+          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")),
+        )
+        .for("share");
+      stage1Reached();
+      await gate1;
+      // THE deadlock probe: pre-fence, the parked DELETE would already hold
+      // this trip's invite rows (RI cascade fires the invites FK first, 0000
+      // creation order) while waiting on our member-row FOR SHARE — this
+      // FOR UPDATE would close the cycle → 40P01. With the fence the delete
+      // is parked BEFORE any cascade lock, so this acquires instantly.
+      await tx
+        .select({ id: schema.invites.id })
+        .from(schema.invites)
+        .where(eq(schema.invites.id, invite.id))
+        .for("update");
+      stage2Reached();
+      await gate2;
+    });
+    await stage1;
+
+    // The REAL owner trip-delete: must park at the fence (member rows), not
+    // mid-cascade. While we hold the FOR SHARE it cannot resolve — the wait
+    // is the lock's, not a timing guess.
+    const deletePromise = Promise.resolve(
+      request(`/api/trips/${tripId}`, owner.accessToken, { method: "DELETE" }),
+    );
+    const during = await Promise.race([
+      deletePromise.then(() => "resolved" as const),
+      delay(250).then(() => "blocked" as const),
+    ]);
+    expect(during).toBe("blocked");
+
+    releaseGate1();
+    await stage2; // invite FOR UPDATE acquired with the delete parked — no deadlock
+    releaseGate2();
+    await txnPromise;
+
+    const res = await deletePromise;
+    expect(res.status).toBe(204);
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toEqual([]);
+  });
+
+  // ===========================================================================
   // Rate limit — the /invites/:token* token-guessing guard (§3.3)
   // ===========================================================================
 
@@ -647,6 +723,49 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     // Window rollover clears it.
     nowMs += RATE_LIMITS.inviteTokenPerUser.windowMs + 1;
     expect((await limitedPreview(invite.token)).status).toBe(200);
+  });
+
+  it("the per-IP window charges every token request — under-user-cap callers behind ONE IP trip it", async () => {
+    let nowMs = 1_900_000_000_000;
+    const limited = createApp({
+      auth: authDeps,
+      trips: {
+        db,
+        now: () => FROZEN_NOW,
+        rateLimit: { store: new InMemoryRateLimitStore(), now: () => nowMs },
+      },
+    });
+    // Under `app.request` there is no socket, so `clientIp()` answers
+    // "unknown" for EVERY request — one shared IP bucket. That is exactly
+    // the shape this test exploits: it proves the per-IP rule is wired and
+    // CHARGING (not a silent no-op behind a null key), which no per-user
+    // path can reach (30/user < 100/IP).
+    const callers = await Promise.all(
+      Array.from({ length: 5 }, () => seedUserWithToken("IP Racer")),
+    );
+    const limitedPreview = (accessToken: string) =>
+      limited.request(`/api/invites/${generateInviteToken()}`, {
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+
+    // 4 callers × 25 requests = 100 = the per-IP cap; each caller stays well
+    // under the 30/min user cap, so only the IP window accumulates.
+    for (const caller of callers.slice(0, 4)) {
+      for (let i = 0; i < 25; i++) {
+        expect((await limitedPreview(caller.accessToken)).status).toBe(404);
+      }
+    }
+
+    // The 101st request comes from a FRESH caller with an untouched user
+    // bucket — only the shared IP window can 429 it.
+    const blocked = await limitedPreview(callers[4]!.accessToken);
+    expect(blocked.status).toBe(429);
+    expect(((await blocked.json()) as ErrorEnvelope).error.code).toBe("RATE_LIMITED");
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+
+    // IP-window rollover clears it for the same fresh caller.
+    nowMs += RATE_LIMITS.inviteTokenPerIp.windowMs + 1;
+    expect((await limitedPreview(callers[4]!.accessToken)).status).toBe(404);
   });
 
   // ===========================================================================

@@ -31,7 +31,7 @@
  * deliberately not emitted here yet (same deferral as trips/routes.ts).
  */
 import { zValidator } from "@hono/zod-validator";
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { memberEndpoints } from "@gogo/shared/domains/member";
 import * as schema from "../db/schema/index.js";
@@ -123,14 +123,25 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         });
       }
 
+      // `ne(role,'owner')` rides IN the predicate (not just the pre-check
+      // above): under READ COMMITTED a concurrent transfer promoting this
+      // target commits while we wait on its row lock, and EvalPlanQual
+      // re-evaluates the WHERE against the NEW row version — without the
+      // role guard the write would land on the NEW OWNER and demote them
+      // (zero-owner strand, R-trips-9; T-6.2 round-1 blocking #1). With it,
+      // the EPQ re-check misses → 0 rows → converge below.
       const [updated] = await deps.db
         .update(schema.tripMembers)
         .set({ role: body.role })
         .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, targetId)),
+          and(
+            eq(schema.tripMembers.tripId, tripId),
+            eq(schema.tripMembers.userId, targetId),
+            ne(schema.tripMembers.role, "owner"),
+          ),
         )
         .returning();
-      // Raced a concurrent removal — the row is gone; converge (§3.5 rule 3).
+      // Raced a concurrent removal or promotion — converge (§3.5 rule 3).
       if (!updated) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
       return c.json(toTripMemberWire(updated));
@@ -173,11 +184,24 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       return apiError(c, "FORBIDDEN", "insufficient role");
     }
 
+    // `ne(role,'owner')` in the DELETE predicate: no code path legitimately
+    // deletes an owner row (owner exit is always the 409 above), so this is
+    // pure EPQ armor — a transfer promoting the target that commits while we
+    // wait on its row lock re-evaluates the WHERE against the NEW row
+    // version; without the guard, B-leaves-while-A-transfers-to-B deletes
+    // the freshly promoted owner and strands the trip owner-less
+    // (R-trips-9; T-6.2 round-1 blocking #1). With it: 0 rows → 404.
     const deleted = await deps.db
       .delete(schema.tripMembers)
-      .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, targetId)))
+      .where(
+        and(
+          eq(schema.tripMembers.tripId, tripId),
+          eq(schema.tripMembers.userId, targetId),
+          ne(schema.tripMembers.role, "owner"),
+        ),
+      )
       .returning({ userId: schema.tripMembers.userId });
-    // Unknown target (or a concurrent removal won) → converge on 404.
+    // Unknown target (or a concurrent removal/promotion won) → converge on 404.
     if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
     return c.body(null, 204);
@@ -208,6 +232,25 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       }
 
       const rows = await deps.db.transaction(async (tx) => {
+        // Ordered membership fence FIRST (T-6.2 round-1 blocking #2): both
+        // rows FOR UPDATE in user_id order before any write. The demote →
+        // promote UPDATE sequence acquires in role order, which can invert
+        // against other lockers' scan order (e.g. a trip-delete fence or the
+        // RI cascade's multi-row members DELETE); a deterministic user_id
+        // acquisition order removes the cycle. The fence also parks this
+        // transfer behind any in-flight accept/removal touching these rows.
+        await tx
+          .select({ userId: schema.tripMembers.userId })
+          .from(schema.tripMembers)
+          .where(
+            and(
+              eq(schema.tripMembers.tripId, tripId),
+              inArray(schema.tripMembers.userId, [callerId, targetId]),
+            ),
+          )
+          .orderBy(schema.tripMembers.userId)
+          .for("update");
+
         // Target must be a member AND live — a ghost cannot receive a
         // transfer (R-trips-10 requires a member who can still act; the
         // account-deletion sole-owner-ghost fix set this semantics). An

@@ -28,8 +28,24 @@
  *    and then finds the invite cascade-deleted (404). Without this, an
  *    acceptance committing between deletion's guard SELECT and its cascade
  *    would be destroyed with the trip (T-6.1 round-1 security defer).
- *  - Lock order is GLOBAL (membership rows → invite rows) and deletion's
- *    cascade acquires in the same order — no deadlock cycle exists.
+ *  - The caller-liveness `FOR SHARE` on the caller's own users row (taken
+ *    FIRST, before the membership lock) closes the self-deletion door: a
+ *    scrubbed caller's still-valid (≤15 min) access token cannot mint a
+ *    ghost membership — the accept either serializes before the deletion
+ *    (whose later membership sweep then sees the row) or observes
+ *    `deleted_at` set and dies 401 (pairs with account-deletion's step-0
+ *    users-row FOR UPDATE).
+ *  - Lock ORDER is GLOBAL: users(caller) → trip_members → invites — every
+ *    explicit locker follows it. The trips RI CASCADE does NOT (Postgres
+ *    fires FK triggers in creation order, and 0000 creates the invites FK
+ *    before the trip_members FK, so a cascade exclusive-locks invite rows
+ *    BEFORE member rows). Deadlock safety therefore rests on the FENCE
+ *    rule, not on cascade order: every path that deletes a trip (the trips
+ *    DELETE route, account-deletion's reconcile) first takes FOR UPDATE on
+ *    the trip's membership rows, so by cascade time no other transaction
+ *    holds trip-scoped row locks. The FK-creation-order dependency is
+ *    explicit here so a future migration reordering FKs doesn't silently
+ *    change the analysis — the fence holds either way.
  *
  * Push events (invite.created / invite.revoked / member.added — §3.5) are
  * T-6.3's post-commit emitter seam — deliberately not emitted here yet.
@@ -52,7 +68,13 @@ import {
   TRIP_ROLE_RANK,
 } from "../config.js";
 import * as schema from "../db/schema/index.js";
-import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
+import {
+  apiError,
+  HttpError,
+  NOT_FOUND_MESSAGE,
+  UNAUTHENTICATED_MESSAGE,
+  type RequestVars,
+} from "../http/errors.js";
 import {
   decodeKeysetCursor,
   encodeKeysetCursor,
@@ -310,14 +332,31 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
 
     const result = await deps.db.transaction(async (tx) => {
       // 1. Unlocked probe — learn the trip so locks can be taken in the
-      //    global order (membership row first, invite row second).
+      //    global order (users row, then membership row, then invite row).
       const [probe] = await tx
         .select({ id: schema.invites.id, tripId: schema.invites.tripId })
         .from(schema.invites)
         .where(eq(schema.invites.token, token));
       if (!probe) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      // 2. FOR SHARE on the trip's owner membership row — the account-deletion
+      // 2. Caller liveness under lock — FIRST lock acquisition (global order:
+      //    users → trip_members → invites). FOR SHARE on the caller's own
+      //    users row, live only: a scrubbed account's still-valid (≤15 min)
+      //    access token must not mint a ghost membership. Account deletion
+      //    takes this row FOR UPDATE at its step 0, so an in-flight deletion
+      //    blocks us until it commits (→ this re-check sees deleted_at → 401)
+      //    and our held FOR SHARE blocks a deletion from starting until this
+      //    accept commits (→ its membership sweep sees the new row). Absent
+      //    row = same 401 (the principal no longer exists; one message, no
+      //    oracle — T-6.2 round-1 advisory #3).
+      const [liveCaller] = await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+        .for("share");
+      if (!liveCaller) throw new HttpError("UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE);
+
+      // 3. FOR SHARE on the trip's owner membership row — the account-deletion
       //    sync point (module doc). Shareable, so concurrent accepts on the
       //    same trip don't serialize HERE (the invite lock below does that
       //    where it matters); conflicts only with FOR UPDATE/deletes.
@@ -332,7 +371,7 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         )
         .for("share");
 
-      // 3. FOR UPDATE re-read of the invite — the authoritative state. The
+      // 4. FOR UPDATE re-read of the invite — the authoritative state. The
       //    row may have died between probe and lock (trip/account deletion
       //    cascade) → same unknown-token 404. A racing accept blocks here and
       //    re-observes the winner's committed use_count (READ COMMITTED
@@ -344,7 +383,7 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         .for("update");
       if (!invite) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      // 4. Existing member → idempotent 200, membership unchanged (even if
+      // 5. Existing member → idempotent 200, membership unchanged (even if
       //    the invite grants a higher role), NO use_count increment
       //    (R-trips-15; ordering rationale in the route doc).
       const [existing] = await tx
@@ -358,14 +397,14 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         );
       if (existing) return { membership: existing, alreadyMember: true };
 
-      // 5. Dead invite → 409 with the R-trips-16 reason, nothing written.
+      // 6. Dead invite → 409 with the R-trips-16 reason, nothing written.
       const state = inviteState(invite, now);
       if (state !== "active") {
         throw new HttpError("CONFLICT", DEAD_STATE_MESSAGES[state], { reason: state });
       }
 
-      // 6. Insert the membership. A same-user accept racing through a
-      //    DIFFERENT invite can win the PK between step 4 and here —
+      // 7. Insert the membership. A same-user accept racing through a
+      //    DIFFERENT invite can win the PK between step 5 and here —
       //    onConflictDoNothing folds that into the already-member answer
       //    instead of a unique-violation 500.
       const [inserted] = await tx
@@ -387,8 +426,8 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         return { membership: raced, alreadyMember: true };
       }
 
-      // 7. Charge the use. Plain arithmetic is race-safe HERE because the
-      //    FOR UPDATE lock (step 3) made this transaction the only writer of
+      // 8. Charge the use. Plain arithmetic is race-safe HERE because the
+      //    FOR UPDATE lock (step 4) made this transaction the only writer of
       //    the row until commit.
       await tx
         .update(schema.invites)

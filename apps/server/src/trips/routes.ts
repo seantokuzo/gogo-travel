@@ -373,10 +373,30 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   router.delete(tripEndpoints.deleteTrip.path, requireTripMember("owner"), async (c) => {
     const { tripId } = tripContextOf(c);
 
-    const deleted = await deps.db
-      .delete(schema.trips)
-      .where(eq(schema.trips.id, tripId))
-      .returning({ id: schema.trips.id });
+    const deleted = await deps.db.transaction(async (tx) => {
+      // Membership FENCE before the cascade (T-6.2 round-1 blocking #2). The
+      // RI cascade exclusive-locks this trip's INVITE rows BEFORE its member
+      // rows (Postgres fires FK triggers in creation order; 0000 creates the
+      // invites FK before the trip_members FK), inverting the global
+      // users → trip_members → invites acquisition order — an in-flight
+      // invite-accept (owner-row FOR SHARE held, invite lock wanted) would
+      // cycle with the cascade → 40P01. Taking every membership row
+      // FOR UPDATE first, in user_id order (the account-deletion step-1
+      // fence shape), parks this delete until in-flight accepts commit and
+      // blocks new ones — by cascade time no other transaction holds
+      // trip-scoped row locks, regardless of FK trigger order.
+      await tx
+        .select({ userId: schema.tripMembers.userId })
+        .from(schema.tripMembers)
+        .where(eq(schema.tripMembers.tripId, tripId))
+        .orderBy(schema.tripMembers.userId)
+        .for("update");
+
+      return tx
+        .delete(schema.trips)
+        .where(eq(schema.trips.id, tripId))
+        .returning({ id: schema.trips.id });
+    });
     if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
     return c.body(null, 204);

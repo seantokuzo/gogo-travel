@@ -21,7 +21,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createLocalJWKSet, generateKeyPair } from "jose";
@@ -327,6 +327,100 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     expect(await memberRow(tripId, viewer.userId)).toBeDefined();
   });
 
+  it("DELETE: owner removes a GHOST member's legacy row — 204, raw row gone (removal operates on rows, not aggregates)", async () => {
+    const { owner, tripId } = await seedCollabTrip();
+    const ghost = await seedUserWithToken("Ghost G");
+    await addMember(tripId, ghost.userId, "viewer");
+    await db
+      .update(schema.users)
+      .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
+      .where(eq(schema.users.id, ghost.userId));
+
+    // The list hides the ghost (live-join aggregate), but the OWNER can still
+    // clean the raw row up — the module-doc removal semantics, pinned so a
+    // live-joined-delete refactor can't silently strand legacy ghost rows.
+    expect((await removeMember(tripId, ghost.userId, owner.accessToken)).status).toBe(204);
+    expect(await memberRow(tripId, ghost.userId)).toBeUndefined();
+  });
+
+  it("DELETE: a leave racing a transfer-to-the-leaver can NEVER strand the trip owner-less (EPQ role guard)", async () => {
+    const { owner, editor, tripId } = await seedCollabTrip();
+
+    // Hold the transfer's critical section open, mirroring members-routes.ts:
+    // ordered FOR UPDATE fence on both rows, demote, promote — uncommitted.
+    let releaseTxn!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTxn = resolve;
+    });
+    let locksTaken!: () => void;
+    const locksReady = new Promise<void>((resolve) => {
+      locksTaken = resolve;
+    });
+    const txnPromise = db.transaction(async (tx) => {
+      await tx
+        .select({ userId: schema.tripMembers.userId })
+        .from(schema.tripMembers)
+        .where(
+          and(
+            eq(schema.tripMembers.tripId, tripId),
+            inArray(schema.tripMembers.userId, [owner.userId, editor.userId]),
+          ),
+        )
+        .orderBy(schema.tripMembers.userId)
+        .for("update");
+      await tx
+        .update(schema.tripMembers)
+        .set({ role: "editor" })
+        .where(
+          and(
+            eq(schema.tripMembers.tripId, tripId),
+            eq(schema.tripMembers.userId, owner.userId),
+            eq(schema.tripMembers.role, "owner"),
+          ),
+        );
+      await tx
+        .update(schema.tripMembers)
+        .set({ role: "owner" })
+        .where(
+          and(
+            eq(schema.tripMembers.tripId, tripId),
+            eq(schema.tripMembers.userId, editor.userId),
+          ),
+        );
+      locksTaken();
+      await gate;
+    });
+    await locksReady;
+
+    // The editor's REAL leave request: the gate reads them as 'editor'
+    // (pre-transfer snapshot) → leave path → its DELETE parks on the row
+    // lock the in-flight promote holds. While we hold the transaction open
+    // the leave cannot resolve — the wait is the lock's, not a timing guess.
+    const leavePromise = Promise.resolve(removeMember(tripId, editor.userId, editor.accessToken));
+    const during = await Promise.race([
+      leavePromise.then(() => "resolved" as const),
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 250)),
+    ]);
+    expect(during).toBe("blocked");
+
+    releaseTxn();
+    await txnPromise;
+
+    // EvalPlanQual re-evaluated the DELETE's WHERE against the promoted row:
+    // ne(role,'owner') missed → 0 rows → converge on 404. Without the guard
+    // this deletes the NEW OWNER row and strands the trip owner-less
+    // (T-6.2 round-1 blocking #1).
+    const res = await leavePromise;
+    expect(res.status).toBe(404);
+    expect((await memberRow(tripId, editor.userId))?.role).toBe("owner"); // survives
+    expect((await memberRow(tripId, owner.userId))?.role).toBe("editor");
+    const owners = await db
+      .select()
+      .from(schema.tripMembers)
+      .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")));
+    expect(owners).toHaveLength(1); // exactly one owner, always
+  });
+
   it("DELETE: owner leave with members present → 409 transfer-first (R-trips-11, Gate 2)", async () => {
     const { owner, tripId } = await seedCollabTrip();
     const res = await removeMember(tripId, owner.userId, owner.accessToken);
@@ -482,11 +576,10 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     }
   });
 
-  it("transfer: non-member target → 404; ghost target → 404 (no live-ness oracle); self → 400; non-owner → 403", async () => {
+  it("transfer: outsider / ghost / unknown targets are BYTE-IDENTICAL 404s (with the gate 404); self → 400; non-owner → 403", async () => {
     const { owner, editor, viewer, tripId } = await seedCollabTrip();
     const outsider = await seedUserWithToken();
-
-    expect((await transfer(tripId, owner.accessToken, outsider.userId)).status).toBe(404);
+    const stranger = await seedUserWithToken();
 
     // A ghost member cannot receive ownership (R-trips-10 needs an actor).
     const ghost = await seedUserWithToken();
@@ -495,7 +588,17 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
       .update(schema.users)
       .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
       .where(eq(schema.users.id, ghost.userId));
-    expect((await transfer(tripId, owner.accessToken, ghost.userId)).status).toBe(404);
+
+    // ONE 404 door: outsider target, ghost target, unknown target, and the
+    // membership-gate 404 all serialize to the same bytes — no target-
+    // existence or live-ness oracle for a probing owner, and no divergence
+    // between the gate's return path and the transaction's thrown path.
+    await expectIndistinguishable404s([
+      await transfer(tripId, owner.accessToken, outsider.userId),
+      await transfer(tripId, owner.accessToken, ghost.userId),
+      await transfer(tripId, owner.accessToken, NONEXISTENT_UUID),
+      await transfer(tripId, stranger.accessToken, editor.userId),
+    ]);
 
     const self = await transfer(tripId, owner.accessToken, owner.userId);
     expect(self.status).toBe(400);
