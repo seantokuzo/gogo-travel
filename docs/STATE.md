@@ -65,8 +65,14 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     scale caps added (bare-text ≥4 chars, bbox 2°-clamp — Wave 4/5 clients
     build against these; constants in shared config/places.ts). Server suite
     515, shared 378.
-  - **Wave 4:** T-6.6 (M, entry-redirect + default-tab + tab-memory + `[tripId]`
-    guard/no-access + deep-link registry).
+  - **Wave 4:** T-6.6 **✅ MERGED e180d0f (PR #7) 2026-07-26** — guard
+    verification window (3-lane convergent) + unbounded-splash blockers fixed;
+    12s request-timeout cap now app-wide; mobile 354. **Phase-QA simulator
+    checklist (accumulating, run at phase close):** warm-start deep-link URL
+    transport (untestable in jest — unit parity pinned only); offline
+    cached-shell mount leg (source-verified only, no renderApp test);
+    two-account collab loop (create → invite → join → role change → transfer →
+    removal); native universal-link modals.
   - **Wave 5 (parallel):** T-6.7 (M, trip list + create modal), T-6.8 (M,
     invite-join + members), T-6.9 (M, settings + collab client layer).
 - **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
