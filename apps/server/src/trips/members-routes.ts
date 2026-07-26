@@ -26,9 +26,14 @@
  * on the RAW membership row: it is a row write, not an aggregate, and it is
  * the only API path that can clean a legacy ghost row up.
  *
- * Push events (member.role_changed / member.removed / member.left /
- * ownership.transferred — §3.5) are T-6.3's post-commit emitter seam —
- * deliberately not emitted here yet (same deferral as trips/routes.ts).
+ * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): every committed
+ * membership mutation emits post-commit via the `tripEvents` seam —
+ * member.role_changed (target included: they are still a member),
+ * member.removed (`alsoNotify` re-adds the no-longer-member target so their
+ * device evicts — §3.5 rule 6), member.left (the departed IS the actor, so
+ * actor exclusion already yields "remaining members"), and
+ * ownership.transferred (new owner's user_id as entity_id). Zero-row writes
+ * (converged 404s) and rolled-back transfers never emit.
  */
 import { zValidator } from "@hono/zod-validator";
 import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
@@ -43,6 +48,7 @@ import {
   UUID_RE,
 } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
+import { emitTripEvent } from "./push-invalidation.js";
 import type { TripsRouterDeps } from "./routes.js";
 import { toMemberListItemWire, toTripMemberWire } from "./serialize.js";
 
@@ -144,6 +150,16 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       // Raced a concurrent removal or promotion — converge (§3.5 rule 3).
       if (!updated) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
+      // POST-COMMIT push invalidation (T-6.3): the guarded UPDATE above is
+      // auto-commit and returned a row — the mutation is durable. Default
+      // fan-out covers "incl. the target" (§3.3 bullet): they're a member.
+      emitTripEvent(deps.tripEvents, {
+        event: "member.role_changed",
+        tripId,
+        actorId: authContextOf(c).userId,
+        entityId: targetId,
+      });
+
       return c.json(toTripMemberWire(updated));
     },
   );
@@ -203,6 +219,20 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       .returning({ userId: schema.tripMembers.userId });
     // Unknown target (or a concurrent removal/promotion won) → converge on 404.
     if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+
+    // POST-COMMIT push invalidation (T-6.3): member.left on self-leave (the
+    // departed IS the actor — exclusion leaves exactly the remaining
+    // members); member.removed on owner removal, with the removed user
+    // re-added via alsoNotify — they are no longer a member post-commit, but
+    // §3.5 rule 6 includes them "so their device evicts". A removed GHOST
+    // row (legacy cleanup) is live-filtered out by the emitter.
+    emitTripEvent(deps.tripEvents, {
+      event: targetId === callerId ? "member.left" : "member.removed",
+      tripId,
+      actorId: callerId,
+      entityId: targetId,
+      ...(targetId === callerId ? {} : { alsoNotify: [targetId] }),
+    });
 
     return c.body(null, 204);
   });
@@ -298,6 +328,17 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         if (!promoted) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
         return [demoted, promoted];
+      });
+
+      // POST-COMMIT push invalidation (T-6.3): only a COMMITTED transfer
+      // reaches this line (every failure path above threw → rollback, no
+      // event). entity_id = the NEW owner (§3.5 table); the old owner is the
+      // actor and is excluded — the new owner + everyone else refetch.
+      emitTripEvent(deps.tripEvents, {
+        event: "ownership.transferred",
+        tripId,
+        actorId: callerId,
+        entityId: targetId,
       });
 
       return c.json({ items: rows.map(toTripMemberWire) });

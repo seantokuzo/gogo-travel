@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { CursorQuerySchema } from "../api/envelope.js";
 import {
   deriveTripStatus,
+  PushInvalidationPayloadSchema,
+  TRIP_DOMAIN_EVENTS,
   TripCreateSchema,
+  TripDomainEventSchema,
   TripListItemSchema,
   TripListQuerySchema,
   TripSchema,
@@ -141,6 +144,76 @@ describe("TripListQuery", () => {
     expect(Object.keys(TripListQuerySchema.shape).sort()).toEqual(["cursor", "limit"]);
     expect(TripListQuerySchema.shape.cursor).toBe(CursorQuerySchema.shape.cursor);
     expect(TripListQuerySchema.parse({ cursor: "abc" }).cursor).toBe("abc");
+  });
+});
+
+describe("push-invalidation domain events (trips spec §3.5 rule 6, R-trips-18 — T-6.3)", () => {
+  const TRIP_ID = "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7d";
+  const ENTITY_ID = "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7e";
+
+  it("the catalog is the §3.5 table, verbatim — <entity>.<verb> names", () => {
+    expect([...TRIP_DOMAIN_EVENTS]).toEqual([
+      "trip.updated",
+      "trip.status_changed",
+      "trip.deleted",
+      "member.added",
+      "member.role_changed",
+      "member.removed",
+      "member.left",
+      "ownership.transferred",
+      "invite.created",
+      "invite.revoked",
+    ]);
+    expect(TripDomainEventSchema.safeParse("trip.created").success).toBe(false);
+    expect(TripDomainEventSchema.safeParse("expense.updated").success).toBe(false);
+  });
+
+  it("payload parses with and without entity_id (ids only)", () => {
+    expect(
+      PushInvalidationPayloadSchema.parse({ event: "trip.updated", trip_id: TRIP_ID }),
+    ).toEqual({ event: "trip.updated", trip_id: TRIP_ID });
+    expect(
+      PushInvalidationPayloadSchema.parse({
+        event: "member.removed",
+        trip_id: TRIP_ID,
+        entity_id: ENTITY_ID,
+      }).entity_id,
+    ).toBe(ENTITY_ID);
+  });
+
+  it("rejects non-uuid ids and unknown event names", () => {
+    expect(
+      PushInvalidationPayloadSchema.safeParse({ event: "trip.updated", trip_id: "not-a-uuid" })
+        .success,
+    ).toBe(false);
+    expect(
+      PushInvalidationPayloadSchema.safeParse({
+        event: "member.added",
+        trip_id: TRIP_ID,
+        entity_id: "42",
+      }).success,
+    ).toBe(false);
+    expect(
+      PushInvalidationPayloadSchema.safeParse({ event: "trip.created", trip_id: TRIP_ID }).success,
+    ).toBe(false);
+  });
+
+  it("is STRICT — content-bearing extra fields fail parsing (R-trips-18: ids only, no PII)", () => {
+    expect(
+      PushInvalidationPayloadSchema.safeParse({
+        event: "trip.updated",
+        trip_id: TRIP_ID,
+        name: "Tokyo 2027",
+      }).success,
+    ).toBe(false);
+    expect(
+      PushInvalidationPayloadSchema.safeParse({
+        event: "invite.created",
+        trip_id: TRIP_ID,
+        entity_id: ENTITY_ID,
+        token: "secret-invite-token",
+      }).success,
+    ).toBe(false);
   });
 });
 

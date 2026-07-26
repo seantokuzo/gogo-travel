@@ -2,9 +2,12 @@
  * T-6.1 trip CRUD integration suite (API-TRIPS-1): POST/GET/GET:id/PATCH/
  * DELETE `/trips` end-to-end over a real Postgres, behind the real app-wide
  * `requireAuth` + `requireTripMember` gates. Covers every §3.3 "Tests
- * required" bullet for the five endpoints EXCEPT the push-event bullets —
- * the §3.5 post-commit emitter is T-6.3's seam (STATE P-6 wave plan) and its
- * emission tests land with it.
+ * required" bullet for the five endpoints INCLUDING the push-event bullets
+ * (T-6.3): trip.updated to other members minus the actor, trip.deleted to
+ * the pre-delete member snapshot, trip.status_changed on both the manual
+ * override and the derived read-path reconciliation (§3.5), ids-only
+ * payloads, push_tokens fan-out, no emission on any rollback/failure path,
+ * and a throwing emitter never breaking a request.
  *
  * Headline adversarial assertions: the F-038 IDOR harness (non-member,
  * nonexistent, and malformed trip ids produce BYTE-IDENTICAL 404s across
@@ -46,6 +49,11 @@ import {
   NONEXISTENT_UUID,
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
+import { createTripEventEmitter } from "./push-invalidation.js";
+import {
+  createRecordingTripEvents,
+  type RecordingTripEvents,
+} from "./push-invalidation.test-util.js";
 
 const dockerAvailable = await (async () => {
   try {
@@ -93,7 +101,9 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
+  let authDeps: AuthRouterDeps;
   let signer: AccessTokenSigner;
+  let pushEvents: RecordingTripEvents;
 
   let seq = 0;
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -110,7 +120,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
-    const authDeps: AuthRouterDeps = {
+    authDeps = {
       db,
       verifier: {
         appleJwks: createLocalJWKSet({ keys: [] }),
@@ -124,7 +134,11 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       appleCredentialsKey: Buffer.alloc(32, 7),
       logger: { warn: () => undefined },
     };
-    app = createApp({ auth: authDeps, trips: { db, now: () => FROZEN_NOW } });
+    pushEvents = createRecordingTripEvents(db);
+    app = createApp({
+      auth: authDeps,
+      trips: { db, now: () => FROZEN_NOW, tripEvents: pushEvents.tripEvents },
+    });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -841,5 +855,202 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       await deleteTrip(trip.id, owner.accessToken),
       await deleteTrip(NONEXISTENT_UUID, owner.accessToken),
     ]);
+  });
+
+  // ===========================================================================
+  // T-6.3 push invalidation (§3.5 rule 6, R-trips-18 / API-TRIPS-4)
+  // ===========================================================================
+
+  async function seedPushToken(userId: string): Promise<string> {
+    const token = `ExponentPushToken[${uniq()}]`;
+    await db.insert(schema.pushTokens).values({ userId, token, platform: "ios" });
+    return token;
+  }
+
+  it("PATCH: trip.updated → other members minus the actor; push_tokens attached; payload ids-only", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+    const editorTokenA = await seedPushToken(editor.userId);
+    const editorTokenB = await seedPushToken(editor.userId);
+
+    expect((await patchTrip(trip.id, owner.accessToken, { name: "Renamed" })).status).toBe(200);
+
+    // Exactly ONE event — which also proves POST /trips emitted nothing for
+    // this trip (§3.5 has no trip.created).
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.updated"]);
+    const delivery = events[0]!;
+    // Ids only (R-trips-18): no name, no content, no PII — exact key set.
+    expect(Object.keys(delivery.payload)).toEqual(["event", "trip_id"]);
+    expect(pushEvents.recipientIdsOf(delivery)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+    // Device fan-out via push_tokens (API-TRIPS-4): registered tokens ride
+    // along; token-less members stay user-grained recipients.
+    const editorRecipient = delivery.recipients.find((r) => r.userId === editor.userId);
+    expect([...(editorRecipient?.tokens ?? [])].sort()).toEqual(
+      [editorTokenA, editorTokenB].sort(),
+    );
+    expect(delivery.recipients.find((r) => r.userId === viewer.userId)?.tokens).toEqual([]);
+  });
+
+  it("PATCH: actor exclusion follows the ACTOR, not a role — editor PATCH fans out to owner + viewer", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+    expect((await patchTrip(trip.id, editor.accessToken, { theme: "sunset" })).status).toBe(200);
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.updated"]);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [owner.userId, viewer.userId].sort(),
+    );
+  });
+
+  it("PATCH: failure and no-op paths NEVER emit — 403, stale 409, gate 404, write-less body", async () => {
+    const { editor, viewer, trip } = await seedCollabTrip();
+    const stranger = await seedUserWithToken();
+
+    expect((await patchTrip(trip.id, viewer.accessToken, { name: "x" })).status).toBe(403);
+    expect(
+      (
+        await patchTrip(trip.id, editor.accessToken, {
+          name: "x",
+          expect_updated_at: "2020-01-01T00:00:00.000Z",
+        })
+      ).status,
+    ).toBe(409);
+    expect((await patchTrip(trip.id, stranger.accessToken, { name: "x" })).status).toBe(404);
+    // Write-less request: 200, but no mutation committed → no event
+    // (R-trips-18 fires "WHEN any mutation ... commits").
+    expect(
+      (await patchTrip(trip.id, editor.accessToken, { expect_updated_at: trip.updated_at }))
+        .status,
+    ).toBe(200);
+
+    expect(await pushEvents.eventsFor(trip.id)).toEqual([]);
+  });
+
+  it("PATCH: archiving (override → 'past') emits trip.updated AND trip.status_changed", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    expect((await patchTrip(trip.id, owner.accessToken, { status: "past" })).status).toBe(200);
+    // Independent §3.5 rows: the PATCH committed (trip.updated) and the
+    // STORED status moved planning → past (trip.status_changed).
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.updated", "trip.status_changed"]);
+  });
+
+  it("GET :id: derived reconciliation emits trip.status_changed to other members minus the READER", async () => {
+    const owner = await seedUserWithToken();
+    const editor = await seedUserWithToken();
+    const seeded = await seedDriftedTrip(owner.userId);
+    await addMember(seeded.id, editor.userId, "editor");
+
+    expect((await getTrip(seeded.id, editor.accessToken)).status).toBe(200);
+    const events = await pushEvents.eventsFor(seeded.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.status_changed"]);
+    expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id"]);
+    // The reader is the actor — their device already has the fresh value.
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([owner.userId]);
+
+    // Converged rows emit nothing on re-read: drift, not reads, is the trigger.
+    expect((await getTrip(seeded.id, editor.accessToken)).status).toBe(200);
+    expect(await pushEvents.eventsFor(seeded.id)).toHaveLength(1);
+  });
+
+  it("GET list: reconciliation emits one trip.status_changed PER drifted trip", async () => {
+    const owner = await seedUserWithToken();
+    const editor = await seedUserWithToken();
+    const toPast = await seedDriftedTrip(owner.userId);
+    const toActive = await seedDriftedTrip(owner.userId, {
+      startDate: "2026-07-20",
+      endDate: "2026-07-30",
+    });
+    await addMember(toPast.id, editor.userId, "editor");
+    await addMember(toActive.id, editor.userId, "viewer");
+
+    expect((await listTrips(owner.accessToken)).status).toBe(200);
+    const pastEvents = await pushEvents.eventsFor(toPast.id);
+    const activeEvents = await pushEvents.eventsFor(toActive.id);
+    expect(pastEvents.map((d) => d.payload.event)).toEqual(["trip.status_changed"]);
+    expect(activeEvents.map((d) => d.payload.event)).toEqual(["trip.status_changed"]);
+    expect(pushEvents.recipientIdsOf(pastEvents[0]!)).toEqual([editor.userId]);
+  });
+
+  it("DELETE: trip.deleted → the PRE-delete member set minus actor (fence snapshot; a 403 never emits)", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+    expect((await deleteTrip(trip.id, editor.accessToken)).status).toBe(403); // must not emit
+    expect((await deleteTrip(trip.id, owner.accessToken)).status).toBe(204);
+
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.deleted"]);
+    expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id"]);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
+      [editor.userId, viewer.userId].sort(),
+    );
+    // The recipients could ONLY have come from the pre-delete snapshot
+    // (R-trips-8 "captured before the delete") — the rows are cascade-gone.
+    expect(
+      await db
+        .select()
+        .from(schema.tripMembers)
+        .where(eq(schema.tripMembers.tripId, trip.id)),
+    ).toEqual([]);
+  });
+
+  it("ghost members never receive events — fan-out is LIVE users only (STATE P-6 landmine)", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+    await db
+      .update(schema.users)
+      .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${viewer.userId}` })
+      .where(eq(schema.users.id, viewer.userId));
+
+    expect((await patchTrip(trip.id, owner.accessToken, { name: "Live only" })).status).toBe(200);
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId]);
+  });
+
+  it("a sole-member trip still emits — empty fan-out is not 'no emission'", async () => {
+    const owner = await seedUserWithToken();
+    const trip = await createTripVia(owner.accessToken);
+    expect((await patchTrip(trip.id, owner.accessToken, { name: "Solo" })).status).toBe(200);
+    const events = await pushEvents.eventsFor(trip.id);
+    expect(events.map((d) => d.payload.event)).toEqual(["trip.updated"]);
+    expect(events[0]!.recipients).toEqual([]);
+  });
+
+  it("a THROWING emitter transport never breaks a request (fire-and-forget, R-trips-18)", async () => {
+    const warnings: string[] = [];
+    const throwingEmitter = createTripEventEmitter({
+      db,
+      transport: {
+        deliver: () => {
+          throw new Error("push transport down");
+        },
+      },
+      logger: { warn: (m) => warnings.push(m) },
+    });
+    const hostile = createApp({
+      auth: authDeps,
+      trips: { db, now: () => FROZEN_NOW, tripEvents: throwingEmitter },
+    });
+
+    const owner = await seedUserWithToken();
+    const trip = await createTripVia(owner.accessToken); // main app; create emits nothing
+    const patched = await hostile.request(`/api/trips/${trip.id}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${owner.accessToken}`,
+      },
+      body: JSON.stringify({ name: "Still fine" }),
+    });
+    expect(patched.status).toBe(200);
+    const deletedRes = await hostile.request(`/api/trips/${trip.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${owner.accessToken}` },
+    });
+    expect(deletedRes.status).toBe(204);
+
+    await throwingEmitter.idle();
+    // Both drops were logged — and neither touched the responses above.
+    expect(warnings.some((m) => m.includes("trip.updated"))).toBe(true);
+    expect(warnings.some((m) => m.includes("trip.deleted"))).toBe(true);
   });
 });
