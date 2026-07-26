@@ -171,6 +171,13 @@ export const INVITE_DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** `GET /trips/:tripId/invites` page size (keyset-paginated, §3.3). */
 export const INVITES_PAGE_SIZE = 50;
 
+/**
+ * Push-invalidation drop-log cap (T-6.3 round-1 advisory #3) — one line of
+ * ops context, never a dump; same posture as PLACES_INGEST_ERROR_MAX_CHARS.
+ * Applied AFTER token redaction in `push-invalidation.ts`.
+ */
+export const PUSH_EVENT_LOG_MAX_CHARS = 300;
+
 // ---------------------------------------------------------------------------
 // Places spine ingest (places spec §3.1, R-places-4/5/7) — T-6.4 / PL-1.
 // Grid + dedup thresholds live in `@gogo/shared/config/places` (§3.1.4:

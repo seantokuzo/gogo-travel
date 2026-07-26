@@ -154,6 +154,51 @@ export function deriveTripStatus(
 }
 
 // ---------------------------------------------------------------------------
+// Push-invalidation domain events (trips spec §3.5 rule 6; R-trips-18 —
+// T-6.3 / API-TRIPS-4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The §3.5 domain-event catalog, verbatim — names are `<entity>.<verb>`, the
+ * naming pattern all domains follow. The trips spec owns this LIST (§1: "this
+ * spec fixes only the domain event list"); later domains (itinerary, money,
+ * …) append their own tuples and the payload's `event` union widens with
+ * them. The full push transport + notification payload family is the
+ * notifications spec's (P-13) — this catalog is what its data-only
+ * invalidation push carries.
+ */
+export const TRIP_DOMAIN_EVENTS = [
+  "trip.updated",
+  "trip.status_changed",
+  "trip.deleted",
+  "member.added",
+  "member.role_changed",
+  "member.removed",
+  "member.left",
+  "ownership.transferred",
+  "invite.created",
+  "invite.revoked",
+] as const;
+export const TripDomainEventSchema = z.enum(TRIP_DOMAIN_EVENTS);
+export type TripDomainEvent = z.infer<typeof TripDomainEventSchema>;
+
+/**
+ * The silent/data-only invalidation payload — `{ event, trip_id, entity_id? }`
+ * EXACTLY (§3.5 rule 6): ids and event names only, never entity content or
+ * PII (R-trips-18); receivers refetch. `strictObject` mechanizes "ids only" —
+ * a payload smuggling extra fields is a spec violation, not a
+ * forward-compat surface, so it fails parsing. `entity_id` is the §3.5
+ * table's third column (member events → a `user_id`, invite events → the
+ * `invite_id`; trip.* events carry none).
+ */
+export const PushInvalidationPayloadSchema = z.strictObject({
+  event: TripDomainEventSchema,
+  trip_id: UuidSchema,
+  entity_id: UuidSchema.optional(),
+});
+export type PushInvalidationPayload = z.infer<typeof PushInvalidationPayloadSchema>;
+
+// ---------------------------------------------------------------------------
 // Endpoint descriptors (trips spec §3.3; contracts spec §3.6)
 // ---------------------------------------------------------------------------
 
