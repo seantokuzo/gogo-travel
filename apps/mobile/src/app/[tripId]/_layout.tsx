@@ -151,6 +151,10 @@ export default function TripLayout() {
   if (tripQuery.data !== undefined && tripQuery.isFetchedAfterMount) {
     return <TripShell trip={tripQuery.data} />;
   }
+  // Cached-error remount flash (T-6.6 R2): a retained error from a PRIOR
+  // mount is not this mount's verdict — while the mount's re-verification is
+  // still in flight, hold; only a SETTLED failure reaches the retry surface.
+  if (tripQuery.isFetching && !tripQuery.isFetchedAfterMount) return <TripLoadingState />;
   if (tripQuery.isError) return <TripErrorState onRetry={() => void tripQuery.refetch()} />;
   return <TripLoadingState />;
 }

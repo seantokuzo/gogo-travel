@@ -1,0 +1,356 @@
+/**
+ * Create-trip modal (T-6.7 / CT-2; trips spec §2.3, R-tripui-6..8).
+ * Screen-level render with the router/navigator surface stubbed — the
+ * beforeRemove contract is exercised by invoking the captured listener the
+ * way the vendored navigator would; the real-tree walkthrough (modal
+ * presentation + itinerary landing) lives in trip-create-flow.test.tsx.
+ *
+ * Covers the §3 test bullets: validation (required name/destination/dates +
+ * date order), destination structured search (4-char text-only floor,
+ * pick-fills-lat/lng), pending-disable, success replace-navigation, failure
+ * preserves input, dirty dismiss confirms; base_currency defaulting
+ * (R-tripui-6) both ways.
+ */
+import { placeEndpoints, tripEndpoints, type User } from "@gogo/shared";
+import type { QueryClient } from "@tanstack/react-query";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+
+import TripNewScreen from "@/app/(trips)/new";
+import { apiClient, ApiRequestError } from "@/auth";
+import { TEST_TRIP_ID } from "@/test-utils/ids";
+import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { TEST_USER } from "@/test-utils/session-fixtures";
+import { makePlace, makePlanningTrip } from "@/test-utils/trip-fixtures";
+
+const mockRouter = { push: jest.fn(), back: jest.fn(), replace: jest.fn() };
+
+type BeforeRemoveEvent = {
+  preventDefault: jest.Mock;
+  data: { action: { type: string } };
+};
+const mockBeforeRemoveListeners: ((e: BeforeRemoveEvent) => void)[] = [];
+const mockNavigation = {
+  addListener: (type: string, cb: (e: BeforeRemoveEvent) => void) => {
+    if (type === "beforeRemove") mockBeforeRemoveListeners.push(cb);
+    return () => {
+      const i = mockBeforeRemoveListeners.indexOf(cb);
+      if (i >= 0) mockBeforeRemoveListeners.splice(i, 1);
+    };
+  },
+  dispatch: jest.fn(),
+};
+
+jest.mock("expo-router", () => ({
+  useRouter: () => mockRouter,
+  useNavigation: () => mockNavigation,
+}));
+
+jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
+
+const KYOTO = makePlace();
+
+/** `METHOD path` routed network mock (profile-screen convention). */
+function mockApi(
+  overrides: Record<string, (input: Record<string, unknown>) => Promise<unknown>> = {},
+  opts?: { me?: User },
+): jest.Mock {
+  const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+  request.mockImplementation((descriptor: { method: string; path: string }, input?: unknown) => {
+    const key = `${descriptor.method} ${descriptor.path}`;
+    const override = overrides[key];
+    if (override) return override((input ?? {}) as Record<string, unknown>);
+    switch (key) {
+      case "GET /users/me":
+        return Promise.resolve(opts?.me ?? TEST_USER);
+      case "GET /places/search":
+        return Promise.resolve({ items: [KYOTO], nextCursor: null });
+      case "POST /trips":
+        return Promise.resolve(makePlanningTrip(TEST_TRIP_ID));
+      default:
+        return Promise.reject(new Error(`unexpected ${key}`));
+    }
+  });
+  return request;
+}
+
+/** The §3.3 body a fully-filled form must produce (base_currency separate). */
+const FILLED_BODY = {
+  name: "Kyoto Spring",
+  destination_name: "Kyoto",
+  destination_lat: KYOTO.lat,
+  destination_lng: KYOTO.lng,
+  start_date: "2027-05-01",
+  end_date: "2027-05-08",
+};
+
+async function fillValidForm() {
+  await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
+  await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+  await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
+  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "2027-05-01");
+  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-end"), "2027-05-08");
+}
+
+function fireBeforeRemove(): BeforeRemoveEvent {
+  const event: BeforeRemoveEvent = {
+    preventDefault: jest.fn(),
+    data: { action: { type: "POP" } },
+  };
+  for (const cb of [...mockBeforeRemoveListeners]) cb(event);
+  return event;
+}
+
+const postCalls = (request: jest.Mock) =>
+  request.mock.calls.filter(
+    ([d]) => (d as { method: string; path: string }).method === "POST",
+  );
+
+/** The last render's client — the afterEach drain loop reads its isFetching. */
+let lastClient: QueryClient | null = null;
+
+async function renderScreen() {
+  const client = makeTestQueryClient();
+  lastClient = client;
+  const result = await renderWithProviders(<TripNewScreen />, { queryClient: client });
+  // Settle the mount's me-query INSIDE act before the test interacts — its
+  // notify batch otherwise lands in a between-act gap under --maxWorkers=2
+  // contention (B-2 family). Two hops: batch + follow-on batch.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  return result;
+}
+
+beforeEach(() => {
+  mockRouter.push.mockClear();
+  mockRouter.back.mockClear();
+  mockRouter.replace.mockClear();
+  mockNavigation.dispatch.mockClear();
+  mockBeforeRemoveListeners.length = 0;
+});
+
+afterEach(async () => {
+  // Bounded drain-until-idle inside act (profile-screen recipe, B-2 family):
+  // exit only after two consecutive idle hops (the hop that settles the
+  // last fetch leaves its notify batch queued), bounded at 6.
+  let hops = 0;
+  let idleHops = 0;
+  do {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    hops += 1;
+    idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
+  } while (idleHops < 2 && hops < 6);
+  lastClient = null;
+  jest.restoreAllMocks();
+});
+
+describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
+  it("submitting an empty form surfaces every required-field error and never POSTs", async () => {
+    const request = mockApi();
+    await renderScreen();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    expect(screen.getByTestId("trip-new-input-name-error")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-new-input-destination-error")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-new-input-dates-start-error")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-new-input-dates-end-error")).toBeOnTheScreen();
+    expect(postCalls(request)).toHaveLength(0);
+  });
+
+  it("mirrors the shared date rules: bad format and end-before-start are field errors, not requests", async () => {
+    const request = mockApi();
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "05/01/2027");
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    expect(screen.getByText("Use YYYY-MM-DD.")).toBeOnTheScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "2027-05-09");
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    expect(
+      screen.getByText("End date must be on or after the start date."),
+    ).toBeOnTheScreen();
+    expect(postCalls(request)).toHaveLength(0);
+  });
+});
+
+describe("destination structured search (§2.3 — Overture spine, no free text)", () => {
+  it("stays quiet under the 4-char text-only floor, then searches and fills from a picked result", async () => {
+    const request = mockApi();
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyo");
+    expect(screen.getByText("Keep typing — search starts at 4 characters.")).toBeOnTheScreen();
+    expect(
+      request.mock.calls.filter(([d]) => (d as { path: string }).path === "/places/search"),
+    ).toHaveLength(0);
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
+
+    expect(request).toHaveBeenCalledWith(
+      placeEndpoints.searchPlaces,
+      { query: { q: "Kyoto" } },
+      { signal: expect.any(AbortSignal) },
+    );
+    // The pick is structural: input shows the canonical name, results close.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+    expect(screen.queryByTestId(`trip-new-list-item-${KYOTO.id}`)).toBeNull();
+  });
+
+  it("renders the search error surface with retry (async path, R-ds-17)", async () => {
+    let fail = true;
+    mockApi({
+      "GET /places/search": () =>
+        fail
+          ? Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom"))
+          : Promise.resolve({ items: [KYOTO], nextCursor: null }),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    expect(await screen.findByTestId("trip-new-error-search")).toBeOnTheScreen();
+
+    fail = false;
+    await fireEvent.press(screen.getByTestId("trip-new-error-search-retry"));
+    expect(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`)).toBeOnTheScreen();
+  });
+});
+
+describe("submit (R-tripui-7)", () => {
+  it("POSTs the schema-shaped body with prefs.home_currency and replace-navigates into the trip", async () => {
+    const request = mockApi({}, { me: { ...TEST_USER, prefs: { home_currency: "EUR" } } });
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: { ...FILLED_BODY, base_currency: "EUR" },
+      }),
+    );
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
+  });
+
+  it("omits base_currency when prefs carry no home_currency (server defaults USD, R-tripui-6)", async () => {
+    const request = mockApi(); // TEST_USER.prefs = {}
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
+    );
+  });
+
+  it("disables the submit control while pending — a double press fires ONE request", async () => {
+    // Controllable deferred, NOT a never-settling promise: a mutation still
+    // pending at suite end held the jest worker open (observed live, T-6.7)
+    // — the window stays deterministic and then settles inside the test.
+    let resolvePost!: (value: unknown) => void;
+    const request = mockApi({
+      "POST /trips": () =>
+        new Promise((resolve) => {
+          resolvePost = resolve;
+        }),
+    });
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    expect(await screen.findByTestId("trip-new-button-create-spinner")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    expect(postCalls(request)).toHaveLength(1);
+
+    await act(async () => {
+      resolvePost(makePlanningTrip(TEST_TRIP_ID));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
+  });
+
+  it("failure renders the ErrorBanner, preserves every entered value, and retry resubmits", async () => {
+    let fail = true;
+    const request = mockApi({
+      "POST /trips": () =>
+        fail
+          ? Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom"))
+          : Promise.resolve(makePlanningTrip(TEST_TRIP_ID)),
+    });
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    expect(await screen.findByTestId("trip-new-error")).toBeOnTheScreen();
+
+    // R-tripui-7: all entered values preserved on failure.
+    expect(screen.getByTestId("trip-new-input-name").props.value).toBe("Kyoto Spring");
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+    expect(screen.getByTestId("trip-new-input-dates-start").props.value).toBe("2027-05-01");
+    expect(screen.getByTestId("trip-new-input-dates-end").props.value).toBe("2027-05-08");
+
+    fail = false;
+    await fireEvent.press(screen.getByTestId("trip-new-error-retry"));
+    await waitFor(() => expect(postCalls(request)).toHaveLength(2));
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
+  });
+});
+
+describe("dirty dismissal (R-tripui-8, nav §2.6 form-modal rule)", () => {
+  it("a CLEAN form dismisses freely — beforeRemove is not prevented", async () => {
+    mockApi();
+    await renderScreen();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-cancel"));
+    expect(mockRouter.back).toHaveBeenCalled();
+
+    const event = fireBeforeRemove();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull();
+  });
+
+  it("a DIRTY removal is intercepted with the discard Confirm; confirm dispatches the stashed action", async () => {
+    mockApi();
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "K");
+
+    // Any removal — swipe-down, back, the cancel button's router.back() —
+    // funnels through beforeRemove.
+    let event!: BeforeRemoveEvent;
+    await waitFor(() => {
+      event = fireBeforeRemove();
+      expect(event.preventDefault).toHaveBeenCalled();
+    });
+
+    await fireEvent.press(await screen.findByTestId("trip-new-button-cancel-confirm"));
+    expect(mockNavigation.dispatch).toHaveBeenCalledWith(event.data.action);
+  });
+
+  it("keep-editing cancels the dialog and stays put", async () => {
+    mockApi();
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "K");
+
+    await waitFor(() => {
+      const event = fireBeforeRemove();
+      expect(event.preventDefault).toHaveBeenCalled();
+    });
+    await fireEvent.press(await screen.findByTestId("trip-new-button-cancel-cancel"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull(),
+    );
+    expect(mockNavigation.dispatch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("trip-new-input-name").props.value).toBe("K");
+  });
+});

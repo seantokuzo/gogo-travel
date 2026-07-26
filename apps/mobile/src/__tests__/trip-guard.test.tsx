@@ -113,7 +113,7 @@ it("Law #3 client half: a stale cached trip + fresh 404 renders no-access, never
   // A trips-list entry exists too (e.g. warmed by the entry redirect) — the
   // 404 must mark it stale so the switcher/entry active set drops the trip.
   queryClient.setQueryData(queryKeys.trips, { items: [cached], nextCursor: null });
-  mockNavApi({ trips: [] }); // membership since revoked → fresh 404
+  const request = mockNavApi({ trips: [] }); // membership since revoked → fresh 404
   await renderApp(`/${TEST_TRIP_ID}/itinerary`);
   expect(await screen.findByTestId("no-access-screen")).toBeOnTheScreen();
   expect(screen.queryByText("Secret Trip Name")).toBeNull();
@@ -122,10 +122,46 @@ it("Law #3 client half: a stale cached trip + fresh 404 renders no-access, never
   expect(readLastViewedTrip()).toBeNull();
   // Scrub half 1: the trips list is invalidated immediately.
   expect(queryClient.getQueryState(queryKeys.trips)?.isInvalidated).toBe(true);
+  // LOCAL exact:true pin (T-6.6 R2): ["trips"] is a PREFIX of the guard's own
+  // ["trips", id] detail key — a non-exact scrub would match the actively-
+  // observed detail query and refetch-loop the 404 (caught live: 121 requests
+  // before the timeout). EXACTLY ONE guard call proves the scrub stayed
+  // exact. (The detail entry's isInvalidated flag is NOT a usable pin here:
+  // v5's error reducer marks any data-bearing query invalidated on a
+  // background error by design — query.ts "flag existing data as
+  // invalidated if we get a background error".)
+  expect(
+    request.mock.calls.filter(
+      ([descriptor]) => (descriptor as { path: string }).path === "/trips/:tripId",
+    ),
+  ).toHaveLength(1);
   // Scrub half 2: leaving the 404 branch removes the dead trip's cache entry
   // (deferred to teardown — removing an observed query would refetch-loop).
   await cleanup();
   expect(queryClient.getQueryData(queryKeys.trip(TEST_TRIP_ID))).toBeUndefined();
+});
+
+it("T-6.6 R2: a RETAINED error from a prior mount holds — never flashes the retry surface — while the remount's verification is in flight", async () => {
+  // Mount 1: a non-404 failure settles into the retry surface and leaves an
+  // error state in the prod cache (retry collapsed to 1ms as below).
+  queryClient.setQueryDefaults(queryKeys.trip(TEST_TRIP_ID), { retryDelay: 1 });
+  mockNavApi({
+    overrides: {
+      "GET /trips/:tripId": () => Promise.reject(new ApiRequestError(503, "UNKNOWN", "down")),
+    },
+  });
+  await renderApp(`/${TEST_TRIP_ID}/itinerary`);
+  expect(await screen.findByTestId("trip-error-screen")).toBeOnTheScreen();
+
+  // Mount 2: the cached error is NOT this mount's verdict. While the fresh
+  // verification never settles, the guard must hold — the pre-fix code
+  // rendered the error branch off the retained state for the whole RTT.
+  mockNavApi({
+    overrides: { "GET /trips/:tripId": () => new Promise(() => undefined) },
+  });
+  await renderApp(`/${TEST_TRIP_ID}/itinerary`);
+  expect(screen.getByTestId("trip-loading")).toBeOnTheScreen();
+  expect(screen.queryByTestId("trip-error-screen")).toBeNull();
 });
 
 it("a non-404 failure is NOT a membership verdict → retry surface, then success mounts the shell", async () => {

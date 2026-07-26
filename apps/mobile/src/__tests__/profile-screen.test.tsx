@@ -98,19 +98,40 @@ afterEach(async () => {
   // section's assertion can leave another section's settle notification on a
   // setTimeout(0) that lands post-test — an un-act-wrapped update (B-2 flake
   // family; SessionsSection/EntitlementsSection fired intermittently under
-  // --maxWorkers=2). Two act-wrapped hops run both queued batches while the
-  // tree is still mounted (suite afterEach runs before RNTL auto-cleanup).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  // --maxWorkers=2). Loop-until-idle (T-6.6 R2, replacing a fixed 2-hop
+  // constant): exit only after TWO consecutive idle hops — a hop that
+  // settles the last in-flight fetch leaves that settle's notify batch
+  // queued, so idleness must be observed twice (the second idle hop flushes
+  // it). Bounded at 6 hops so a genuine hang fails the suite loudly.
+  let hops = 0;
+  let idleHops = 0;
+  do {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    hops += 1;
+    idleHops = queryClient.isFetching() > 0 ? 0 : idleHops + 1;
+  } while (idleHops < 2 && hops < 6);
   jest.restoreAllMocks();
   queryClient.clear();
   // Defensive: real timers even if a sibling renderRouter suite leaked fake ones.
   jest.useRealTimers();
 });
+
+/**
+ * Consume a mutation's settle chain INSIDE the test (B-2 family): the
+ * request assert passes at call time, but the isPending flip and the
+ * invalidate-driven me-refetch ride notify timers that otherwise fire in
+ * the unwrapped gap between the test and afterEach (observed 1-in-4 under
+ * the 8× --maxWorkers=2 protocol, T-6.7). Two timer awaits in ONE act
+ * window: mutation notify → refetch fire+settle → its notify.
+ */
+async function settleMutation() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 
 describe("ProfileScreen", () => {
   it("loads the profile and prefills the display name", async () => {
@@ -136,6 +157,7 @@ describe("ProfileScreen", () => {
         body: { display_name: "Edited" },
       }),
     );
+    await settleMutation();
   });
 
   it("saves payment handles via updatePaymentHandles", async () => {
@@ -152,6 +174,7 @@ describe("ProfileScreen", () => {
         body: { venmo_username: "@sean" },
       }),
     );
+    await settleMutation();
   });
 
   it("marks the current session, blocks its revoke, and revokes another after confirm", async () => {
@@ -171,6 +194,7 @@ describe("ProfileScreen", () => {
         params: { sessionId: SESSION_OTHER.id },
       }),
     );
+    await settleMutation();
   });
 
   it("deletes the account after a hard confirm, then signs out", async () => {

@@ -29,8 +29,17 @@ export const queryKeys = {
   sessions: ["sessions"] as const,
   /** `GET /trips` first page — the entry redirect + trip switcher read (T-6.6). */
   trips: ["trips"] as const,
+  /**
+   * `GET /trips` REAL cursor pagination — the trip-list screen's infinite
+   * query (T-6.7 / CT-1). Distinct from `trips` (different data shape:
+   * `InfiniteData` vs a single page) and from every `trip(id)` detail key
+   * ("list" is not a UUID, so the [tripId] guard's key space never collides).
+   */
+  tripsList: ["trips", "list"] as const,
   /** `GET /trips/:tripId` — the `[tripId]` membership guard's query (R-nav-20). */
   trip: (tripId: string) => ["trips", tripId] as const,
+  /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
+  placeSearch: (q: string) => ["places", "search", q] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */
   invitePreview: (token: string) => ["invites", token, "preview"] as const,
 } as const;

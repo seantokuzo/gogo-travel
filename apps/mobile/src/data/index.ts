@@ -16,3 +16,9 @@ export {
   useTrip,
   useInvitePreview,
 } from "./hooks";
+export {
+  isSearchableDestinationQuery,
+  useCreateTrip,
+  usePlaceSearch,
+  useTripList,
+} from "./trips-mutations";
