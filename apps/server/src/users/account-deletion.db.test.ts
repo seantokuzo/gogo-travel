@@ -752,6 +752,73 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     expect(inviteAfter?.useCount).toBe(0);
   });
 
+  it("a caller mid-scrub cannot mint a ghost-owned trip — POST /trips parks on the users row and dies 401", async () => {
+    const victim = await seedUser();
+
+    // Hold deletion's step-0 shape open: users row FOR UPDATE, then the
+    // scrub on release — the exact window where a still-valid token used to
+    // slip a create through (T-6.2 round-2 advisory #2, the un-closed
+    // sibling of the accept door).
+    let releaseTxn!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseTxn = resolve;
+    });
+    let locksTaken!: () => void;
+    const locksReady = new Promise<void>((resolve) => {
+      locksTaken = resolve;
+    });
+    const txnPromise = db.transaction(async (tx) => {
+      await tx
+        .select({ id: schema.users.id })
+        .from(schema.users)
+        .where(eq(schema.users.id, victim.user.id))
+        .for("update");
+      locksTaken();
+      await gate;
+      await tx
+        .update(schema.users)
+        .set({ deletedAt: new Date(), googleSub: null, email: `deleted:${victim.user.id}` })
+        .where(eq(schema.users.id, victim.user.id));
+    });
+    await locksReady;
+
+    // The REAL create route: its first in-txn lock is the caller-liveness
+    // FOR SHARE, which our FOR UPDATE blocks — it cannot resolve while the
+    // deletion-shaped transaction is open.
+    const createPromise = Promise.resolve(
+      app.request("/api/trips", {
+        method: "POST",
+        headers: { ...authHeaders(victim.accessToken), "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "Ghost trip",
+          destination_name: "Nowhere, Atlantis",
+          destination_lat: 38.7,
+          destination_lng: -9.1,
+          start_date: "2026-08-01",
+          end_date: "2026-08-05",
+        }),
+      }),
+    );
+    const during = await Promise.race([
+      createPromise.then(() => "resolved" as const),
+      delay(250).then(() => "blocked" as const),
+    ]);
+    expect(during).toBe("blocked");
+
+    releaseTxn();
+    await txnPromise;
+
+    // The create resumed against the scrubbed row: 401, and NO trip or
+    // membership row was minted for the ghost account.
+    const res = await createPromise;
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as Envelope).error.code).toBe("UNAUTHENTICATED");
+    expect(
+      await db.select().from(schema.trips).where(eq(schema.trips.createdBy, victim.user.id)),
+    ).toEqual([]);
+    expect(await membersOf(victim.user.id)).toEqual([]);
+  });
+
   it("TRUE RACE — real deletion route vs real accept route: a 200 acceptance is NEVER destroyed by the cascade", async () => {
     for (let round = 0; round < 5; round++) {
       const owner = await seedUser();

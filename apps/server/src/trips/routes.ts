@@ -25,14 +25,20 @@
  * emitted here yet (STATE P-6 wave plan: emitter stubs land in T-6.3).
  */
 import { zValidator } from "@hono/zod-validator";
-import { and, eq, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
-import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
+import {
+  apiError,
+  HttpError,
+  NOT_FOUND_MESSAGE,
+  UNAUTHENTICATED_MESSAGE,
+  type RequestVars,
+} from "../http/errors.js";
 import {
   expectUpdatedAtPrecondition,
   throwGuardedUpdateMiss,
@@ -101,6 +107,20 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const today = todayUtc(nowOf());
 
       const trip = await deps.db.transaction(async (tx) => {
+        // Caller liveness under lock — FIRST acquisition (global order:
+        // users → trip_members → invites; the same door invite-accept
+        // holds, T-6.2 round-2 advisory #2): a scrubbed account's
+        // still-valid (≤15 min) token must not mint a ghost-owned orphan
+        // trip. Account deletion holds this row FOR UPDATE for its whole
+        // transaction (step 0), so an in-flight deletion parks this create
+        // until it commits — the live-only re-check then misses → 401.
+        const [liveCaller] = await tx
+          .select({ id: schema.users.id })
+          .from(schema.users)
+          .where(and(eq(schema.users.id, userId), isNull(schema.users.deletedAt)))
+          .for("share");
+        if (!liveCaller) throw new HttpError("UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE);
+
         const [inserted] = await tx
           .insert(schema.trips)
           .values({

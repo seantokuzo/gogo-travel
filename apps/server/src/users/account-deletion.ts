@@ -141,10 +141,19 @@ export async function deleteAccount(
     //    caller's membership rows, in-flight accepts have committed, and new
     //    ones are parked (owner-row FOR SHARE), so nothing else holds
     //    trip-scoped row locks. Same fence shape as the trips DELETE route.
+    //    CROSS-TRIP ORDERING (T-6.2 round-2): this fence spans TRIPS (one
+    //    caller, many memberships), so it acquires in trip_id order — the
+    //    same deterministic-order rule every other multi-row locker follows
+    //    (trip-delete fence and transfer order by user_id WITHIN a trip).
+    //    Unordered, two deletions/fences whose row sets overlap on ≥2 trips
+    //    (4-party cross-trip interleavings) could acquire in opposite orders
+    //    and cycle; ordered, every fence→deletion wait chain is strictly
+    //    increasing in trip id and can never close a loop.
     const lockedMemberships = await tx
       .select({ tripId: schema.tripMembers.tripId, role: schema.tripMembers.role })
       .from(schema.tripMembers)
       .where(eq(schema.tripMembers.userId, userId))
+      .orderBy(schema.tripMembers.tripId)
       .for("update");
     const ownedTripIds = lockedMemberships
       .filter((membership) => membership.role === "owner")
