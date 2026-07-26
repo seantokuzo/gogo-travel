@@ -14,9 +14,11 @@
 import { SPINE_SOURCE_PRIORITY, type SpineSource } from "@gogo/shared/config/places";
 import type { Env } from "../env.js";
 import { getDb } from "../db/index.js";
+import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import { createDuckDbGeoParquetReader } from "./geoparquet-reader.js";
 import { createPlacesIngestQueue, type PlacesIngestTrigger } from "./ingest-queue.js";
 import { ingestRegionCell, type RegionIngestDatasets } from "./region-ingest.js";
+import type { PlacesRouterDeps } from "./routes.js";
 
 export interface PlacesIngestWiring {
   trigger: PlacesIngestTrigger;
@@ -40,4 +42,22 @@ export function buildPlacesIngest(env: Env): PlacesIngestWiring {
     trigger,
     unconfiguredSources: SPINE_SOURCE_PRIORITY.filter((source) => datasets[source] === undefined),
   };
+}
+
+/**
+ * Process-wide store for the `GET /places/search` per-user window
+ * (RATE_LIMITS.placesSearch — T-6.5 enqueue-volume posture). Bucket keys are
+ * rule-namespaced, so one store per process is safe (trips/wire.ts pattern).
+ */
+const placesRateLimitStore = new InMemoryRateLimitStore();
+
+/**
+ * Production deps for the places router (T-6.5). The DB is the Neon
+ * WebSocket `Pool` (`getDb()`); every route here is single-statement, but
+ * the driver choice stays uniform with the rest of the app (landmine #1).
+ * `placesIngest` is THE SAME queue instance the trips router fires — one
+ * queue, two triggers (destination + search-miss), one serial drain.
+ */
+export function buildPlacesRouterDeps(placesIngest: PlacesIngestTrigger): PlacesRouterDeps {
+  return { db: getDb(), rateLimit: { store: placesRateLimitStore }, placesIngest };
 }

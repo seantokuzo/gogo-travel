@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
-import { buildPlacesIngest } from "./places/wire.js";
+import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
@@ -48,6 +48,9 @@ if (authDeps) {
     auth: authDeps,
     users: await buildUsersDepsFromEnv(env),
     trips: { ...buildTripsDeps(), placesIngest: placesIngest.trigger },
+    // Same queue instance as trips: destination + search-miss triggers feed
+    // one serial drain (T-6.5).
+    places: buildPlacesRouterDeps(placesIngest.trigger),
   };
 }
 const app = createApp(appOptions);

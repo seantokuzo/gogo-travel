@@ -63,6 +63,88 @@ export function regionCellAt(lat: number, lng: number): RegionCell {
   return cellFromIndices(latIdx, lngIdx);
 }
 
+/** A degree-space bounding box (minLng ≤ maxLng — no antimeridian wrap). */
+export interface RegionBbox {
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+}
+
+/**
+ * The grid cells a bbox overlaps, CENTER-OUT and hard-capped (T-6.5, the
+ * R-places-7 secondary-trigger consumer): enumeration walks Chebyshev rings
+ * around the bbox's center cell and STOPS at `maxCells`, so a scan-the-globe
+ * viewport (the whole ring is 720 × 360 cells) can neither stampede ingest
+ * jobs nor even materialize its own cell list — the cap is structural, not a
+ * post-filter. `maxCells` is required for exactly that reason: an unbounded
+ * call is unrepresentable.
+ *
+ * Ordering is deterministic (ring by ring; reading order within a ring) and
+ * center-first, so a capped result keeps the cells the user is actually
+ * looking at. Ring distance is index-space Chebyshev — an approximation of
+ * metric distance (lng cells narrow toward the poles), which is fine: the
+ * consumer needs determinism + center bias, not geodesic exactness.
+ */
+export function regionCellsForBbox(bbox: RegionBbox, maxCells: number): RegionCell[] {
+  assertCoordinate(bbox.minLat, bbox.minLng);
+  assertCoordinate(bbox.maxLat, bbox.maxLng);
+  if (bbox.minLat > bbox.maxLat || bbox.minLng > bbox.maxLng) {
+    throw new RangeError("bbox min must not exceed max");
+  }
+  if (!Number.isInteger(maxCells) || maxCells < 1) {
+    throw new RangeError(`maxCells must be a positive integer: ${maxCells}`);
+  }
+
+  const clampLatIdx = (idx: number) => Math.min(LAT_IDX_MAX, Math.max(LAT_IDX_MIN, idx));
+  const loLat = clampLatIdx(Math.floor(bbox.minLat / GRID));
+  const hiLat = clampLatIdx(Math.floor(bbox.maxLat / GRID));
+  // Raw (unwrapped) lng indices keep the range contiguous; each emitted cell
+  // wraps individually, so the lng = 180 edge lands on the -360 cell exactly
+  // as `regionCellAt` would.
+  const loLng = Math.floor(bbox.minLng / GRID);
+  const hiLng = Math.floor(bbox.maxLng / GRID);
+
+  const centerLatIdx = clampLatIdx(Math.floor((bbox.minLat + bbox.maxLat) / 2 / GRID));
+  const centerLngIdx = Math.floor((bbox.minLng + bbox.maxLng) / 2 / GRID);
+  const maxRing = Math.max(
+    centerLatIdx - loLat,
+    hiLat - centerLatIdx,
+    centerLngIdx - loLng,
+    hiLng - centerLngIdx,
+  );
+
+  const cells: RegionCell[] = [];
+  const seen = new Set<string>();
+  const push = (latIdx: number, lngIdxRaw: number): boolean => {
+    if (latIdx < loLat || latIdx > hiLat || lngIdxRaw < loLng || lngIdxRaw > hiLng) return false;
+    const cell = cellFromIndices(latIdx, wrapLngIdx(lngIdxRaw));
+    if (seen.has(cell.key)) return false; // wrap collision on a ≥360° span
+    seen.add(cell.key);
+    cells.push(cell);
+    return cells.length >= maxCells;
+  };
+
+  for (let ring = 0; ring <= maxRing; ring++) {
+    if (ring === 0) {
+      if (push(centerLatIdx, centerLngIdx)) return cells;
+      continue;
+    }
+    // Reading order: top and bottom rows fully, then the two side columns.
+    for (const dLat of [ring, -ring]) {
+      for (let dLng = -ring; dLng <= ring; dLng++) {
+        if (push(centerLatIdx + dLat, centerLngIdx + dLng)) return cells;
+      }
+    }
+    for (let dLat = -(ring - 1); dLat <= ring - 1; dLat++) {
+      for (const dLng of [-ring, ring]) {
+        if (push(centerLatIdx + dLat, centerLngIdx + dLng)) return cells;
+      }
+    }
+  }
+  return cells;
+}
+
 /**
  * The destination's ingest coverage (§3.1.3): its cell plus the 8 neighbors.
  * The containing cell comes FIRST (ingest starts where the user actually is);

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
 import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
@@ -57,6 +58,13 @@ export interface CreateAppOptions {
    * trip-membership gate), so trips-without-auth is a wiring bug.
    */
   trips?: TripsRouterDeps;
+  /**
+   * Places-surface dependencies (T-6.5 search + custom places). Same
+   * pairing rule: every route is Auth: Required, and custom-place
+   * visibility (Law #3 posture) assumes the authenticated identity exists —
+   * places-without-auth is a wiring bug.
+   */
+  places?: PlacesRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -65,6 +73,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.trips && !options.auth) {
     throw new Error("trips router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.places && !options.auth) {
+    throw new Error("places router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -104,6 +115,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     app.route(API_BASE, createMembersRouter(options.trips));
     // Also carries the non-trip-scoped `/invites/:token*` capability routes.
     app.route(API_BASE, createInvitesRouter(options.trips));
+  }
+
+  if (options.places) {
+    app.route(API_BASE, createPlacesRouter(options.places));
   }
 
   return app;

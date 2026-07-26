@@ -8,8 +8,10 @@
  *   fail the user request.
  * - SECONDARY (R-places-7, enqueue half): geo-scoped search over
  *   non-`ready`/stale cells → `enqueueSearchMiss` — throttled to one enqueue
- *   per cell per hour so scan-the-globe panning can't stampede jobs. The
- *   /places/search endpoint (T-6.5) is the caller; the seam ships here.
+ *   per cell per hour AND capped by a global per-window budget
+ *   (PLACES_SEARCH_MISS_GLOBAL_* — T-6.5's enqueue-volume bound, the T-6.4
+ *   round-1 defer) so scan-the-globe panning can't stampede jobs or grow the
+ *   queue unboundedly. The /places/search endpoint (T-6.5) is the caller.
  *
  * Single-instance, in-memory — the same acceptable-until-≥2-instances
  * posture as http/rate-limit.ts (§3.6.3). Cells run ONE at a time (a serial
@@ -18,7 +20,11 @@
  * anything that raced to fresh in the meantime.
  */
 import { regionCellsForDestination, type RegionCell } from "@gogo/shared/region-grid";
-import { PLACES_SEARCH_MISS_THROTTLE_MS } from "../config.js";
+import {
+  PLACES_SEARCH_MISS_GLOBAL_PER_WINDOW,
+  PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS,
+  PLACES_SEARCH_MISS_THROTTLE_MS,
+} from "../config.js";
 
 /** What routers depend on — the enqueue half only (jobs run behind it). */
 export interface PlacesIngestTrigger {
@@ -35,6 +41,9 @@ export interface PlacesIngestQueueDeps {
   logger?: { warn: (message: string) => void };
   /** Override seam for tests; default PLACES_SEARCH_MISS_THROTTLE_MS. */
   searchMissThrottleMs?: number;
+  /** Override seams for tests; defaults PLACES_SEARCH_MISS_GLOBAL_*. */
+  searchMissGlobalPerWindow?: number;
+  searchMissGlobalWindowMs?: number;
 }
 
 export interface PlacesIngestQueue extends PlacesIngestTrigger {
@@ -49,6 +58,8 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
   const now = deps.now ?? (() => new Date());
   const logger = deps.logger ?? console;
   const throttleMs = deps.searchMissThrottleMs ?? PLACES_SEARCH_MISS_THROTTLE_MS;
+  const globalPerWindow = deps.searchMissGlobalPerWindow ?? PLACES_SEARCH_MISS_GLOBAL_PER_WINDOW;
+  const globalWindowMs = deps.searchMissGlobalWindowMs ?? PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS;
 
   // Two-tier scheduling: destination cells (a user just created/moved a
   // trip — they're about to look at this map) drain BEFORE search-miss
@@ -59,6 +70,14 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
   } as const;
   type Tier = keyof typeof queues;
   const lastSearchMissEnqueue = new Map<string, number>();
+  // Global search-miss budget (T-6.5, the T-6.4 round-1 enqueue-volume
+  // defer): a fixed window counting ACCEPTED search-miss cells across all
+  // callers — the hard ceiling on backfill job volume and queue memory that
+  // distinct-cell spam (globe panning) would otherwise make unbounded. The
+  // destination tier is deliberately exempt: it is bounded by trip writes
+  // and must stay user-latency-shaped (R-places-1).
+  let globalWindowStart = Number.NEGATIVE_INFINITY;
+  let globalWindowUsed = 0;
   let draining = false;
   let drainPromise: Promise<void> = Promise.resolve();
 
@@ -131,8 +150,27 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
           const last = lastSearchMissEnqueue.get(cell.key);
           return last === undefined || nowMs - last >= throttleMs;
         });
-        for (const cell of due) lastSearchMissEnqueue.set(cell.key, nowMs);
-        schedule(due, "searchMiss");
+
+        // Global budget AFTER the per-cell throttle: only genuinely new work
+        // charges it. Overflow cells are dropped WITHOUT a throttle stamp —
+        // a budget-dropped cell stays eligible the moment budget returns,
+        // instead of serving a phantom hour of throttle for work never done.
+        if (nowMs - globalWindowStart >= globalWindowMs) {
+          globalWindowStart = nowMs;
+          globalWindowUsed = 0;
+        }
+        const budget = Math.max(0, globalPerWindow - globalWindowUsed);
+        const accepted = due.slice(0, budget);
+        if (accepted.length < due.length) {
+          logger.warn(
+            `places-ingest: search-miss global budget exhausted — dropped ${
+              due.length - accepted.length
+            } cell(s) this window`,
+          );
+        }
+        globalWindowUsed += accepted.length;
+        for (const cell of accepted) lastSearchMissEnqueue.set(cell.key, nowMs);
+        schedule(accepted, "searchMiss");
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         logger.warn(`places-ingest: search-miss enqueue dropped: ${message}`);

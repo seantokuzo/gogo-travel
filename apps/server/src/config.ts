@@ -130,6 +130,17 @@ export const RATE_LIMITS = {
    */
   inviteTokenPerUser: { limit: 30, windowMs: MINUTE_MS },
   inviteTokenPerIp: { limit: 100, windowMs: MINUTE_MS },
+  /**
+   * `GET /places/search` — per authenticated user (T-6.5; the T-6.4 round-1
+   * enqueue-volume defer, §3.6.3 posture). Unlike keyed CRUD reads, search
+   * takes UNBOUNDED-COST inputs (arbitrary trgm text, arbitrary geo windows)
+   * AND is the reachable mouth of the search-miss ingest seam — so it gets a
+   * limiter where GET /trips does not. 120/min ≈ 2 rps sustained: far above
+   * debounced type-ahead + map panning, far below attack utility. Layered
+   * with the per-search cell cap and the queue's per-cell throttle + global
+   * hourly budget below.
+   */
+  placesSearch: { limit: 120, windowMs: MINUTE_MS },
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
 
 // ---------------------------------------------------------------------------
@@ -187,6 +198,37 @@ export const PLACES_SEARCH_MISS_THROTTLE_MS = HOUR_MS;
 
 /** Region-row `error` cap — visible in ops queries, never a stack dump. */
 export const PLACES_INGEST_ERROR_MAX_CHARS = 500;
+
+// ---------------------------------------------------------------------------
+// Place search (places spec §3.3 GET /places/search, R-places-6..8) — T-6.5.
+// Enqueue-volume bounds are the T-6.4 round-1 security defer: the search
+// endpoint makes DISTINCT-CELL spam reachable (a panned globe is ~260k grid
+// cells, each enqueued cell = remote parquet scans + queue memory), so the
+// seam gets layered, config-pinned bounds — per-request, per-cell (throttle
+// above), per-user (RATE_LIMITS.placesSearch), and global-per-hour.
+// ---------------------------------------------------------------------------
+
+/** `GET /places/search` default page size (`limit` omitted). The hard cap
+ * (50) lives in the shared `PlaceSearchQuerySchema` — spec §3.3. */
+export const PLACES_SEARCH_PAGE_SIZE_DEFAULT = 20;
+
+/** `near` search radius when `radius_m` is omitted (spec §3.3: default
+ * 2,000 m; the 50,000 m max is the shared schema's bound). */
+export const PLACES_SEARCH_RADIUS_M_DEFAULT = 2_000;
+
+/** Max cells ONE search's coverage miss may enqueue (R-places-7 secondary
+ * trigger). Center-out selection keeps the cells the user is looking at;
+ * 9 mirrors the primary trigger's 3×3 destination coverage. */
+export const PLACES_SEARCH_MISS_MAX_CELLS = 9;
+
+/** Global search-miss enqueue budget: at most this many cells per rolling
+ * window across ALL users (queue-level hard ceiling — bounds job volume and
+ * queue memory even under distinct-cell spam; destination-tier enqueues are
+ * deliberately NOT charged, they are bounded by trip writes). Exhaustion is
+ * logged and non-fatal: backfill resumes next window (R-places-7 — never an
+ * error, never a block). */
+export const PLACES_SEARCH_MISS_GLOBAL_PER_WINDOW = 200;
+export const PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS = HOUR_MS;
 
 // ---------------------------------------------------------------------------
 // Trip role ladder (auth-users spec §2.5 R-authz-3; `requireTripMember`)
