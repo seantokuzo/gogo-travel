@@ -58,9 +58,13 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     @duckdb/node-api@1.5.5-r.1. Server suite 433, shared 348.
     T-6.5 carry-forwards: enqueue-volume bounds; consumes `enqueueSearchMiss`;
     adds PlaceCreate/coarseCategory shared shapes.
-  - **Wave 3:** T-6.3 **✅ MERGED 0cc55d1 (PR #5) 2026-07-25** — clean
-    round-1 SHIP (0 blocking, 5 lanes); emitter dormant until P-13 (obligations
-    parked in QUEUE). T-6.5 (S, `/places/search` + custom places) — building.
+  - **Wave 3 — COMPLETE 2026-07-26. P-6 SERVER SURFACE DONE (6/6 tasks,
+    5 PRs, all judge merge/high):** T-6.3 **✅ 0cc55d1 (PR #5)** — clean
+    round-1 SHIP; emitter dormant until P-13. T-6.5 **✅ 3f6a8ce (PR #6)** —
+    search + custom places; prod-driver FK-field landmine caught in review;
+    scale caps added (bare-text ≥4 chars, bbox 2°-clamp — Wave 4/5 clients
+    build against these; constants in shared config/places.ts). Server suite
+    515, shared 378.
   - **Wave 4:** T-6.6 (M, entry-redirect + default-tab + tab-memory + `[tripId]`
     guard/no-access + deep-link registry).
   - **Wave 5 (parallel):** T-6.7 (M, trip list + create modal), T-6.8 (M,
