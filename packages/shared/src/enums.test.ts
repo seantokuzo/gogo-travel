@@ -9,6 +9,7 @@ import {
   BUNDLE_STATUSES,
   BookingCategorySchema,
   CAPTURE_SOURCES,
+  COARSE_CATEGORIES,
   DOCUMENT_KINDS,
   EXPENSE_CATEGORIES,
   ITINERARY_ITEM_KINDS,
@@ -104,6 +105,19 @@ describe("enum tuples mirror schema spec §3.2 exactly (parsed from the spec)", 
       "document_expiry",
       "settle_up",
       "flight_status",
+    ]);
+    // places spec §3.2.3 (T-6.5) — the derived coarse-category union
+    expect([...COARSE_CATEGORIES]).toEqual([
+      "food",
+      "drink",
+      "lodging",
+      "attraction",
+      "culture",
+      "outdoors",
+      "shopping",
+      "nightlife",
+      "transport",
+      "other",
     ]);
     // contracts spec §3.4 user.ts (Gate 2)
     expect([...TRAVEL_STYLES]).toEqual([

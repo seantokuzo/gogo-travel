@@ -6,7 +6,7 @@
  * Threshold changes are CONFIG EDITS here (places spec §3.1.4 step 5:
  * "both config in `@gogo/shared`; thresholds tunable on real regions").
  */
-import type { PlaceSource } from "../enums.js";
+import type { CoarseCategory, PlaceSource } from "../enums.js";
 
 // ---------------------------------------------------------------------------
 // Region grid (§3.1.3) — consumed by `region-grid.ts` and the map client's
@@ -48,6 +48,174 @@ export function isSpineSource(source: PlaceSource): source is SpineSource {
 export function spineSourcesAbove(source: SpineSource): readonly SpineSource[] {
   return SPINE_SOURCE_PRIORITY.slice(0, SPINE_SOURCE_PRIORITY.indexOf(source));
 }
+
+// ---------------------------------------------------------------------------
+// Search scale bounds (§3.3 GET /places/search) — T-6.5 round-1 findings
+// ---------------------------------------------------------------------------
+
+/**
+ * Minimum `q` length for a TEXT-ONLY search (no bbox/near). A 2-char query
+ * yields only 3 padded trigrams ("  x", " xy", "xy ") — against a multi-
+ * million-row spine the trgm GIN's candidate set is every row sharing any
+ * of them, O(10^5–10^6) heap rechecks + similarity() calls per page,
+ * re-paid on every cursor step. ≥ 4 chars ⇒ ≥ 5 trigrams and real
+ * selectivity. 2–3-char typeahead stays legal WHEN a geo bound is present
+ * (the map surface always has one) — the lat/lng window bounds the
+ * candidate set instead. Enforced by `PlaceSearchQuerySchema`.
+ */
+export const PLACES_SEARCH_TEXT_ONLY_MIN_CHARS = 4;
+
+/**
+ * Max bbox span per axis, degrees. Oversized boxes (world-zoom "search this
+ * area") are CLAMPED — not rejected — to this window around the box center
+ * (`PlaceSearchQuerySchema`), mirroring the 9-cell center-out philosophy of
+ * the ingest cap: the v1 map degrades gracefully to "results near where
+ * you're looking" instead of licensing a full-table scan per request. 2° ≈
+ * a 220 km × ≤220 km window — beyond any city-scale viewport.
+ */
+export const PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES = 2;
+
+// ---------------------------------------------------------------------------
+// Coarse-category mapping tables (§3.2.3) — T-6.5 / PL-2
+// ---------------------------------------------------------------------------
+
+/**
+ * The ORDERED source-taxonomy → coarse tables behind
+ * `coarseCategory(source, category)` (domains/place.ts) — first matching
+ * keyword wins; no match ⇒ `'other'`.
+ *
+ * Matching model: the raw category string is lowercased and split into
+ * alphanumeric TOKENS (every non-`[a-z0-9]` run is a separator), and a rule
+ * fires when its keyword equals a whole token. Token equality — never
+ * substring — so "Barbershop" is not a bar. This exact model is mirrored in
+ * SQL by the server's `coarseCategorySqlExpr` (search's `coarse_category`
+ * filter); keywords are single lowercase-ASCII-alphanumeric tokens BY
+ * CONSTRUCTION (config test pins it) so the JS and SQL sides cannot diverge
+ * on any keyword-relevant input.
+ *
+ * ONE table serves all three sources in v1: Overture snake_case labels
+ * ("tourist_attraction"), FSQ OS " > " hierarchies ("Dining and Drinking >
+ * Bakery") and custom free text all reduce to the same tokens. This is
+ * heuristic, TUNABLE CONFIG (same posture as the dedup thresholds above) —
+ * a miss degrades to `'other'`, never an error. Order is load-bearing where
+ * token sets overlap; the blocks below document each precedence decision.
+ */
+export const COARSE_CATEGORY_RULES: ReadonlyArray<readonly [string, CoarseCategory]> = [
+  // Nightlife OUTRANKS drink: a nightclub is not a bar.
+  ["nightclub", "nightlife"],
+  ["nightlife", "nightlife"],
+  ["disco", "nightlife"],
+  ["casino", "nightlife"],
+  // Drink OUTRANKS the generic food fallbacks: "Dining and Drinking > Bar"
+  // must resolve on "bar", not on "dining". "caf" is é-stripped "café" —
+  // tokenization drops non-ASCII, so "Café" arrives as that token.
+  ["bar", "drink"],
+  ["pub", "drink"],
+  ["brewery", "drink"],
+  ["beer", "drink"],
+  ["winery", "drink"],
+  ["distillery", "drink"],
+  ["cafe", "drink"],
+  ["caf", "drink"],
+  ["coffee", "drink"],
+  ["tea", "drink"],
+  // Food — specific venues first, then the FSQ top-level fallbacks.
+  ["restaurant", "food"],
+  ["bakery", "food"],
+  ["pizza", "food"],
+  ["pizzeria", "food"],
+  ["deli", "food"],
+  ["diner", "food"],
+  ["bistro", "food"],
+  ["food", "food"],
+  ["dining", "food"],
+  ["eat", "food"],
+  // Lodging.
+  ["hotel", "lodging"],
+  ["hostel", "lodging"],
+  ["motel", "lodging"],
+  ["resort", "lodging"],
+  ["lodging", "lodging"],
+  ["accommodation", "lodging"],
+  ["campground", "lodging"],
+  ["guesthouse", "lodging"],
+  // Transport — "travel" catches FSQ "Travel and Transportation".
+  ["airport", "transport"],
+  ["station", "transport"],
+  ["transit", "transport"],
+  ["transportation", "transport"],
+  ["transport", "transport"],
+  ["railway", "transport"],
+  ["train", "transport"],
+  ["bus", "transport"],
+  ["ferry", "transport"],
+  ["metro", "transport"],
+  ["subway", "transport"],
+  ["taxi", "transport"],
+  ["parking", "transport"],
+  ["travel", "transport"],
+  // Attraction tokens that OUTRANK culture and outdoors: an "Arts and
+  // Entertainment > Amusement Park" is an attraction, not culture ("arts")
+  // and not a park.
+  ["amusement", "attraction"],
+  ["zoo", "attraction"],
+  ["aquarium", "attraction"],
+  ["monument", "attraction"],
+  ["memorial", "attraction"],
+  // Culture — "arts" catches the rest of FSQ "Arts and Entertainment"
+  // (museums/theaters dominate that branch).
+  ["museum", "culture"],
+  ["gallery", "culture"],
+  ["theater", "culture"],
+  ["theatre", "culture"],
+  ["historic", "culture"],
+  ["historical", "culture"],
+  ["heritage", "culture"],
+  ["temple", "culture"],
+  ["shrine", "culture"],
+  ["church", "culture"],
+  ["cathedral", "culture"],
+  ["mosque", "culture"],
+  ["synagogue", "culture"],
+  ["culture", "culture"],
+  ["cultural", "culture"],
+  ["arts", "culture"],
+  ["art", "culture"],
+  // Outdoors — SPECIFIC venues only here, before the landmark fallbacks, so
+  // "Landmarks and Outdoors > Park" resolves on "park"; the GENERIC
+  // outdoor/outdoors tokens sit after those fallbacks, so the bare
+  // "Landmarks and Outdoors" top level stays an attraction.
+  ["park", "outdoors"],
+  ["trail", "outdoors"],
+  ["beach", "outdoors"],
+  ["garden", "outdoors"],
+  ["mountain", "outdoors"],
+  ["lake", "outdoors"],
+  ["forest", "outdoors"],
+  ["hiking", "outdoors"],
+  ["playground", "outdoors"],
+  // Shopping.
+  ["shop", "shopping"],
+  ["store", "shopping"],
+  ["market", "shopping"],
+  ["supermarket", "shopping"],
+  ["grocery", "shopping"],
+  ["mall", "shopping"],
+  ["retail", "shopping"],
+  ["boutique", "shopping"],
+  ["shopping", "shopping"],
+  // Attraction fallbacks — FSQ "Landmarks and Outdoors" top level, Overture
+  // "tourist_attraction", and the generic entertainment tail.
+  ["landmark", "attraction"],
+  ["landmarks", "attraction"],
+  ["attraction", "attraction"],
+  ["tourist", "attraction"],
+  ["sightseeing", "attraction"],
+  ["entertainment", "attraction"],
+  // Generic outdoor tail — after the landmark fallbacks (see outdoors note).
+  ["outdoor", "outdoors"],
+  ["outdoors", "outdoors"],
+];
 
 // ---------------------------------------------------------------------------
 // Attribution registry (R-places-17, §3.2.4)

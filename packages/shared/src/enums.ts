@@ -131,6 +131,29 @@ export const NotificationCategorySchema = z.enum(NOTIFICATION_CATEGORIES);
 export type NotificationCategory = z.infer<typeof NotificationCategorySchema>;
 
 /**
+ * Places spec §3.2.3 — the DERIVED coarse category on every `Place` wire
+ * payload (`coarse_category` is not a DB column; `places.category` stays the
+ * raw source-taxonomy string). Consumed by search filters and map-pin icons
+ * (map spec §2.2). Append-only. The source-taxonomy → coarse tables live in
+ * `config/places.ts`; the pure mapping is `coarseCategory` in
+ * `domains/place.ts`.
+ */
+export const COARSE_CATEGORIES = [
+  "food",
+  "drink",
+  "lodging",
+  "attraction",
+  "culture",
+  "outdoors",
+  "shopping",
+  "nightlife",
+  "transport",
+  "other",
+] as const;
+export const CoarseCategorySchema = z.enum(COARSE_CATEGORIES);
+export type CoarseCategory = z.infer<typeof CoarseCategorySchema>;
+
+/**
  * Contracts spec §3.4 `user.ts` (Gate 2, 2026-07-09) — fixed multi-tag
  * taxonomy living in `users.prefs` JSONB; feeds the AI cache key. Append-only.
  */
