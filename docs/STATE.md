@@ -50,15 +50,14 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     round-1 fix-then-ship (1 blocking: unbounded string caps; fixed 758f0be),
     judge merge/high, ultra waived. F-030/031/033 code-complete; flips pend
     phase QA (need Wave-4/5 client screens to exercise).
-  - **Wave 2 (parallel, need only T-6.1):** T-6.2 (S, members + invites
-    lifecycle, transfer) — in round-1 fix loop (2 blocking: zero-owner strand
-    via EPQ re-eval, trip-delete cascade deadlock via FK-trigger lock order);
-    T-6.4 (S, places ingest pipeline) — **✅ MERGED e5a2c97 (PR #3)
-    2026-07-25**, round-1 3-blocking fixed e350498 (sargable dedup
-    EXPLAIN-pinned), judge merge/high. New dep @duckdb/node-api@1.5.5-r.1.
-    T-6.5 carry-forwards: enqueue-volume bounds + `enqueueSearchMiss` is the
-    shipped seam it consumes; PlaceCreate/coarseCategory shared shapes are
-    T-6.5 deliverables.
+  - **Wave 2 — COMPLETE 2026-07-25:** T-6.2 **✅ MERGED 5694f83 (PR #4)** —
+    2 dual-lane-convergent blockers (zero-owner strand, cascade deadlock)
+    fixed + pinned with deterministic held-lock tests; global lock order
+    users → trip_members → invites now codified in code docs. T-6.4
+    **✅ MERGED e5a2c97 (PR #3)** — sargable dedup EXPLAIN-pinned; new dep
+    @duckdb/node-api@1.5.5-r.1. Server suite 433, shared 348.
+    T-6.5 carry-forwards: enqueue-volume bounds; consumes `enqueueSearchMiss`;
+    adds PlaceCreate/coarseCategory shared shapes.
   - **Wave 3:** T-6.3 (S, post-commit push emitter — ids-only, actor-excluded,
     member fan-out), T-6.5 (S, `/places/search` + custom places).
   - **Wave 4:** T-6.6 (M, entry-redirect + default-tab + tab-memory + `[tripId]`
@@ -92,9 +91,20 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   Membership aggregates (member_count-style) must join LIVE users or legacy
   ghost rows inflate counts. Observer-less TanStack cache asserts under
   `gcTime: 0` are GC-timer races — pin `gcTime: Infinity` per-key in that test.
-- **Status:** T-6.1 MERGED 2026-07-25; Wave 2 (T-6.2 ∥ T-6.4) dispatched
-  2026-07-25, isolated worktrees off f11f686+. Auth on-device QA (P-5 ledger)
-  runs in parallel whenever Sean wires OAuth.
+- **T-6.2 landmines (add to the T-6.1 list):** write predicates on
+  role-bearing rows must PIN the role (`ne(role,'owner')`) — EPQ re-evaluation
+  after a lock wait lands unguarded writes on the promoted row version.
+  ON DELETE CASCADE lock order = FK-trigger CREATION order (0000: invites
+  before trip_members) — never assume cascades follow your explicit order;
+  fence multi-row deleters with an ordered `FOR UPDATE` SELECT first. Global
+  lock order is users → trip_members → invites; multi-row lockers order by
+  user_id (in-trip) / trip_id (cross-trip). Liveness doors: any INSERT
+  creating a membership/ownership for the caller takes the caller's users row
+  FOR SHARE (live-only) as FIRST lock, or account-deletion mints ghosts.
+- **Status:** Waves 1+2 MERGED 2026-07-25 (T-6.1 f11f686, T-6.4 e5a2c97,
+  T-6.2 5694f83 — main green, server 433). Wave 3 (T-6.3 ∥ T-6.5) dispatched
+  2026-07-26. Auth on-device QA (P-5 ledger) runs in parallel whenever Sean
+  wires OAuth.
 
 ### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
 
