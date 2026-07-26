@@ -51,7 +51,14 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     judge merge/high, ultra waived. F-030/031/033 code-complete; flips pend
     phase QA (need Wave-4/5 client screens to exercise).
   - **Wave 2 (parallel, need only T-6.1):** T-6.2 (S, members + invites
-    lifecycle, transfer), T-6.4 (S, places ingest pipeline).
+    lifecycle, transfer) — in round-1 fix loop (2 blocking: zero-owner strand
+    via EPQ re-eval, trip-delete cascade deadlock via FK-trigger lock order);
+    T-6.4 (S, places ingest pipeline) — **✅ MERGED e5a2c97 (PR #3)
+    2026-07-25**, round-1 3-blocking fixed e350498 (sargable dedup
+    EXPLAIN-pinned), judge merge/high. New dep @duckdb/node-api@1.5.5-r.1.
+    T-6.5 carry-forwards: enqueue-volume bounds + `enqueueSearchMiss` is the
+    shipped seam it consumes; PlaceCreate/coarseCategory shared shapes are
+    T-6.5 deliverables.
   - **Wave 3:** T-6.3 (S, post-commit push emitter — ids-only, actor-excluded,
     member fan-out), T-6.5 (S, `/places/search` + custom places).
   - **Wave 4:** T-6.6 (M, entry-redirect + default-tab + tab-memory + `[tripId]`
