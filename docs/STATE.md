@@ -46,7 +46,10 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     **first real consumer of the dormant `require-trip-member.ts`**; adds
     `TripListItem` shared shape + `expect_updated_at` conflict helper + status
     reconciliation + `base_currency` lock. Flips F-030/031/033, establishes
-    F-038 IDOR harness. NO migration. **← first build.**
+    F-038 IDOR harness. NO migration. **✅ MERGED f11f686 (PR #2) 2026-07-25** —
+    round-1 fix-then-ship (1 blocking: unbounded string caps; fixed 758f0be),
+    judge merge/high, ultra waived. F-030/031/033 code-complete; flips pend
+    phase QA (need Wave-4/5 client screens to exercise).
   - **Wave 2 (parallel, need only T-6.1):** T-6.2 (S, members + invites
     lifecycle, transfer), T-6.4 (S, places ingest pipeline).
   - **Wave 3:** T-6.3 (S, post-commit push emitter — ids-only, actor-excluded,
@@ -62,13 +65,29 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   `TripListItem`/`InvitePreview`/`OwnershipTransfer`/`PlaceCreate`/
   `coarseCategory`/`LINK_DOMAIN`); P-4 mobile placeholders in
   `apps/mobile/src/app/(trips)/` + `[tripId]/_layout.tsx` (NAV-3/4 seams marked).
-- **Carry-forwards to resolve here (QUEUE):** sole-owner-ghost deadlock +
-  invite-accept TOCTOU (→ T-6.1/T-6.2, account-deletion txn must reconcile trip
-  membership); notification-priming wires to the T-6.3 push seam (transport
-  still P-13, stays partial). Txn landmine: atomic multi-writes (owner+member,
-  transfer, invite-accept) MUST use the WS `Pool`/`postgres-js`, never Neon-HTTP.
-- **Status:** scoped + phase docs set up 2026-07-25; T-6.1 is next build. Auth
-  on-device QA (P-5 ledger) runs in parallel whenever Sean wires OAuth.
+- **Carry-forwards:** sole-owner-ghost + account-deletion trip reconcile
+  RESOLVED at T-6.1 (solely-owned trips cascade — judge-validated as the only
+  invariant-consistent mechanization; **spec-amendment note**: no spec sentence
+  says it verbatim, derived from R-trips-1/8/10 + R-db-8). Remaining, with
+  owners: invite-accept TOCTOU + `FOR UPDATE` sole-owner guard + keyset-cursor
+  helper extraction → T-6.2; push-event test bullets (§3.3 trip.updated/deleted,
+  §3.5 status_changed) → T-6.3; base-currency TOCTOU → P-9 money QUEUE row;
+  users' `:userId` 400-vs-404 convergence → P3 QUEUE row. notification-priming
+  wires to the T-6.3 push seam (transport still P-13, stays partial). Txn
+  landmine: atomic multi-writes (owner+member, transfer, invite-accept) MUST
+  use the WS `Pool`/`postgres-js`, never Neon-HTTP.
+- **T-6.1 landmines (fresh sessions, don't re-walk):** timestamptz stores µs
+  but the wire is ms — naive `updated_at` equality 409s every fresh row; use
+  `date_trunc('milliseconds', col) = $iso::timestamptz` (parity proven on both
+  drivers). Raw `Date` params crash postgres-js drizzle `sql` templates — bind
+  canonical ISO string + explicit cast. Key-presence authz needs falsy-value
+  pinning tests (`{status: null}` — a truthiness refactor passes green suites).
+  Membership aggregates (member_count-style) must join LIVE users or legacy
+  ghost rows inflate counts. Observer-less TanStack cache asserts under
+  `gcTime: 0` are GC-timer races — pin `gcTime: Infinity` per-key in that test.
+- **Status:** T-6.1 MERGED 2026-07-25; Wave 2 (T-6.2 ∥ T-6.4) dispatched
+  2026-07-25, isolated worktrees off f11f686+. Auth on-device QA (P-5 ledger)
+  runs in parallel whenever Sean wires OAuth.
 
 ### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
 
