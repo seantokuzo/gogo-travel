@@ -40,6 +40,31 @@ const EnvSchema = z.object({
    * Apple refresh token (§3.3.3 `apple_credentials`).
    */
   APPLE_CREDENTIALS_KEY: z.string().min(1).optional(),
+
+  // -------------------------------------------------------------------------
+  // Places spine ingest datasets (T-6.4, places spec §3.1.4 step 1). Release
+  // snapshots are DATED, so the release pin is deploy-time config, not code
+  // (spec: "release discovery pinned at implementation — never guessed").
+  // Optional at boot: unset ⇒ ingest jobs mark their region rows `failed`
+  // with a visible not-configured error (R-places-4 posture), nothing else
+  // breaks. Local paths are valid values (fixtures/dev).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Overture places GeoParquet glob. Verified pattern (2026-07-25):
+   * `s3://overturemaps-us-west-2/release/<release>/theme=places/type=place/*`
+   * (current release at verification: 2026-07-22.0).
+   */
+  PLACES_OVERTURE_PARQUET_URL: z.string().min(1).optional(),
+  /**
+   * FSQ OS Places parquet glob. NOTE (verified 2026-07-25): Foursquare is
+   * migrating OS Places delivery to its Places Portal (Iceberg catalog,
+   * token-gated) — if the legacy public S3 bucket
+   * (`s3://fsq-os-places-us-east-1/release/dt=<date>/places/parquet/*`) is
+   * gone when this gets wired for real, that's an Autonomy-Contract #3
+   * escalation (account signup), not a config value to improvise.
+   */
+  PLACES_FSQ_OS_PARQUET_URL: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

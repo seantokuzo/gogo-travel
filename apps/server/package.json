@@ -16,6 +16,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@duckdb/node-api": "1.5.5-r.1",
     "@gogo/shared": "workspace:*",
     "@hono/node-server": "2.0.8",
     "@hono/zod-validator": "0.9.0",

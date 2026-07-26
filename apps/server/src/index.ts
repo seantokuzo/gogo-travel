@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildPlacesIngest } from "./places/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
@@ -30,7 +31,14 @@ if (authDeps) {
 
 const app = createApp(
   authDeps
-    ? { auth: authDeps, users: await buildUsersDepsFromEnv(env), trips: buildTripsDeps() }
+    ? {
+        auth: authDeps,
+        users: await buildUsersDepsFromEnv(env),
+        // Places ingest rides the trips deps: trip create / destination
+        // change fire the post-commit region-ingest trigger (T-6.4,
+        // R-places-1) — async, fire-and-forget, never blocks a request.
+        trips: { ...buildTripsDeps(), placesIngest: buildPlacesIngest(env) },
+      }
     : {},
 );
 
