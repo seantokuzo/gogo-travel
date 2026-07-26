@@ -136,6 +136,34 @@ export const RATE_LIMITS = {
 export const TRIPS_PAGE_SIZE_DEFAULT = 50;
 
 // ---------------------------------------------------------------------------
+// Places spine ingest (places spec §3.1, R-places-4/5/7) — T-6.4 / PL-1.
+// Grid + dedup thresholds live in `@gogo/shared/config/places` (§3.1.4:
+// shared with the map client); these are the SERVER-side job knobs.
+// ---------------------------------------------------------------------------
+
+/** Refresh window: a `ready` region younger than this is not re-ingested
+ * (R-places-5 — "default 90 days, config"). Demand-driven only; no cron. */
+export const PLACES_REFRESH_WINDOW_DAYS = 90;
+export const PLACES_REFRESH_WINDOW_MS = PLACES_REFRESH_WINDOW_DAYS * DAY_MS;
+
+/** Rows per upsert statement (§3.1.4 step 4 pins 500–1,000; GIN pending-list
+ * churns badly under row-by-row writes — places schema breadcrumb). */
+export const PLACES_INGEST_BATCH_SIZE = 500;
+
+/** Per-source attempts before the region row goes `failed` (§3.1.4 step 6:
+ * "retry with backoff (max 3)"). */
+export const PLACES_INGEST_MAX_ATTEMPTS = 3;
+/** Backoff base — attempt N waits base × 2^(N−1). */
+export const PLACES_INGEST_RETRY_BASE_MS = 1_000;
+
+/** Secondary-trigger throttle: one enqueue per cell per hour (§3.1.3 —
+ * scan-the-globe panning must not stampede jobs; R-places-7). */
+export const PLACES_SEARCH_MISS_THROTTLE_MS = HOUR_MS;
+
+/** Region-row `error` cap — visible in ops queries, never a stack dump. */
+export const PLACES_INGEST_ERROR_MAX_CHARS = 500;
+
+// ---------------------------------------------------------------------------
 // Trip role ladder (auth-users spec §2.5 R-authz-3; `requireTripMember`)
 // ---------------------------------------------------------------------------
 
