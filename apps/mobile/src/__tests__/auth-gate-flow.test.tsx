@@ -14,8 +14,11 @@
 import { authEndpoints, type SignInResponse } from "@gogo/shared";
 import { act, cleanup, renderRouter, screen, waitFor } from "expo-router/testing-library";
 
-import { apiClient, useSessionStore } from "@/auth";
+import { useSessionStore } from "@/auth";
+import { queryClient } from "@/data";
+import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { seedUnauthenticated, TEST_USER } from "@/test-utils/session-fixtures";
+import { mockNavApi } from "@/test-utils/trip-fixtures";
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
@@ -40,16 +43,17 @@ it("gates the unauthed → onboarding → resume → sign-out lifecycle on the r
   // Seeded state stands in for boot hydration; keep hydrate a no-op.
   useSessionStore.setState({ hydrate: async () => undefined });
   seedUnauthenticated();
-  // signOut now fires a best-effort /auth/logout (spec §3.6.1) — stub the one
-  // real ApiClient call so R-nav-4 stays a pure store/navigation assertion.
-  const requestSpy = jest.spyOn(apiClient, "request").mockResolvedValue(undefined as never);
+  // The resume target is a GUARDED trip route since T-6.6 — the descriptor
+  // mock serves GET /trips/:tripId for the fixture trip (and the best-effort
+  // /auth/logout signOut fires, spec §3.6.1) so R-nav-1..4 stay the subject.
+  const requestSpy = mockNavApi();
 
-  const result = renderRouter("src/app", { initialUrl: "/trip-1/today" });
+  const result = renderRouter("src/app", { initialUrl: `/${TEST_TRIP_ID}/today` });
   await result;
 
   // R-nav-1: an unauthenticated deep route redirects to sign-in and stashes it.
   await waitFor(() => expect(screen.getByTestId("sign-in-screen")).toBeOnTheScreen());
-  expect(useSessionStore.getState().pendingDestination).toBe("/trip-1/today");
+  expect(useSessionStore.getState().pendingDestination).toBe(`/${TEST_TRIP_ID}/today`);
 
   // R-nav-2 (first run): a new-user sign-in routes through onboarding.
   await act(async () => {
@@ -73,4 +77,5 @@ it("gates the unauthed → onboarding → resume → sign-out lifecycle on the r
   expect(requestSpy).toHaveBeenCalledWith(authEndpoints.logout, { body: {} });
 
   requestSpy.mockRestore();
+  queryClient.clear();
 });

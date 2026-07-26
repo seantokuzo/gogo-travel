@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 
-import { Button } from "@/components";
+import { Button, ErrorBanner } from "@/components";
+import { useLinkNoticeStore } from "@/navigation/link-notice";
 import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
 
 /**
@@ -9,9 +10,14 @@ import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
  * `(trips)/capture` (R-nav-24; the needs-review count badge is NAV-6 data
  * wiring). List content (active/upcoming/past grouping) is owned by the
  * trips feature spec.
+ *
+ * Link notice (R-nav-17, T-6.6): an unknown/malformed deep link lands here
+ * with a dismissible non-blocking banner — ErrorBanner is the DS's inline
+ * notice surface (no toast exists, R-ds-17).
  */
 export default function TripListScreen() {
   const router = useRouter();
+  const linkNotice = useLinkNoticeStore((s) => s.message);
   return (
     <PlaceholderScreen
       screenId="trip-list"
@@ -38,11 +44,20 @@ export default function TripListScreen() {
         },
       ]}
     >
+      {linkNotice !== null ? (
+        <ErrorBanner
+          tone="warning"
+          message={linkNotice}
+          onDismiss={() => useLinkNoticeStore.getState().clear()}
+          testID="trip-list-link-notice"
+        />
+      ) : null}
       {__DEV__ ? (
         // Dev-only entries: component gallery (DS-10 evidence surface, moved
-        // here from the old home screen) + a sample-trip door into the
-        // `[tripId]` tab navigator — until trips CRUD lands (P-6) there is
-        // no user path into the tabs, and device QA can't deeplink.
+        // here from the old home screen) + a sample-trip door. NOTE (T-6.6):
+        // the `[tripId]` membership guard now runs on this path — without a
+        // real server trip, the door renders the R-nav-15 no-access state,
+        // which is itself useful device QA. T-6.7's real trip list retires it.
         <>
           <Button
             title="Component gallery"

@@ -25,8 +25,10 @@ import {
 import { create, type StateCreator } from "zustand";
 
 import { queryClient } from "@/data/query-client";
+import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
+import { resetTabMemory } from "@/navigation/tab-memory";
 
-import { ApiRequestError, createApiClient } from "./api-client";
+import { ApiRequestError, createApiClient, type MobileApiClient } from "./api-client";
 import { resolveApiBaseUrl } from "./config";
 import { secureTokenStorage, type SecureTokenStorage } from "./secure-storage";
 
@@ -176,7 +178,7 @@ export const createSessionSlice =
  * lazy closures: the bridge callbacks read `useSessionStore` only at
  * request/refresh time, never during construction.
  */
-export const apiClient: ApiClient = createApiClient({
+export const apiClient: MobileApiClient = createApiClient({
   baseUrl: resolveApiBaseUrl(),
   fetchImpl: (input, init) => fetch(input, init),
   getAccessToken: () => useSessionStore.getState().accessToken,
@@ -189,6 +191,14 @@ export const useSessionStore = create<SessionState>()(
   createSessionSlice({
     storage: secureTokenStorage,
     api: apiClient,
-    onSignedOut: () => queryClient.clear(),
+    onSignedOut: () => {
+      // Nav §2.2 + R-nav-4 ("reset the ENTIRE navigation state"): clear the
+      // query cache, the in-session tab memory, AND the most-recently-viewed
+      // stamp — the next account starts from default tabs and its own entry
+      // resolution, never the previous account's recency.
+      queryClient.clear();
+      resetTabMemory();
+      clearLastViewedTrip();
+    },
   }),
 );

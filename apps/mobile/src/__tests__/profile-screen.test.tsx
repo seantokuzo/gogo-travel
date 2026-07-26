@@ -12,7 +12,7 @@ import {
   type AuthSessionInfo,
   type EffectiveEntitlements,
 } from "@gogo/shared";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 
 import { apiClient, ApiRequestError, useSessionStore } from "@/auth";
 import ProfileScreen from "@/app/(trips)/profile";
@@ -92,7 +92,20 @@ function mockApi(overrides: Record<string, () => Promise<unknown>> = {}): jest.M
   return request;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  // Drain TanStack's queued notifyManager macrotasks INSIDE act before
+  // teardown: the screen mounts FOUR queries, and a test that ends on one
+  // section's assertion can leave another section's settle notification on a
+  // setTimeout(0) that lands post-test — an un-act-wrapped update (B-2 flake
+  // family; SessionsSection/EntitlementsSection fired intermittently under
+  // --maxWorkers=2). Two act-wrapped hops run both queued batches while the
+  // tree is still mounted (suite afterEach runs before RNTL auto-cleanup).
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   jest.restoreAllMocks();
   queryClient.clear();
   // Defensive: real timers even if a sibling renderRouter suite leaked fake ones.

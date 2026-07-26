@@ -27,6 +27,12 @@ export const queryKeys = {
   me: ["me"] as const,
   entitlements: ["entitlements"] as const,
   sessions: ["sessions"] as const,
+  /** `GET /trips` first page — the entry redirect + trip switcher read (T-6.6). */
+  trips: ["trips"] as const,
+  /** `GET /trips/:tripId` — the `[tripId]` membership guard's query (R-nav-20). */
+  trip: (tripId: string) => ["trips", tripId] as const,
+  /** `GET /invites/:token` — join-screen preview (R-nav-11). */
+  invitePreview: (token: string) => ["invites", token, "preview"] as const,
 } as const;
 
 /**

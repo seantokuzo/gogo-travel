@@ -447,6 +447,16 @@ Fixed rules:
    (TabNav). _(Synced 2026-07-18, post-T-4.3)_
 5. IDs are stable across renders and refactors — E2E flows match on them
    (landmine: flows point at the REAL UI).
+6. _(Synced 2026-07-26, post-T-6.6 R1)_ Guard/link surfaces the build added:
+   screen prefixes `no-access` and `trip-error` (rule 2 applies:
+   `no-access-screen`, `trip-error-screen`); layout-hosted component base
+   `trip-switcher` (R-nav-23 affordance — `-button` / `-sheet` /
+   `-list-item-{tripId}`); element nouns `banner` (`trip-error-banner`) and
+   `link-notice` (`trip-list-link-notice`, the R-nav-17 notice). HOLD
+   surfaces are NON-screens: transient boot/guard holds carry no `-screen`
+   suffix — `entry-splash`, `trip-loading` (joining T-5.7's
+   `sign-in-splash`); a screen-scoped loading region derives
+   `<screen>-loading` (`invite-join-loading`).
 
 Examples: `sign-in-button-apple`, `trip-list-fab-create`,
 `trip-list-list-item-{tripId}`, `itinerary-view-toggle`,

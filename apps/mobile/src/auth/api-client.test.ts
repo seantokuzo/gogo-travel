@@ -4,7 +4,12 @@
  */
 import { authEndpoints, userEndpoints, type User } from "@gogo/shared";
 
-import { ApiRequestError, createApiClient, type ApiClientConfig } from "./api-client";
+import {
+  ApiRequestError,
+  createApiClient,
+  REQUEST_TIMEOUT_MS,
+  type ApiClientConfig,
+} from "./api-client";
 
 const USER: User = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -204,5 +209,92 @@ describe("createApiClient — refresh-on-401 rotation", () => {
       fetchImpl.mock.calls.filter((c) => (c[0] as string).endsWith("/auth/refresh")),
     ).toHaveLength(1);
     expect(onAuthLost).not.toHaveBeenCalled();
+  });
+});
+
+describe("request timeout + cancellation (T-6.6 R1)", () => {
+  // A signal-respecting transport that never responds on its own — the
+  // captive-portal/black-hole stall the cap exists for (Android RN OkHttp
+  // ships with timeouts DISABLED; without the cap this hangs forever).
+  const stalledFetch = (onSignal?: (signal: AbortSignal) => void) =>
+    jest.fn(
+      (_url: string, init: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          onSignal?.(init.signal);
+          init.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("aborts a stalled request at the REQUEST_TIMEOUT_MS cap → transport error", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = stalledFetch();
+    const { client } = setup({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const pending = client.request(userEndpoints.getMe, {});
+    const assertion = expect(pending).rejects.toMatchObject({ status: 0, code: "NETWORK" });
+    await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+    await assertion;
+    // The settle cleaned its own timer — nothing left ticking (jest handles).
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it("just under the cap, the request is still pending (the cap is the cap)", async () => {
+    jest.useFakeTimers();
+    const fetchImpl = stalledFetch();
+    const { client } = setup({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    let settled = false;
+    const pending = client.request(userEndpoints.getMe, {}).catch(() => {
+      settled = true;
+    });
+    await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(settled).toBe(true);
+  });
+
+  it("forwards the external signal into fetch — aborting it cancels the request", async () => {
+    let received: AbortSignal | undefined;
+    const fetchImpl = stalledFetch((signal) => {
+      received = signal;
+    });
+    const { client } = setup({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const controller = new AbortController();
+    const pending = client.request(userEndpoints.getMe, {}, { signal: controller.signal });
+    const assertion = expect(pending).rejects.toMatchObject({ status: 0, code: "NETWORK" });
+    expect(received?.aborted).toBe(false);
+    controller.abort();
+    await assertion;
+    // External abort propagated through the composed signal fetch received.
+    expect(received?.aborted).toBe(true);
+  });
+
+  it("an already-aborted external signal short-circuits", async () => {
+    const fetchImpl = jest.fn((_url: string, init: { signal: AbortSignal }) =>
+      init.signal.aborted
+        ? Promise.reject(new Error("aborted"))
+        : Promise.resolve(httpResponse(200, USER)),
+    );
+    const { client } = setup({ fetchImpl: fetchImpl as unknown as typeof fetch });
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client.request(userEndpoints.getMe, {}, { signal: controller.signal }),
+    ).rejects.toMatchObject({ status: 0, code: "NETWORK" });
+  });
+
+  it("clears the cap timer when a request settles normally (no leaked handles)", async () => {
+    jest.useFakeTimers();
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockResolvedValue(httpResponse(200, USER));
+    await client.request(userEndpoints.getMe, {});
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
