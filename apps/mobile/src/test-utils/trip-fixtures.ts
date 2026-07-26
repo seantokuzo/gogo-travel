@@ -8,12 +8,21 @@
  * with the effective `status` field kept coherent with the dates — the
  * server derives it the same way (R-db-19).
  */
-import type { InvitePreview, ISODate, Paginated, TripListItem } from "@gogo/shared";
+import type {
+  InviteListItem,
+  InvitePreview,
+  ISODate,
+  MemberListItem,
+  Paginated,
+  TripListItem,
+  TripMember,
+  UserProfile,
+} from "@gogo/shared";
 
 import { apiClient, ApiRequestError } from "@/auth";
 import { localTodayISO } from "@/navigation/trip-defaults";
 
-import { TEST_TRIP_ID } from "./ids";
+import { CREATED_INVITE_ID, CREATED_INVITE_URL, TEST_INVITE_ID, TEST_TRIP_ID } from "./ids";
 import { TEST_USER } from "./session-fixtures";
 
 /** Day arithmetic on ISO dates (UTC math — no tz drift for day offsets). */
@@ -101,11 +110,67 @@ export function makeInvitePreview(overrides?: Partial<InvitePreview>): InvitePre
 /** The default guarded trip most route-tree suites mount. */
 export const DEFAULT_TRIPS: TripListItem[] = [makePlanningTrip(TEST_TRIP_ID)];
 
+// ---------------------------------------------------------------------------
+// Members & invites (T-6.8)
+// ---------------------------------------------------------------------------
+
+/** Member-visible profile — TEST_USER's fields unless overridden. */
+export function makeUserProfile(overrides?: Partial<UserProfile>): UserProfile {
+  return {
+    id: TEST_USER.id,
+    display_name: TEST_USER.display_name,
+    avatar_key: null,
+    venmo_username: null,
+    cashtag: null,
+    paypalme_username: null,
+    zelle_handle: null,
+    zelle_display_name: null,
+    ...overrides,
+  };
+}
+
+/** `GET /trips/:tripId/members` item — the caller as owner by default. */
+export function makeMember(overrides?: {
+  user?: Partial<UserProfile>;
+  role?: MemberListItem["role"];
+  joined_at?: string;
+}): MemberListItem {
+  return {
+    user: makeUserProfile(overrides?.user),
+    role: overrides?.role ?? "owner",
+    joined_at: overrides?.joined_at ?? "2026-07-01T00:00:00.000Z",
+  };
+}
+
+/** `GET /trips/:tripId/invites` item — live 7-day editor invite by default. */
+export function makeInvite(overrides?: Partial<InviteListItem>): InviteListItem {
+  return {
+    id: TEST_INVITE_ID,
+    trip_id: TEST_TRIP_ID,
+    // Bearer credential — fixtures keep it obviously fake; screens never render it.
+    token: "tok-fixture-row",
+    role: "editor",
+    created_by: TEST_USER.id,
+    expires_at: `${addDays(localTodayISO(), 7)}T00:00:00.000Z`,
+    revoked_at: null,
+    max_uses: null,
+    use_count: 0,
+    created_at: "2026-07-01T00:00:00.000Z",
+    updated_at: "2026-07-01T00:00:00.000Z",
+    state: "active",
+    ...overrides,
+  };
+}
+
 export interface NavApiOptions {
   /** `GET /trips` page AND the `GET /trips/:tripId` universe (id-keyed). */
   trips?: TripListItem[];
   /** Token → preview for `GET /invites/:token`; unknown tokens 404. */
   invitePreviews?: Record<string, InvitePreview>;
+  /** `GET /trips/:tripId/members` items (default: the caller as owner). */
+  members?: MemberListItem[];
+  /** `GET /trips/:tripId/invites` page items (default: none). */
+  invites?: InviteListItem[];
   /** `METHOD path` → responder; replaces the route (partial-failure seam). */
   overrides?: Record<string, (input: Record<string, unknown>) => Promise<unknown>>;
 }
@@ -118,9 +183,14 @@ export interface NavApiOptions {
 export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
   const trips = opts.trips ?? DEFAULT_TRIPS;
   const byId = new Map(trips.map((trip) => [trip.id, trip]));
+  const members = opts.members ?? [makeMember()];
+  const invites = opts.invites ?? [];
   const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
   request.mockImplementation(
-    (descriptor: { method: string; path: string }, input?: { params?: Record<string, string> }) => {
+    (
+      descriptor: { method: string; path: string },
+      input?: { params?: Record<string, string>; body?: Record<string, unknown> },
+    ) => {
       const key = `${descriptor.method} ${descriptor.path}`;
       const override = opts.overrides?.[key];
       if (override) return override((input ?? {}) as Record<string, unknown>);
@@ -141,6 +211,50 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
             ? Promise.resolve(preview)
             : Promise.reject(new ApiRequestError(404, "NOT_FOUND", "not found"));
         }
+        // Member/invite family (T-6.8) — happy-path defaults; failure shapes
+        // come in through `overrides` so tests exercise the REAL error mapping.
+        case "GET /trips/:tripId/members":
+          return Promise.resolve({ items: members });
+        case "GET /trips/:tripId/invites":
+          return Promise.resolve({ items: invites, nextCursor: null });
+        case "PATCH /trips/:tripId/members/:userId": {
+          const row: TripMember = {
+            trip_id: input?.params?.tripId ?? TEST_TRIP_ID,
+            user_id: input?.params?.userId ?? "",
+            role: (input?.body as { role?: TripMember["role"] } | undefined)?.role ?? "editor",
+            joined_at: "2026-07-01T00:00:00.000Z",
+          };
+          return Promise.resolve(row);
+        }
+        case "DELETE /trips/:tripId/members/:userId":
+          return Promise.resolve(undefined);
+        case "POST /trips/:tripId/transfer-ownership": {
+          const tripId = input?.params?.tripId ?? TEST_TRIP_ID;
+          const toUserId = (input?.body as { to_user_id?: string } | undefined)?.to_user_id ?? "";
+          const rows: TripMember[] = [
+            {
+              trip_id: tripId,
+              user_id: TEST_USER.id,
+              role: "editor",
+              joined_at: "2026-07-01T00:00:00.000Z",
+            },
+            {
+              trip_id: tripId,
+              user_id: toUserId,
+              role: "owner",
+              joined_at: "2026-07-01T00:00:00.000Z",
+            },
+          ];
+          return Promise.resolve({ items: rows });
+        }
+        case "POST /trips/:tripId/invites": {
+          const role =
+            (input?.body as { role?: InviteListItem["role"] } | undefined)?.role ?? "editor";
+          const { state: _state, ...row } = makeInvite({ id: CREATED_INVITE_ID, role });
+          return Promise.resolve({ ...row, url: CREATED_INVITE_URL });
+        }
+        case "DELETE /trips/:tripId/invites/:inviteId":
+          return Promise.resolve(undefined);
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:

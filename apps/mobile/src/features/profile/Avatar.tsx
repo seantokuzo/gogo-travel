@@ -18,7 +18,8 @@ export interface AvatarProps {
   avatarKey: string | null;
 }
 
-function initialsOf(name: string): string {
+/** Exported for the members feature's compact avatar (T-6.8) — one derivation. */
+export function initialsOf(name: string): string {
   const parts = name
     .trim()
     .split(/\s+/)
