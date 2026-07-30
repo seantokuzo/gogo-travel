@@ -2,14 +2,17 @@
  * Members screen (T-6.8 / CT-4; trips spec §2.5, R-tripui-13..17) — member
  * list with role badges, owner-only management (role change via Sheet,
  * remove + make-owner via ConfirmDialog), invite create → OS share sheet,
- * active-invite list with revoke, and self-leave for non-owners.
+ * active-invite list with revoke. §2.5 enumerates this screen EXHAUSTIVELY —
+ * leave-trip lives on trip settings (CT-5/T-6.9), not here (round-1 ruling;
+ * the LEAVE_TRIP_CONFIRM copy + owner-leave 409 mappings stay in
+ * features/members for that screen to consume).
  *
  * Role gating is UI convenience only (R-tripui-14) — the §3.2 matrix
  * enforces server-side; any 4xx a raced screen produces renders a mapped
  * ErrorBanner (features/members/error-copy), never a crash:
  * - owner: manage sheet on every other row, invite section, revoke any
- * - editor: invite section, revoke OWN invites, leave
- * - viewer: read-only list + leave (no invites section — the query is
+ * - editor: invite section, revoke OWN invites only
+ * - viewer: read-only list (no invites section — the query is
  *   `enabled`-gated so the guaranteed 403 never fires)
  *
  * Mutation policy per §2.6 lives in `@/data/members` (optimistic role
@@ -21,14 +24,8 @@
  * carries the triggering action's testID; children derive `-confirm` /
  * `-cancel`, same as trip-new's cancel-confirm).
  */
-import type {
-  InviteGrantableRole,
-  InviteListItem,
-  MemberListItem,
-  TripMemberRole,
-} from "@gogo/shared";
+import type { InviteGrantableRole, MemberListItem, TripMemberRole } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useRouter } from "expo-router";
 import { useMemo, useState } from "react";
 import { FlatList, Platform, Share, StyleSheet, View } from "react-native";
 
@@ -46,6 +43,7 @@ import {
   Skeleton,
 } from "@/components";
 import type { BadgeTone } from "@/components";
+import type { InviteRow } from "@/data";
 import {
   useCreateInvite,
   useRemoveMember,
@@ -67,14 +65,13 @@ const ROLE_TONE: Record<TripMemberRole, BadgeTone> = {
 type Row =
   | { type: "member"; item: MemberListItem }
   | { type: "invites-header" }
-  | { type: "invite"; item: InviteListItem }
+  | { type: "invite"; item: InviteRow }
   | { type: "invites-empty" }
   | { type: "invites-error" };
 
 type Dialog =
   | { kind: "remove"; userId: string; name: string }
   | { kind: "transfer"; userId: string; name: string }
-  | { kind: "leave" }
   | { kind: "revoke"; inviteId: string }
   | null;
 
@@ -92,27 +89,17 @@ const useStyles = createStyles((t) =>
       paddingTop: t.space[5],
       paddingBottom: t.space[2],
     },
-    trailing: { flexDirection: "row", alignItems: "center", gap: t.space[2] },
     emptyCaption: { paddingVertical: t.space[2] },
   }),
 );
 
 export default function MembersScreen() {
   const s = useStyles();
-  const router = useRouter();
   const trip = useTripContext();
   const me = useSessionStore((state) => state.user);
 
   const callerRole = trip.role;
   const canManageInvites = callerRole === "owner" || callerRole === "editor";
-
-  const members = useTripMembers(trip.id);
-  const invites = useTripInvites(trip.id, { enabled: canManageInvites });
-  const updateRole = useUpdateMemberRole(trip.id);
-  const removeMember = useRemoveMember(trip.id);
-  const transferOwnership = useTransferOwnership(trip.id);
-  const createInvite = useCreateInvite(trip.id);
-  const revokeInvite = useRevokeInvite(trip.id);
 
   const [banner, setBanner] = useState<string | null>(null);
   const [managedId, setManagedId] = useState<string | null>(null);
@@ -120,7 +107,19 @@ export default function MembersScreen() {
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
 
-  const failToBanner = { onError: (err: unknown) => setBanner(memberActionErrorMessage(err)) };
+  // HOOK-level error seam, not per-call: per-call `mutate` callbacks fire
+  // only for the LATEST call — a failed sibling of two in-flight row actions
+  // would lose its banner (data/members.ts `MemberMutationOptions`).
+  const failToBanner = {
+    onMutationError: (err: unknown) => setBanner(memberActionErrorMessage(err)),
+  };
+  const members = useTripMembers(trip.id);
+  const invites = useTripInvites(trip.id, { enabled: canManageInvites });
+  const updateRole = useUpdateMemberRole(trip.id, failToBanner);
+  const removeMember = useRemoveMember(trip.id, failToBanner);
+  const transferOwnership = useTransferOwnership(trip.id, failToBanner);
+  const createInvite = useCreateInvite(trip.id, failToBanner);
+  const revokeInvite = useRevokeInvite(trip.id, failToBanner);
 
   const rows = useMemo<Row[]>(() => {
     const built: Row[] = (members.data?.items ?? []).map((item) => ({ type: "member", item }));
@@ -149,7 +148,7 @@ export default function MembersScreen() {
   const pickRole = (userId: string, role: InviteGrantableRole, current: string) => {
     setManagedId(null);
     if (role === current) return;
-    updateRole.mutate({ userId, role }, failToBanner);
+    updateRole.mutate({ userId, role });
   };
 
   const sendInvite = (role: InviteGrantableRole) => {
@@ -168,7 +167,6 @@ export default function MembersScreen() {
             setBanner("Couldn't open the share sheet — the invite link was still created.");
           }
         },
-        ...failToBanner,
       },
     );
   };
@@ -179,27 +177,13 @@ export default function MembersScreen() {
     setDialog(null);
     switch (closing.kind) {
       case "remove":
-        removeMember.mutate({ userId: closing.userId }, failToBanner);
+        removeMember.mutate({ userId: closing.userId });
         break;
       case "transfer":
-        transferOwnership.mutate({ toUserId: closing.userId }, failToBanner);
-        break;
-      case "leave":
-        if (me === null) return;
-        removeMember.mutate(
-          { userId: me.id },
-          {
-            onSuccess: () => {
-              // Back to the list; the guard 404s + scrubs this trip's cache
-              // if it is ever revisited (T-6.6 posture) — no manual eviction.
-              router.replace("/(trips)");
-            },
-            ...failToBanner,
-          },
-        );
+        transferOwnership.mutate({ toUserId: closing.userId });
         break;
       case "revoke":
-        revokeInvite.mutate({ inviteId: closing.inviteId }, failToBanner);
+        revokeInvite.mutate({ inviteId: closing.inviteId });
         break;
     }
   };
@@ -210,21 +194,7 @@ export default function MembersScreen() {
         const { user, role } = row.item;
         const isMe = user.id === me?.id;
         const manageable = callerRole === "owner" && !isMe;
-        const showLeave = isMe && callerRole !== "owner";
-        const trailing = (
-          <View style={s.trailing}>
-            <Badge label={role} tone={ROLE_TONE[role]} />
-            {showLeave ? (
-              <Button
-                title="Leave"
-                variant="ghost"
-                size="sm"
-                onPress={() => setDialog({ kind: "leave" })}
-                testID="members-button-leave"
-              />
-            ) : null}
-          </View>
-        );
+        const trailing = <Badge label={role} tone={ROLE_TONE[role]} />;
         const title = isMe ? `${user.display_name} (you)` : user.display_name;
         const leading = (
           <MemberAvatar displayName={user.display_name} avatarKey={user.avatar_key} />
@@ -467,14 +437,6 @@ function dialogProps(dialog: NonNullable<Dialog>): {
         body: "They'll take over this trip and you'll become an editor. Only the owner can delete the trip or manage members.",
         confirmLabel: "Make owner",
         testID: `members-button-transfer-${dialog.userId}`,
-      };
-    case "leave":
-      return {
-        title: "Leave this trip?",
-        body: "You'll lose access to the plan. Your expenses and balances remain for the group.",
-        confirmLabel: "Leave",
-        destructive: true,
-        testID: "members-button-leave",
       };
     case "revoke":
       return {

@@ -5,10 +5,15 @@
  * reachability is members-flow.test.tsx.
  *
  * Pins: the role-gated affordance matrix (viewer none / editor invite-only /
- * owner all), the ConfirmDialog paths (remove, transfer, leave, revoke),
- * §2.6 optimistic-vs-reconcile behavior (role change rollback, transfer
- * two-row reconcile, revoke rollback on already_revoked), invite create →
- * OS share sheet with the returned url, and the 4xx → banner mapping.
+ * owner all; NO leave affordance — §2.5 is exhaustive, leave lives on trip
+ * settings), the ConfirmDialog confirm AND cancel paths, §2.6
+ * optimistic-vs-reconcile behavior, invite create → OS share sheet, the
+ * 4xx → banner mapping, and cache token-hygiene.
+ *
+ * FALSIFIABILITY (round-1): rollback tests HANG the re-sync GET that
+ * `onError` fires — restoration can then only come from the snapshot
+ * `setQueryData`, so deleting the rollback turns these red instead of being
+ * papered over by the refetch returning the pre-mutation list.
  */
 import type { InviteListItem, MemberListItem, TripMemberRole, TripWithRole } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
@@ -16,6 +21,7 @@ import { Share } from "react-native";
 
 import MembersScreen from "@/app/[tripId]/more/members";
 import { ApiRequestError } from "@/auth";
+import { queryKeys } from "@/data";
 import { TripProvider } from "@/navigation/trip-context";
 import {
   CREATED_INVITE_ID,
@@ -52,6 +58,7 @@ const C_VIEWER = makeMember({
   user: { id: MEMBER_C_ID, display_name: "Casey Viewer" },
   role: "viewer",
 });
+const DEFAULT_MEMBERS = [ME_OWNER, B_EDITOR, C_VIEWER];
 /** Non-owner-caller universes: someone else owns the trip. */
 const B_OWNER = makeMember({ user: { id: MEMBER_B_ID, display_name: "Blake Owner" } });
 const ME_EDITOR = makeMember({ role: "editor" });
@@ -65,7 +72,7 @@ async function renderMembers(opts: {
 }) {
   seedAuthenticated();
   const request = mockNavApi({
-    members: opts.members ?? [ME_OWNER, B_EDITOR, C_VIEWER],
+    members: opts.members ?? DEFAULT_MEMBERS,
     invites: opts.invites ?? [],
     overrides: opts.overrides,
   });
@@ -81,6 +88,22 @@ async function renderMembers(opts: {
 }
 
 /**
+ * A members GET that serves `first` once, then HANGS (or serves `healed`) —
+ * the falsifiability tool: with the re-sync refetch pinned open, only the
+ * snapshot rollback can restore the pre-mutation UI.
+ */
+function membersGetSequence(first: MemberListItem[], later?: MemberListItem[]) {
+  let calls = 0;
+  return () => {
+    calls += 1;
+    if (calls === 1) return Promise.resolve({ items: first });
+    return later === undefined
+      ? new Promise(() => undefined) // hang: the refetch never lands
+      : Promise.resolve({ items: later });
+  };
+}
+
+/**
  * Hold an act() window over VirtualizedList's deferred cell-batch update
  * (B-2 family, T-6.8 variant): every FlatList DATA change schedules a
  * Batchinator setState ~50ms later, and RNTL's waitFor sleeps BETWEEN
@@ -91,6 +114,19 @@ async function renderMembers(opts: {
 async function settleList() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+}
+
+/**
+ * Hold act() over a Sheet's exit-completion setState (timed slide-out at
+ * duration.base = 200ms → `setExiting(false)`): a waitFor SLEEP between
+ * act-wrapped checks is un-act'd, so under full-turbo contention the
+ * completion otherwise lands there ("An update to Sheet was not wrapped in
+ * act"). Call right after any press that closes a sheet.
+ */
+async function settleSheetExit() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
   });
 }
 
@@ -108,7 +144,10 @@ afterEach(async () => {
 
 describe("role-gated affordances (R-tripui-13/14)", () => {
   it("owner sees everything: list w/ roles + (you), manage sheet, invite CTA, revoke on any invite", async () => {
-    await renderMembers({ role: "owner", invites: [makeInvite({ created_by: MEMBER_B_ID })] });
+    const { client } = await renderMembers({
+      role: "owner",
+      invites: [makeInvite({ created_by: MEMBER_B_ID })],
+    });
 
     expect(await screen.findByText("Test Traveler (you)")).toBeOnTheScreen();
     await settleList();
@@ -121,8 +160,18 @@ describe("role-gated affordances (R-tripui-13/14)", () => {
     expect(screen.getByTestId("members-button-invite")).toBeOnTheScreen();
     // Owner revokes ANY invite (§3.2), including one created by an editor.
     expect(screen.getByTestId(`members-button-revoke-${TEST_INVITE_ID}`)).toBeOnTheScreen();
-    // The owner has no leave affordance (transfer-first, R-trips-11).
+    // §2.5 enumerates this screen exhaustively — NO leave affordance here
+    // (leave lives on trip settings, CT-5/T-6.9; round-1 ruling).
     expect(screen.queryByTestId("members-button-leave")).toBeNull();
+
+    // Cache hygiene: cached invite rows carry NO bearer token (round-1).
+    const cachedInvites = client.getQueryData<{ items: Record<string, unknown>[] }>(
+      queryKeys.tripInvites(TEST_TRIP_ID),
+    );
+    expect(cachedInvites?.items.length).toBeGreaterThan(0);
+    for (const row of cachedInvites?.items ?? []) {
+      expect(row).not.toHaveProperty("token");
+    }
 
     // Row press opens the manage sheet with the three §2.5 actions.
     await fireEvent.press(rowB);
@@ -131,7 +180,7 @@ describe("role-gated affordances (R-tripui-13/14)", () => {
     expect(screen.getByTestId(`members-button-remove-${MEMBER_B_ID}`)).toBeOnTheScreen();
   });
 
-  it("editor sees invite + own-invite revoke only; other rows are not manageable; self can leave", async () => {
+  it("editor sees invite + own-invite revoke only; other rows are not manageable", async () => {
     await renderMembers({
       role: "editor",
       members: [B_OWNER, ME_EDITOR],
@@ -146,7 +195,7 @@ describe("role-gated affordances (R-tripui-13/14)", () => {
     expect(screen.getByTestId("members-button-invite")).toBeOnTheScreen();
     expect(screen.getByTestId(`members-button-revoke-${TEST_INVITE_ID}`)).toBeOnTheScreen();
     expect(screen.queryByTestId(`members-button-revoke-${INVITE_B_ID}`)).toBeNull();
-    expect(screen.getByTestId("members-button-leave")).toBeOnTheScreen();
+    expect(screen.queryByTestId("members-button-leave")).toBeNull();
 
     // Pressing another member's row opens nothing for a non-owner.
     await fireEvent.press(screen.getByTestId(`members-list-item-${MEMBER_B_ID}`));
@@ -162,7 +211,7 @@ describe("role-gated affordances (R-tripui-13/14)", () => {
     expect(screen.queryByTestId("members-button-invite")).toBeNull();
     expect(screen.queryByText("Invites")).toBeNull();
     expect(screen.queryByTestId(`members-button-role-${MEMBER_B_ID}`)).toBeNull();
-    expect(screen.getByTestId("members-button-leave")).toBeOnTheScreen();
+    expect(screen.queryByTestId("members-button-leave")).toBeNull();
     const inviteCalls = request.mock.calls.filter(
       ([descriptor]) => (descriptor as { path: string }).path === "/trips/:tripId/invites",
     );
@@ -182,6 +231,7 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     await settleList();
     await fireEvent.press(rowB);
     await fireEvent.press(await screen.findByTestId(`members-button-remove-${MEMBER_B_ID}`));
+    await settleSheetExit();
 
     expect(await screen.findByText("Remove Blake Editor from this trip?")).toBeOnTheScreen();
     expect(screen.getByText(/expenses and balances stay/i)).toBeOnTheScreen();
@@ -205,6 +255,7 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     await settleList();
     await fireEvent.press(rowB);
     await fireEvent.press(await screen.findByTestId(`members-button-remove-${MEMBER_B_ID}`));
+    await settleSheetExit();
     await fireEvent.press(await screen.findByTestId(`members-button-remove-${MEMBER_B_ID}-cancel`));
 
     expect(screen.getByTestId(`members-list-item-${MEMBER_B_ID}`)).toBeOnTheScreen();
@@ -214,11 +265,38 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     expect(deletes).toHaveLength(0);
   });
 
-  it("role change applies optimistically, rolls back on 403, and maps the ErrorBanner (R-tripui-14/21)", async () => {
+  it("a remove failure restores the row from the SNAPSHOT — the re-sync GET is held open (rollback pin)", async () => {
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        "GET /trips/:tripId/members": membersGetSequence(DEFAULT_MEMBERS),
+        "DELETE /trips/:tripId/members/:userId": () =>
+          Promise.reject(new ApiRequestError(404, "NOT_FOUND", "already gone")),
+      },
+    });
+
+    const rowB = await screen.findByTestId(`members-list-item-${MEMBER_B_ID}`);
+    await settleList();
+    await fireEvent.press(rowB);
+    await fireEvent.press(await screen.findByTestId(`members-button-remove-${MEMBER_B_ID}`));
+    await settleSheetExit();
+    await fireEvent.press(
+      await screen.findByTestId(`members-button-remove-${MEMBER_B_ID}-confirm`),
+    );
+
+    // Banner maps the 404; the row is back even though the refetch hangs —
+    // only the snapshot restore can have put it there.
+    expect(await screen.findByText(/no longer in this trip/i)).toBeOnTheScreen();
+    expect(screen.getByTestId(`members-list-item-${MEMBER_B_ID}`)).toBeOnTheScreen();
+    await settleList();
+  });
+
+  it("role change applies optimistically and rolls back on 403 from the SNAPSHOT (re-sync GET held open)", async () => {
     let rejectPatch: ((reason: unknown) => void) | undefined;
     await renderMembers({
       role: "owner",
       overrides: {
+        "GET /trips/:tripId/members": membersGetSequence(DEFAULT_MEMBERS),
         "PATCH /trips/:tripId/members/:userId": () =>
           new Promise((_resolve, reject) => {
             rejectPatch = reject;
@@ -233,6 +311,7 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     await fireEvent.press(rowB);
     await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}`));
     await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}-viewer`));
+    await settleSheetExit();
 
     // Optimistic flip while the PATCH is still in flight.
     await waitFor(() =>
@@ -242,7 +321,9 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     );
     await settleList();
 
-    // Server denies → rollback + mapped banner, never a crash.
+    // Server denies → the snapshot restore flips it back (the onError
+    // re-sync refetch HANGS, so a refetch cannot be what restored it) +
+    // mapped banner, never a crash.
     await act(async () => {
       rejectPatch?.(new ApiRequestError(403, "FORBIDDEN", "forbidden"));
     });
@@ -264,6 +345,7 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
     await fireEvent.press(rowBFound);
     await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}`));
     await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}-viewer`));
+    await settleSheetExit();
 
     await waitFor(() =>
       expect(
@@ -276,16 +358,87 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
       { params: { tripId: TEST_TRIP_ID, userId: MEMBER_B_ID }, body: { role: "viewer" } },
     );
   });
+
+  it("concurrent role changes: a failed sibling's rollback can't strand the survivor — the onError re-sync heals", async () => {
+    const held: { resolve(value: unknown): void; reject(reason: unknown): void }[] = [];
+    const healed = [
+      ME_OWNER,
+      B_EDITOR,
+      makeMember({ user: { id: MEMBER_C_ID, display_name: "Casey Viewer" }, role: "editor" }),
+    ];
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        // Serves the initial list, then the POST-COMMIT server truth the
+        // onError re-sync fetches (B's change failed, C's committed).
+        "GET /trips/:tripId/members": membersGetSequence(DEFAULT_MEMBERS, healed),
+        "PATCH /trips/:tripId/members/:userId": () =>
+          new Promise((resolve, reject) => {
+            held.push({ resolve, reject });
+          }),
+      },
+    });
+
+    // Mutation 1: B editor → viewer (this one will FAIL).
+    const rowB = await screen.findByTestId(`members-list-item-${MEMBER_B_ID}`);
+    await settleList();
+    await fireEvent.press(rowB);
+    await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}`));
+    await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_B_ID}-viewer`));
+    await settleSheetExit();
+
+    // Mutation 2: C viewer → editor (this one will SUCCEED).
+    await fireEvent.press(screen.getByTestId(`members-list-item-${MEMBER_C_ID}`));
+    await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_C_ID}`));
+    await fireEvent.press(await screen.findByTestId(`members-button-role-${MEMBER_C_ID}-editor`));
+    await settleSheetExit();
+    await waitFor(() => expect(held).toHaveLength(2));
+
+    // C's PATCH commits first — its reconcile lands C=editor.
+    await act(async () => {
+      held[1].resolve({
+        trip_id: TEST_TRIP_ID,
+        user_id: MEMBER_C_ID,
+        role: "editor",
+        joined_at: "2026-07-01T00:00:00.000Z",
+      });
+    });
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId(`members-list-item-${MEMBER_C_ID}`)).getByText("editor"),
+      ).toBeOnTheScreen(),
+    );
+    await settleList();
+
+    // B's PATCH fails. Its snapshot pre-dates C's change, so the bare
+    // rollback clobbers C back to viewer — the onError invalidate must
+    // refetch server truth and heal the survivor.
+    await act(async () => {
+      held[0].reject(new ApiRequestError(403, "FORBIDDEN", "forbidden"));
+    });
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId(`members-list-item-${MEMBER_B_ID}`)).getByText("editor"),
+      ).toBeOnTheScreen();
+      expect(
+        within(screen.getByTestId(`members-list-item-${MEMBER_C_ID}`)).getByText("editor"),
+      ).toBeOnTheScreen();
+    });
+    await settleList();
+    expect(screen.getByText(/permission/i)).toBeOnTheScreen();
+  });
 });
 
 describe("transfer ownership (R-tripui-17)", () => {
-  it("confirms the demotion, then reconciles BOTH returned rows (R-trips-19)", async () => {
-    const { request } = await renderMembers({ role: "owner" });
+  it("confirms the demotion, reconciles BOTH returned rows, and fires the role re-gate invalidates", async () => {
+    const { request, client } = await renderMembers({ role: "owner" });
+    const invalidateSpy = jest.spyOn(client, "invalidateQueries");
 
     const rowB = await screen.findByTestId(`members-list-item-${MEMBER_B_ID}`);
     await settleList();
     await fireEvent.press(rowB);
     await fireEvent.press(await screen.findByTestId(`members-button-transfer-${MEMBER_B_ID}`));
+    await settleSheetExit();
 
     expect(await screen.findByText("Make Blake Editor the owner?")).toBeOnTheScreen();
     expect(screen.getByText(/you'll become an editor/i)).toBeOnTheScreen();
@@ -305,10 +458,17 @@ describe("transfer ownership (R-tripui-17)", () => {
       expect.objectContaining({ path: "/trips/:tripId/transfer-ownership" }),
       { params: { tripId: TEST_TRIP_ID }, body: { to_user_id: MEMBER_B_ID } },
     );
+    // Round-1: the caller's own role gates every affordance — the trip
+    // detail (guard/TripProvider) AND trips list invalidates must fire.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.trip(TEST_TRIP_ID),
+      exact: true,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.trips, exact: true });
   });
 
-  it("a transfer 404 (target no longer a LIVE member) maps to the stale-list banner", async () => {
-    await renderMembers({
+  it("a transfer 404 (target no longer a LIVE member) maps the banner AND refetches the list", async () => {
+    const { request } = await renderMembers({
       role: "owner",
       overrides: {
         "POST /trips/:tripId/transfer-ownership": () =>
@@ -320,75 +480,126 @@ describe("transfer ownership (R-tripui-17)", () => {
     await settleList();
     await fireEvent.press(rowB);
     await fireEvent.press(await screen.findByTestId(`members-button-transfer-${MEMBER_B_ID}`));
+    await settleSheetExit();
     await fireEvent.press(
       await screen.findByTestId(`members-button-transfer-${MEMBER_B_ID}-confirm`),
     );
 
     expect(await screen.findByText(/no longer in this trip/i)).toBeOnTheScreen();
+    // The copy says "the list has been refreshed" — make it true (round-1):
+    // the onError invalidate refetches the members list.
+    await waitFor(() => {
+      const membersGets = request.mock.calls.filter(
+        ([descriptor]) => (descriptor as { path: string }).path === "/trips/:tripId/members",
+      );
+      expect(membersGets.length).toBeGreaterThanOrEqual(2);
+    });
     await settleList();
   });
 });
 
-describe("leave (self) with ConfirmDialog", () => {
-  it("confirms, DELETEs self, and lands on the trip list", async () => {
-    const { request } = await renderMembers({ role: "editor", members: [B_OWNER, ME_EDITOR] });
+describe("ConfirmDialog cancel paths (nav §2.6 — cancel never mutates)", () => {
+  it("transfer cancel closes the dialog with no call and unchanged roles", async () => {
+    const { request } = await renderMembers({ role: "owner" });
 
-    await fireEvent.press(await screen.findByTestId("members-button-leave"));
-    expect(await screen.findByText("Leave this trip?")).toBeOnTheScreen();
-    await fireEvent.press(screen.getByTestId("members-button-leave-confirm"));
-
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/(trips)"));
+    const rowB = await screen.findByTestId(`members-list-item-${MEMBER_B_ID}`);
     await settleList();
-    expect(request).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "DELETE", path: "/trips/:tripId/members/:userId" }),
-      { params: { tripId: TEST_TRIP_ID, userId: TEST_USER.id } },
+    await fireEvent.press(rowB);
+    await fireEvent.press(await screen.findByTestId(`members-button-transfer-${MEMBER_B_ID}`));
+    await settleSheetExit();
+    await fireEvent.press(
+      await screen.findByTestId(`members-button-transfer-${MEMBER_B_ID}-cancel`),
     );
+
+    await waitFor(() => expect(screen.queryByText("Make Blake Editor the owner?")).toBeNull());
+    expect(
+      within(screen.getByTestId(`members-list-item-${MEMBER_B_ID}`)).getByText("editor"),
+    ).toBeOnTheScreen();
+    const transfers = request.mock.calls.filter(
+      ([descriptor]) =>
+        (descriptor as { path: string }).path === "/trips/:tripId/transfer-ownership",
+    );
+    expect(transfers).toHaveLength(0);
   });
 
-  it("a leave 409 maps the owner-leave reason (transfer-first path) and stays put", async () => {
-    await renderMembers({
-      role: "editor",
-      members: [B_OWNER, ME_EDITOR],
-      overrides: {
-        "DELETE /trips/:tripId/members/:userId": () =>
-          Promise.reject(
-            new ApiRequestError(409, "CONFLICT", "owner leave", {
-              reason: "owner_transfer_required",
-            }),
-          ),
-      },
-    });
+  it("revoke cancel closes the dialog with no call and the invite still listed", async () => {
+    const { request } = await renderMembers({ role: "owner", invites: [makeInvite()] });
 
-    await fireEvent.press(await screen.findByTestId("members-button-leave"));
-    await fireEvent.press(await screen.findByTestId("members-button-leave-confirm"));
+    await fireEvent.press(await screen.findByTestId(`members-button-revoke-${TEST_INVITE_ID}`));
+    await fireEvent.press(
+      await screen.findByTestId(`members-button-revoke-${TEST_INVITE_ID}-cancel`),
+    );
 
-    expect(await screen.findByText(/transfer ownership to someone else/i)).toBeOnTheScreen();
-    await settleList();
-    expect(mockReplace).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText("Revoke this invite?")).toBeNull());
+    expect(screen.getByTestId(`members-list-item-invite-${TEST_INVITE_ID}`)).toBeOnTheScreen();
+    const revokes = request.mock.calls.filter(
+      ([descriptor]) =>
+        (descriptor as { path: string }).path === "/trips/:tripId/invites/:inviteId",
+    );
+    expect(revokes).toHaveLength(0);
   });
 });
 
 describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
-  it("create offers the role choice (editor first/default) and opens the OS share sheet with the returned url", async () => {
+  it("create offers the role choice (editor first/default), opens the OS share sheet, and caches a token-free row", async () => {
     const shareSpy = jest
       .spyOn(Share, "share")
       .mockResolvedValue({ action: "sharedAction" } as never);
-    const { request } = await renderMembers({ role: "owner" });
+    const { request, client } = await renderMembers({ role: "owner" });
 
     await fireEvent.press(await screen.findByTestId("members-button-invite"));
     const editorOption = await screen.findByTestId("members-button-invite-editor");
     expect(screen.getByTestId("members-button-invite-viewer")).toBeOnTheScreen();
     await fireEvent.press(editorOption);
+    await settleSheetExit();
 
     await waitFor(() => expect(shareSpy).toHaveBeenCalledWith({ url: CREATED_INVITE_URL }));
     expect(request).toHaveBeenCalledWith(
       expect.objectContaining({ method: "POST", path: "/trips/:tripId/invites" }),
       { params: { tripId: TEST_TRIP_ID }, body: { role: "editor" } },
     );
-    // Reconcile: the created invite appears in the active list (no refetch).
+    // Reconcile: the created invite appears in the active list (no refetch)…
     expect(
       await screen.findByTestId(`members-list-item-invite-${CREATED_INVITE_ID}`),
     ).toBeOnTheScreen();
+    // …and the cached row carries NEITHER the bearer token NOR the url.
+    const cached = client.getQueryData<{ items: Record<string, unknown>[] }>(
+      queryKeys.tripInvites(TEST_TRIP_ID),
+    );
+    const createdRow = cached?.items.find((row) => row.id === CREATED_INVITE_ID);
+    expect(createdRow).toBeDefined();
+    expect(createdRow).not.toHaveProperty("token");
+    expect(createdRow).not.toHaveProperty("url");
+    await settleList();
+  });
+
+  it("create falls back to an invalidate when the invites cache is empty (create raced the initial GET)", async () => {
+    const shareSpy = jest
+      .spyOn(Share, "share")
+      .mockResolvedValue({ action: "sharedAction" } as never);
+    const { client } = await renderMembers({
+      role: "owner",
+      overrides: {
+        // The initial invites list never lands — nothing to append onto.
+        "GET /trips/:tripId/invites": () => new Promise(() => undefined),
+      },
+    });
+    expect(await screen.findByText("Test Traveler (you)")).toBeOnTheScreen();
+    await settleList();
+    const invalidateSpy = jest.spyOn(client, "invalidateQueries");
+
+    await fireEvent.press(screen.getByTestId("members-button-invite"));
+    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
+    await settleSheetExit();
+
+    await waitFor(() => expect(shareSpy).toHaveBeenCalled());
+    // Round-1: without this fallback the created invite is invisible until
+    // staleTime lapses.
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: queryKeys.tripInvites(TEST_TRIP_ID),
+      }),
+    );
     await settleList();
   });
 
@@ -409,11 +620,17 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     );
   });
 
-  it("a revoke 409 already_revoked rolls back and shows the mapped banner", async () => {
+  it("a revoke 409 already_revoked restores the hidden row from the SNAPSHOT (re-sync GET held open) + mapped banner", async () => {
+    let invitesCalls = 0;
     await renderMembers({
       role: "owner",
-      invites: [makeInvite()],
       overrides: {
+        "GET /trips/:tripId/invites": () => {
+          invitesCalls += 1;
+          return invitesCalls === 1
+            ? Promise.resolve({ items: [makeInvite()], nextCursor: null })
+            : new Promise(() => undefined); // hang the onError re-sync
+        },
         "DELETE /trips/:tripId/invites/:inviteId": () =>
           Promise.reject(
             new ApiRequestError(409, "CONFLICT", "already revoked", {
@@ -429,6 +646,9 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     );
 
     expect(await screen.findByText(/already revoked/i)).toBeOnTheScreen();
+    // The optimistically-hidden row is BACK, and only the snapshot restore
+    // can have done it — the refetch is pinned open.
+    expect(screen.getByTestId(`members-list-item-invite-${TEST_INVITE_ID}`)).toBeOnTheScreen();
     await settleList();
   });
 });

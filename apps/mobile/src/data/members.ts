@@ -16,6 +16,11 @@
  * cache was stale — e.g. the target already left); success paths reconcile
  * from returned rows without an extra fetch (R-trips-19). Every QUERY
  * forwards TanStack's `{ signal }` (T-6.6 R1 cancellation/timeout posture).
+ *
+ * Token hygiene (round-1 security finding): the invites LIST wire shape
+ * carries each row's live bearer `token` — the UI never uses it, so the
+ * query layer strips it before anything lands in the cache (`InviteRow`).
+ * Removing it from the wire itself is a server-side QUEUE row.
  */
 import {
   useMutation,
@@ -41,6 +46,18 @@ import { apiClient } from "@/auth";
 
 import { queryKeys } from "./query-client";
 
+/**
+ * Mutation-error seam for screens (round-1, via the concurrency pin):
+ * TanStack fires PER-CALL `mutate` callbacks only for the LATEST call on a
+ * mutation instance — with two in-flight row actions, the first failure's
+ * per-call `onError` (the screen's banner) is silently dropped. Hook-LEVEL
+ * callbacks fire for every in-flight mutation, so screens hand their banner
+ * setter here instead of per-call.
+ */
+export interface MemberMutationOptions {
+  onMutationError?(error: unknown): void;
+}
+
 /** `GET /trips/:tripId/members` — live members only (ghosts server-excluded). */
 export function useTripMembers(tripId: string): UseQueryResult<MemberList, Error> {
   return useQuery({
@@ -48,6 +65,17 @@ export function useTripMembers(tripId: string): UseQueryResult<MemberList, Error
     queryFn: ({ signal }) =>
       apiClient.request(memberEndpoints.listMembers, { params: { tripId } }, { signal }),
   });
+}
+
+/**
+ * An invites-list row as CACHED: the wire `InviteListItem` minus its live
+ * bearer `token` (never rendered, never needed client-side — hygiene above).
+ */
+export type InviteRow = Omit<InviteListItem, "token">;
+
+function stripInviteToken(item: InviteListItem): InviteRow {
+  const { token: _token, ...row } = item;
+  return row;
 }
 
 /**
@@ -60,11 +88,18 @@ export function useTripMembers(tripId: string): UseQueryResult<MemberList, Error
 export function useTripInvites(
   tripId: string,
   options?: { enabled?: boolean },
-): UseQueryResult<Paginated<InviteListItem>, Error> {
+): UseQueryResult<Paginated<InviteRow>, Error> {
   return useQuery({
     queryKey: queryKeys.tripInvites(tripId),
-    queryFn: ({ signal }) =>
-      apiClient.request(inviteEndpoints.listInvites, { params: { tripId }, query: {} }, { signal }),
+    queryFn: async ({ signal }) => {
+      const page = await apiClient.request(
+        inviteEndpoints.listInvites,
+        { params: { tripId }, query: {} },
+        { signal },
+      );
+      // Strip the bearer token BEFORE caching (module doc: token hygiene).
+      return { ...page, items: page.items.map(stripInviteToken) };
+    },
     enabled: options?.enabled ?? true,
   });
 }
@@ -79,15 +114,20 @@ export function useTripInvites(
  *
  * Success invalidates the trips LIST (`exact` — the T-6.6 landmine: the list
  * key is a prefix of every detail key) so the joined trip appears when the
- * list next renders; navigation into `/[tripId]` is the screen's move.
+ * list next renders; navigation into `/[tripId]` is the screen's move. It
+ * also EVICTS the token's preview entry (round-1): the preview flips
+ * `already_member` server-side on acceptance, and a cached pre-accept copy
+ * inside staleTime would replay the "Join as <role>" card on a link re-tap
+ * instead of the already-member notice.
  */
 export function useAcceptInvite(): UseMutationResult<InviteAccept, Error, string> {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (token: string) =>
       apiClient.request(inviteEndpoints.acceptInvite, { params: { token } }),
-    onSuccess: () => {
+    onSuccess: (_data, token) => {
       void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      qc.removeQueries({ queryKey: queryKeys.invitePreview(token) });
     },
   });
 }
@@ -107,6 +147,7 @@ interface MembersSnapshot {
  */
 export function useUpdateMemberRole(
   tripId: string,
+  options?: MemberMutationOptions,
 ): UseMutationResult<TripMember, Error, MemberRoleUpdateVars, MembersSnapshot> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -126,10 +167,11 @@ export function useUpdateMemberRole(
       );
       return { previous };
     },
-    onError: (_err, _vars, ctx) => {
+    onError: (err, _vars, ctx) => {
       if (ctx?.previous !== undefined) qc.setQueryData(key, ctx.previous);
       // The optimistic premise was stale (target left, role raced) — re-sync.
       void qc.invalidateQueries({ queryKey: key });
+      options?.onMutationError?.(err);
     },
     onSuccess: (row) => {
       // Reconcile with the returned row (R-trips-19) — no extra fetch.
@@ -152,10 +194,12 @@ export function useUpdateMemberRole(
  * 409s (`owner_transfer_required` with other members, `delete_trip_instead`
  * when sole member) — the UI never offers it, and the rollback + mapped
  * banner covers the race where ownership shifted under an open screen.
- * Self-leave callers handle navigation + trip-subtree eviction per-call.
+ * Self-leave callers (trip settings, T-6.9 — see features/members
+ * LEAVE_TRIP_CONFIRM) handle navigation per-call.
  */
 export function useRemoveMember(
   tripId: string,
+  options?: MemberMutationOptions,
 ): UseMutationResult<void, Error, { userId: string }, MembersSnapshot> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -170,9 +214,10 @@ export function useRemoveMember(
       );
       return { previous };
     },
-    onError: (_err, _vars, ctx) => {
+    onError: (err, _vars, ctx) => {
       if (ctx?.previous !== undefined) qc.setQueryData(key, ctx.previous);
       void qc.invalidateQueries({ queryKey: key });
+      options?.onMutationError?.(err);
     },
     onSuccess: () => {
       // 204 — nothing to reconcile; the trips list's member_count is stale.
@@ -190,6 +235,7 @@ export function useRemoveMember(
  */
 export function useTransferOwnership(
   tripId: string,
+  options?: MemberMutationOptions,
 ): UseMutationResult<OwnershipTransferResult, Error, { toUserId: string }> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -213,6 +259,13 @@ export function useTransferOwnership(
       void qc.invalidateQueries({ queryKey: queryKeys.trip(tripId), exact: true });
       void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
     },
+    onError: (err) => {
+      // Not optimistic, so nothing to roll back — but a 404 means the target
+      // left under an open screen: refetch so the list matches the error copy
+      // ("the list has been refreshed", error-copy.ts).
+      void qc.invalidateQueries({ queryKey: key });
+      options?.onMutationError?.(err);
+    },
   });
 }
 
@@ -223,6 +276,7 @@ export function useTransferOwnership(
  */
 export function useCreateInvite(
   tripId: string,
+  options?: MemberMutationOptions,
 ): UseMutationResult<InviteWithUrl, Error, { role: InviteGrantableRole }> {
   const qc = useQueryClient();
   const key = queryKeys.tripInvites(tripId);
@@ -230,11 +284,25 @@ export function useCreateInvite(
     mutationFn: ({ role }: { role: InviteGrantableRole }) =>
       apiClient.request(inviteEndpoints.createInvite, { params: { tripId }, body: { role } }),
     onSuccess: (invite) => {
-      // The list shape is `Invite & { state }`; `url` is create-response-only.
-      const { url: _url, ...row } = invite;
-      qc.setQueryData<Paginated<InviteListItem>>(key, (old) =>
-        old === undefined ? old : { ...old, items: [...old.items, { ...row, state: "active" }] },
-      );
+      // Reconcile by appending — minus `url` (create-response-only) and the
+      // bearer `token` (cache hygiene, module doc). If the cache is empty
+      // (create raced the initial GET, or a prior list error), an append has
+      // nothing to land on — invalidate so the new invite isn't invisible
+      // until staleTime lapses (round-1).
+      const existing = qc.getQueryData<Paginated<InviteRow>>(key);
+      if (existing === undefined) {
+        void qc.invalidateQueries({ queryKey: key });
+        return;
+      }
+      const { url: _url, ...wireRow } = invite;
+      const row = stripInviteToken({ ...wireRow, state: "active" });
+      qc.setQueryData<Paginated<InviteRow>>(key, {
+        ...existing,
+        items: [...existing.items, row],
+      });
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
     },
   });
 }
@@ -246,11 +314,12 @@ export function useCreateInvite(
  */
 export function useRevokeInvite(
   tripId: string,
+  options?: MemberMutationOptions,
 ): UseMutationResult<
   void,
   Error,
   { inviteId: string },
-  { previous: Paginated<InviteListItem> | undefined }
+  { previous: Paginated<InviteRow> | undefined }
 > {
   const qc = useQueryClient();
   const key = queryKeys.tripInvites(tripId);
@@ -259,8 +328,8 @@ export function useRevokeInvite(
       apiClient.request(inviteEndpoints.revokeInvite, { params: { tripId, inviteId } }),
     onMutate: async ({ inviteId }) => {
       await qc.cancelQueries({ queryKey: key });
-      const previous = qc.getQueryData<Paginated<InviteListItem>>(key);
-      qc.setQueryData<Paginated<InviteListItem>>(key, (old) =>
+      const previous = qc.getQueryData<Paginated<InviteRow>>(key);
+      qc.setQueryData<Paginated<InviteRow>>(key, (old) =>
         old === undefined
           ? old
           : {
@@ -272,10 +341,11 @@ export function useRevokeInvite(
       );
       return { previous };
     },
-    onError: (_err, _vars, ctx) => {
+    onError: (err, _vars, ctx) => {
       if (ctx?.previous !== undefined) qc.setQueryData(key, ctx.previous);
       // 409 already_revoked / 404 mean the cache lied — refetch the truth.
       void qc.invalidateQueries({ queryKey: key });
+      options?.onMutationError?.(err);
     },
   });
 }

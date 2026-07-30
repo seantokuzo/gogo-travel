@@ -8,6 +8,7 @@
  * trips invalidation + navigation, terminal accept 409s vs the RETRYABLE
  * transport class (network drop / 12s timeout — task contract), decline.
  */
+import { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import InviteJoinScreen from "@/app/(trips)/join/[token]";
@@ -223,4 +224,44 @@ it("R-tripui-12 decline: returns to the trip list with NO server call", async ()
     ([descriptor]) => (descriptor as { path: string }).path === "/invites/:token/accept",
   );
   expect(acceptCalls).toHaveLength(0);
+});
+
+it("a re-tapped link after accept refetches the preview — no stale 'Join as' replay (round-1 eviction)", async () => {
+  let previewCalls = 0;
+  const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+  request.mockImplementation((descriptor: { method: string; path: string }) => {
+    const key = `${descriptor.method} ${descriptor.path}`;
+    if (key === "GET /invites/:token") {
+      previewCalls += 1;
+      // The server flips already_member once the caller has accepted.
+      return Promise.resolve(makeInvitePreview(previewCalls === 1 ? {} : { already_member: true }));
+    }
+    if (key === "POST /invites/:token/accept") return Promise.resolve(ACCEPTED);
+    return Promise.reject(new Error(`unexpected ${key}`));
+  });
+
+  // Prod-like cache semantics: a non-evicted preview stays FRESH for 5min,
+  // so this test is red without useAcceptInvite's removeQueries eviction.
+  // Query gcTime must exceed the unmount→remount gap (or the entry would be
+  // GC'd and refetched regardless, making the pin vacuous) — Infinity
+  // schedules NO timer. Mutations pin gcTime 0: the default 5-min mutation
+  // gc timer is the exact "jest did not exit" landmine mobile.md documents.
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity, staleTime: 5 * 60 * 1000 },
+      mutations: { retry: false, gcTime: 0 },
+    },
+  });
+  const first = await renderWithProviders(<InviteJoinScreen />, { queryClient: client });
+  await fireEvent.press(await screen.findByTestId("invite-join-button-accept"));
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
+  await flushNotify();
+  await first.unmount();
+  await flushNotify();
+
+  // Re-tap: a fresh mount of the same route against the same cache.
+  await renderWithProviders(<InviteJoinScreen />, { queryClient: client });
+  expect(await screen.findByText("You're already in this trip.")).toBeOnTheScreen();
+  expect(screen.getByTestId("invite-join-button-open-trip")).toBeOnTheScreen();
+  expect(screen.queryByTestId("invite-join-button-accept")).toBeNull();
 });

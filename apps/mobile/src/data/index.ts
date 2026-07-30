@@ -26,4 +26,4 @@ export {
   useCreateInvite,
   useRevokeInvite,
 } from "./members";
-export type { MemberRoleUpdateVars } from "./members";
+export type { InviteRow, MemberMutationOptions, MemberRoleUpdateVars } from "./members";
