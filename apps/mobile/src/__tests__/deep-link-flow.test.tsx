@@ -72,8 +72,9 @@ it("R-nav-11 expired: a dead token renders the in-screen error with a path back 
   mockLinkApi();
   await renderApp(`/invite/${EXPIRED_TOKEN}`);
   const join = await screen.findByTestId("invite-join-screen");
-  expect(await within(join).findByText("Invite not available")).toBeOnTheScreen();
-  expect(within(join).getByTestId("invite-join-button-trips")).toBeOnTheScreen();
+  // T-6.8 (R-tripui-11): expired copy is DISTINCT from invalid/not-found.
+  expect(await within(join).findByText("This invite has expired")).toBeOnTheScreen();
+  expect(within(join).getByTestId("invite-join-button-back")).toBeOnTheScreen();
 });
 
 it("R-nav-15 + NAV-5: a trip deep link for a non-member renders no-access with zero trip data", async () => {

@@ -16,3 +16,14 @@ export {
   useTrip,
   useInvitePreview,
 } from "./hooks";
+export {
+  useTripMembers,
+  useTripInvites,
+  useAcceptInvite,
+  useUpdateMemberRole,
+  useRemoveMember,
+  useTransferOwnership,
+  useCreateInvite,
+  useRevokeInvite,
+} from "./members";
+export type { InviteRow, MemberMutationOptions, MemberRoleUpdateVars } from "./members";
