@@ -46,6 +46,14 @@ export const queryKeys = {
   tripsList: ["trip-list"] as const,
   /** `GET /trips/:tripId` — the `[tripId]` membership guard's query (R-nav-20). */
   trip: (tripId: string) => ["trips", tripId] as const,
+  /**
+   * `GET /trips/:tripId/members` (T-6.8) — the trips spec §2.6 push map's
+   * `['trip', tripId, 'members']` key, rooted under this file's `trips`
+   * convention so the detail-subtree eviction (`trip.deleted`) covers it.
+   */
+  tripMembers: (tripId: string) => ["trips", tripId, "members"] as const,
+  /** `GET /trips/:tripId/invites` (T-6.8) — §2.6 `['trip', tripId, 'invites']`. */
+  tripInvites: (tripId: string) => ["trips", tripId, "invites"] as const,
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */

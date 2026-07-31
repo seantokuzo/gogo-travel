@@ -140,6 +140,32 @@ describe("useCreateTrip (CT-2)", () => {
   });
 });
 
+describe("key-namespace disjointness (R1 blocker 1, extended over the T-6.8 merge)", () => {
+  it("no route-param-driven factory key can alias OR prefix-cover the trip-list root", () => {
+    // The guard's key space is arbitrary URL segments, and its 404-scrub
+    // removes by PREFIX over trip(param) — so for adversarial params, every
+    // param-driven factory key must neither EQUAL queryKeys.tripsList nor be
+    // a PREFIX of it. Covers T-6.8's factories (tripMembers/tripInvites/
+    // invitePreview) so future factory additions inherit the check pattern.
+    const adversarialParams = ["list", "trip-list", "infinite", TEST_TRIP_ID];
+    const factories = [
+      queryKeys.trip,
+      queryKeys.tripMembers,
+      queryKeys.tripInvites,
+      queryKeys.invitePreview,
+    ];
+    const listKey: readonly unknown[] = queryKeys.tripsList;
+    for (const param of adversarialParams) {
+      for (const factory of factories) {
+        const key: readonly unknown[] = factory(param);
+        expect(JSON.stringify(key)).not.toBe(JSON.stringify(listKey));
+        // key is a prefix of listKey ⇔ listKey.slice(0, key.length) equals it
+        expect(JSON.stringify(listKey.slice(0, key.length))).not.toBe(JSON.stringify(key));
+      }
+    }
+  });
+});
+
 describe("useTripList cold-start seed (R1 perf)", () => {
   it("seeds the infinite cache from the entry redirect's ['trips'] page — rows render with no list request settled", async () => {
     const request = spyRequest();

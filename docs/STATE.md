@@ -73,8 +73,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     cached-shell mount leg (source-verified only, no renderApp test);
     two-account collab loop (create → invite → join → role change → transfer →
     removal); native universal-link modals.
-  - **Wave 5 (parallel):** T-6.7 (M, trip list + create modal), T-6.8 (M,
-    invite-join + members), T-6.9 (M, settings + collab client layer).
+  - **Wave 5 (parallel):** T-6.8 **✅ MERGED 04b00a8 (PR #8) 2026-07-30** —
+    invite-join + members; leave button TRIMMED per Law #4 (§2.5: leave lives
+    on settings/CT-5 — T-6.9 wires it via preserved `useRemoveMember` +
+    `LEAVE_TRIP_CONFIRM` + 409 mappings); REAL FIND: TanStack v5 drops
+    per-call mutate callbacks for superseded calls → hook-level
+    `onMutationError` seam on all 5 member mutation hooks (T-6.9: add the
+    `onMutationSuccess` twin or document the drop — QUEUE carry row). Round-2
+    tests lane falsification-probed every fix (mutate→red, restore→green).
+    Mobile 406. T-6.7 (M, trip list + create modal) — round-1 reviewed
+    (5 blocking incl. `["trips","list"]` ≡ `trip("list")` key collision +
+    list error-precedence; date fields → spec's range picker via free
+    `@react-native-community/datetimepicker`, in-contract), fix set
+    dispatched. T-6.9 (M, settings + collab) — built at 832f938 unpushed;
+    holds for both merges, then merges main (reconcile T-6.8 key factories +
+    T-6.7 key namespace + theme-label map, harmonize date inputs).
+    **Phase-QA checklist additions:** two-account invite→join→role→transfer→
+    remove loop on sim (T-6.8); native share-sheet open on invite create.
 - **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
   404-indistinguishable, `createRequireTripMember`); `apps/server/src/app.ts`
   (only auth+users mounted at :82/:86 — T-6.1 mounts `/trips`);
