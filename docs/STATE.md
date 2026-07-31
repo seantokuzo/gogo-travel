@@ -93,17 +93,44 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     row). Vendored-fork `beforeRemove`/preventDefault PROVEN working
     (first consumer, real-tree red/green probe). Round 2: all 3 lanes SHIP,
     every fix falsification-probed; judge merge/high. Mobile 466 (65 suites).
-    T-6.9 (M, settings + collab) — **NOW UNBLOCKED**, sole remaining P-6
-    task: merge main first (reconcile duplicate member/invite key factories
-    vs merged T-6.8 versions, adopt `["trip-list"]` namespace +
-    `invalidateTripLists`, harmonize date inputs w/ DateField), wire leave
-    via preserved capability, carry the two T-6.8 round-2 items, then
-    PR #10 → 5-lane round 1.
-    **Phase-QA checklist additions:** two-account invite→join→role→transfer→
-    remove loop on sim (T-6.8); native share-sheet open on invite create;
-    REBUILD dev client first (new native module). **B-2 ledger note
-    (T-6.7 R2):** the press→settle act-stabilization is load-sensitive under
-    harsher-than-CI starvation (one repro during a Docker-saturated
+    T-6.9 **✅ MERGED 322807a (PR #10) 2026-07-31 — P-6 CODE-COMPLETE
+    (9/9 tasks, PRs #2–#10, every judge merge/high).** Settings (details w/
+    structured destination edit + DateField, theme/currency sheets, leave
+    via useRemoveMember(me), delete, stale-409 conflict UX) + CT-6 collab
+    wiring (exhaustive 10-event plan, foreground/focus legs). Mobile 517
+    (72 suites). Three rounds: R1 7-blocking (incl. per-call-callback
+    superseded drop reintroduced on updateTrip — the PR's own T-6.8 class;
+    theme:"constructor" prototype crash) → R2 found 3 NEW blockers in the
+    fix diff (armed-latch delayed silent re-seed; builder's "UI-unreachable"
+    amendment REJECTED via an empirical counter-test — Sheet exit window
+    drives two-in-flight) → R3 both lanes SHIP, 8/8 falsification probes
+    discriminating.
+  - **T-6.9 landmines (add to the running list):** (1) NEVER hang per-call
+    callbacks on a SHARED mutation instance — TanStack v5 fires per-call
+    callbacks only for the latest call; use the hook-level
+    `onMutationError`/`onMutationSuccess` seam pattern (members.ts +
+    trip-settings.ts precedents) or pending-gate every affordance. (2) A
+    conflict latch must be CONSUMED on every terminal path (re-seed, effect,
+    dismiss) — invariant: latch armed ⟺ notice visible; an armed-but-orphaned
+    latch = delayed silent overwrite. (3) DS Sheet is hit-testable through
+    its ~200ms exit animation (mounted = visible || exiting) — role-item-class
+    presses inside the exit window fire real mutations (QUEUE row for the DS
+    guard). (4) `expect_updated_at` must always read the FRESH context row
+    (buildTripPatch), never the seeded form snapshot.
+    **PHASE-QA CHECKLIST (consolidated — run on sim before ledger flips;
+    REBUILD the dev client FIRST, datetimepicker native module):**
+    ① two-account collab loop: create → invite (share sheet opens) → join
+    via gogo:// link → role change → transfer → remove (T-6.2/6.8/6.9);
+    ② warm-start deep-link URL transport (jest-untestable leg, T-6.6);
+    ③ offline cached-shell mount (source-verified only, T-6.6); ④ native
+    universal-link modals (T-6.6); ⑤ trip create golden path w/ native
+    range picker + destination typeahead (T-6.7); ⑥ settings: edit
+    name/destination/dates/theme/currency, stale-409 two-device conflict
+    (edit on A, save on B, save on A → notice), leave (non-owner), delete
+    (owner), owner-leave 409 copy (T-6.9); ⑦ trip list: pagination past
+    page 1, offline refocus retains rows w/ banner (T-6.7). **B-2 ledger
+    note (T-6.7 R2):** the press→settle act-stabilization is load-sensitive
+    under harsher-than-CI starvation (one repro during a Docker-saturated
     concurrent run; canonical `--ci --maxWorkers=2` guard + CI both print 0)
     — if act warnings resurface under host contention, that's the class.
 - **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
