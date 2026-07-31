@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildBookingsDeps } from "./bookings/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
@@ -51,6 +52,9 @@ if (authDeps) {
     // Same queue instance as trips: destination + search-miss triggers feed
     // one serial drain (T-6.5).
     places: buildPlacesRouterDeps(placesIngest.trigger),
+    // Booking service + router (T-7.1); the dirty-day seam rides dormant
+    // until T-7.3 wires the leg-computation worker.
+    bookings: buildBookingsDeps(),
   };
 }
 const app = createApp(appOptions);
