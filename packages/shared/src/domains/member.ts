@@ -136,8 +136,15 @@ export const InviteWithUrlSchema = InviteSchema.extend({
 });
 export type InviteWithUrl = z.infer<typeof InviteWithUrlSchema>;
 
-/** `GET /trips/:tripId/invites` item — active and dead invites, flagged. */
-export const InviteListItemSchema = InviteSchema.extend({
+/**
+ * `GET /trips/:tripId/invites` item — active and dead invites, flagged.
+ * The raw bearer `token` is DROPPED from the list envelope (T-6.8 security
+ * defer, landed with T-7.1): every list row carried a live capability the
+ * UI never uses — id/role/expiry/counts suffice to render and revoke. The
+ * CREATE response (`InviteWithUrl`) keeps token+url: that one-shot answer
+ * is what feeds the share sheet.
+ */
+export const InviteListItemSchema = InviteSchema.omit({ token: true }).extend({
   state: InviteStateSchema,
 });
 export type InviteListItem = z.infer<typeof InviteListItemSchema>;

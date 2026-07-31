@@ -164,13 +164,15 @@ export function makeMember(overrides?: {
   };
 }
 
-/** `GET /trips/:tripId/invites` item — live 7-day editor invite by default. */
+/**
+ * `GET /trips/:tripId/invites` item — live 7-day editor invite by default.
+ * Token-free since T-7.1: the wire list row no longer carries the bearer
+ * token (create-response fixtures add one explicitly where needed).
+ */
 export function makeInvite(overrides?: Partial<InviteListItem>): InviteListItem {
   return {
     id: TEST_INVITE_ID,
     trip_id: TEST_TRIP_ID,
-    // Bearer credential — fixtures keep it obviously fake; screens never render it.
-    token: "tok-fixture-row",
     role: "editor",
     created_by: TEST_USER.id,
     expires_at: `${addDays(localTodayISO(), 7)}T00:00:00.000Z`,
@@ -273,7 +275,8 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
           const role =
             (input?.body as { role?: InviteListItem["role"] } | undefined)?.role ?? "editor";
           const { state: _state, ...row } = makeInvite({ id: CREATED_INVITE_ID, role });
-          return Promise.resolve({ ...row, url: CREATED_INVITE_URL });
+          // Wire-faithful: the CREATE response (alone) carries token + url.
+          return Promise.resolve({ ...row, token: "tok-created", url: CREATED_INVITE_URL });
         }
         case "DELETE /trips/:tripId/invites/:inviteId":
           return Promise.resolve(undefined);

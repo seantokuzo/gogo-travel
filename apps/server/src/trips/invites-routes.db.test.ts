@@ -320,7 +320,14 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
 
     const res = await listInvites(tripId, owner.accessToken);
     expect(res.status).toBe(200);
-    const page = PaginatedInviteListSchema.parse(await res.json());
+    const raw = (await res.json()) as { items: Record<string, unknown>[] };
+    // T-6.8 defer (landed T-7.1): the raw bearer token NEVER rides the list
+    // envelope — asserted on the RAW body (a schema parse would silently
+    // strip a leaking key and mask the regression). Create keeps token+url.
+    for (const item of raw.items) {
+      expect(item).not.toHaveProperty("token");
+    }
+    const page = PaginatedInviteListSchema.parse(raw);
     const stateOf = (id: string) => page.items.find((i) => i.id === id)?.state;
     expect(stateOf(active.id)).toBe("active");
     expect(stateOf(expired.id)).toBe("expired");

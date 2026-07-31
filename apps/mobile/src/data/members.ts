@@ -17,10 +17,12 @@
  * from returned rows without an extra fetch (R-trips-19). Every QUERY
  * forwards TanStack's `{ signal }` (T-6.6 R1 cancellation/timeout posture).
  *
- * Token hygiene (round-1 security finding): the invites LIST wire shape
- * carries each row's live bearer `token` — the UI never uses it, so the
- * query layer strips it before anything lands in the cache (`InviteRow`).
- * Removing it from the wire itself is a server-side QUEUE row.
+ * Token hygiene (T-6.8 round-1 security finding, wire fix landed T-7.1):
+ * the invites LIST envelope no longer carries the bearer `token` at all —
+ * `InviteListItem` is token-free by schema, and the descriptor's response
+ * parse strips any stray key an older server might send. Only the CREATE
+ * response carries token+url (the one-shot share-sheet answer); its cache
+ * append still drops both below.
  */
 import {
   useMutation,
@@ -76,15 +78,11 @@ export function useTripMembers(tripId: string): UseQueryResult<MemberList, Error
 }
 
 /**
- * An invites-list row as CACHED: the wire `InviteListItem` minus its live
- * bearer `token` (never rendered, never needed client-side — hygiene above).
+ * An invites-list row as CACHED. Since T-7.1 the wire `InviteListItem` is
+ * already token-free (module doc), so the cached row IS the wire row — the
+ * alias survives so consumers keep importing `InviteRow`.
  */
-export type InviteRow = Omit<InviteListItem, "token">;
-
-function stripInviteToken(item: InviteListItem): InviteRow {
-  const { token: _token, ...row } = item;
-  return row;
-}
+export type InviteRow = InviteListItem;
 
 /**
  * `GET /trips/:tripId/invites` — active AND dead invites, flagged (§3.2:
@@ -99,15 +97,10 @@ export function useTripInvites(
 ): UseQueryResult<Paginated<InviteRow>, Error> {
   return useQuery({
     queryKey: queryKeys.tripInvites(tripId),
-    queryFn: async ({ signal }) => {
-      const page = await apiClient.request(
-        inviteEndpoints.listInvites,
-        { params: { tripId }, query: {} },
-        { signal },
-      );
-      // Strip the bearer token BEFORE caching (module doc: token hygiene).
-      return { ...page, items: page.items.map(stripInviteToken) };
-    },
+    queryFn: ({ signal }) =>
+      // Rows are token-free by wire schema (module doc); the descriptor's
+      // response parse is the strip for any stray legacy key.
+      apiClient.request(inviteEndpoints.listInvites, { params: { tripId }, query: {} }, { signal }),
     enabled: options?.enabled ?? true,
   });
 }
@@ -312,8 +305,8 @@ export function useCreateInvite(
         void qc.invalidateQueries({ queryKey: key });
         return;
       }
-      const { url: _url, ...wireRow } = invite;
-      const row = stripInviteToken({ ...wireRow, state: "active" });
+      const { url: _url, token: _token, ...wireRow } = invite;
+      const row: InviteRow = { ...wireRow, state: "active" };
       qc.setQueryData<Paginated<InviteRow>>(key, {
         ...existing,
         items: [...existing.items, row],
