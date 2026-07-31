@@ -8,7 +8,7 @@
  * suite holds two POSTs open at once and pins both notifications.
  */
 import type { InviteWithUrl } from "@gogo/shared";
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import { notifyManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
@@ -45,6 +45,18 @@ function makeInviteWithUrl(id: string, token: string): InviteWithUrl {
     url: `https://links.gogo.example/invite/${token}`,
   };
 }
+
+// Synchronous TanStack notify for THIS suite: the default scheduler batches
+// store notifications on setTimeout(0) — one firing inside a waitFor sleep
+// window (RNTL only act-wraps the checks) lands un-acted, a contention-only
+// warning (B-2 family; the trip-settings-form suite pins the same cure).
+// Module state is per test file, so nothing leaks across suites.
+beforeAll(() => {
+  notifyManager.setScheduler((cb) => cb());
+});
+afterAll(() => {
+  notifyManager.setScheduler((cb) => setTimeout(cb, 0));
+});
 
 afterEach(() => {
   jest.restoreAllMocks();

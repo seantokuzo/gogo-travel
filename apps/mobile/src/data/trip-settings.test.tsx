@@ -10,7 +10,7 @@
  * - delete/leave 404 convergence (§3.5 rule 3) + list invalidation.
  */
 import { tripEndpoints, type Trip } from "@gogo/shared";
-import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
+import { notifyManager, QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
@@ -62,6 +62,17 @@ const locked409 = () =>
   new ApiRequestError(409, "CONFLICT", "base currency is locked once the first expense exists", {
     reason: "base_currency_locked",
   });
+
+// Synchronous TanStack notify for THIS suite — mutation-settle batches on
+// setTimeout(0) can land inside a waitFor sleep window (un-act-wrapped;
+// contention-only, B-2 family). Same cure as the trip-settings-form and
+// members suites; module state is per test file.
+beforeAll(() => {
+  notifyManager.setScheduler((cb) => cb());
+});
+afterAll(() => {
+  notifyManager.setScheduler((cb) => setTimeout(cb, 0));
+});
 
 afterEach(() => {
   jest.restoreAllMocks();
