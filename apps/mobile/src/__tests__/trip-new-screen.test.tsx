@@ -109,6 +109,22 @@ async function fillValidForm() {
   await pickDate("trip-new-input-dates-end", 2027, 5, 8);
 }
 
+/**
+ * Press + settle INSIDE act (invite-join precedent, T-6.7 R1 residual):
+ * under contention an async settle (mutation / prefs resolution / search
+ * refetch) can land during waitFor/findBy's between-poll sleep — which is
+ * NOT act-wrapped — and warn. Two hops: settle batch + follow-on.
+ */
+async function pressSettled(testID: string) {
+  await fireEvent.press(screen.getByTestId(testID));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 function fireBeforeRemove(): BeforeRemoveEvent {
   const event: BeforeRemoveEvent = {
     preventDefault: jest.fn(),
@@ -178,7 +194,7 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
     // The §2.7 container id wraps the whole range control (R1 advisory pin).
     expect(screen.getByTestId("trip-new-input-dates")).toBeOnTheScreen();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     expect(screen.getByTestId("trip-new-input-name-error")).toBeOnTheScreen();
     expect(screen.getByTestId("trip-new-input-destination-error")).toBeOnTheScreen();
@@ -196,7 +212,7 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
     await fillValidForm();
 
     await pickDate("trip-new-input-dates-start", 2027, 5, 9); // after the 05-08 end
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     expect(
       await screen.findByText("End date must be on or after the start date."),
     ).toBeOnTheScreen();
@@ -211,12 +227,12 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
     await pickDate("trip-new-input-dates-end", 2027, 5, 1);
 
     await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "n".repeat(201));
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     expect(screen.getByText("Trip names run 1–200 characters.")).toBeOnTheScreen();
     expect(postCalls(request)).toHaveLength(0);
 
     await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "n".repeat(200));
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     await waitFor(() => expect(postCalls(request)).toHaveLength(1));
     const body = (postCalls(request)[0][1] as { body: Record<string, unknown> }).body;
     expect(body.name).toBe("n".repeat(200));
@@ -231,7 +247,7 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
 
     // Edit AFTER the pick: the stale lat/lng must never ride under new text.
     await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto!");
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     expect(screen.getByTestId("trip-new-input-destination-error")).toBeOnTheScreen();
     expect(postCalls(request)).toHaveLength(0);
@@ -276,7 +292,7 @@ describe("destination structured search (§2.3 — Overture spine, no free text)
     expect(await screen.findByTestId("trip-new-error-search")).toBeOnTheScreen();
 
     fail = false;
-    await fireEvent.press(screen.getByTestId("trip-new-error-search-retry"));
+    await pressSettled("trip-new-error-search-retry");
     expect(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`)).toBeOnTheScreen();
   });
 });
@@ -287,7 +303,7 @@ describe("submit (R-tripui-7)", () => {
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
@@ -312,12 +328,12 @@ describe("submit (R-tripui-7)", () => {
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     // Still resolving prefs: the submit is held (spinner up), nothing POSTed.
     expect(postCalls(request)).toHaveLength(0);
     expect(await screen.findByTestId("trip-new-button-create-spinner")).toBeOnTheScreen();
     // …and a second press during the prefs window is a no-op.
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     await act(async () => {
       resolveMe({ ...TEST_USER, prefs: { home_currency: "JPY" } });
@@ -343,7 +359,7 @@ describe("submit (R-tripui-7)", () => {
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
@@ -364,9 +380,9 @@ describe("submit (R-tripui-7)", () => {
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     expect(await screen.findByTestId("trip-new-button-create-spinner")).toBeOnTheScreen();
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
 
     expect(postCalls(request)).toHaveLength(1);
 
@@ -388,7 +404,7 @@ describe("submit (R-tripui-7)", () => {
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await pressSettled("trip-new-button-create");
     expect(await screen.findByTestId("trip-new-error")).toBeOnTheScreen();
 
     // R-tripui-7: all entered values preserved on failure (dates render
@@ -399,7 +415,7 @@ describe("submit (R-tripui-7)", () => {
     expect(screen.getByText("May 8, 2027")).toBeOnTheScreen();
 
     fail = false;
-    await fireEvent.press(screen.getByTestId("trip-new-error-retry"));
+    await pressSettled("trip-new-error-retry");
     await waitFor(() => expect(postCalls(request)).toHaveLength(2));
     await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
   });

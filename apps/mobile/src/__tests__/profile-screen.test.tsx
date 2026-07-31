@@ -28,7 +28,19 @@ let lastClient: QueryClient | null = null;
 async function renderScreen() {
   const client = makeTestQueryClient();
   lastClient = client;
-  return renderWithProviders(<ProfileScreen />, { queryClient: client });
+  const result = await renderWithProviders(<ProfileScreen />, { queryClient: client });
+  // Settle the FOUR mount queries INSIDE act before the test proceeds
+  // (T-6.7 R1, trip-new precedent): a fast test otherwise ends with a
+  // settle notify queued for the un-act-able test→afterEach gap — the
+  // residual SessionsSection/EntitlementsSection warnings under the 8×
+  // --maxWorkers=2 protocol were exactly this.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  return result;
 }
 
 jest.mock("expo-router", () => ({
