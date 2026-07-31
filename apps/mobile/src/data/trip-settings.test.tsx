@@ -9,7 +9,7 @@
  *   with the 409 discrimination (stale refetches, locked doesn't);
  * - delete/leave 404 convergence (§3.5 rule 3) + list invalidation.
  */
-import { memberEndpoints, tripEndpoints, type Trip } from "@gogo/shared";
+import { tripEndpoints, type Trip } from "@gogo/shared";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
@@ -21,12 +21,10 @@ import {
   isBaseCurrencyLocked,
   isStaleUpdatedAt,
   useDeleteTrip,
-  useLeaveTrip,
   useUpdateTrip,
 } from "@/data/trip-settings";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient } from "@/test-utils/render";
-import { seedAuthenticated, TEST_USER } from "@/test-utils/session-fixtures";
 import { makePlanningTrip } from "@/test-utils/trip-fixtures";
 
 function spyRequest(): jest.Mock {
@@ -44,8 +42,15 @@ function seededClient(trip = makePlanningTrip(TEST_TRIP_ID)): QueryClient {
   const client = makeTestQueryClient();
   client.setQueryDefaults(queryKeys.trip(TEST_TRIP_ID), { gcTime: Infinity });
   client.setQueryDefaults(queryKeys.trips, { gcTime: Infinity });
+  client.setQueryDefaults(queryKeys.tripsList, { gcTime: Infinity });
   client.setQueryData(queryKeys.trip(TEST_TRIP_ID), trip);
   client.setQueryData(queryKeys.trips, { items: [trip], nextCursor: null });
+  // Stand-in for the list screen's InfiniteData — only invalidation FLAGS
+  // are asserted on it (the key-cache-law two-key pin).
+  client.setQueryData(queryKeys.tripsList, {
+    pages: [{ items: [trip], nextCursor: null }],
+    pageParams: [undefined],
+  });
   return client;
 }
 
@@ -155,8 +160,10 @@ describe("useUpdateTrip (optimistic per §2.6)", () => {
     }>(queryKeys.trips);
     expect(reconciled?.items[0]?.updated_at).toBe(returned.updated_at);
     expect(reconciled?.items[0]?.member_count).toBe(1);
-    // Re-sort/section placement: the list refetches (exact) after a save.
+    // Re-sort/section placement: BOTH lists refetch after a save — the
+    // mandatory invalidateTripLists two-key op (key-cache law, T-6.7 merge).
     expect(client.getQueryState(queryKeys.trips)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripsList)?.isInvalidated).toBe(true);
     expect(request).toHaveBeenCalledWith(tripEndpoints.updateTrip, {
       params: { tripId: TEST_TRIP_ID },
       body: { theme: "deepWaters", expect_updated_at: trip.updated_at },
@@ -179,6 +186,7 @@ describe("useUpdateTrip (optimistic per §2.6)", () => {
     expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.name).toBe(trip.name);
     expect(client.getQueryState(queryKeys.trip(TEST_TRIP_ID))?.isInvalidated).toBe(true);
     expect(client.getQueryState(queryKeys.trips)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripsList)?.isInvalidated).toBe(true);
   });
 
   it("a LOCKED 409 rolls back WITHOUT refetching (the stored row never moved)", async () => {
@@ -197,11 +205,12 @@ describe("useUpdateTrip (optimistic per §2.6)", () => {
     expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.base_currency).toBe("USD");
     expect(client.getQueryState(queryKeys.trip(TEST_TRIP_ID))?.isInvalidated).toBe(false);
     expect(client.getQueryState(queryKeys.trips)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(queryKeys.tripsList)?.isInvalidated).toBe(false);
   });
 });
 
-describe("useDeleteTrip / useLeaveTrip", () => {
-  it("delete: fires DELETE /trips/:tripId and invalidates the list (exact)", async () => {
+describe("useDeleteTrip", () => {
+  it("delete: fires DELETE /trips/:tripId and invalidates BOTH lists (helper)", async () => {
     const client = seededClient();
     const request = spyRequest();
     request.mockResolvedValue(undefined);
@@ -218,6 +227,7 @@ describe("useDeleteTrip / useLeaveTrip", () => {
       params: { tripId: TEST_TRIP_ID },
     });
     expect(client.getQueryState(queryKeys.trips)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripsList)?.isInvalidated).toBe(true);
     expect(client.getQueryState(queryKeys.trip(TEST_TRIP_ID))?.isInvalidated).toBe(false);
   });
 
@@ -234,23 +244,8 @@ describe("useDeleteTrip / useLeaveTrip", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 
-  it("leave: removes the CALLER's own membership row", async () => {
-    seedAuthenticated();
-    const client = seededClient();
-    const request = spyRequest();
-    request.mockResolvedValue(undefined);
-
-    const { result } = await renderHook(() => useLeaveTrip(TEST_TRIP_ID), {
-      wrapper: makeWrapper(client),
-    });
-    await act(async () => {
-      result.current.mutate();
-    });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-
-    expect(request).toHaveBeenCalledWith(memberEndpoints.removeMember, {
-      params: { tripId: TEST_TRIP_ID, userId: TEST_USER.id },
-    });
-    expect(client.getQueryState(queryKeys.trips)?.isInvalidated).toBe(true);
-  });
+  // Leave-trip is NOT a hook here — the settings screen rides T-6.8's
+  // `useRemoveMember` with the caller's own userId (see trip-settings.ts);
+  // the wire + navigation + eviction flow is pinned end-to-end in
+  // __tests__/trip-settings-leave.test.tsx.
 });

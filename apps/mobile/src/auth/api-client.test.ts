@@ -238,7 +238,18 @@ describe("request timeout + cancellation (T-6.6 R1)", () => {
     const assertion = expect(pending).rejects.toMatchObject({ status: 0, code: "NETWORK" });
     await jest.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
     await assertion;
-    // The settle cleaned its own timer — nothing left ticking (jest handles).
+  });
+
+  it("a request that settles BEFORE the cap clears its watchdog timer (T-6.6 R2)", async () => {
+    // The timeout test above can't prove cleanup — advancing past the cap
+    // FIRES the timer, so a zero count there is vacuous. Here the response
+    // lands with the watchdog still pending: a leaked timer would show up
+    // as a nonzero count (and, in suites, as a jest open handle).
+    jest.useFakeTimers();
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockResolvedValue(httpResponse(200, USER));
+
+    await client.request(userEndpoints.getMe, {});
     expect(jest.getTimerCount()).toBe(0);
   });
 

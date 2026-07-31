@@ -1,8 +1,8 @@
 /**
  * Trip-settings data layer (T-6.9 / CT-5 — trips spec §2.5/§2.6). The
- * settings screen's mutations over `PATCH /trips/:tripId`, `DELETE
- * /trips/:tripId`, and self-removal (leave). All PATCHes ride the diffed
- * `buildTripPatch` output so:
+ * settings screen's mutations over `PATCH /trips/:tripId` and `DELETE
+ * /trips/:tripId` (leave rides T-6.8's `useRemoveMember` — see the note at
+ * the bottom). All PATCHes ride the diffed `buildTripPatch` output so:
  *
  * - only TOUCHED keys go on the wire — the server's owner-only authz is
  *   KEY-PRESENCE (`status`/`base_currency` present ⇒ owner required,
@@ -15,25 +15,19 @@
  *
  * Optimistic policy (§2.6): trip-row PATCHes (settings save, theme change)
  * apply optimistically via the collab helpers and reconcile with the returned
- * row. Delete and leave are NOT optimistic — §2.6's sanctioned list doesn't
- * include them; both are destructive Confirm-gated exits where a spinner is
- * the honest surface and the §2.6 forced-exit/eviction machinery handles the
- * cache.
+ * row. Delete is NOT optimistic — §2.6's sanctioned list doesn't include it;
+ * a destructive Confirm-gated exit where a spinner is the honest surface and
+ * the eviction machinery handles the cache. (Leave IS §2.6-optimistic on the
+ * members list — that comes free with `useRemoveMember`.)
  */
-import {
-  memberEndpoints,
-  tripEndpoints,
-  type Trip,
-  type TripStatus,
-  type TripUpdate,
-} from "@gogo/shared";
+import { tripEndpoints, type Trip, type TripStatus, type TripUpdate } from "@gogo/shared";
 import {
   useMutation,
   useQueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
 
-import { apiClient, ApiRequestError, useSessionStore } from "@/auth";
+import { apiClient, ApiRequestError } from "@/auth";
 import { localTodayISO } from "@/navigation/trip-defaults";
 
 import {
@@ -41,7 +35,7 @@ import {
   reconcileTripRow,
   rollbackTripPatch,
 } from "./collab";
-import { queryKeys } from "./query-client";
+import { invalidateTripLists, queryKeys } from "./query-client";
 
 // ---------------------------------------------------------------------------
 // 409 CONFLICT discrimination (trips spec §3.5 rule 2; R-trips-6/22)
@@ -154,14 +148,15 @@ export function useUpdateTrip(tripId: string): UseMutationResult<Trip, Error, Tr
       if (snapshot !== undefined) rollbackTripPatch(client, tripId, snapshot);
       if (isStaleUpdatedAt(error)) {
         void client.invalidateQueries({ queryKey: queryKeys.trip(tripId), exact: true });
-        void client.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+        invalidateTripLists(client);
       }
     },
     onSuccess: (row) => {
       reconcileTripRow(client, tripId, row);
-      // Row contents are reconciled in place; the list still refetches for
-      // section/sort placement (status/date moves re-bucket the row).
-      void client.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      // Row contents are reconciled in place; the lists still refetch for
+      // section/sort placement (status/date moves re-bucket the row) — the
+      // mandatory two-key helper (key-cache law, T-6.7 merge).
+      invalidateTripLists(client);
     },
   });
 }
@@ -194,37 +189,13 @@ export function useDeleteTrip(tripId: string): UseMutationResult<void, Error, vo
       }
     },
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      invalidateTripLists(client);
     },
   });
 }
 
-/**
- * Leave trip = `DELETE /trips/:tripId/members/:me` (§2.5; server R-trips-11 —
- * owner leave 409s server-side, and the screen never offers it to owners:
- * transfer-first, R-tripui-20). NOT optimistic — leaving exits the trip
- * entirely, so there is no surviving in-trip surface to update in place
- * (§2.6's optimistic "member remove/leave" targets the members-screen list,
- * which is CT-4's surface). Same 404 convergence + teardown-eviction contract
- * as delete.
- */
-export function useLeaveTrip(tripId: string): UseMutationResult<void, Error, void> {
-  const client = useQueryClient();
-  const userId = useSessionStore((s) => s.user?.id);
-  return useMutation({
-    mutationFn: async () => {
-      if (userId === undefined) {
-        // Unreachable under the auth gate; the narrow keeps the params honest.
-        throw new Error("not signed in");
-      }
-      try {
-        await apiClient.request(memberEndpoints.removeMember, { params: { tripId, userId } });
-      } catch (error) {
-        if (!isConvergedDelete(error)) throw error;
-      }
-    },
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
-    },
-  });
-}
+// Leave trip (§2.5) is NOT a hook here: the settings screen rides T-6.8's
+// `useRemoveMember` (data/members.ts) with the caller's own userId —
+// optimistic members-list removal, the hook-level error seam, and the
+// owner-leave 409 reason mappings all come with it (features/members).
+// The screen's per-call onError converges a 404 to success (§3.5 rule 3).

@@ -10,7 +10,9 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.anonymous.gogo-travel",
-      "associatedDomains": ["applinks:links.gogotravel.example"]
+      "associatedDomains": [
+        "applinks:links.gogotravel.example"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -24,10 +26,21 @@
         {
           "action": "VIEW",
           "autoVerify": true,
-          "category": ["BROWSABLE", "DEFAULT"],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "data": [
-            { "scheme": "https", "host": "links.gogotravel.example", "pathPrefix": "/invite/" },
-            { "scheme": "https", "host": "links.gogotravel.example", "pathPrefix": "/t/" }
+            {
+              "scheme": "https",
+              "host": "links.gogotravel.example",
+              "pathPrefix": "/invite/"
+            },
+            {
+              "scheme": "https",
+              "host": "links.gogotravel.example",
+              "pathPrefix": "/t/"
+            }
           ]
         }
       ]
@@ -51,7 +64,8 @@
       "expo-status-bar",
       "expo-web-browser",
       "expo-secure-store",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,

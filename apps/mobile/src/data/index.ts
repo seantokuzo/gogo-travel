@@ -4,7 +4,7 @@
  * consume. Import the concrete `./query-client` (not this barrel) from the
  * session store to keep the cache-clear wiring cycle-free.
  */
-export { queryClient, queryKeys, shouldRetry } from "./query-client";
+export { invalidateTripLists, queryClient, queryKeys, shouldRetry } from "./query-client";
 export {
   useMe,
   useUpdateMe,
@@ -17,19 +17,40 @@ export {
   useInvitePreview,
 } from "./hooks";
 export {
-  collabInvalidationTargets,
+  useTripMembers,
+  useTripInvites,
+  useAcceptInvite,
+  useUpdateMemberRole,
+  useRemoveMember,
+  useTransferOwnership,
+  useCreateInvite,
+  useRevokeInvite,
+} from "./members";
+export type { InviteRow, MemberMutationOptions, MemberRoleUpdateVars } from "./members";
+export {
+  isSearchableDestinationQuery,
+  useCreateTrip,
+  usePlaceSearch,
+  useTripList,
+} from "./trips-mutations";
+export {
+  collabInvalidationPlan,
   evictTripSubtree,
   handleCollabEvent,
   useAppForegroundRefetch,
   useScreenFocusRefetch,
 } from "./collab";
-export type { CollabDeps, CollabResult, InvalidationTarget } from "./collab";
+export type {
+  CollabDeps,
+  CollabInvalidationPlan,
+  CollabResult,
+  InvalidationTarget,
+} from "./collab";
 export {
   buildTripPatch,
   isBaseCurrencyLocked,
   isStaleUpdatedAt,
   useDeleteTrip,
-  useLeaveTrip,
   useUpdateTrip,
 } from "./trip-settings";
 export type { TripSettingsEdits } from "./trip-settings";

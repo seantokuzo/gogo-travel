@@ -27,7 +27,7 @@
  * `[tripId]` observers are live re-creates + refetches dead queries (the
  * T-6.6 scrub landmine).
  */
-import { CurrencyCodeSchema, ISODateSchema, type Trip } from "@gogo/shared";
+import { CurrencyCodeSchema, type Trip } from "@gogo/shared";
 import { THEME_NAMES } from "@gogo/tokens";
 import { createStyles } from "@gogo/tokens/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -48,6 +48,7 @@ import {
   PageHeader,
   Sheet,
 } from "@/components";
+import { ApiRequestError, useSessionStore } from "@/auth";
 import {
   buildTripPatch,
   evictTripSubtree,
@@ -55,10 +56,12 @@ import {
   isStaleUpdatedAt,
   queryKeys,
   useDeleteTrip,
-  useLeaveTrip,
+  useRemoveMember,
   useScreenFocusRefetch,
   useUpdateTrip,
 } from "@/data";
+import { LEAVE_TRIP_CONFIRM, memberActionErrorMessage } from "@/features/members";
+import { DateField } from "@/features/trips";
 import { useTripContext } from "@/navigation/trip-context";
 
 /** Display labels for trip accent themes (AppearanceSection's naming). */
@@ -97,14 +100,16 @@ export default function TripSettingsScreen() {
 
   const updateTrip = useUpdateTrip(trip.id);
   const deleteTrip = useDeleteTrip(trip.id);
-  const leaveTrip = useLeaveTrip(trip.id);
+  // Leave = removing the CALLER's own membership row (T-6.8's capability;
+  // R-trips-11). No hook-level error seam here: leave is this screen's only
+  // member mutation, so the per-call onError below cannot be superseded.
+  const removeMember = useRemoveMember(trip.id);
+  const myUserId = useSessionStore((s) => s.user?.id);
 
   // R-tripui-3: returning focus (e.g. back from members) refreshes this
-  // screen's queries — list key exact (T-6.6 landmine), detail key exact.
-  useScreenFocusRefetch([
-    { queryKey: queryKeys.trips, exact: true },
-    { queryKey: queryKeys.trip(trip.id), exact: true },
-  ]);
+  // screen's query — the guarded trip row (exact; the lists are the list
+  // screen's own focus concern, key-cache law).
+  useScreenFocusRefetch([{ queryKey: queryKeys.trip(trip.id), exact: true }]);
 
   // ---- notices -------------------------------------------------------------
   const [conflictNotice, setConflictNotice] = useState(false);
@@ -170,12 +175,11 @@ export default function TripSettingsScreen() {
   const trimmedName = name.trim();
   const nameError =
     trimmedName.length === 0 || trimmedName.length > 200 ? "1–200 characters." : undefined;
-  const startError = ISODateSchema.safeParse(startDate).success ? undefined : "YYYY-MM-DD";
-  const endBadFormat = !ISODateSchema.safeParse(endDate).success;
-  const endBeforeStart =
-    !endBadFormat && startError === undefined && startDate > endDate;
-  const endError = endBadFormat ? "YYYY-MM-DD" : endBeforeStart ? "Before start date" : undefined;
-  const formValid = nameError === undefined && startError === undefined && endError === undefined;
+  // Dates come from the native picker (DateField, T-6.7) — the wire format is
+  // correct by construction, so the shared date-order rule is the only
+  // reachable validation error (§2.3 point 3 posture; ISO compares lexically).
+  const endError = startDate > endDate ? "Before the start date" : undefined;
+  const formValid = nameError === undefined && endError === undefined;
 
   const onSaveDetails = () => {
     const patch = buildTripPatch(trip, {
@@ -255,10 +259,24 @@ export default function TripSettingsScreen() {
 
   const onConfirmLeave = () => {
     setLeaveDialogOpen(false);
-    leaveTrip.mutate(undefined, {
-      onSuccess: exitToTripList,
-      onError: () => setSaveError("Couldn't leave the trip. Please try again."),
-    });
+    if (myUserId === undefined) return; // unreachable under the auth gate
+    removeMember.mutate(
+      { userId: myUserId },
+      {
+        onSuccess: exitToTripList,
+        onError: (error) => {
+          // §3.5 rule 3: deletes converge — a 404 means the membership row is
+          // already gone, which IS the desired end state. Exit anyway.
+          if (error instanceof ApiRequestError && error.status === 404) {
+            exitToTripList();
+            return;
+          }
+          // Owner-leave races land here with the mapped 409 copy
+          // (owner_transfer_required / delete_trip_instead, error-copy.ts).
+          setSaveError(memberActionErrorMessage(error));
+        },
+      },
+    );
   };
 
   const themeLabel = trip.theme === null ? "App default" : (THEME_LABELS[trip.theme] ?? trip.theme);
@@ -295,25 +313,22 @@ export default function TripSettingsScreen() {
                 returnKeyType="done"
                 testID="trip-settings-input-name"
               />
-              <View style={s.dateRow}>
+              <View style={s.dateRow} testID="trip-settings-input-dates">
                 <View style={s.dateField}>
-                  <Input
+                  <DateField
                     label="Start date"
                     value={startDate}
-                    onChangeText={setStartDate}
-                    placeholder="YYYY-MM-DD"
-                    error={startError}
-                    testID="trip-settings-input-start-date"
+                    onSelect={setStartDate}
+                    testID="trip-settings-input-dates-start"
                   />
                 </View>
                 <View style={s.dateField}>
-                  <Input
+                  <DateField
                     label="End date"
                     value={endDate}
-                    onChangeText={setEndDate}
-                    placeholder="YYYY-MM-DD"
+                    onSelect={setEndDate}
                     error={endError}
-                    testID="trip-settings-input-end-date"
+                    testID="trip-settings-input-dates-end"
                   />
                 </View>
               </View>
@@ -496,10 +511,10 @@ export default function TripSettingsScreen() {
 
       <ConfirmDialog
         visible={leaveDialogOpen}
-        title="Leave this trip?"
-        body="You'll lose access to its itinerary, expenses, and photos. Your expenses and balances stay with the trip."
-        confirmLabel="Leave trip"
-        destructive
+        title={LEAVE_TRIP_CONFIRM.title}
+        body={LEAVE_TRIP_CONFIRM.body}
+        confirmLabel={LEAVE_TRIP_CONFIRM.confirmLabel}
+        destructive={LEAVE_TRIP_CONFIRM.destructive}
         onConfirm={onConfirmLeave}
         onCancel={() => setLeaveDialogOpen(false)}
         testID="trip-settings-leave-dialog"

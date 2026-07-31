@@ -18,14 +18,18 @@
  *    NON-optimistic list (trip create, invite accept — server-generated
  *    identity/membership) must NOT use these; they render spinners instead.
  *
- * Key-scheme note: the spec's conceptual keys (`['trip', tripId]`,
- * `['trip', tripId, 'members']`, …) map onto the app's concrete `queryKeys`
- * where the trips LIST key `["trips"]` is a PREFIX of every detail key — so
- * every list-level invalidate here is `exact: true` (the T-6.6 landmine: a
- * non-exact `["trips"]` invalidate matches the `[tripId]` guard's own query;
- * inside its 404-scrub effect that refetch-looped live). The one deliberate
- * NON-exact invalidate (`useAppForegroundRefetch`) is safe because it fires on
- * an AppState transition, never in reaction to query state — it cannot loop.
+ * Key-scheme note (key-cache law, T-6.7 merge): the spec's conceptual
+ * `['trips']` column is a TWO-key operation — the `["trips"]` switcher/
+ * redirect page plus the DISJOINT `["trip-list"]` infinite cache — and every
+ * such site goes through `invalidateTripLists` (query-client.ts), never a
+ * hand-rolled invalidate. The detail-family keys (`['trip', tripId]` →
+ * `["trips", tripId]`, members/invites beneath it) invalidate `exact: true`
+ * (the T-6.6 landmine: a non-exact `["trips"]` invalidate matches the
+ * `[tripId]` guard's own query; inside its 404-scrub effect that
+ * refetch-looped live). The one deliberate NON-exact invalidate
+ * (`useAppForegroundRefetch`'s detail-subtree sweep) is safe because it
+ * fires on an AppState transition, never in reaction to query state — it
+ * cannot loop.
  */
 import {
   PushInvalidationPayloadSchema,
@@ -44,7 +48,7 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef } from "react";
 import { AppState } from "react-native";
 
-import { queryKeys } from "./query-client";
+import { invalidateTripLists, queryKeys } from "./query-client";
 
 // ---------------------------------------------------------------------------
 // 1. Push-invalidation seam (R-tripui-4; §2.6 mapping table)
@@ -54,6 +58,18 @@ import { queryKeys } from "./query-client";
 export interface InvalidationTarget {
   queryKey: QueryKey;
   exact: boolean;
+}
+
+/** What one §2.6 event invalidates — the executable form of the table's row. */
+export interface CollabInvalidationPlan {
+  /**
+   * The table's `['trips']` column — a TWO-key op since the T-6.7 key split,
+   * executed ONLY via `invalidateTripLists` (key-cache law; never a
+   * hand-rolled list invalidate).
+   */
+  tripLists: boolean;
+  /** Detail-family keys, invalidated exactly as given. */
+  targets: InvalidationTarget[];
 }
 
 /**
@@ -68,31 +84,31 @@ export interface InvalidationTarget {
  *   `['trips']` (list rows carry `member_count`)
  * - `invite.created` / `invite.revoked` → `['trip', tripId, 'invites']`
  */
-export function collabInvalidationTargets(
+export function collabInvalidationPlan(
   event: TripDomainEvent,
   tripId: string,
-): InvalidationTarget[] {
+): CollabInvalidationPlan {
   switch (event) {
     case "trip.updated":
     case "trip.status_changed":
-      return [
-        { queryKey: queryKeys.trips, exact: true },
-        { queryKey: queryKeys.trip(tripId), exact: true },
-      ];
+      return { tripLists: true, targets: [{ queryKey: queryKeys.trip(tripId), exact: true }] };
     case "trip.deleted":
-      return [{ queryKey: queryKeys.trips, exact: true }];
+      return { tripLists: true, targets: [] };
     case "member.added":
     case "member.role_changed":
     case "member.removed":
     case "member.left":
     case "ownership.transferred":
-      return [
-        { queryKey: queryKeys.tripMembers(tripId), exact: true },
-        { queryKey: queryKeys.trips, exact: true },
-      ];
+      return {
+        tripLists: true,
+        targets: [{ queryKey: queryKeys.tripMembers(tripId), exact: true }],
+      };
     case "invite.created":
     case "invite.revoked":
-      return [{ queryKey: queryKeys.tripInvites(tripId), exact: true }];
+      return {
+        tripLists: false,
+        targets: [{ queryKey: queryKeys.tripInvites(tripId), exact: true }],
+      };
   }
 }
 
@@ -173,7 +189,9 @@ export function handleCollabEvent(raw: unknown, deps: CollabDeps): CollabResult 
   const payload = parsed.data;
   const { event, trip_id, entity_id } = payload;
 
-  for (const target of collabInvalidationTargets(event, trip_id)) {
+  const plan = collabInvalidationPlan(event, trip_id);
+  if (plan.tripLists) invalidateTripLists(deps.client);
+  for (const target of plan.targets) {
     void deps.client.invalidateQueries({ queryKey: target.queryKey, exact: target.exact });
   }
 
@@ -201,9 +219,11 @@ export function handleCollabEvent(raw: unknown, deps: CollabDeps): CollabResult 
 // ---------------------------------------------------------------------------
 
 /**
- * App-foreground leg: `AppState → active` invalidates the whole `["trips"]`
- * family (list + every trip's detail/members/invites — "this spec's queries",
- * §2.6). Deliberately NON-exact: one prefix covers the family, and a
+ * App-foreground leg: `AppState → active` refreshes "this spec's queries"
+ * (§2.6) — the trip lists (via the mandatory `invalidateTripLists` helper,
+ * key-cache law) plus the whole `["trips", …]` detail family (every trip's
+ * detail/members/invites) in one deliberately NON-exact sweep: since the key
+ * split, nothing but detail subtrees lives under that prefix, and a
  * foreground transition is a one-shot external trigger — it cannot enter the
  * 404-scrub refetch loop the guard's landmine note is about. Mounted ONCE at
  * the root layout.
@@ -213,6 +233,7 @@ export function useAppForegroundRefetch(): void {
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (status) => {
       if (status === "active") {
+        invalidateTripLists(client);
         void client.invalidateQueries({ queryKey: queryKeys.trips });
       }
     });
@@ -223,17 +244,25 @@ export function useAppForegroundRefetch(): void {
 /**
  * Screen-focus leg: on every navigation focus AFTER the first (mount already
  * fetches), invalidate the screen's own keys — mark stale + refetch active
- * (§2.6). Callers pass concrete targets with the exactness the key scheme
- * requires (the `["trips"]` list key MUST come in `exact: true`).
+ * (§2.6). Callers pass concrete detail-family targets; a screen whose focus
+ * should also refresh the trip LISTS passes `tripLists: true`, which routes
+ * through the mandatory `invalidateTripLists` helper (key-cache law) — never
+ * hand a list key into `targets`. (The trip-list screen itself has its own
+ * inline focus effect, T-6.7 / CT-1.)
  */
-export function useScreenFocusRefetch(targets: readonly InvalidationTarget[]): void {
+export function useScreenFocusRefetch(
+  targets: readonly InvalidationTarget[],
+  opts?: { tripLists?: boolean },
+): void {
   const client = useQueryClient();
   const targetsRef = useRef(targets);
-  // Latest-value ref, updated in an effect (react-hooks/refs: no render-time
+  const tripListsRef = useRef(opts?.tripLists ?? false);
+  // Latest-value refs, updated in an effect (react-hooks/refs: no render-time
   // writes). Focus events only ever fire post-commit, so the effect has
-  // always run before the callback reads it.
+  // always run before the callback reads them.
   useEffect(() => {
     targetsRef.current = targets;
+    tripListsRef.current = opts?.tripLists ?? false;
   });
   const firstFocusRef = useRef(true);
   useFocusEffect(
@@ -242,6 +271,7 @@ export function useScreenFocusRefetch(targets: readonly InvalidationTarget[]): v
         firstFocusRef.current = false;
         return;
       }
+      if (tripListsRef.current) invalidateTripLists(client);
       for (const target of targetsRef.current) {
         void client.invalidateQueries({ queryKey: target.queryKey, exact: target.exact });
       }

@@ -73,8 +73,39 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     cached-shell mount leg (source-verified only, no renderApp test);
     two-account collab loop (create → invite → join → role change → transfer →
     removal); native universal-link modals.
-  - **Wave 5 (parallel):** T-6.7 (M, trip list + create modal), T-6.8 (M,
-    invite-join + members), T-6.9 (M, settings + collab client layer).
+  - **Wave 5 (parallel):** T-6.8 **✅ MERGED 04b00a8 (PR #8) 2026-07-30** —
+    invite-join + members; leave button TRIMMED per Law #4 (§2.5: leave lives
+    on settings/CT-5 — T-6.9 wires it via preserved `useRemoveMember` +
+    `LEAVE_TRIP_CONFIRM` + 409 mappings); REAL FIND: TanStack v5 drops
+    per-call mutate callbacks for superseded calls → hook-level
+    `onMutationError` seam on all 5 member mutation hooks (T-6.9: add the
+    `onMutationSuccess` twin or document the drop — QUEUE carry row). Round-2
+    tests lane falsification-probed every fix (mutate→red, restore→green).
+    Mobile 406. T-6.7 **✅ MERGED dd5304a (PR #9) 2026-07-30** — trip list +
+    create modal. KEY-CACHE LAW (new landmine, pin-tested): `tripsList` is the
+    DISJOINT root `["trip-list"]` — the guard's 404-scrub `removeQueries`
+    matches by PREFIX, so NOTHING else may ever live under a `["trips", ...]`
+    prefix except the trip-detail subtree the scrub is meant to evict;
+    `invalidateTripLists(qc)` is THE only sanctioned way to invalidate list
+    caches (two keys, exact — also retrofitted into T-6.8's members sites).
+    Native range picker via `@react-native-community/datetimepicker` 9.1.0 —
+    **dev clients must be REBUILT before sim QA / device install** (QUEUE
+    row). Vendored-fork `beforeRemove`/preventDefault PROVEN working
+    (first consumer, real-tree red/green probe). Round 2: all 3 lanes SHIP,
+    every fix falsification-probed; judge merge/high. Mobile 466 (65 suites).
+    T-6.9 (M, settings + collab) — **NOW UNBLOCKED**, sole remaining P-6
+    task: merge main first (reconcile duplicate member/invite key factories
+    vs merged T-6.8 versions, adopt `["trip-list"]` namespace +
+    `invalidateTripLists`, harmonize date inputs w/ DateField), wire leave
+    via preserved capability, carry the two T-6.8 round-2 items, then
+    PR #10 → 5-lane round 1.
+    **Phase-QA checklist additions:** two-account invite→join→role→transfer→
+    remove loop on sim (T-6.8); native share-sheet open on invite create;
+    REBUILD dev client first (new native module). **B-2 ledger note
+    (T-6.7 R2):** the press→settle act-stabilization is load-sensitive under
+    harsher-than-CI starvation (one repro during a Docker-saturated
+    concurrent run; canonical `--ci --maxWorkers=2` guard + CI both print 0)
+    — if act warnings resurface under host contention, that's the class.
 - **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
   404-indistinguishable, `createRequireTripMember`); `apps/server/src/app.ts`
   (only auth+users mounted at :82/:86 — T-6.1 mounts `/trips`);

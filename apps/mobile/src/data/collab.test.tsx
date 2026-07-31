@@ -20,13 +20,13 @@ import type { ReactNode } from "react";
 import { AppState, type NativeEventSubscription } from "react-native";
 
 import {
-  collabInvalidationTargets,
+  collabInvalidationPlan,
   evictTripSubtree,
   handleCollabEvent,
   useAppForegroundRefetch,
   useScreenFocusRefetch,
   type CollabDeps,
-  type InvalidationTarget,
+  type CollabInvalidationPlan,
 } from "@/data/collab";
 import { queryKeys } from "@/data/query-client";
 import { TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
@@ -48,6 +48,7 @@ const OTHER_USER_ID = "99999999-9999-4999-8999-999999999999";
 function seedTripFamily(client: QueryClient): void {
   const keys = [
     queryKeys.trips,
+    queryKeys.tripsList,
     queryKeys.trip(TEST_TRIP_ID),
     queryKeys.trip(TRIP_B_ID),
     queryKeys.tripMembers(TEST_TRIP_ID),
@@ -57,6 +58,9 @@ function seedTripFamily(client: QueryClient): void {
   const trip = makePlanningTrip(TEST_TRIP_ID);
   const page: Paginated<TripListItem> = { items: [trip], nextCursor: null };
   client.setQueryData(queryKeys.trips, page);
+  // Shape stands in for the list screen's InfiniteData — only the
+  // invalidation FLAG is asserted here, never the contents.
+  client.setQueryData(queryKeys.tripsList, { pages: [page], pageParams: [undefined] });
   client.setQueryData(queryKeys.trip(TEST_TRIP_ID), trip);
   client.setQueryData(queryKeys.trip(TRIP_B_ID), makePlanningTrip(TRIP_B_ID));
   client.setQueryData(queryKeys.tripMembers(TEST_TRIP_ID), []);
@@ -91,25 +95,26 @@ afterEach(() => {
   mockFocusCallback = undefined;
 });
 
-describe("collabInvalidationTargets (§2.6 table, exhaustive over the catalog)", () => {
-  it("maps all 10 events onto the concrete keys, every list-level target exact", () => {
+describe("collabInvalidationPlan (§2.6 table, exhaustive over the catalog)", () => {
+  it("maps all 10 events onto the concrete plan — lists via the helper flag, detail keys exact", () => {
     const T = TEST_TRIP_ID;
-    const tripRow: InvalidationTarget[] = [
-      { queryKey: queryKeys.trips, exact: true },
-      { queryKey: queryKeys.trip(T), exact: true },
-    ];
-    const memberRow: InvalidationTarget[] = [
-      { queryKey: queryKeys.tripMembers(T), exact: true },
-      { queryKey: queryKeys.trips, exact: true },
-    ];
-    const inviteRow: InvalidationTarget[] = [
-      { queryKey: queryKeys.tripInvites(T), exact: true },
-    ];
+    const tripRow: CollabInvalidationPlan = {
+      tripLists: true,
+      targets: [{ queryKey: queryKeys.trip(T), exact: true }],
+    };
+    const memberRow: CollabInvalidationPlan = {
+      tripLists: true,
+      targets: [{ queryKey: queryKeys.tripMembers(T), exact: true }],
+    };
+    const inviteRow: CollabInvalidationPlan = {
+      tripLists: false,
+      targets: [{ queryKey: queryKeys.tripInvites(T), exact: true }],
+    };
     // Typed over TripDomainEvent: a catalog append fails compilation here.
-    const expected: Record<TripDomainEvent, InvalidationTarget[]> = {
+    const expected: Record<TripDomainEvent, CollabInvalidationPlan> = {
       "trip.updated": tripRow,
       "trip.status_changed": tripRow,
-      "trip.deleted": [{ queryKey: queryKeys.trips, exact: true }],
+      "trip.deleted": { tripLists: true, targets: [] },
       "member.added": memberRow,
       "member.role_changed": memberRow,
       "member.removed": memberRow,
@@ -118,8 +123,8 @@ describe("collabInvalidationTargets (§2.6 table, exhaustive over the catalog)",
       "invite.created": inviteRow,
       "invite.revoked": inviteRow,
     };
-    for (const [event, targets] of Object.entries(expected)) {
-      expect(collabInvalidationTargets(event as TripDomainEvent, T)).toEqual(targets);
+    for (const [event, plan] of Object.entries(expected)) {
+      expect(collabInvalidationPlan(event as TripDomainEvent, T)).toEqual(plan);
     }
   });
 });
@@ -146,7 +151,7 @@ describe("handleCollabEvent", () => {
     expect(deps.onForcedExit).not.toHaveBeenCalled();
   });
 
-  it("trip.updated invalidates list + detail EXACTLY — never another trip's detail or the members key", () => {
+  it("trip.updated invalidates BOTH lists (helper) + detail EXACTLY — never another trip's detail or the members key", () => {
     const client = makeTestQueryClient();
     seedTripFamily(client);
 
@@ -156,7 +161,9 @@ describe("handleCollabEvent", () => {
     );
 
     expect(result).toEqual({ handled: true, forcedExit: false });
+    // Key-cache law: "the trips list" is the invalidateTripLists two-key op.
     expect(invalidated(client, queryKeys.trips)).toBe(true);
+    expect(invalidated(client, queryKeys.tripsList)).toBe(true);
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(true);
     // The exactness pins: ["trips"] must not sweep the detail universe
     // (T-6.6 landmine) and the detail invalidate must not sweep its subtree.
@@ -164,7 +171,7 @@ describe("handleCollabEvent", () => {
     expect(invalidated(client, queryKeys.tripMembers(TEST_TRIP_ID))).toBe(false);
   });
 
-  it("a member event targeting ANOTHER user refreshes members + list but not my role's detail row", () => {
+  it("a member event targeting ANOTHER user refreshes members + lists but not my role's detail row", () => {
     const client = makeTestQueryClient();
     seedTripFamily(client);
 
@@ -175,6 +182,7 @@ describe("handleCollabEvent", () => {
 
     expect(invalidated(client, queryKeys.tripMembers(TEST_TRIP_ID))).toBe(true);
     expect(invalidated(client, queryKeys.trips)).toBe(true);
+    expect(invalidated(client, queryKeys.tripsList)).toBe(true);
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(false);
   });
 
@@ -209,9 +217,11 @@ describe("handleCollabEvent", () => {
     expect(client.getQueryState(queryKeys.trip(TEST_TRIP_ID))).toBeUndefined();
     expect(client.getQueryState(queryKeys.tripMembers(TEST_TRIP_ID))).toBeUndefined();
     expect(client.getQueryState(queryKeys.tripInvites(TEST_TRIP_ID))).toBeUndefined();
-    // The LIST survives (invalidated, not evicted) — and other trips' details too.
+    // The LISTS survive (invalidated, not evicted) — and other trips' details too.
     expect(client.getQueryData(queryKeys.trips)).toBeDefined();
+    expect(client.getQueryData(queryKeys.tripsList)).toBeDefined();
     expect(invalidated(client, queryKeys.trips)).toBe(true);
+    expect(invalidated(client, queryKeys.tripsList)).toBe(true);
     expect(client.getQueryData(queryKeys.trip(TRIP_B_ID))).toBeDefined();
   });
 
@@ -309,8 +319,10 @@ describe("useAppForegroundRefetch (R-tripui-3, foreground leg)", () => {
     expect(invalidated(client, queryKeys.trips)).toBe(false);
 
     await act(async () => listeners[0]?.("active"));
-    // Deliberately NON-exact: the one prefix covers list + detail + subtrees.
+    // Lists via the helper (key-cache law) + one deliberately NON-exact
+    // sweep of the ["trips", …] detail family.
     expect(invalidated(client, queryKeys.trips)).toBe(true);
+    expect(invalidated(client, queryKeys.tripsList)).toBe(true);
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(true);
     expect(invalidated(client, queryKeys.tripMembers(TEST_TRIP_ID))).toBe(true);
 
@@ -320,16 +332,15 @@ describe("useAppForegroundRefetch (R-tripui-3, foreground leg)", () => {
 });
 
 describe("useScreenFocusRefetch (R-tripui-3, screen-focus leg)", () => {
-  it("skips the initial focus (mount already fetches), then invalidates the given targets with their exactness", async () => {
+  it("skips the initial focus (mount already fetches), then invalidates the targets + lists via the helper", async () => {
     const client = makeTestQueryClient();
     seedTripFamily(client);
 
     await renderHook(
       () =>
-        useScreenFocusRefetch([
-          { queryKey: queryKeys.trips, exact: true },
-          { queryKey: queryKeys.trip(TEST_TRIP_ID), exact: true },
-        ]),
+        useScreenFocusRefetch([{ queryKey: queryKeys.trip(TEST_TRIP_ID), exact: true }], {
+          tripLists: true,
+        }),
       { wrapper: makeWrapper(client) },
     );
     expect(mockFocusCallback).toBeDefined();
@@ -339,9 +350,11 @@ describe("useScreenFocusRefetch (R-tripui-3, screen-focus leg)", () => {
     expect(invalidated(client, queryKeys.trips)).toBe(false);
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(false);
 
-    // A REAL refocus invalidates exactly the screen's keys.
+    // A REAL refocus invalidates exactly the screen's keys (lists through
+    // the mandatory two-key helper — key-cache law).
     await act(async () => mockFocusCallback?.());
     expect(invalidated(client, queryKeys.trips)).toBe(true);
+    expect(invalidated(client, queryKeys.tripsList)).toBe(true);
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(true);
     expect(invalidated(client, queryKeys.trip(TRIP_B_ID))).toBe(false);
     expect(invalidated(client, queryKeys.tripMembers(TEST_TRIP_ID))).toBe(false);
