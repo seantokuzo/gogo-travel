@@ -113,6 +113,11 @@ afterEach(async () => {
     hops += 1;
     idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
+  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
+  // the suite, not silently hand a wedged query to the next test. Tests
+  // that intentionally hold a fetch open unmount before ending (the
+  // consumed signal cancels the fetch).
+  expect(lastClient?.isFetching() ?? 0).toBe(0);
   lastClient = null;
   jest.restoreAllMocks();
 });
@@ -164,9 +169,12 @@ describe("theme boot (landing surface, R-ds-4)", () => {
 describe("trip list states (CT-1)", () => {
   it("holds on skeleton rows while the first page is in flight (§2.1 loading)", async () => {
     mockNavApi({ overrides: { "GET /trips": () => new Promise(() => undefined) } });
-    await renderScreen();
+    const { unmount } = await renderScreen();
     expect(screen.getByTestId("trip-list-loading")).toBeOnTheScreen();
     expect(screen.queryByTestId("trip-list-empty")).toBeNull();
+    // Cancel the held fetch (signal-consuming queryFn) so the drain loop's
+    // loud idle assert stays meaningful.
+    await unmount();
   });
 
   it("R-tripui-1/2: groups into labeled sections in active → planning → past order and renders row content", async () => {
@@ -223,6 +231,38 @@ describe("trip list states (CT-1)", () => {
     // Close it so the sheet's animation work doesn't outlive the test.
     await fireEvent.press(screen.getByTestId("trip-list-sheet-join-close"));
     await waitFor(() => expect(screen.queryByTestId("trip-list-sheet-join")).toBeNull());
+  });
+
+  it("R1: a failed background REFRESH keeps the loaded rows — inline banner, never the full-screen error", async () => {
+    // v5 flips status to "error" with data RETAINED when a focus-invalidate
+    // refetch fails; the loaded list must survive it (guard posture parity:
+    // a failed refetch is not a verdict).
+    let fail = false;
+    mockNavApi({
+      overrides: {
+        "GET /trips": () =>
+          fail
+            ? Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom"))
+            : Promise.resolve({ items: [makePlanningTrip(TEST_TRIP_ID)], nextCursor: null }),
+      },
+    });
+    await renderScreen();
+    await screen.findByTestId(`trip-list-list-item-${TEST_TRIP_ID}`);
+
+    fail = true;
+    await act(async () => {
+      mockFocusHolder.current?.(); // refocus → invalidate → failing refetch
+    });
+
+    expect(await screen.findByTestId("trip-list-banner-refresh")).toBeOnTheScreen();
+    expect(screen.getByTestId(`trip-list-list-item-${TEST_TRIP_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId("trip-list-error")).toBeNull();
+
+    // Banner retry recovers in place.
+    fail = false;
+    await fireEvent.press(screen.getByTestId("trip-list-banner-refresh-retry"));
+    await waitFor(() => expect(screen.queryByTestId("trip-list-banner-refresh")).toBeNull());
+    expect(screen.getByTestId(`trip-list-list-item-${TEST_TRIP_ID}`)).toBeOnTheScreen();
   });
 
   it("§2.1 error state: banner + the spec-exact trip-list-retry control, retry refetches into rows", async () => {
@@ -288,6 +328,71 @@ describe("pagination (CT-1 — real keyset paging)", () => {
       {},
       { cursor: "cur-1" },
     ]);
+
+    // R1: EXHAUSTED cursor (page 2 returned null) — further end-reached
+    // events fire no request.
+    await fireEvent(screen.getByTestId("trip-list-list"), "onEndReached");
+    await fireEvent(screen.getByTestId("trip-list-list"), "onEndReached");
+    expect(
+      request.mock.calls.filter(([d]) => (d as { path: string }).path === "/trips"),
+    ).toHaveLength(2);
+  });
+
+  it("R1: a failed page fetch keeps loaded rows and shows the footer surface; its retry appends", async () => {
+    const page1 = { items: [makePlanningTrip(TEST_TRIP_ID)], nextCursor: "cur-1" };
+    const page2 = {
+      items: [makePlanningTrip(TRIP_B_ID, { name: "Second Page Trip" })],
+      nextCursor: null,
+    };
+    let failPage2 = true;
+    mockNavApi({
+      overrides: {
+        "GET /trips": (input) => {
+          const cursor = (input as { query?: { cursor?: string } }).query?.cursor;
+          if (cursor === undefined) return Promise.resolve(page1);
+          return failPage2
+            ? Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom"))
+            : Promise.resolve(page2);
+        },
+      },
+    });
+    await renderScreen();
+    await screen.findByTestId(`trip-list-list-item-${TEST_TRIP_ID}`);
+
+    await fireEvent(screen.getByTestId("trip-list-list"), "onEndReached");
+
+    // Rows retained, footer surface up, no full-screen error, no top banner.
+    expect(await screen.findByTestId("trip-list-banner-page")).toBeOnTheScreen();
+    expect(screen.getByTestId(`trip-list-list-item-${TEST_TRIP_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId("trip-list-error")).toBeNull();
+    expect(screen.queryByTestId("trip-list-banner-refresh")).toBeNull();
+
+    failPage2 = false;
+    await fireEvent.press(screen.getByTestId("trip-list-banner-page-retry"));
+    expect(await screen.findByTestId(`trip-list-list-item-${TRIP_B_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId("trip-list-banner-page")).toBeNull();
+  });
+
+  it("R1: a row overlapping across pages renders ONCE (id-dedupe — the append/refetch race the code flags)", async () => {
+    // Page 2 re-serves the page-1 trip (keyset drift under a concurrent
+    // refetch) plus a genuinely new row.
+    const dupe = makePlanningTrip(TEST_TRIP_ID);
+    const page1 = { items: [dupe], nextCursor: "cur-1" };
+    const page2 = { items: [dupe, makePlanningTrip(TRIP_B_ID)], nextCursor: null };
+    mockNavApi({
+      overrides: {
+        "GET /trips": (input) =>
+          Promise.resolve(
+            (input as { query?: { cursor?: string } }).query?.cursor === "cur-1" ? page2 : page1,
+          ),
+      },
+    });
+    await renderScreen();
+    await screen.findByTestId(`trip-list-list-item-${TEST_TRIP_ID}`);
+    await fireEvent(screen.getByTestId("trip-list-list"), "onEndReached");
+
+    await screen.findByTestId(`trip-list-list-item-${TRIP_B_ID}`);
+    expect(screen.getAllByTestId(`trip-list-list-item-${TEST_TRIP_ID}`)).toHaveLength(1);
   });
 });
 

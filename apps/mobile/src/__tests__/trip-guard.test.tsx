@@ -141,6 +141,30 @@ it("Law #3 client half: a stale cached trip + fresh 404 renders no-access, never
   expect(queryClient.getQueryData(queryKeys.trip(TEST_TRIP_ID))).toBeUndefined();
 });
 
+it('R1: tripId="list" (any non-UUID segment) can NEVER touch the trip-list cache — the guard 404 and its scrub leave it intact', async () => {
+  // Deep links pass unknown segments straight into [tripId] (no client UUID
+  // check — T-6.6 posture), so the guard's key space is arbitrary strings.
+  // With the old ["trips","list"] list key this URL ALIASED the infinite
+  // cache: the 404 wrote an error into it and the PREFIX-matching scrub
+  // teardown evicted it wholesale. The disjoint ["trip-list"] root makes
+  // both paths unreachable — pinned here.
+  const seeded = {
+    pages: [{ items: [makePlanningTrip(TEST_TRIP_ID)], nextCursor: null }],
+    pageParams: [undefined],
+  };
+  queryClient.setQueryData(queryKeys.tripsList, seeded);
+  mockNavApi({ trips: [] }); // "list" names no trip → the guard 404s
+  await renderApp("/list/itinerary");
+  expect(await screen.findByTestId("no-access-screen")).toBeOnTheScreen();
+
+  // The 404 wrote its error into the guard's OWN entry, not the list's…
+  expect(queryClient.getQueryData(queryKeys.tripsList)).toEqual(seeded);
+  expect(queryClient.getQueryState(queryKeys.tripsList)?.status).toBe("success");
+  // …and the scrub's prefix removal over trip("list") misses it too.
+  await cleanup();
+  expect(queryClient.getQueryData(queryKeys.tripsList)).toEqual(seeded);
+});
+
 it("T-6.6 R2: a RETAINED error from a prior mount holds — never flashes the retry surface — while the remount's verification is in flight", async () => {
   // Mount 1: a non-404 failure settles into the retry surface and leaves an
   // error state in the prod cache (retry collapsed to 1ms as below).

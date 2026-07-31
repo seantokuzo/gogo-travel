@@ -44,7 +44,7 @@ import { StyleSheet, View } from "react-native";
 
 import { ApiRequestError } from "@/auth";
 import { TabNav } from "@/components";
-import { queryClient, queryKeys, useTrip } from "@/data";
+import { invalidateTripLists, queryClient, queryKeys, useTrip } from "@/data";
 import { stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 import { TripProvider, useTripId } from "@/navigation/trip-context";
@@ -133,10 +133,12 @@ export default function TripLayout() {
   // the scrub rides the effect teardown instead.
   useEffect(() => {
     if (!is404) return;
-    // exact: the list key ["trips"] is a PREFIX of every ["trips", id] detail
-    // key — a non-exact invalidate matches the guard's own query and
-    // refetch-loops it (caught live: 121 requests before the test timed out).
-    void queryClient.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+    // BOTH list keys go stale (invalidateTripLists is exact-only — a
+    // non-exact ["trips"] invalidate matches the guard's own detail query
+    // and refetch-loops the 404; caught live: 121 requests). The removal
+    // below matches by PREFIX over trip(tripId), which is exactly why the
+    // list cache lives under a disjoint root (R1: tripId="list" reachable).
+    invalidateTripLists(queryClient);
     return () => {
       queryClient.removeQueries({ queryKey: queryKeys.trip(tripId) });
     };

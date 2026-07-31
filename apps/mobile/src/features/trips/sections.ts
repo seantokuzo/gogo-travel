@@ -97,3 +97,9 @@ export function formatDateRange(start: string, end: string): string {
 export function formatMemberCount(count: number): string {
   return count === 1 ? "1 member" : `${count} members`;
 }
+
+/** Single field date — "May 1, 2027" (DateField display; same tz-free rules). */
+export function formatFieldDate(iso: string): string {
+  const { y, m, d } = parts(iso);
+  return `${MONTHS[m - 1] ?? ""} ${d}, ${y}`;
+}

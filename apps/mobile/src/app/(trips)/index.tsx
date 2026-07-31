@@ -29,7 +29,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { SectionList, StyleSheet, View } from "react-native";
 
 import { AppText, Button, EmptyState, ErrorBanner, PageHeader, Sheet, Skeleton } from "@/components";
-import { queryKeys, useTripList } from "@/data";
+import { invalidateTripLists, useTripList } from "@/data";
 import { Fab, TripRow, groupTripsIntoSections } from "@/features/trips";
 import { useLinkNoticeStore } from "@/navigation/link-notice";
 
@@ -89,10 +89,7 @@ export default function TripListScreen() {
         firstFocus.current = false;
         return;
       }
-      // exact: ["trips"] is a PREFIX of every ["trips", id] detail key — a
-      // non-exact invalidate would refetch-loop the [tripId] guard (T-6.6).
-      void qc.invalidateQueries({ queryKey: queryKeys.tripsList, exact: true });
-      void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      invalidateTripLists(qc);
     }, [qc]),
   );
 
@@ -120,7 +117,12 @@ export default function TripListScreen() {
         <Skeleton variant="rect" height={96} />
       </View>
     );
-  } else if (list.status === "error") {
+  } else if (list.data === undefined) {
+    // Full-screen error ONLY when there is nothing to show (R1 review): v5
+    // flips status to "error" with data RETAINED on a failed background
+    // refetch/fetchNextPage — a populated list must never be replaced by
+    // this surface (same posture as the guard's "failed refetch is NOT a
+    // verdict"). Retained-data failures render inline below instead.
     // §2.7 pins the retry control's EXACT id as `trip-list-retry` ("retry"
     // is an element noun) — a standalone retry button keeps every node
     // grammar-conforming, where an ErrorBanner-derived retry could not.
@@ -162,8 +164,23 @@ export default function TripListScreen() {
       </View>
     );
   } else {
+    // Background-failure surfaces over RETAINED rows (R1 review): a failed
+    // focus-refetch shows an inline banner above the list; a failed page
+    // fetch shows a footer banner with its own retry (isFetchNextPageError
+    // discriminates the two — both flip status to "error" in v5).
+    const refreshFailed = list.isError && !list.isFetchNextPageError;
     content = (
-      <SectionList
+      <>
+        {refreshFailed ? (
+          <View style={s.banner}>
+            <ErrorBanner
+              message="Couldn't refresh — showing your last loaded trips."
+              onRetry={() => void list.refetch()}
+              testID="trip-list-banner-refresh"
+            />
+          </View>
+        ) : null}
+        <SectionList
         testID="trip-list-list"
         sections={sections}
         keyExtractor={(item) => item.id}
@@ -187,6 +204,12 @@ export default function TripListScreen() {
           <View style={s.footer}>
             {list.isFetchingNextPage ? (
               <Skeleton variant="rect" height={96} width="100%" testID="trip-list-loading-more" />
+            ) : list.isFetchNextPageError ? (
+              <ErrorBanner
+                message="Couldn't load more trips."
+                onRetry={() => void list.fetchNextPage()}
+                testID="trip-list-banner-page"
+              />
             ) : null}
             <Button
               title="Join with an invite link"
@@ -206,7 +229,8 @@ export default function TripListScreen() {
             ) : null}
           </View>
         }
-      />
+        />
+      </>
     );
   }
 

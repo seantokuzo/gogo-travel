@@ -118,13 +118,56 @@ describe("useCreateTrip (CT-2)", () => {
 
     expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: input });
     expect(client.getQueryData(queryKeys.trip(TEST_TRIP_ID))).toEqual(created);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.trips, exact: true });
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.tripsList, exact: true });
+    // R1: ONE canonical two-key invalidation (invalidateTripLists) with
+    // refetchType "none" — the list's guaranteed focus refetch on return
+    // does the work; an eager refetch here would be a redundant RTT.
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: queryKeys.trips,
+      exact: true,
+      refetchType: "none",
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: queryKeys.tripsList,
+      exact: true,
+      refetchType: "none",
+    });
     // NEVER a bare ["trips"] prefix invalidate — it would match every
     // ["trips", id] detail key and refetch-loop the [tripId] guard (T-6.6).
     expect(invalidate).not.toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: queryKeys.trips, exact: false }),
     );
+    await unmount();
+  });
+});
+
+describe("useTripList cold-start seed (R1 perf)", () => {
+  it("seeds the infinite cache from the entry redirect's ['trips'] page — rows render with no list request settled", async () => {
+    const request = spyRequest();
+    // The list's own fetch never settles: any rendered rows can only have
+    // come from the seed. (The harness client's staleTime 0 marks the seed
+    // stale so a background refetch fires — prod's 5-min staleTime plus the
+    // carried dataUpdatedAt is what suppresses it on real cold starts.)
+    request.mockImplementation(() => new Promise(() => undefined));
+    const client = makeTestQueryClient();
+    const page = { items: [makePlanningTrip(TEST_TRIP_ID)], nextCursor: null };
+    client.setQueryData(queryKeys.trips, page);
+
+    const { result, unmount } = await renderHook(() => useTripList(), {
+      wrapper: makeWrapper(client),
+    });
+
+    expect(result.current.data?.pages).toEqual([page]);
+    expect(result.current.status).toBe("success");
+    await unmount();
+  });
+
+  it("starts empty (pending) when no redirect page is cached", async () => {
+    const request = spyRequest();
+    request.mockImplementation(() => new Promise(() => undefined));
+    const { result, unmount } = await renderHook(() => useTripList(), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+    expect(result.current.status).toBe("pending");
     await unmount();
   });
 });

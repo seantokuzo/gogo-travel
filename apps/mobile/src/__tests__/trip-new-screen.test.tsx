@@ -22,7 +22,12 @@ import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { TEST_USER } from "@/test-utils/session-fixtures";
 import { makePlace, makePlanningTrip } from "@/test-utils/trip-fixtures";
 
-const mockRouter = { push: jest.fn(), back: jest.fn(), replace: jest.fn() };
+const mockRouter = {
+  push: jest.fn(),
+  back: jest.fn(),
+  replace: jest.fn(),
+  canGoBack: jest.fn(() => true),
+};
 
 type BeforeRemoveEvent = {
   preventDefault: jest.Mock;
@@ -83,12 +88,25 @@ const FILLED_BODY = {
   end_date: "2027-05-08",
 };
 
+/**
+ * Drive the platform date picker (R1 — the §2.3 range picker replaced typed
+ * fields): press the field row to reveal the picker, then fire the native
+ * change event the iOS wrapper translates into `onValueChange(event, date)`.
+ * LOCAL noon keeps the picked calendar day tz-stable on any runner.
+ */
+async function pickDate(fieldTestID: string, y: number, m: number, d: number) {
+  await fireEvent.press(screen.getByTestId(fieldTestID));
+  await fireEvent(screen.getByTestId(`${fieldTestID}-picker`), "onChange", {
+    nativeEvent: { timestamp: new Date(y, m - 1, d, 12).getTime(), utcOffset: 0 },
+  });
+}
+
 async function fillValidForm() {
   await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
   await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
   await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
-  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "2027-05-01");
-  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-end"), "2027-05-08");
+  await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+  await pickDate("trip-new-input-dates-end", 2027, 5, 8);
 }
 
 function fireBeforeRemove(): BeforeRemoveEvent {
@@ -145,6 +163,9 @@ afterEach(async () => {
     hops += 1;
     idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
+  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
+  // the suite, not silently hand a wedged query to the next test.
+  expect(lastClient?.isFetching() ?? 0).toBe(0);
   lastClient = null;
   jest.restoreAllMocks();
 });
@@ -153,6 +174,9 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
   it("submitting an empty form surfaces every required-field error and never POSTs", async () => {
     const request = mockApi();
     await renderScreen();
+
+    // The §2.7 container id wraps the whole range control (R1 advisory pin).
+    expect(screen.getByTestId("trip-new-input-dates")).toBeOnTheScreen();
 
     await fireEvent.press(screen.getByTestId("trip-new-button-create"));
 
@@ -163,20 +187,53 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
     expect(postCalls(request)).toHaveLength(0);
   });
 
-  it("mirrors the shared date rules: bad format and end-before-start are field errors, not requests", async () => {
+  it("mirrors the shared date-order rule: end before start is a field error, not a request", async () => {
+    // Bad-FORMAT dates are unreachable through the picker control (it emits
+    // ISO by construction) — the schema's format arm stays as defense but
+    // only the order rule has a UI path.
     const request = mockApi();
     await renderScreen();
     await fillValidForm();
 
-    await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "05/01/2027");
-    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
-    expect(screen.getByText("Use YYYY-MM-DD.")).toBeOnTheScreen();
-
-    await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "2027-05-09");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 9); // after the 05-08 end
     await fireEvent.press(screen.getByTestId("trip-new-button-create"));
     expect(
-      screen.getByText("End date must be on or after the start date."),
+      await screen.findByText("End date must be on or after the start date."),
     ).toBeOnTheScreen();
+    expect(postCalls(request)).toHaveLength(0);
+  });
+
+  it("boundary pins: 200-char name accepted, 201 rejected; equal start/end accepted", async () => {
+    const request = mockApi();
+    await renderScreen();
+    await fillValidForm();
+    // Equal start/end is a valid single-day range (shared rule is `>` only).
+    await pickDate("trip-new-input-dates-end", 2027, 5, 1);
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "n".repeat(201));
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    expect(screen.getByText("Trip names run 1–200 characters.")).toBeOnTheScreen();
+    expect(postCalls(request)).toHaveLength(0);
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "n".repeat(200));
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    await waitFor(() => expect(postCalls(request)).toHaveLength(1));
+    const body = (postCalls(request)[0][1] as { body: Record<string, unknown> }).body;
+    expect(body.name).toBe("n".repeat(200));
+    expect(body.start_date).toBe("2027-05-01");
+    expect(body.end_date).toBe("2027-05-01");
+  });
+
+  it("§2.3 no-free-text: editing the text after a pick voids it — submit errors, ZERO POSTs", async () => {
+    const request = mockApi();
+    await renderScreen();
+    await fillValidForm();
+
+    // Edit AFTER the pick: the stale lat/lng must never ride under new text.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto!");
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    expect(screen.getByTestId("trip-new-input-destination-error")).toBeOnTheScreen();
     expect(postCalls(request)).toHaveLength(0);
   });
 });
@@ -240,6 +297,47 @@ describe("submit (R-tripui-7)", () => {
     await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
   });
 
+  it("R1: a submit RACING the /me read waits for it — base_currency is never silently dropped", async () => {
+    // /me is held open across the submit press; the deterministic-prefs
+    // contract says no POST may fire until it settles, and the settled
+    // home_currency must ride the body (base_currency locks at the first
+    // expense — a silent USD default has teeth).
+    let resolveMe!: (value: unknown) => void;
+    const request = mockApi({
+      "GET /users/me": () =>
+        new Promise((resolve) => {
+          resolveMe = resolve;
+        }),
+    });
+    await renderScreen();
+    await fillValidForm();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+    // Still resolving prefs: the submit is held (spinner up), nothing POSTed.
+    expect(postCalls(request)).toHaveLength(0);
+    expect(await screen.findByTestId("trip-new-button-create-spinner")).toBeOnTheScreen();
+    // …and a second press during the prefs window is a no-op.
+    await fireEvent.press(screen.getByTestId("trip-new-button-create"));
+
+    await act(async () => {
+      resolveMe({ ...TEST_USER, prefs: { home_currency: "JPY" } });
+      // Two hops INSIDE one act window: the me-settle's notify batch, then
+      // the submit continuation's (resolvingPrefs flip → mutate pending)
+      // follow-on batch — otherwise the second lands between act windows
+      // under --maxWorkers=2 contention (B-2 family).
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: { ...FILLED_BODY, base_currency: "JPY" },
+      }),
+    );
+    expect(postCalls(request)).toHaveLength(1);
+    await waitFor(() => expect(mockRouter.replace).toHaveBeenCalledWith(`/${TEST_TRIP_ID}`));
+  });
+
   it("omits base_currency when prefs carry no home_currency (server defaults USD, R-tripui-6)", async () => {
     const request = mockApi(); // TEST_USER.prefs = {}
     await renderScreen();
@@ -293,11 +391,12 @@ describe("submit (R-tripui-7)", () => {
     await fireEvent.press(screen.getByTestId("trip-new-button-create"));
     expect(await screen.findByTestId("trip-new-error")).toBeOnTheScreen();
 
-    // R-tripui-7: all entered values preserved on failure.
+    // R-tripui-7: all entered values preserved on failure (dates render
+    // their picked values on the picker field rows).
     expect(screen.getByTestId("trip-new-input-name").props.value).toBe("Kyoto Spring");
     expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
-    expect(screen.getByTestId("trip-new-input-dates-start").props.value).toBe("2027-05-01");
-    expect(screen.getByTestId("trip-new-input-dates-end").props.value).toBe("2027-05-08");
+    expect(screen.getByText("May 1, 2027")).toBeOnTheScreen();
+    expect(screen.getByText("May 8, 2027")).toBeOnTheScreen();
 
     fail = false;
     await fireEvent.press(screen.getByTestId("trip-new-error-retry"));

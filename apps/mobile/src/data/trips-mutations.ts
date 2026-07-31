@@ -33,7 +33,7 @@ import {
 
 import { apiClient } from "@/auth";
 
-import { queryKeys } from "./query-client";
+import { invalidateTripLists, queryKeys } from "./query-client";
 
 /**
  * `GET /trips` with REAL keyset pagination (CT-1; §2.1) — cursor pages per
@@ -44,12 +44,17 @@ import { queryKeys } from "./query-client";
  * The entry redirect / trip switcher keep their own first-page-at-cap read
  * (`useTrips`, key `["trips"]`) — an `InfiniteData` shape can't share a key
  * with a plain page, and the launch decision wants one bounded read, not a
- * paginated crawl.
+ * paginated crawl. On cold start that redirect page IS this list's first
+ * page (same endpoint, wider limit), so it seeds the infinite cache
+ * (`initialData` + the source read's `dataUpdatedAt` — R1 perf review):
+ * the default landing renders rows immediately instead of paying a second
+ * serial RTT behind a skeleton.
  */
 export function useTripList(): UseInfiniteQueryResult<
   InfiniteData<Paginated<TripListItem>, string | undefined>,
   Error
 > {
+  const qc = useQueryClient();
   return useInfiniteQuery({
     queryKey: queryKeys.tripsList,
     queryFn: ({ pageParam, signal }) =>
@@ -62,6 +67,14 @@ export function useTripList(): UseInfiniteQueryResult<
     // `null` (shared contract's "no further page") and `undefined` both mean
     // stop in v5 — normalize so the pageParam type stays `string | undefined`.
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    initialData: () => {
+      const seed = qc.getQueryData<Paginated<TripListItem>>(queryKeys.trips);
+      if (seed === undefined) return undefined;
+      return { pages: [seed], pageParams: [undefined] };
+    },
+    // Carry the source read's timestamp so staleTime applies to when the
+    // rows were actually fetched — a stale redirect page still refetches.
+    initialDataUpdatedAt: () => qc.getQueryState(queryKeys.trips)?.dataUpdatedAt,
   });
 }
 
@@ -71,9 +84,11 @@ export function useTripList(): UseInfiniteQueryResult<
  * On success:
  * - seed the trip's detail cache (the guard still re-verifies on mount —
  *   R-nav-20 — but the fresh row is the reconciled truth, R-trips-19);
- * - invalidate BOTH trips list keys so the new trip appears everywhere
- *   (`exact` on `["trips"]` — it is a PREFIX of every detail key; the T-6.6
- *   guard scrub learned that landmine live).
+ * - mark BOTH trips list keys stale WITHOUT refetching (`refetchType:
+ *   "none"`, R1 perf review): the modal replaces into `/[tripId]`, so the
+ *   list refetches exactly once via its guaranteed focus effect when the
+ *   user returns — an eager background refetch here would be a redundant
+ *   second RTT.
  * `enqueueDestination` (places ingest) fires server-side on create — no
  * client call.
  */
@@ -84,8 +99,7 @@ export function useCreateTrip(): UseMutationResult<TripWithRole, Error, TripCrea
       apiClient.request(tripEndpoints.createTrip, { body: input }),
     onSuccess: (trip) => {
       qc.setQueryData(queryKeys.trip(trip.id), trip);
-      void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
-      void qc.invalidateQueries({ queryKey: queryKeys.tripsList, exact: true });
+      invalidateTripLists(qc, { refetchType: "none" });
     },
   });
 }
@@ -109,9 +123,12 @@ export function isSearchableDestinationQuery(raw: string): boolean {
  * `GET /places/search` — destination structured search (CT-2; §2.3 resolved
  * Gate 2: Overture city/locality subset lives in the same `places` spine, so
  * the standard search endpoint IS the destination source). Text-only (no
- * bbox/near) with the 4-char floor enforced by the `enabled` gate — the
- * ApiClient validates inputs against the descriptor schema, so firing a
- * 2–3-char bare query would reject client-side.
+ * bbox/near) with the 4-char floor enforced by the `enabled` gate — and the
+ * gate is the ONLY client-side floor: the ApiClient validates RESPONSES
+ * against the descriptor schema, never inputs (params/query/body serialize
+ * unvalidated — R1 review), so a sub-floor query fired past this gate would
+ * be a live server 400. Don't lean on a client input-validation layer that
+ * doesn't exist.
  */
 export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place>, Error> {
   const q = normalizeSearchText(rawQuery);

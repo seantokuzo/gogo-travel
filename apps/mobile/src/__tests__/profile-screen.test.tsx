@@ -14,11 +14,22 @@ import {
 } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
 
+import type { QueryClient } from "@tanstack/react-query";
+
 import { apiClient, ApiRequestError, useSessionStore } from "@/auth";
 import ProfileScreen from "@/app/(trips)/profile";
 import { queryClient } from "@/data";
-import { renderWithProviders } from "@/test-utils/render";
+import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { TEST_USER, seedAuthenticated } from "@/test-utils/session-fixtures";
+
+/** The last render's client — the afterEach drain reads its isFetching. */
+let lastClient: QueryClient | null = null;
+
+async function renderScreen() {
+  const client = makeTestQueryClient();
+  lastClient = client;
+  return renderWithProviders(<ProfileScreen />, { queryClient: client });
+}
 
 jest.mock("expo-router", () => ({
   __esModule: true,
@@ -110,8 +121,13 @@ afterEach(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     hops += 1;
-    idleHops = queryClient.isFetching() > 0 ? 0 : idleHops + 1;
+    idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
+  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
+  // the suite, not silently hand a wedged query to the next test. The check
+  // reads the RENDER's client — the prod singleton never fetches here.
+  expect(lastClient?.isFetching() ?? 0).toBe(0);
+  lastClient = null;
   jest.restoreAllMocks();
   queryClient.clear();
   // Defensive: real timers even if a sibling renderRouter suite leaked fake ones.
@@ -137,7 +153,7 @@ describe("ProfileScreen", () => {
   it("loads the profile and prefills the display name", async () => {
     seedAuthenticated();
     mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
 
     expect(await screen.findByTestId("profile-section-edit")).toBeOnTheScreen();
     expect(screen.getByTestId("profile-input-name").props.value).toBe(TEST_USER.display_name);
@@ -146,7 +162,7 @@ describe("ProfileScreen", () => {
   it("saves an edited display name via updateMe", async () => {
     seedAuthenticated();
     const request = mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId("profile-input-name");
 
     await fireEvent.changeText(screen.getByTestId("profile-input-name"), "Edited");
@@ -163,7 +179,7 @@ describe("ProfileScreen", () => {
   it("saves payment handles via updatePaymentHandles", async () => {
     seedAuthenticated();
     const request = mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId("profile-input-venmo");
 
     await fireEvent.changeText(screen.getByTestId("profile-input-venmo"), "@sean");
@@ -180,7 +196,7 @@ describe("ProfileScreen", () => {
   it("marks the current session, blocks its revoke, and revokes another after confirm", async () => {
     seedAuthenticated();
     const request = mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId(`profile-session-${SESSION_CURRENT.id}`);
 
     // Current session: badge present, no revoke button.
@@ -200,7 +216,7 @@ describe("ProfileScreen", () => {
   it("deletes the account after a hard confirm, then signs out", async () => {
     seedAuthenticated();
     const request = mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId("profile-button-delete");
 
     await fireEvent.press(screen.getByTestId("profile-button-delete"));
@@ -214,7 +230,7 @@ describe("ProfileScreen", () => {
     seedAuthenticated();
     mockApi();
     const clear = jest.spyOn(queryClient, "clear");
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId("profile-button-signout");
 
     await fireEvent.press(screen.getByTestId("profile-button-signout"));
@@ -227,7 +243,7 @@ describe("ProfileScreen", () => {
   it("renders the read-only entitlements", async () => {
     seedAuthenticated();
     mockApi();
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
 
     const planRow = await screen.findByTestId("profile-entitlement-plan");
     expect(within(planRow).getByText("Free")).toBeOnTheScreen();
@@ -239,7 +255,7 @@ describe("ProfileScreen", () => {
     (jest.spyOn(apiClient, "request") as unknown as jest.Mock).mockRejectedValue(
       new ApiRequestError(500, "UNKNOWN", "boom"),
     );
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
 
     expect(await screen.findByTestId("profile-error")).toBeOnTheScreen();
   });
@@ -251,7 +267,7 @@ describe("ProfileScreen", () => {
     mockApi({
       "GET /auth/sessions": () => Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
     });
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
 
     expect(await screen.findByTestId("profile-sessions-error")).toBeOnTheScreen();
   });
@@ -262,7 +278,7 @@ describe("ProfileScreen", () => {
       "DELETE /auth/sessions/:sessionId": () =>
         Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
     });
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId(`profile-session-${SESSION_OTHER.id}`);
 
     await fireEvent.press(screen.getByTestId(`profile-revoke-${SESSION_OTHER.id}`));
@@ -276,7 +292,7 @@ describe("ProfileScreen", () => {
     mockApi({
       "DELETE /users/me": () => Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")),
     });
-    await renderWithProviders(<ProfileScreen />);
+    await renderScreen();
     await screen.findByTestId("profile-button-delete");
 
     await fireEvent.press(screen.getByTestId("profile-button-delete"));

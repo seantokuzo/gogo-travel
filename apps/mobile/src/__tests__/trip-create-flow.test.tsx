@@ -33,7 +33,7 @@ it("CT-2: fill → pick destination → create → land inside the new trip on t
   const kyoto = makePlace();
   const created = makePlanningTrip(TEST_TRIP_ID);
   let postedBody: unknown;
-  mockNavApi({
+  const request = mockNavApi({
     // The created trip is the guard's universe — the post-create replace
     // must verify membership (R-nav-20) before the shell mounts.
     trips: [created],
@@ -47,14 +47,27 @@ it("CT-2: fill → pick destination → create → land inside the new trip on t
     },
   });
 
-  const result = await renderApp("/new");
+  // The real user path: land on the list (planning trip → R-nav-5 default),
+  // open the modal via the FAB — the list mounts beneath, so the walkthrough
+  // also pins the ONE-list-RTT budget below.
+  const result = await renderApp("/");
+  await screen.findByTestId("trip-list-screen");
+  await fireEvent.press(screen.getByTestId("trip-list-fab-create"));
   expect(await screen.findByTestId("trip-new-screen")).toBeOnTheScreen();
 
   await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
   await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
   await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${kyoto.id}`));
-  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-start"), "2027-05-01");
-  await fireEvent.changeText(screen.getByTestId("trip-new-input-dates-end"), "2027-05-08");
+  // The §2.3 range picker: reveal each platform picker and fire its native
+  // change event (local-noon timestamps keep the calendar day tz-stable).
+  await fireEvent.press(screen.getByTestId("trip-new-input-dates-start"));
+  await fireEvent(screen.getByTestId("trip-new-input-dates-start-picker"), "onChange", {
+    nativeEvent: { timestamp: new Date(2027, 4, 1, 12).getTime(), utcOffset: 0 },
+  });
+  await fireEvent.press(screen.getByTestId("trip-new-input-dates-end"));
+  await fireEvent(screen.getByTestId("trip-new-input-dates-end-picker"), "onChange", {
+    nativeEvent: { timestamp: new Date(2027, 4, 8, 12).getTime(), utcOffset: 0 },
+  });
   await fireEvent.press(screen.getByTestId("trip-new-button-create"));
 
   // Landed: guard verified, shell mounted, planning default = itinerary.
@@ -75,4 +88,21 @@ it("CT-2: fill → pick destination → create → land inside the new trip on t
 
   // The dirty-form guard did NOT intercept the submit's replace (bypass).
   expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull();
+
+  // List RTT budget (R1): the LIST SCREEN paid ZERO fetches — the entry
+  // redirect's ["trips"] page seeded its infinite cache (initialData), and
+  // the create's invalidate is refetchType "none", so no eager refetch rode
+  // the mutation. The two limit-100 GETs are the entry redirect's launch
+  // read and the trip switcher's mount refetch of the (now stale) active
+  // set inside the new trip's shell — each a distinct consumer, one RTT.
+  const listGets = request.mock.calls.filter(
+    ([descriptor]) =>
+      (descriptor as { path: string; method: string }).path === "/trips" &&
+      (descriptor as { path: string; method: string }).method === "GET",
+  );
+  const infiniteListGets = listGets.filter(
+    ([, input]) => !("limit" in ((input as { query: object }).query ?? {})),
+  );
+  expect(infiniteListGets).toHaveLength(0);
+  expect(listGets).toHaveLength(2);
 });

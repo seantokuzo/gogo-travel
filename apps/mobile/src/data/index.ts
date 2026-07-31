@@ -4,7 +4,7 @@
  * consume. Import the concrete `./query-client` (not this barrel) from the
  * session store to keep the cache-clear wiring cycle-free.
  */
-export { queryClient, queryKeys, shouldRetry } from "./query-client";
+export { invalidateTripLists, queryClient, queryKeys, shouldRetry } from "./query-client";
 export {
   useMe,
   useUpdateMe,
