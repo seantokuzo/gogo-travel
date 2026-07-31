@@ -75,6 +75,31 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   Viewer role is read-only here, server-enforced (R-ib-24) — reuse the F-038
   byte-identity IDOR harness. LWW semantics (R-ib-18) are the offline-sync
   spec's foundation — don't improvise beyond them.
+- **Status:** W1 **T-7.1 ✅ MERGED b67ba9c (PR #11) 2026-07-31** — 3 review
+  rounds, judge merge/high (full narrative: QUEUE row). W2 dispatched
+  2026-07-31: T-7.2 ∥ T-7.3 in worktrees off b67ba9c (T-7.2 carries the
+  bodyLimit rider). Both consume T-7.1's frozen seams.
+- **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
+  - **Caps must cover EVERY schema class, not just obvious strings** — zod
+    `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
+    "valid datetime" (PR #11 R2 blocker, found IN the caps-fix diff). When
+    capping a wire surface, sweep the whole union: strings, arrays, array
+    ELEMENTS, and every formatted-scalar class.
+  - **Place visibility has ONE home:** `apps/server/src/places/visibility.ts`
+    — every surface that writes a client-supplied `place_id` (bookings now;
+    itinerary items T-7.2; anything later) MUST consume it with the
+    indistinguishable-404 posture. `bookings.place_id` (and soon
+    `itinerary_items.place_id`) is a VISIBILITY GRANT in places search —
+    writing it unchecked is a Law #3 bypass (PR #11 R1 blocker class).
+  - **Lock order extended:** users → trip_members → invites → bookings →
+    itinerary_items. Mutating a booking-kind item goes THROUGH the booking
+    service (parent booking FOR UPDATE first), never directly.
+  - **Dirty-day seam:** `bookings/dirty-days.ts` interface FROZEN
+    (`markDaysDirty`, post-commit-only, never-throws, duplicates OK);
+    T-7.3 owns the internals.
+  - Place-FK 23503 → canonical 404 mapping is constraint-precise
+    (`isPlaceFkViolation` handles both driver field shapes); copy that
+    pattern for any new FK-race mapping.
 
 ### P-6 — Trips, collaboration & places spine (CODE-COMPLETE 2026-07-31 → archived; PHASE QA PENDING)
 
