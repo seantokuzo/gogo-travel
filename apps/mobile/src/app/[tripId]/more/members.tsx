@@ -118,7 +118,25 @@ export default function MembersScreen() {
   const updateRole = useUpdateMemberRole(trip.id, failToBanner);
   const removeMember = useRemoveMember(trip.id, failToBanner);
   const transferOwnership = useTransferOwnership(trip.id, failToBanner);
-  const createInvite = useCreateInvite(trip.id, failToBanner);
+  const createInvite = useCreateInvite(trip.id, {
+    ...failToBanner,
+    // HOOK-level, same reason as the error seam (T-6.9 carry from T-6.8 R2):
+    // a per-call onSuccess is dropped for superseded calls — a second create
+    // mid-flight would silently swallow the first's share sheet.
+    onMutationSuccess: (invite) => {
+      void (async () => {
+        try {
+          // R-tripui-16: OS share sheet with the returned url. iOS shares
+          // the url payload; Android's Share only carries `message`.
+          await Share.share(
+            Platform.OS === "ios" ? { url: invite.url } : { message: invite.url },
+          );
+        } catch {
+          setBanner("Couldn't open the share sheet — the invite link was still created.");
+        }
+      })();
+    },
+  });
   const revokeInvite = useRevokeInvite(trip.id, failToBanner);
 
   const rows = useMemo<Row[]>(() => {
@@ -153,22 +171,9 @@ export default function MembersScreen() {
 
   const sendInvite = (role: InviteGrantableRole) => {
     setInviteSheetOpen(false);
-    createInvite.mutate(
-      { role },
-      {
-        onSuccess: async (invite) => {
-          try {
-            // R-tripui-16: OS share sheet with the returned url. iOS shares
-            // the url payload; Android's Share only carries `message`.
-            await Share.share(
-              Platform.OS === "ios" ? { url: invite.url } : { message: invite.url },
-            );
-          } catch {
-            setBanner("Couldn't open the share sheet — the invite link was still created.");
-          }
-        },
-      },
-    );
+    // Share-sheet open lives on the HOOK-level success seam (see the
+    // useCreateInvite options above) — never per-call.
+    createInvite.mutate({ role });
   };
 
   const confirmDialog = () => {

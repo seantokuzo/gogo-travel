@@ -44,9 +44,11 @@ import {
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
-const mockReplace = jest.fn();
+// PageHeader/Sheet reach for useRouter — the mock stays; no test in this
+// suite navigates, so the handles are inline fns (T-6.9 carry from T-6.8 R2:
+// the named mockReplace was leave-test scaffolding that never landed here).
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ replace: mockReplace, back: jest.fn(), push: jest.fn() }),
+  useRouter: () => ({ replace: jest.fn(), back: jest.fn(), push: jest.fn() }),
 }));
 
 const ME_OWNER = makeMember();
@@ -139,7 +141,6 @@ afterEach(async () => {
     await new Promise((resolve) => setTimeout(resolve, 350));
   });
   jest.restoreAllMocks();
-  mockReplace.mockClear();
 });
 
 describe("role-gated affordances (R-tripui-13/14)", () => {
@@ -625,6 +626,106 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
         queryKey: queryKeys.tripInvites(TEST_TRIP_ID),
       }),
     );
+    await settleList();
+  });
+
+  it("a create in flight pending-gates the CTA; both sequential creates open their share sheet via the seam (T-6.9 round-1 pin)", async () => {
+    // The two-in-flight overlap the hook-level seam guards is UI-UNREACHABLE
+    // on this screen: the CTA disables while a create is pending (asserted
+    // below) — which is exactly why the round-1 probe's per-call revert left
+    // every test green. This pin turns that gate into an explicit invariant
+    // (remove the gate OR the seam and this file's contract breaks) and
+    // drives TWO creates through the seam asserting Share.share CALL COUNT;
+    // the superseded-call mechanics themselves are pinned at hook grain
+    // (data/members.test.tsx two-held-POST).
+    const shareSpy = jest
+      .spyOn(Share, "share")
+      .mockResolvedValue({ action: "sharedAction" } as never);
+    const resolvers: ((invite: unknown) => void)[] = [];
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        "POST /trips/:tripId/invites": () =>
+          new Promise((resolve) => resolvers.push(resolve as (invite: unknown) => void)),
+      },
+    });
+
+    // Create #1 held open…
+    await fireEvent.press(await screen.findByTestId("members-button-invite"));
+    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
+    await settleSheetExit();
+    // …the CTA is pending-gated: a re-press opens NO sheet mid-flight.
+    expect(screen.getByTestId("members-button-invite")).toBeDisabled();
+    await fireEvent.press(screen.getByTestId("members-button-invite"));
+    expect(screen.queryByTestId("members-button-invite-editor")).toBeNull();
+    expect(resolvers).toHaveLength(1);
+
+    const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
+      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
+      return { ...row, url };
+    };
+    await act(async () =>
+      resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/first")),
+    );
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(1));
+
+    // CTA re-enables on settle; the SECOND create opens its own sheet.
+    await waitFor(() => expect(screen.getByTestId("members-button-invite")).toBeEnabled());
+    await fireEvent.press(screen.getByTestId("members-button-invite"));
+    await fireEvent.press(await screen.findByTestId("members-button-invite-viewer"));
+    await settleSheetExit();
+    expect(resolvers).toHaveLength(2);
+    await act(async () =>
+      resolvers[1]?.(wireInvite(INVITE_B_ID, "viewer", "https://links.test/invite/second")),
+    );
+
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(2));
+    expect(shareSpy).toHaveBeenNthCalledWith(1, { url: "https://links.test/invite/first" });
+    expect(shareSpy).toHaveBeenNthCalledWith(2, { url: "https://links.test/invite/second" });
+    await settleList();
+  });
+
+  it("EXIT-WINDOW two-in-flight creates: both share sheets open via the seam (round-2 — per-call would drop the first)", async () => {
+    // The CTA pending gate does NOT cover the Sheet's role items, and Sheet
+    // stays mounted AND pressable through its ~200ms exit animation — so a
+    // second role-item tap inside the exit window fires a second create
+    // while the first is in flight (prod-real). v5 drops the superseded
+    // call's per-call callbacks; only the hook-level seam opens BOTH sheets.
+    const shareSpy = jest
+      .spyOn(Share, "share")
+      .mockResolvedValue({ action: "sharedAction" } as never);
+    const resolvers: ((invite: unknown) => void)[] = [];
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        "POST /trips/:tripId/invites": () =>
+          new Promise((resolve) => resolvers.push(resolve as (invite: unknown) => void)),
+      },
+    });
+
+    await fireEvent.press(await screen.findByTestId("members-button-invite"));
+    // Create #1, then create #2 INSIDE the exit window — no settleSheetExit
+    // between the presses (the sheet is still hit-testable while sliding out).
+    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
+    await fireEvent.press(screen.getByTestId("members-button-invite-viewer"));
+    await settleSheetExit();
+    expect(resolvers).toHaveLength(2);
+
+    const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
+      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
+      return { ...row, url };
+    };
+    await act(async () =>
+      resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/one")),
+    );
+    await act(async () =>
+      resolvers[1]?.(wireInvite(INVITE_B_ID, "viewer", "https://links.test/invite/two")),
+    );
+
+    // COUNT is the discriminator: a per-call wiring opens only the second.
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(2));
+    expect(shareSpy).toHaveBeenNthCalledWith(1, { url: "https://links.test/invite/one" });
+    expect(shareSpy).toHaveBeenNthCalledWith(2, { url: "https://links.test/invite/two" });
     await settleList();
   });
 

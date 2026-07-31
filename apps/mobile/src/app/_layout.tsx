@@ -3,7 +3,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
-import { queryClient } from "@/data";
+import { queryClient, useAppForegroundRefetch } from "@/data";
 import { AuthGate } from "@/navigation/AuthGate";
 import { useStackScreenOptions } from "@/navigation/stack-options";
 import { systemAppearance, themeStorage } from "@/theme";
@@ -28,6 +28,10 @@ import { systemAppearance, themeStorage } from "@/theme";
  */
 function ThemedShell() {
   const { scheme } = useTheme();
+  // Collab v1 foreground leg (R-tripui-3, T-6.9): AppState → active refetches
+  // the trip-scoped queries. Lives here (inside the QueryClientProvider) so it
+  // mounts exactly once for the whole app.
+  useAppForegroundRefetch();
   return (
     <>
       <StatusBar style={scheme === "dark" ? "light" : "dark"} />

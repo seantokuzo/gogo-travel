@@ -33,3 +33,24 @@ export {
   usePlaceSearch,
   useTripList,
 } from "./trips-mutations";
+export {
+  collabInvalidationPlan,
+  evictTripSubtree,
+  handleCollabEvent,
+  useAppForegroundRefetch,
+  useScreenFocusRefetch,
+} from "./collab";
+export type {
+  CollabDeps,
+  CollabInvalidationPlan,
+  CollabResult,
+  InvalidationTarget,
+} from "./collab";
+export {
+  buildTripPatch,
+  isBaseCurrencyLocked,
+  isStaleUpdatedAt,
+  useDeleteTrip,
+  useUpdateTrip,
+} from "./trip-settings";
+export type { TripMutationOptions, TripSettingsEdits } from "./trip-settings";
