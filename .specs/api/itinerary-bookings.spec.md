@@ -307,7 +307,10 @@ Create a booking in any category. The manual-entry and deeplink-return paths.
 derived (R-ib-4); auto-item(s) created when I-2 applies; legs marked dirty.
 
 **Errors**: 400 VALIDATION_FAILED (details/category mismatch, unpaired price,
-disallowed source/status) · 401 · 403 FORBIDDEN (viewer) · 404 (non-member).
+disallowed source/status) · 401 · 403 FORBIDDEN (viewer) · 404 (non-member) ·
+404 (`place_id` unknown OR invisible to the caller — one indistinguishable
+NOT_FOUND, R-places-8 / Law #3: invisible ≡ absent; covers the
+place-deleted-mid-write FK race too).
 
 **Requirements covered**: R-ib-1, R-ib-4, R-ib-5, R-ib-11, R-ib-12, R-ib-24
 
@@ -349,7 +352,9 @@ status transitions per §3.2 with their item effects; time changes resync
 items (I-2); place/time changes mark legs dirty.
 
 **Errors**: 400 VALIDATION_FAILED (illegal transition, category change,
-details mismatch) · 401 · 403 · 404.
+details mismatch) · 401 · 403 · 404 · 404 (`place_id` unknown OR invisible to
+the caller — one indistinguishable NOT_FOUND, R-places-8 / Law #3: invisible
+≡ absent; covers the place-deleted-mid-write FK race too).
 
 **Requirements covered**: R-ib-1..R-ib-7, R-ib-12, R-ib-18, R-ib-24
 
@@ -612,11 +617,12 @@ unchanged):
 
 - `domains/booking.ts` adds `BookingCreate`, `BookingUpdate`,
   `BookingWithItems`, `ScheduleBookingInput` + this router's
-  `EndpointDescriptor`s (contracts §3.6 pattern).
+  `EndpointDescriptor`s (contracts §3.6 pattern), and the pure
+  time-derivation helpers of §3.3 (used by server writes and client
+  optimistic updates alike — they live beside the booking detail shapes
+  they derive from; inventory corrected at T-7.1 round-1).
 - `domains/itinerary.ts` adds `ItineraryItemCreate`, `ItineraryItemUpdate`,
-  `DayOrderInput`, `ItineraryRead` (`{ items, legs }`) + descriptors, and
-  the pure time-derivation helpers of §3.3 (used by server writes and client
-  optimistic updates alike).
+  `DayOrderInput`, `ItineraryRead` (`{ items, legs }`) + descriptors.
 - `scalars.ts` adds `ISOTime` (`HH:MM`, 24-hour) — `time` columns cross the
   wire as strings; contracts spec §3.3 currently lacks a time-of-day scalar.
 

@@ -238,6 +238,18 @@ export const PLACES_SEARCH_MISS_GLOBAL_PER_WINDOW = 200;
 export const PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS = HOUR_MS;
 
 // ---------------------------------------------------------------------------
+// Bookings surface (itinerary-bookings spec §3.4) — T-7.1
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /trips/:tripId/bookings` default page size when the client omits
+ * `limit` (page-size caps are server-defined). The hard cap (100) lives in
+ * the shared `BookingListQuerySchema` — client and server validate the same
+ * bound (trips convention).
+ */
+export const BOOKINGS_PAGE_SIZE_DEFAULT = 50;
+
+// ---------------------------------------------------------------------------
 // Trip role ladder (auth-users spec §2.5 R-authz-3; `requireTripMember`)
 // ---------------------------------------------------------------------------
 

@@ -120,9 +120,15 @@ export function toInviteWithUrlWire(row: InviteRow): InviteWithUrl {
   return { ...toInviteWire(row), url: inviteUrl(row.token) };
 }
 
-/** `GET /trips/:tripId/invites` item: `Invite & { state }` (§3.3). */
+/**
+ * `GET /trips/:tripId/invites` item: `Omit<Invite, "token"> & { state }` —
+ * the raw bearer `token` never rides the LIST envelope (T-6.8 security
+ * defer): every row carried a live capability the UI never uses. The CREATE
+ * response above keeps token+url (the one-shot share-sheet answer).
+ */
 export function toInviteListItemWire(row: InviteRow, state: InviteState): InviteListItem {
-  return { ...toInviteWire(row), state };
+  const { token: _token, ...rest } = toInviteWire(row);
+  return { ...rest, state };
 }
 
 /**

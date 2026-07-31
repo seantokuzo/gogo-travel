@@ -661,8 +661,9 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     expect(resolvers).toHaveLength(1);
 
     const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
-      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
-      return { ...row, url };
+      const { state: _state, ...row } = makeInvite({ id, role });
+      // Wire-faithful: only the CREATE response carries the bearer token.
+      return { ...row, token: `tok-${id}`, url };
     };
     await act(async () =>
       resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/first")),
@@ -712,8 +713,9 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     expect(resolvers).toHaveLength(2);
 
     const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
-      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
-      return { ...row, url };
+      const { state: _state, ...row } = makeInvite({ id, role });
+      // Wire-faithful: only the CREATE response carries the bearer token.
+      return { ...row, token: `tok-${id}`, url };
     };
     await act(async () =>
       resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/one")),

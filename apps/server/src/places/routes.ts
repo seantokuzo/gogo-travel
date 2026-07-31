@@ -26,7 +26,7 @@
  * cap, layered over the queue's per-cell throttle + global budget.
  */
 import { zValidator } from "@hono/zod-validator";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Paginated } from "@gogo/shared/api/envelope";
@@ -44,12 +44,12 @@ import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../htt
 import { decodeKeysetCursor, encodeKeysetCursor } from "../http/keyset-cursor.js";
 import { rateLimit, type RateLimitStore } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
-import { UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "./ingest-queue.js";
 import { intersectBoxes, staleSearchCells } from "./search-coverage.js";
 import { nearPrefilterBox, placesSearchQuery, type SearchBox } from "./search-query.js";
 import { toPlaceWire, type PlaceRow } from "./serialize.js";
+import { resolvePlaceAccess } from "./visibility.js";
 
 export interface PlacesRouterDeps {
   db: DbClient;
@@ -142,38 +142,25 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
     : passThrough;
 
   /**
-   * Mutation-side visibility resolution (R-places-8/10). "Visible but not
-   * creator" — the 403 branch — means the place is referenced (saved /
-   * itinerary / booking) in SOME trip the caller belongs to: those members
-   * already see it in trip content, so FORBIDDEN reveals nothing new.
+   * Mutation-side visibility resolution (R-places-8/10) — the shared
+   * predicate (`visibility.ts`, round-2 A1) mapped onto THIS surface's
+   * branches: "referenced" (visible but not creator) is the 403 arm — the
+   * place is referenced (saved / itinerary / booking) in SOME trip the
+   * caller belongs to, so those members already see it in trip content and
+   * FORBIDDEN reveals nothing new.
    */
   async function customPlaceAccess(placeId: string, userId: string): Promise<CustomPlaceAccess> {
-    if (!UUID_RE.test(placeId)) return { kind: "not_found" };
-
-    const [row] = await deps.db
-      .select()
-      .from(schema.places)
-      .where(eq(schema.places.id, placeId));
-    if (!row) return { kind: "not_found" };
-    if (row.source !== "custom") return { kind: "spine" };
-    if (row.createdBy === userId) return { kind: "owned", row };
-
-    const [visible] = await deps.db
-      .select({ one: sql<number>`1` })
-      .from(schema.tripMembers)
-      .where(
-        and(
-          eq(schema.tripMembers.userId, userId),
-          sql`(
-            exists (select 1 from saved_places sp where sp.trip_id = ${schema.tripMembers.tripId} and sp.place_id = ${placeId}::uuid)
-            or exists (select 1 from itinerary_items ii where ii.trip_id = ${schema.tripMembers.tripId} and ii.place_id = ${placeId}::uuid)
-            or exists (select 1 from bookings b where b.trip_id = ${schema.tripMembers.tripId} and b.place_id = ${placeId}::uuid)
-          )`,
-        ),
-      )
-      .limit(1);
-
-    return visible ? { kind: "forbidden" } : { kind: "not_found" };
+    const access = await resolvePlaceAccess(deps.db, { placeId, userId });
+    switch (access.kind) {
+      case "not_found":
+        return { kind: "not_found" };
+      case "spine":
+        return { kind: "spine" };
+      case "owned":
+        return { kind: "owned", row: access.row };
+      case "referenced":
+        return { kind: "forbidden" };
+    }
   }
 
   // -------------------------------------------------------------------------
