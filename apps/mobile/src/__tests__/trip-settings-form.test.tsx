@@ -112,6 +112,20 @@ async function drainNotify(): Promise<void> {
   });
 }
 
+/**
+ * Hold act() over a Sheet's exit-completion setState (timed slide-out at
+ * duration.base = 200ms → `setExiting(false)`) — the members-screen idiom:
+ * a waitFor SLEEP between act-wrapped checks is un-act'd, so under
+ * full-turbo contention the completion otherwise lands there ("An update to
+ * Sheet was not wrapped in act"). Call right after any press that closes a
+ * sheet (theme option, currency save). Subsumes drainNotify's 0ms hop.
+ */
+async function settleSheetExit(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  });
+}
+
 afterEach(async () => {
   // Drain TanStack's queued notifyManager macrotasks inside act — TWO hops,
   // the second runs batches the first one's effects queued (B-2 family;
@@ -163,20 +177,20 @@ it("own-overlap is pending-gated at the source: theme select and currency save m
   // PATCH 1 (theme) held open…
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-deepWaters"));
-  await drainNotify();
+  await settleSheetExit();
   expect(patchBodies(request)).toHaveLength(1);
 
   // …currency save mid-flight is gated — no second PATCH…
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-currency"));
   await fireEvent.changeText(screen.getByTestId("trip-settings-input-currency"), "EUR");
   await fireEvent.press(screen.getByTestId("trip-settings-button-currency-save"));
-  await drainNotify();
+  await settleSheetExit();
   expect(patchBodies(request)).toHaveLength(1);
 
   // …and so is a second theme select.
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-midnightExpress"));
-  await drainNotify();
+  await settleSheetExit();
   expect(patchBodies(request)).toHaveLength(1);
 
   await act(async () =>
@@ -294,7 +308,7 @@ it("notice retraction (round-2): a NON-details success settling after a 409 keep
   // (an unconditional clear was the round-2 retraction bug)…
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-deepWaters"));
-  await drainNotify();
+  await settleSheetExit();
   await waitFor(() =>
     expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.theme).toBe("deepWaters"),
   );
@@ -434,7 +448,7 @@ it("theme change applies optimistically and rolls back with an error banner on f
 
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-deepWaters"));
-  await drainNotify();
+  await settleSheetExit();
 
   await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
   expect(patchBodies(request)[0]).toEqual({
@@ -480,7 +494,7 @@ it("base-currency 409 → the §2.5 locked explainer, row read-only, cache rolle
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-currency"));
   await fireEvent.changeText(screen.getByTestId("trip-settings-input-currency"), "eur");
   await fireEvent.press(screen.getByTestId("trip-settings-button-currency-save"));
-  await drainNotify();
+  await settleSheetExit();
 
   await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
   // Input uppercases; only the currency key + precondition go out.
