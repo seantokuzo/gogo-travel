@@ -214,6 +214,45 @@ describe("useUpdateTrip (optimistic per §2.6)", () => {
     expect(client.getQueryState(queryKeys.tripsList)?.isInvalidated).toBe(true);
   });
 
+  it("TripMutationOptions seam fires for a SUPERSEDED call (two-held-PATCH — per-call callbacks are dropped)", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    const settlers: { resolve(row: Trip): void; reject(error: Error): void }[] = [];
+    request.mockImplementation(
+      () => new Promise((resolve, reject) => settlers.push({ resolve, reject })),
+    );
+    const onMutationError = jest.fn();
+    const onMutationSuccess = jest.fn();
+
+    const { result } = await renderHook(
+      () => useUpdateTrip(TEST_TRIP_ID, { onMutationError, onMutationSuccess }),
+      { wrapper: makeWrapper(client) },
+    );
+    // Two PATCHes on the shared instance; the second supersedes the first.
+    await act(async () => {
+      result.current.mutate({ name: "First", expect_updated_at: trip.updated_at });
+    });
+    await act(async () => {
+      result.current.mutate({ theme: "deepWaters", expect_updated_at: trip.updated_at });
+    });
+    expect(settlers).toHaveLength(2);
+
+    // The SUPERSEDED first call fails — v5 drops per-call callbacks for it,
+    // so only the hook-level seam surfaces the error (the screen's triage).
+    await act(async () => settlers[0]?.reject(new ApiRequestError(500, "INTERNAL", "boom")));
+    await waitFor(() => expect(onMutationError).toHaveBeenCalledTimes(1));
+
+    const returned: Trip = { ...trip, theme: "deepWaters", updated_at: "2026-07-21T00:00:00.000Z" };
+    await act(async () => settlers[1]?.resolve(returned));
+    await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledTimes(1));
+    // The seam hands the row AND the patch (the screen scopes its re-seed on it).
+    expect(onMutationSuccess).toHaveBeenCalledWith(returned, {
+      theme: "deepWaters",
+      expect_updated_at: trip.updated_at,
+    });
+  });
+
   it("a LOCKED 409 rolls back WITHOUT refetching (the stored row never moved)", async () => {
     const trip = makePlanningTrip(TEST_TRIP_ID);
     const client = seededClient(trip);

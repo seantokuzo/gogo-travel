@@ -685,6 +685,50 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     await settleList();
   });
 
+  it("EXIT-WINDOW two-in-flight creates: both share sheets open via the seam (round-2 — per-call would drop the first)", async () => {
+    // The CTA pending gate does NOT cover the Sheet's role items, and Sheet
+    // stays mounted AND pressable through its ~200ms exit animation — so a
+    // second role-item tap inside the exit window fires a second create
+    // while the first is in flight (prod-real). v5 drops the superseded
+    // call's per-call callbacks; only the hook-level seam opens BOTH sheets.
+    const shareSpy = jest
+      .spyOn(Share, "share")
+      .mockResolvedValue({ action: "sharedAction" } as never);
+    const resolvers: ((invite: unknown) => void)[] = [];
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        "POST /trips/:tripId/invites": () =>
+          new Promise((resolve) => resolvers.push(resolve as (invite: unknown) => void)),
+      },
+    });
+
+    await fireEvent.press(await screen.findByTestId("members-button-invite"));
+    // Create #1, then create #2 INSIDE the exit window — no settleSheetExit
+    // between the presses (the sheet is still hit-testable while sliding out).
+    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
+    await fireEvent.press(screen.getByTestId("members-button-invite-viewer"));
+    await settleSheetExit();
+    expect(resolvers).toHaveLength(2);
+
+    const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
+      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
+      return { ...row, url };
+    };
+    await act(async () =>
+      resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/one")),
+    );
+    await act(async () =>
+      resolvers[1]?.(wireInvite(INVITE_B_ID, "viewer", "https://links.test/invite/two")),
+    );
+
+    // COUNT is the discriminator: a per-call wiring opens only the second.
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(2));
+    expect(shareSpy).toHaveBeenNthCalledWith(1, { url: "https://links.test/invite/one" });
+    expect(shareSpy).toHaveBeenNthCalledWith(2, { url: "https://links.test/invite/two" });
+    await settleList();
+  });
+
   it("revoke confirms then optimistically drops the invite from the active list", async () => {
     const { request } = await renderMembers({ role: "owner", invites: [makeInvite()] });
 

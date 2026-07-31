@@ -53,4 +53,4 @@ export {
   useDeleteTrip,
   useUpdateTrip,
 } from "./trip-settings";
-export type { TripSettingsEdits } from "./trip-settings";
+export type { TripMutationOptions, TripSettingsEdits } from "./trip-settings";

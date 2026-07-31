@@ -23,6 +23,7 @@ import {
   collabInvalidationPlan,
   evictTripSubtree,
   handleCollabEvent,
+  optimisticTripFields,
   useAppForegroundRefetch,
   useScreenFocusRefetch,
   type CollabDeps,
@@ -273,6 +274,41 @@ describe("handleCollabEvent", () => {
     expect(result).toEqual({ handled: true, forcedExit: false });
     expect(deps.onForcedExit).not.toHaveBeenCalled();
     expect(client.getQueryState(queryKeys.trip(TEST_TRIP_ID))).toBeUndefined();
+  });
+});
+
+describe("optimisticTripFields (unit grain — round-2: the branches need direct falsification)", () => {
+  const base = makePlanningTrip(TEST_TRIP_ID, {
+    start_date: "2026-08-20",
+    end_date: "2026-08-27",
+    status: "planning",
+    status_override: null,
+  });
+  const TODAY = "2026-08-10";
+
+  it("dates moved WITHOUT an override: derived status follows the merged window", () => {
+    // Start pulled before today → today ∈ [start, end] → active (was planning).
+    const fields = optimisticTripFields(base, { start_date: "2026-08-01" }, TODAY);
+    expect(fields.start_date).toBe("2026-08-01");
+    expect(fields.status).toBe("active");
+    expect(fields.status_override).toBeUndefined();
+  });
+
+  it("an existing override PINS the status even when dates move", () => {
+    const overridden = { ...base, status: "past" as const, status_override: "past" as const };
+    const fields = optimisticTripFields(overridden, { start_date: "2026-08-01" }, TODAY);
+    expect(fields.status).toBe("past");
+  });
+
+  it("clearing the override ({status: null}) resumes derivation over the merged dates", () => {
+    const overridden = { ...base, status: "past" as const, status_override: "past" as const };
+    const fields = optimisticTripFields(
+      overridden,
+      { status: null, start_date: "2026-08-01" },
+      TODAY,
+    );
+    expect(fields.status_override).toBeNull();
+    expect(fields.status).toBe("active");
   });
 });
 

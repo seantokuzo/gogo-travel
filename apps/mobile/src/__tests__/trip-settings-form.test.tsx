@@ -148,43 +148,159 @@ it("an editor's rename sends ONLY {name, expect_updated_at} — owner-only keys 
   );
 });
 
-it("hook-level seam: a SUPERSEDED patch's failure still surfaces the banner (round-1 blocker pin)", async () => {
+it("own-overlap is pending-gated at the source: theme select and currency save mid-flight fire NO second PATCH (round-2)", async () => {
+  // A second PATCH overlapping the shared mutation deterministically 409s
+  // (the optimistic apply never advances updated_at) — the gates kill the
+  // overlap; the seam's superseded-call mechanics stay pinned at hook grain
+  // (data/trip-settings.test.tsx two-held-PATCH).
   const trip = makePlanningTrip(TEST_TRIP_ID);
   const client = seededClient(trip);
   const request = spyRequest();
-  const settlers: { resolve(row: Trip): void; reject(error: Error): void }[] = [];
-  request.mockImplementation(
-    () => new Promise((resolve, reject) => settlers.push({ resolve, reject })),
-  );
+  let resolvePatch: (row: Trip) => void = () => undefined;
+  request.mockImplementation(() => new Promise((resolve) => (resolvePatch = resolve)));
   await renderSettings(trip, client);
 
-  // PATCH 1 (theme) in flight…
+  // PATCH 1 (theme) held open…
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-deepWaters"));
   await drainNotify();
-  // …PATCH 2 (currency) supersedes it on the SHARED mutation instance.
+  expect(patchBodies(request)).toHaveLength(1);
+
+  // …currency save mid-flight is gated — no second PATCH…
   await fireEvent.press(screen.getByTestId("trip-settings-list-item-currency"));
   await fireEvent.changeText(screen.getByTestId("trip-settings-input-currency"), "EUR");
   await fireEvent.press(screen.getByTestId("trip-settings-button-currency-save"));
   await drainNotify();
-  expect(settlers).toHaveLength(2);
+  expect(patchBodies(request)).toHaveLength(1);
 
-  // The SUPERSEDED first call fails — per-call callbacks are dropped by v5,
-  // so only the hook-level seam can surface this (T-6.8 R1 defect class).
-  await act(async () => settlers[0]?.reject(new ApiRequestError(500, "INTERNAL", "boom")));
-  expect(await screen.findByTestId("trip-settings-banner")).toBeOnTheScreen();
+  // …and so is a second theme select.
+  await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
+  await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-midnightExpress"));
+  await drainNotify();
+  expect(patchBodies(request)).toHaveLength(1);
 
-  // Settle the second before teardown (pending mutation = open handle).
   await act(async () =>
-    settlers[1]?.resolve({
-      ...trip,
-      base_currency: "EUR",
-      updated_at: "2026-07-21T00:00:00.000Z",
-    }),
+    resolvePatch({ ...trip, theme: "deepWaters", updated_at: "2026-07-21T00:00:00.000Z" }),
   );
   await waitFor(() =>
-    expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.base_currency).toBe("EUR"),
+    expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.theme).toBe("deepWaters"),
   );
+});
+
+it("armed-latch (round-2): a consumed conflict latch never re-seeds LATER dirty edits silently", async () => {
+  const trip = makePlanningTrip(TEST_TRIP_ID);
+  const client = seededClient(trip);
+  const request = spyRequest();
+  // Save #1: stale 409 (arms the latch + raises the notice)…
+  request.mockRejectedValueOnce(
+    new ApiRequestError(409, "CONFLICT", "the row changed since it was read", {
+      reason: "stale_updated_at",
+    }),
+  );
+  // …save #2: success (seedForm must CONSUME the latch). The row echoes the
+  // SAME updated_at as the mounted context — the sentinel's equal-timestamp
+  // condition in test-controllable form: the re-seed effect stays quiet
+  // (trip.updated_at === seeded.updatedAt), so ONLY seedForm's consumption
+  // can clear the latch. Without it, the later moved-row rerender re-seeds
+  // dirty edits silently (probe-verified RED under the leg-2 revert).
+  const savedRow: Trip = { ...trip, name: "Mine" };
+  request.mockResolvedValueOnce(savedRow);
+  const view = await renderSettings(trip, client);
+
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-name"), "Mine");
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+  await drainNotify();
+  expect(await screen.findByTestId("trip-settings-banner-conflict")).toBeOnTheScreen();
+
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+  await drainNotify();
+  await waitFor(() => expect(screen.queryByTestId("trip-settings-banner-conflict")).toBeNull());
+
+  // New dirty edits, then a LATER refetch moves the row (foreground sweep /
+  // another member): with the latch consumed, dirty edits MUST survive —
+  // an armed leftover latch would silently re-seed to the remote row
+  // (the delayed R-tripui-19 violation this round pinned).
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-name"), "My dirty edit");
+  const remoteRow = {
+    ...savedRow,
+    name: "Remote Rename",
+    updated_at: "2026-07-22T09:00:00.000Z",
+  };
+  await view.rerender(
+    <TripProvider trip={{ ...trip, ...remoteRow }}>
+      <TripSettingsScreen />
+    </TripProvider>,
+  );
+
+  expect(screen.getByTestId("trip-settings-input-name").props.value).toBe("My dirty edit");
+  expect(screen.queryByTestId("trip-settings-banner-conflict")).toBeNull();
+});
+
+it("dismissing the conflict notice consumes the latch too — no silent re-seed after acknowledgement (round-2)", async () => {
+  const trip = makePlanningTrip(TEST_TRIP_ID);
+  const client = seededClient(trip);
+  const request = spyRequest();
+  request.mockRejectedValueOnce(
+    new ApiRequestError(409, "CONFLICT", "the row changed since it was read", {
+      reason: "stale_updated_at",
+    }),
+  );
+  const view = await renderSettings(trip, client);
+
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-name"), "My dirty edit");
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+  await drainNotify();
+  expect(await screen.findByTestId("trip-settings-banner-conflict")).toBeOnTheScreen();
+
+  // The user acknowledges the conflict (dismiss) and keeps editing — a later
+  // moved-row refetch must NOT silently re-seed (latch armed ⟺ notice
+  // visible; dismissal consumes both).
+  await fireEvent.press(screen.getByTestId("trip-settings-banner-conflict-dismiss"));
+  await view.rerender(
+    <TripProvider
+      trip={{ ...trip, name: "Remote Rename", updated_at: "2026-07-22T09:00:00.000Z" }}
+    >
+      <TripSettingsScreen />
+    </TripProvider>,
+  );
+
+  expect(screen.getByTestId("trip-settings-input-name").props.value).toBe("My dirty edit");
+});
+
+it("notice retraction (round-2): a NON-details success settling after a 409 keeps the conflict notice up", async () => {
+  const trip = makePlanningTrip(TEST_TRIP_ID);
+  const client = seededClient(trip);
+  const request = spyRequest();
+  request.mockRejectedValueOnce(
+    new ApiRequestError(409, "CONFLICT", "the row changed since it was read", {
+      reason: "stale_updated_at",
+    }),
+  );
+  request.mockResolvedValueOnce({
+    ...trip,
+    theme: "deepWaters",
+    updated_at: "2026-07-21T00:00:00.000Z",
+  });
+  await renderSettings(trip, client);
+
+  // Details save 409s → notice up.
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-name"), "Mine");
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+  await drainNotify();
+  expect(await screen.findByTestId("trip-settings-banner-conflict")).toBeOnTheScreen();
+
+  // A theme save succeeds AFTER the 409 — the clear is SCOPED to
+  // details-family successes, so the notice stays until the user resolves
+  // (an unconditional clear was the round-2 retraction bug)…
+  await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme"));
+  await fireEvent.press(screen.getByTestId("trip-settings-list-item-theme-deepWaters"));
+  await drainNotify();
+  await waitFor(() =>
+    expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.theme).toBe("deepWaters"),
+  );
+  expect(screen.getByTestId("trip-settings-banner-conflict")).toBeOnTheScreen();
+  // …and the theme success never re-seeds the dirty details form.
+  expect(screen.getByTestId("trip-settings-input-name").props.value).toBe("Mine");
 });
 
 it("destination edit rides the CT-2 structured search: pick required, all three fields travel together", async () => {
@@ -234,7 +350,7 @@ it("destination edit rides the CT-2 structured search: pick required, all three 
   );
 });
 
-it("date edit saves ONLY the changed date; picking end before start blocks with the order error", async () => {
+it("date edit saves the changed dates and FLIPS the optimistic derived status; order violation blocks", async () => {
   const trip = makePlanningTrip(TEST_TRIP_ID);
   const client = seededClient(trip);
   const request = spyRequest();
@@ -248,30 +364,64 @@ it("date edit saves ONLY the changed date; picking end before start blocks with 
   await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
   expect(patchBodies(request)).toHaveLength(0);
 
-  // A valid far-future end date: exactly {end_date, expect_updated_at} goes
-  // out, and the optimistic row keeps its derived status (dates-moved branch).
+  // Valid window that spans TODAY (start in the past, end far future): the
+  // optimistic derived status must FLIP planning → active — a fixture whose
+  // pre- and post-move statuses agree would let the dates-moved branch of
+  // optimisticTripFields be deleted unnoticed (round-2 vacuous-pin fix).
   await pickDate("trip-settings-input-dates-end", 2030, 1, 2);
+  await pickDate("trip-settings-input-dates-start", 2020, 1, 5);
   await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
   await drainNotify();
 
   await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
   expect(patchBodies(request)[0]).toEqual({
+    start_date: "2020-01-05",
     end_date: "2030-01-02",
     expect_updated_at: trip.updated_at,
   });
   const optimistic = client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID));
+  expect(optimistic?.start_date).toBe("2020-01-05");
   expect(optimistic?.end_date).toBe("2030-01-02");
-  // Start stays ~30 days out (fixture) → still planning under derivation.
-  expect(optimistic?.status).toBe("planning");
+  // Today ∈ [2020-01-05, 2030-01-02] → derivation says ACTIVE (was planning).
+  expect(optimistic?.status).toBe("active");
 
   await act(async () =>
-    resolvePatch({ ...trip, end_date: "2030-01-02", updated_at: "2026-07-21T00:00:00.000Z" }),
+    resolvePatch({
+      ...trip,
+      start_date: "2020-01-05",
+      end_date: "2030-01-02",
+      status: "active",
+      updated_at: "2026-07-21T00:00:00.000Z",
+    }),
   );
   await waitFor(() =>
     expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.updated_at).toBe(
       "2026-07-21T00:00:00.000Z",
     ),
   );
+});
+
+it("void-pick-on-edit: editing the text after a pick voids it — save blocks with the pick-required error", async () => {
+  const trip = makePlanningTrip(TEST_TRIP_ID);
+  const client = seededClient(trip);
+  const osaka = makePlace({ name: "Osaka, Japan", lat: 34.6937, lng: 135.5023 });
+  const request = spyRequest();
+  request.mockImplementation((descriptor: { method: string; path: string }) =>
+    descriptor.path === "/places/search"
+      ? Promise.resolve({ items: [osaka], nextCursor: null })
+      : Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`)),
+  );
+  await renderSettings(trip, client);
+
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-destination"), "Osaka");
+  await fireEvent.press(await screen.findByTestId(`trip-settings-list-item-destination-${osaka.id}`));
+  // Editing after the pick VOIDS it (lat/lng must match the visible text) —
+  // deleting setSelectedPlace(null) from onChangeText turns this red.
+  await fireEvent.changeText(screen.getByTestId("trip-settings-input-destination"), "Osaka?");
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+
+  expect(patchBodies(request)).toHaveLength(0);
+  expect(await screen.findByText(/Pick a destination from the search results/)).toBeOnTheScreen();
 });
 
 it("theme change applies optimistically and rolls back with an error banner on failure (R-tripui-21)", async () => {
@@ -395,7 +545,7 @@ it("owner-leave race 409 maps to the shared banner copy and does NOT exit", asyn
   expect(mockReplace).not.toHaveBeenCalled();
 });
 
-it("a pristine form's save is a no-op: nothing changed ⇒ no request at all", async () => {
+it("a pristine form's save is a no-op — and trim-equal destination text stays pristine (round-2)", async () => {
   const trip = makePlanningTrip(TEST_TRIP_ID);
   const client = seededClient(trip);
   const request = spyRequest();
@@ -405,4 +555,14 @@ it("a pristine form's save is a no-op: nothing changed ⇒ no request at all", a
   // buildTripPatch returns null and the screen skips the mutation.
   await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
   expect(patchBodies(request)).toHaveLength(0);
+
+  // A trailing-space destination edit is trim-equal ⇒ still pristine: Save
+  // stays disabled (no dead-end enabled button) and no search fires.
+  await fireEvent.changeText(
+    screen.getByTestId("trip-settings-input-destination"),
+    `${trip.destination_name} `,
+  );
+  expect(screen.getByTestId("trip-settings-button-save")).toBeDisabled();
+  await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+  expect(request).not.toHaveBeenCalled();
 });

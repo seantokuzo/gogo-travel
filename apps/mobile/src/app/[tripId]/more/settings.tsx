@@ -150,6 +150,12 @@ export default function TripSettingsScreen() {
   const seedForm = (
     row: Pick<Trip, "name" | "start_date" | "end_date" | "destination_name" | "updated_at">,
   ) => {
+    // Re-seeding to a known-fresh row IS the latch's purpose — consume it
+    // here, not only in the effect (round 2: a conflict whose refetch lands
+    // an updated_at the form already seeded would otherwise leave the latch
+    // ARMED, silently re-seeding over dirty edits on an arbitrarily-later
+    // refetch — the R-tripui-19 violation, delayed).
+    conflictRefreshPending.current = false;
     setSeeded({
       updatedAt: row.updated_at,
       name: row.name,
@@ -170,7 +176,9 @@ export default function TripSettingsScreen() {
     startDate !== seeded.start ||
     endDate !== seeded.end ||
     selectedPlace !== null ||
-    destinationQuery !== seeded.destination;
+    // Trim-equal text is pristine (round 2): a trailing-space edit must not
+    // enable a Save that buildTripPatch will no-op.
+    destinationQuery.trim() !== seeded.destination;
 
   // R-tripui-19 re-render half: when a fresh row lands (conflict refetch, or a
   // background refetch while the form is pristine), re-seed. Dirty edits are
@@ -185,11 +193,17 @@ export default function TripSettingsScreen() {
 
   // CT-2 typeahead: search only while the text is EDITED away from the seeded
   // destination with no pick yet — a pristine form must never fire a search
-  // (its initial value is already a valid ≥4-char destination name).
+  // (its initial value is already a valid ≥4-char destination name). The
+  // HOOK gates on the DEFERRED state (round 2): during the first keystroke's
+  // interim commit the deferred value still equals the seeded name — gating
+  // on the immediate value would dispatch one spurious search for the
+  // CURRENT destination. Trim-equal text counts as pristine.
   const deferredQuery = useDeferredValue(destinationQuery);
-  const destinationEditing = selectedPlace === null && destinationQuery !== seeded.destination;
-  const searchActive = destinationEditing && isSearchableDestinationQuery(deferredQuery);
-  const search = usePlaceSearch(destinationEditing ? deferredQuery : "");
+  const destinationEditing =
+    selectedPlace === null && destinationQuery.trim() !== seeded.destination;
+  const deferredEditing = selectedPlace === null && deferredQuery.trim() !== seeded.destination;
+  const searchActive = deferredEditing && isSearchableDestinationQuery(deferredQuery);
+  const search = usePlaceSearch(deferredEditing ? deferredQuery : "");
   const results = (search.data?.items ?? []).slice(0, MAX_RESULTS);
 
   const trimmedName = name.trim();
@@ -215,9 +229,14 @@ export default function TripSettingsScreen() {
     }
     setSaveError(SAVE_ERROR);
   };
-  /** Every settled PATCH clears the conflict; details-family saves re-seed. */
+  /**
+   * Details-family saves re-seed AND clear the conflict — a successful
+   * re-save IS the "review and re-save" resolution (R-tripui-19). The clear
+   * is SCOPED to details successes (round 2): an unconditional clear let a
+   * success settling after a concurrent 409 erase the notice that 409 just
+   * raised, leaving its rollback surface-less.
+   */
   const onPatchSuccess = (row: Trip, patch: TripUpdate) => {
-    setConflictNotice(false);
     const touchedDetails =
       patch.name !== undefined ||
       patch.start_date !== undefined ||
@@ -225,7 +244,10 @@ export default function TripSettingsScreen() {
       patch.destination_name !== undefined ||
       patch.destination_lat !== undefined ||
       patch.destination_lng !== undefined;
-    if (touchedDetails) seedForm(row);
+    if (touchedDetails) {
+      setConflictNotice(false);
+      seedForm(row);
+    }
   };
 
   const updateTrip = useUpdateTrip(trip.id, {
@@ -263,7 +285,12 @@ export default function TripSettingsScreen() {
           }
         : {}),
     });
-    if (patch === null) return;
+    if (patch === null) {
+      // Nothing actually changed (e.g. the identical place re-picked) —
+      // reset to pristine instead of leaving Save enabled on a dead end.
+      seedForm(trip);
+      return;
+    }
     setSaveError(null);
     updateTrip.mutate(patch);
   };
@@ -272,6 +299,10 @@ export default function TripSettingsScreen() {
   const [themeSheetOpen, setThemeSheetOpen] = useState(false);
   const onSelectTheme = (value: string | null) => {
     setThemeSheetOpen(false);
+    // Pending gate (round 2): a second PATCH overlapping the shared mutation
+    // deterministically 409s (the optimistic apply never advances
+    // updated_at) — own-overlap dies at the source, matching Save's gate.
+    if (updateTrip.isPending) return;
     const patch = buildTripPatch(trip, { theme: value });
     if (patch === null) return;
     updateTrip.mutate(patch);
@@ -283,6 +314,8 @@ export default function TripSettingsScreen() {
   const currencyValid = CurrencyCodeSchema.safeParse(currencyDraft).success;
   const onSaveCurrency = () => {
     setCurrencySheetOpen(false);
+    // Same pending gate as theme select (round 2 — own-overlap source kill).
+    if (updateTrip.isPending) return;
     const patch = buildTripPatch(trip, { base_currency: currencyDraft });
     if (patch === null) return;
     updateTrip.mutate(patch);
@@ -359,7 +392,14 @@ export default function TripSettingsScreen() {
           <ErrorBanner
             tone="warning"
             message={CONFLICT_NOTICE}
-            onDismiss={() => setConflictNotice(false)}
+            onDismiss={() => {
+              // Dismissal acknowledges the conflict — consume the latch with
+              // the notice (round 2 invariant: latch armed ⟺ notice visible;
+              // an armed latch outliving its notice re-seeds dirty edits
+              // SILENTLY on the next moved-row refetch).
+              conflictRefreshPending.current = false;
+              setConflictNotice(false);
+            }}
             testID="trip-settings-banner-conflict"
           />
         ) : null}
