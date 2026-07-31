@@ -1,78 +1,308 @@
-import { useRouter } from "expo-router";
-
-import { Button, ErrorBanner } from "@/components";
-import { useLinkNoticeStore } from "@/navigation/link-notice";
-import { PlaceholderScreen } from "@/navigation/PlaceholderScreen";
-
 /**
- * Trip list (§2.4) — the default landing route (R-nav-5). Header entries are
- * nav-owned: profile avatar → `(trips)/profile`, capture inbox →
- * `(trips)/capture` (R-nav-24; the needs-review count badge is NAV-6 data
- * wiring). List content (active/upcoming/past grouping) is owned by the
- * trips feature spec.
+ * Trip list (T-6.7 / CT-1; trips spec §2.1) — the default landing route
+ * (R-nav-5). Sections by effective `trip_status` in `active → planning →
+ * past` order with §2.1 labels (R-tripui-1); rows carry name, destination,
+ * date range, member count and push `/[tripId]` (R-tripui-2). REAL keyset
+ * pagination over the shared `Paginated` contract (`useTripList`).
+ *
+ * Freshness (R-tripui-3, §2.6 collab rules): regaining navigation focus
+ * marks the list queries stale and refetches — the first focus is the mount
+ * itself (useQuery already fetches there), so it is skipped. The
+ * `AppState → active` half + push invalidation are the collab client
+ * layer's (CT-6 / T-6.9), not this screen's.
+ *
+ * Join entries (§2.1): invite links are the ONLY join path in v1 (no
+ * token-typing UI), so the join affordance opens guidance. It lives in the
+ * EmptyState and the list footer — the spec's "header overflow" home is
+ * deferred: PageHeader caps trailing actions at two and both slots are
+ * nav-owned (profile avatar — resolved Gate 2 — and capture inbox,
+ * R-nav-24); the DS ships no overflow menu.
  *
  * Link notice (R-nav-17, T-6.6): an unknown/malformed deep link lands here
- * with a dismissible non-blocking banner — ErrorBanner is the DS's inline
- * notice surface (no toast exists, R-ds-17).
+ * with a dismissible non-blocking banner.
  */
-export default function TripListScreen() {
-  const router = useRouter();
-  const linkNotice = useLinkNoticeStore((s) => s.message);
+import type { TripListItem } from "@gogo/shared";
+import { createStyles } from "@gogo/tokens/react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { SectionList, StyleSheet, View } from "react-native";
+
+import {
+  AppText,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  PageHeader,
+  Sheet,
+  Skeleton,
+} from "@/components";
+import { invalidateTripLists, useTripList } from "@/data";
+import { Fab, TripRow, groupTripsIntoSections } from "@/features/trips";
+import { useLinkNoticeStore } from "@/navigation/link-notice";
+
+const useStyles = createStyles((t) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: t.color.bg.screen },
+    state: { padding: t.space[4], gap: t.space[3] },
+    banner: { paddingHorizontal: t.space[4], paddingBottom: t.space[2] },
+    sectionHeader: {
+      paddingHorizontal: t.space[4],
+      paddingTop: t.space[4],
+      paddingBottom: t.space[2],
+      backgroundColor: t.color.bg.screen,
+    },
+    listContent: { paddingBottom: 96 },
+    footer: { padding: t.space[4], gap: t.space[3], alignItems: "center" },
+    sheetBody: { gap: t.space[3], paddingBottom: t.space[4] },
+    emptyWrap: { flex: 1, justifyContent: "center", gap: t.space[2] },
+    joinInEmpty: { alignItems: "center" },
+  }),
+);
+
+function JoinGuidanceSheet({ visible, onDismiss }: { visible: boolean; onDismiss(): void }) {
+  const s = useStyles();
   return (
-    <PlaceholderScreen
-      screenId="trip-list"
-      title="Trips"
-      icon="airplane-outline"
-      note="No trips yet. Trip cards with active/upcoming/past grouping land with the trips phase."
-      action={{
-        label: "Create a trip",
-        onPress: () => router.push("/(trips)/new"),
-        testID: "trip-list-button-create",
-      }}
-      headerActions={[
-        {
-          icon: "person-circle-outline",
-          label: "Profile",
-          onPress: () => router.push("/(trips)/profile"),
-          testID: "trip-list-button-profile",
-        },
-        {
-          icon: "file-tray-full-outline",
-          label: "Capture inbox",
-          onPress: () => router.push("/(trips)/capture"),
-          testID: "trip-list-button-capture",
-        },
-      ]}
+    <Sheet
+      visible={visible}
+      onDismiss={onDismiss}
+      title="Join a trip"
+      testID="trip-list-sheet-join"
     >
-      {linkNotice !== null ? (
-        <ErrorBanner
-          tone="warning"
-          message={linkNotice}
-          onDismiss={() => useLinkNoticeStore.getState().clear()}
-          testID="trip-list-link-notice"
+      <View style={s.sheetBody}>
+        <AppText>
+          Trips are joined with an invite link — ask a member of the trip to send you one.
+        </AppText>
+        <AppText color="secondary">
+          Opening the link on this device shows you the trip and who invited you, and you choose
+          whether to accept. There are no invite codes to type.
+        </AppText>
+      </View>
+    </Sheet>
+  );
+}
+
+export default function TripListScreen() {
+  const s = useStyles();
+  const router = useRouter();
+  const linkNotice = useLinkNoticeStore((state) => state.message);
+  const [joinSheetOpen, setJoinSheetOpen] = useState(false);
+
+  const list = useTripList();
+
+  // R-tripui-3 / §2.6: focus ⇒ mark stale + refetch. First focus is the
+  // mount's own fetch — skip it so cold entry doesn't double-request. The
+  // tree's provided client (not the singleton import) so the wiring is real
+  // under any provider.
+  const qc = useQueryClient();
+  const firstFocus = useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      if (firstFocus.current) {
+        firstFocus.current = false;
+        return;
+      }
+      invalidateTripLists(qc);
+    }, [qc]),
+  );
+
+  const items = useMemo(() => {
+    const pages = list.data?.pages ?? [];
+    // Dedupe by id across pages: a focus-invalidate refetching page 1 while
+    // an append is in flight can transiently overlap rows; ids are the
+    // SectionList keys, so duplicates would collide.
+    const byId = new Map<string, TripListItem>();
+    for (const page of pages) {
+      for (const item of page.items) byId.set(item.id, item);
+    }
+    return [...byId.values()];
+  }, [list.data]);
+  const sections = useMemo(() => groupTripsIntoSections(items), [items]);
+
+  // Background-refresh failure over RETAINED data (R1 review; hoisted R2):
+  // v5 flips status to "error" with data kept when a focus-invalidate
+  // refetch fails — BOTH the populated list and the zero-trip empty state
+  // must surface it inline (a 0-trip user offline must not read a
+  // confident "No trips yet" with no failure indication).
+  const refreshFailed = list.isError && !list.isFetchNextPageError;
+
+  let content;
+  if (list.status === "pending") {
+    // Skeleton rows (§2.1 loading state, R-ds-15); non-screen loading region
+    // derives `<screen>-loading` (nav §2.7 rule 6).
+    content = (
+      <View style={s.state} testID="trip-list-loading">
+        <Skeleton variant="rect" height={96} />
+        <Skeleton variant="rect" height={96} />
+        <Skeleton variant="rect" height={96} />
+      </View>
+    );
+  } else if (list.data === undefined) {
+    // Full-screen error ONLY when there is nothing to show (R1 review): v5
+    // flips status to "error" with data RETAINED on a failed background
+    // refetch/fetchNextPage — a populated list must never be replaced by
+    // this surface (same posture as the guard's "failed refetch is NOT a
+    // verdict"). Retained-data failures render inline below instead.
+    // §2.7 pins the retry control's EXACT id as `trip-list-retry` ("retry"
+    // is an element noun) — a standalone retry button keeps every node
+    // grammar-conforming, where an ErrorBanner-derived retry could not.
+    content = (
+      <View style={s.state}>
+        <ErrorBanner message="Couldn't load your trips." testID="trip-list-error" />
+        <Button
+          title="Retry"
+          variant="secondary"
+          onPress={() => void list.refetch()}
+          testID="trip-list-retry"
         />
-      ) : null}
-      {__DEV__ ? (
-        // Dev-only entries: component gallery (DS-10 evidence surface, moved
-        // here from the old home screen) + a sample-trip door. NOTE (T-6.6):
-        // the `[tripId]` membership guard now runs on this path — without a
-        // real server trip, the door renders the R-nav-15 no-access state,
-        // which is itself useful device QA. T-6.7's real trip list retires it.
-        <>
+      </View>
+    );
+  } else if (items.length === 0) {
+    // R-tripui-5: zero trips renders an EmptyState with create AND
+    // join-by-link guidance — never a blank region (R-ds-16).
+    content = (
+      <View style={s.emptyWrap}>
+        {refreshFailed ? (
+          <View style={s.banner}>
+            <ErrorBanner
+              message="Couldn't refresh your trips."
+              onRetry={() => void list.refetch()}
+              testID="trip-list-banner-refresh"
+            />
+          </View>
+        ) : null}
+        <EmptyState
+          icon="airplane-outline"
+          title="No trips yet"
+          body="Plan your first trip, or join a friend's trip with an invite link."
+          action={{
+            label: "Create a trip",
+            onPress: () => router.push("/(trips)/new"),
+            testID: "trip-list-button-create",
+          }}
+          testID="trip-list-empty"
+        />
+        <View style={s.joinInEmpty}>
           <Button
-            title="Component gallery"
+            title="Join with an invite link"
             variant="ghost"
-            onPress={() => router.push("/gallery")}
-            testID="trip-list-button-gallery"
+            onPress={() => setJoinSheetOpen(true)}
+            testID="trip-list-button-join"
           />
-          <Button
-            title="Open sample trip (dev)"
-            variant="ghost"
-            onPress={() => router.push("/trip-1/itinerary")}
-            testID="trip-list-button-sample-trip"
+        </View>
+      </View>
+    );
+  } else {
+    // Failed page fetches surface at the footer with their own retry
+    // (isFetchNextPageError discriminates them from refresh failures).
+    content = (
+      <>
+        {refreshFailed ? (
+          <View style={s.banner}>
+            <ErrorBanner
+              message="Couldn't refresh — showing your last loaded trips."
+              onRetry={() => void list.refetch()}
+              testID="trip-list-banner-refresh"
+            />
+          </View>
+        ) : null}
+        <SectionList
+          testID="trip-list-list"
+          sections={sections}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            // Dynamic trip targets aren't representable in the typed-route
+            // union — same documented cast as TripSwitcher/entry redirect.
+            <TripRow trip={item} onPress={() => router.push(`/${item.id}` as Href)} />
+          )}
+          renderSectionHeader={({ section }) => (
+            <View style={s.sectionHeader}>
+              <AppText role="heading">{section.title}</AppText>
+            </View>
+          )}
+          stickySectionHeadersEnabled={false}
+          contentContainerStyle={s.listContent}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            // !isFetchingNextPage is belt-and-braces (R2 accept-with-comment):
+            // v5's fetchNextPage already no-ops a concurrent call only via
+            // cancelRefetch, so the guard cheaply prevents cancel-restart
+            // churn from rapid end-reached events; it has no other semantics.
+            if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
+          }}
+          ListFooterComponent={
+            <View style={s.footer}>
+              {list.isFetchingNextPage ? (
+                <Skeleton variant="rect" height={96} width="100%" testID="trip-list-loading-more" />
+              ) : list.isFetchNextPageError ? (
+                <ErrorBanner
+                  message="Couldn't load more trips."
+                  onRetry={() => void list.fetchNextPage()}
+                  testID="trip-list-banner-page"
+                />
+              ) : null}
+              <Button
+                title="Join with an invite link"
+                variant="ghost"
+                onPress={() => setJoinSheetOpen(true)}
+                testID="trip-list-button-join"
+              />
+              {__DEV__ ? (
+                // Dev-only DS evidence surface (DS-10). The T-6.6 "Open sample
+                // trip" door is retired — the real list rows are the doors now.
+                <Button
+                  title="Component gallery"
+                  variant="ghost"
+                  onPress={() => router.push("/gallery")}
+                  testID="trip-list-button-gallery"
+                />
+              ) : null}
+            </View>
+          }
+        />
+      </>
+    );
+  }
+
+  return (
+    <View style={s.screen} testID="trip-list-screen">
+      <PageHeader
+        title="Trips"
+        large
+        testID="trip-list-header"
+        trailing={[
+          {
+            icon: "person-circle-outline",
+            label: "Profile",
+            onPress: () => router.push("/(trips)/profile"),
+            testID: "trip-list-button-profile",
+          },
+          {
+            icon: "file-tray-full-outline",
+            label: "Capture inbox",
+            onPress: () => router.push("/(trips)/capture"),
+            testID: "trip-list-button-capture",
+          },
+        ]}
+      />
+      {linkNotice !== null ? (
+        <View style={s.banner}>
+          <ErrorBanner
+            tone="warning"
+            message={linkNotice}
+            onDismiss={() => useLinkNoticeStore.getState().clear()}
+            testID="trip-list-link-notice"
           />
-        </>
+        </View>
       ) : null}
-    </PlaceholderScreen>
+      {content}
+      <Fab
+        icon="add"
+        label="Create a trip"
+        onPress={() => router.push("/(trips)/new")}
+        testID="trip-list-fab-create"
+      />
+      <JoinGuidanceSheet visible={joinSheetOpen} onDismiss={() => setJoinSheetOpen(false)} />
+    </View>
   );
 }

@@ -14,6 +14,7 @@ import type {
   ISODate,
   MemberListItem,
   Paginated,
+  Place,
   TripListItem,
   TripMember,
   UserProfile,
@@ -88,6 +89,27 @@ export function makePastTrip(id: string, overrides?: Partial<TripListItem>): Tri
     status: "past",
     ...overrides,
   });
+}
+
+/** Canonical destination-search hit (T-6.7 — spine place, Overture-sourced). */
+export const TEST_PLACE_ID = "44444444-4444-4444-8444-444444444444";
+
+export function makePlace(overrides?: Partial<Place>): Place {
+  return {
+    id: TEST_PLACE_ID,
+    source: "overture",
+    source_id: "ovt-kyoto",
+    name: "Kyoto",
+    lat: 35.0116,
+    lng: 135.7681,
+    category: "locality",
+    coarse_category: "other",
+    wiki_ref: null,
+    created_by: null,
+    created_at: "2026-07-01T00:00:00.000Z",
+    updated_at: "2026-07-01T00:00:00.000Z",
+    ...overrides,
+  };
 }
 
 export function makeInvitePreview(overrides?: Partial<InvitePreview>): InvitePreview {

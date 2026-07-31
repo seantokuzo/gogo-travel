@@ -131,11 +131,12 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     await fireEvent.press(screen.getByTestId("capture-queue-header-back"));
     await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
 
-    // EmptyState CTA → create-trip modal route (R-nav-21 form modal) + back.
-    await fireEvent.press(screen.getByTestId("trip-list-button-create"));
+    // FAB → create-trip modal route (R-nav-21 form modal; §2.1 create
+    // entry since T-6.7) + cancel (clean form → no discard dialog).
+    await fireEvent.press(screen.getByTestId("trip-list-fab-create"));
     expect(await screen.findByTestId("trip-new-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe("/new");
-    await fireEvent.press(screen.getByTestId("trip-new-header-back"));
+    await fireEvent.press(screen.getByTestId("trip-new-button-cancel"));
     await waitFor(() => expect(screen.queryByTestId("trip-new-screen")).toBeNull());
 
     // Into a trip (same mount — imperative router; testRouter's built-in

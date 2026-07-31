@@ -44,7 +44,7 @@ import {
 
 import { apiClient } from "@/auth";
 
-import { queryKeys } from "./query-client";
+import { invalidateTripLists, queryKeys } from "./query-client";
 
 /**
  * Mutation-error seam for screens (round-1, via the concurrency pin):
@@ -126,7 +126,9 @@ export function useAcceptInvite(): UseMutationResult<InviteAccept, Error, string
     mutationFn: (token: string) =>
       apiClient.request(inviteEndpoints.acceptInvite, { params: { token } }),
     onSuccess: (_data, token) => {
-      void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      // T-6.7 merge: "the trips list" is a two-key op since the key split —
+      // the helper reaches the visible infinite list too.
+      invalidateTripLists(qc);
       qc.removeQueries({ queryKey: queryKeys.invitePreview(token) });
     },
   });
@@ -220,8 +222,9 @@ export function useRemoveMember(
       options?.onMutationError?.(err);
     },
     onSuccess: () => {
-      // 204 — nothing to reconcile; the trips list's member_count is stale.
-      void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      // 204 — nothing to reconcile; the trips list's member_count is stale
+      // (two-key op since the T-6.7 key split).
+      invalidateTripLists(qc);
     },
   });
 }
@@ -257,7 +260,8 @@ export function useTransferOwnership(
             },
       );
       void qc.invalidateQueries({ queryKey: queryKeys.trip(tripId), exact: true });
-      void qc.invalidateQueries({ queryKey: queryKeys.trips, exact: true });
+      // Two-key op since the T-6.7 key split (role column on the list rows).
+      invalidateTripLists(qc);
     },
     onError: (err) => {
       // Not optimistic, so nothing to roll back — but a 404 means the target
