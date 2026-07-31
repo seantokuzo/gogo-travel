@@ -108,6 +108,118 @@ describe("BookingDetails discriminated union (schema spec §3.4.1)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Free-text + array caps (round-1 B2 — the T-6.1 DoS convention; details land
+// verbatim in jsonb, so every client-writable string and array is bounded).
+// Tiers: name/code-like 200 · notes-like prose 2000 · URLs 2048 ·
+// segments ≤ 8 · passenger_names ≤ 20 (elements 200).
+// ---------------------------------------------------------------------------
+
+describe("BookingDetails caps (B2 — T-6.1 DoS convention)", () => {
+  const x = (n: number) => "x".repeat(n);
+
+  it("name/code-like fields cap at 200 per shape (201 rejects, 200 passes)", () => {
+    const overs: Record<string, unknown>[] = [
+      { category: "flight", airline: x(201) },
+      { category: "flight", flight_number: x(201) },
+      { category: "lodging", property_name: x(201) },
+      { category: "lodging", address: x(201) },
+      { category: "train", carrier: x(201) },
+      { category: "car_rental", company: x(201) },
+      { category: "moped_rental", vehicle_description: x(201) },
+      { category: "activity", venue_name: x(201) },
+      { category: "restaurant", provider: x(201) },
+    ];
+    for (const details of overs) {
+      expect(
+        BookingDetailsSchema.safeParse(details).success,
+        JSON.stringify(Object.keys(details)),
+      ).toBe(false);
+    }
+    expect(
+      BookingDetailsSchema.safeParse({ category: "lodging", property_name: x(200) }).success,
+    ).toBe(true);
+  });
+
+  it("notes-like prose caps at 2000 on every shape; boundary passes", () => {
+    for (const category of [
+      "flight",
+      "lodging",
+      "train",
+      "car_rental",
+      "moped_rental",
+      "activity",
+      "restaurant",
+      "other",
+    ]) {
+      expect(BookingDetailsSchema.safeParse({ category, notes: x(2001) }).success, category).toBe(
+        false,
+      );
+    }
+    expect(BookingDetailsSchema.safeParse({ category: "other", notes: x(2000) }).success).toBe(
+      true,
+    );
+    // `other.description` is prose, same tier.
+    expect(
+      BookingDetailsSchema.safeParse({ category: "other", description: x(2001) }).success,
+    ).toBe(false);
+  });
+
+  it("external_url caps at 2048 (activity and other)", () => {
+    expect(
+      BookingDetailsSchema.safeParse({ category: "activity", external_url: x(2049) }).success,
+    ).toBe(false);
+    expect(
+      BookingDetailsSchema.safeParse({ category: "other", external_url: x(2049) }).success,
+    ).toBe(false);
+    expect(
+      BookingDetailsSchema.safeParse({ category: "activity", external_url: x(2048) }).success,
+    ).toBe(true);
+  });
+
+  it("arrays are bounded: segments ≤ 8", () => {
+    const segment = { flight_number: "UA 837" };
+    expect(
+      BookingDetailsSchema.safeParse({ category: "flight", segments: Array(9).fill(segment) })
+        .success,
+    ).toBe(false);
+    expect(
+      BookingDetailsSchema.safeParse({ category: "flight", segments: Array(8).fill(segment) })
+        .success,
+    ).toBe(true);
+    // Segment-level free text is capped too (same fields as the top level).
+    expect(
+      BookingDetailsSchema.safeParse({ category: "flight", segments: [{ airline: x(201) }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("arrays are bounded: passenger_names ≤ 20, elements ≤ 200", () => {
+    expect(
+      BookingDetailsSchema.safeParse({
+        category: "flight",
+        passenger_names: Array(21).fill("Sean T"),
+      }).success,
+    ).toBe(false);
+    expect(
+      BookingDetailsSchema.safeParse({
+        category: "flight",
+        passenger_names: Array(20).fill("Sean T"),
+      }).success,
+    ).toBe(true);
+    expect(
+      BookingDetailsSchema.safeParse({ category: "flight", passenger_names: [x(201)] }).success,
+    ).toBe(false);
+    // Caps apply inside segments' passenger lists as well.
+    expect(
+      BookingDetailsSchema.safeParse({
+        category: "flight",
+        segments: [{ passenger_names: Array(21).fill("Sean T") }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("Booking row schema", () => {
   const validBooking = {
     id: UUID,
@@ -221,6 +333,13 @@ describe("§3.3 wall extraction + UTC instants", () => {
     expect(toUtcInstant("2026-09-02T14:25:00+09:00")).toBe("2026-09-02T05:25:00.000Z");
   });
 
+  it("toUtcInstant folds an unparseable input to null — the corruption-signal arm (R-ib-4 absent-⇒-NULL posture; round-1 A6)", () => {
+    // Schema-validated inputs can't normally reach here malformed; the fold
+    // is the corruption guard, pinned so it never silently becomes a throw.
+    expect(toUtcInstant("9999-99-99T99:99:99+99:99")).toBeNull();
+    expect(toUtcInstant("not a datetime")).toBeNull();
+  });
+
   it("deriveBookingInstants: R-ib-4 — instants from primary times, NULL when absent", () => {
     expect(
       deriveBookingInstants({
@@ -305,6 +424,34 @@ describe("§3.3 auto-item derivation (R-ib-5)", () => {
     expect(
       deriveAutoItems({ category: "restaurant", reserved_at: "2026-09-03T19:00:00+09:00" }),
     ).toEqual([{ day: "2026-09-03", end_day: null, start_time: "19:00", end_time: null }]);
+  });
+
+  it("same-wall-date inverted wall-TIMES emit as-derived — eastward date-line flight (physics-faithful; R-ib-17 governs direct writes, not derivation)", () => {
+    // AKL 14:00 +12:00 (02:00Z) → HNL 06:00 -10:00 (16:00Z): 14 real hours
+    // later, same local calendar date, arrival wall-time before departure.
+    expect(
+      deriveAutoItems({
+        category: "flight",
+        departs_at: "2026-09-02T14:00:00+12:00",
+        arrives_at: "2026-09-02T06:00:00-10:00",
+      }),
+    ).toEqual([{ day: "2026-09-02", end_day: null, start_time: "14:00", end_time: "06:00" }]);
+  });
+
+  it("lodging inverted wall-DATES also emit as-derived from the PURE helper — the server write path owns the 400 (round-1 A1 split pin)", () => {
+    // UTC instants are ordered (check_in 2026-07-31T21:00Z < check_out
+    // 2026-08-01T02:00Z) but the LOCAL dates invert. The helper stays
+    // physics-faithful; the booking service mirrors the items-table
+    // `end_day >= day` CHECK as VALIDATION_FAILED before any insert.
+    expect(
+      deriveAutoItems({
+        category: "lodging",
+        check_in: "2026-08-01T02:00:00+05:00",
+        check_out: "2026-07-31T22:00:00-04:00",
+      }),
+    ).toEqual([
+      { day: "2026-08-01", end_day: "2026-07-31", start_time: "02:00", end_time: "22:00" },
+    ]);
   });
 });
 

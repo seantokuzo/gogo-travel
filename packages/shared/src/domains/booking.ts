@@ -29,7 +29,22 @@ import {
 import { ItineraryItemSchema } from "./itinerary.js";
 
 const localTime = ISODateTimeSchema.optional();
-const optionalString = z.string().optional();
+/**
+ * Free-text caps — DoS headroom, the T-6.1 convention (`trip.ts`/`place.ts`
+ * caps): generous for any real input, bounded so no client-writable string
+ * lands unbounded in jsonb. Tiers: name/code-like fields 200 (the trip-name
+ * magnitude), notes-like prose 2000, URLs 2048. Arrays are bounded too —
+ * flight `segments` ≤ 8 (real multi-leg itineraries top out well under),
+ * `passenger_names` ≤ 20 (group-booking headroom). Length caps are string
+ * bounds, not the NUMERIC range constraints the AI-reuse rule keeps out of
+ * these shapes (R-shared-7 — number ranges stay server-side refiners;
+ * `optionalInt` below stays uncapped by design).
+ */
+const optionalString = z.string().max(200).optional();
+const optionalNotes = z.string().max(2000).optional();
+const optionalUrl = z.string().max(2048).optional();
+const MAX_FLIGHT_SEGMENTS = 8;
+const MAX_PASSENGER_NAMES = 20;
 /** Plain int — range rules are server-side refiners when reused for AI (§3.7). */
 const optionalInt = z.int().optional();
 
@@ -48,8 +63,8 @@ const flightFields = {
   arrives_tz: optionalString,
   cabin_class: optionalString,
   seat: optionalString,
-  passenger_names: z.array(z.string()).optional(),
-  notes: optionalString,
+  passenger_names: z.array(z.string().max(200)).max(MAX_PASSENGER_NAMES).optional(),
+  notes: optionalNotes,
 } as const;
 
 /** Same fields minus `segments` — one level, no recursion. */
@@ -59,7 +74,7 @@ export type FlightSegment = z.infer<typeof FlightSegmentSchema>;
 export const FlightDetailsSchema = z.object({
   category: z.literal("flight"),
   ...flightFields,
-  segments: z.array(FlightSegmentSchema).optional(),
+  segments: z.array(FlightSegmentSchema).max(MAX_FLIGHT_SEGMENTS).optional(),
 });
 export type FlightDetails = z.infer<typeof FlightDetailsSchema>;
 
@@ -83,7 +98,7 @@ export const LodgingDetailsSchema = z.object({
   guests: optionalInt,
   room_type: optionalString,
   provider: LodgingProviderSchema.optional(),
-  notes: optionalString,
+  notes: optionalNotes,
 });
 export type LodgingDetails = z.infer<typeof LodgingDetailsSchema>;
 
@@ -99,7 +114,7 @@ export const TrainDetailsSchema = z.object({
   arrives_tz: optionalString,
   coach: optionalString,
   seat: optionalString,
-  notes: optionalString,
+  notes: optionalNotes,
 });
 export type TrainDetails = z.infer<typeof TrainDetailsSchema>;
 
@@ -111,7 +126,7 @@ export const CarRentalDetailsSchema = z.object({
   pickup_at: localTime,
   dropoff_at: localTime,
   vehicle_class: optionalString,
-  notes: optionalString,
+  notes: optionalNotes,
 });
 export type CarRentalDetails = z.infer<typeof CarRentalDetailsSchema>;
 
@@ -124,7 +139,7 @@ export const MopedRentalDetailsSchema = z.object({
   dropoff_at: localTime,
   vehicle_description: optionalString,
   helmet_count: optionalInt,
-  notes: optionalString,
+  notes: optionalNotes,
 });
 export type MopedRentalDetails = z.infer<typeof MopedRentalDetailsSchema>;
 
@@ -141,8 +156,8 @@ export const ActivityDetailsSchema = z.object({
   ends_at: localTime,
   ticket_count: optionalInt,
   ticket_type: optionalString,
-  external_url: optionalString,
-  notes: optionalString,
+  external_url: optionalUrl,
+  notes: optionalNotes,
 });
 export type ActivityDetails = z.infer<typeof ActivityDetailsSchema>;
 
@@ -152,17 +167,17 @@ export const RestaurantDetailsSchema = z.object({
   reserved_at: localTime,
   party_size: optionalInt,
   provider: optionalString,
-  notes: optionalString,
+  notes: optionalNotes,
 });
 export type RestaurantDetails = z.infer<typeof RestaurantDetailsSchema>;
 
 export const OtherDetailsSchema = z.object({
   category: z.literal("other"),
-  description: optionalString,
+  description: optionalNotes,
   starts_at: localTime,
   ends_at: localTime,
-  external_url: optionalString,
-  notes: optionalString,
+  external_url: optionalUrl,
+  notes: optionalNotes,
 });
 export type OtherDetails = z.infer<typeof OtherDetailsSchema>;
 

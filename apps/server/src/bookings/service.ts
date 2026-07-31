@@ -56,7 +56,7 @@ import {
 } from "@gogo/shared/domains/booking";
 import type { BookingDetails } from "@gogo/shared/domains/booking";
 import type { BookingSource, BookingStatus } from "@gogo/shared/enums";
-import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or, sql } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
@@ -140,6 +140,77 @@ function derivedInstantsOf(details: BookingDetails): {
     );
   }
   return { startsAt, endsAt };
+}
+
+/**
+ * §3.3 placements with the items-table CHECK
+ * (`itinerary_items_end_day_ck`: `end_day IS NULL OR end_day >= day`)
+ * mirrored as a 400 — the `derivedInstantsOf` posture, applied where the
+ * CHECK actually fires (item derivation, not every details write; an idea
+ * storing such details is legal because it holds zero items). Reachable via
+ * the lodging arm: mixed-offset `check_in`/`check_out` whose UTC instants
+ * are correctly ordered but whose WALL-dates invert (check-in's local date
+ * after check-out's) derive `end_day < day`. The pure helper emits
+ * as-derived (physics-faithful, its documented contract); the WRITE path
+ * must answer VALIDATION_FAILED instead of surfacing 23514 as a 500.
+ */
+function derivedPlacementsOf(details: BookingDetails): DerivedItemPlacement[] {
+  const placements = deriveAutoItems(details);
+  for (const placement of placements) {
+    if (placement.end_day !== null && placement.end_day < placement.day) {
+      throw new HttpError(
+        "VALIDATION_FAILED",
+        "the category's primary end wall-date precedes its start wall-date",
+        { details: "end day before start day" },
+      );
+    }
+  }
+  return placements;
+}
+
+/**
+ * Law #3 / R-places-8 write-side gate for `bookings.place_id` (round-1 B1):
+ * a booking's `place_id` is a VISIBILITY GRANT — places search widens
+ * custom-place visibility to trip members via a bookings subquery
+ * (`places/search-query.ts`), so writing it unchecked would let a caller
+ * re-grant themselves (and everyone they invite) a custom place they cannot
+ * see. Mirrors the places surface's exact rule (`customPlaceAccess`,
+ * `places/routes.ts`): spine/open-data rows pass for everyone; custom rows
+ * pass for their creator OR when referenced (saved / itinerary / booking) in
+ * SOME trip the caller belongs to — evaluated at write time, so revoked
+ * membership revokes the grant. Unknown and invisible ids answer the SAME
+ * indistinguishable 404 (Law #3: invisible ≡ absent), which also closes the
+ * 201-vs-500 existence oracle of the unmapped FK 23503 (custom places are
+ * client-deletable — a stale id is a legitimate flow, not an edge case).
+ * Runs INSIDE the write transaction: the FK is validated against the same
+ * snapshot the insert/update commits with.
+ */
+async function assertPlaceVisible(
+  tx: Tx,
+  args: { placeId: string; userId: string },
+): Promise<void> {
+  const [place] = await tx
+    .select({ source: schema.places.source, createdBy: schema.places.createdBy })
+    .from(schema.places)
+    .where(eq(schema.places.id, args.placeId));
+  if (!place) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+  if (place.source !== "custom" || place.createdBy === args.userId) return;
+
+  const [visible] = await tx
+    .select({ one: sql<number>`1` })
+    .from(schema.tripMembers)
+    .where(
+      and(
+        eq(schema.tripMembers.userId, args.userId),
+        sql`(
+          exists (select 1 from saved_places sp where sp.trip_id = ${schema.tripMembers.tripId} and sp.place_id = ${args.placeId}::uuid)
+          or exists (select 1 from itinerary_items ii where ii.trip_id = ${schema.tripMembers.tripId} and ii.place_id = ${args.placeId}::uuid)
+          or exists (select 1 from bookings b where b.trip_id = ${schema.tripMembers.tripId} and b.place_id = ${args.placeId}::uuid)
+        )`,
+      ),
+    )
+    .limit(1);
+  if (!visible) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 }
 
 /**
@@ -337,6 +408,12 @@ export async function createBooking(
   const { startsAt, endsAt } = derivedInstantsOf(details);
 
   return db.transaction(async (tx) => {
+    // B1: a referenced place must exist AND be visible to the caller
+    // (Law #3 — `place_id` is a visibility grant; see assertPlaceVisible).
+    if (input.place_id !== undefined) {
+      await assertPlaceVisible(tx, { placeId: input.place_id, userId });
+    }
+
     const [booking] = await tx
       .insert(schema.bookings)
       .values({
@@ -359,7 +436,7 @@ export async function createBooking(
 
     const dirty = new Set<string>();
     if ((status === "planned" || status === "booked") && startsAt !== null) {
-      const placements = deriveAutoItems(details);
+      const placements = derivedPlacementsOf(details);
       const synced = await syncItemsToPlacements(tx, {
         tripId,
         bookingId: booking.id,
@@ -399,6 +476,15 @@ export async function updateBooking(
       .where(and(eq(schema.bookings.id, bookingId), eq(schema.bookings.tripId, tripId)))
       .for("update");
     if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+
+    // B1: every non-null `place_id` write re-proves visibility — including a
+    // same-value rewrite (the caller's visibility may have been revoked
+    // since it was set; the grant must not survive on replay). Lock order
+    // holds: the booking row is already held FOR UPDATE; places/members are
+    // plain reads.
+    if (input.place_id !== undefined && input.place_id !== null) {
+      await assertPlaceVisible(tx, { placeId: input.place_id, userId });
+    }
 
     // R-ib-1: the details discriminant must match the ROW's (immutable)
     // category — the wire schema can only check body-internal consistency.
@@ -485,7 +571,7 @@ export async function updateBooking(
           tripId,
           bookingId,
           userId,
-          placements: deriveAutoItems(nextDetails),
+          placements: derivedPlacementsOf(nextDetails),
           existing,
         });
         for (const day of synced) dirty.add(day);

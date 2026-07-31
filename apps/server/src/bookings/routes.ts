@@ -36,7 +36,7 @@ import { BOOKINGS_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
-import { epochMicrosExpr } from "../http/keyset-cursor.js";
+import { epochMicrosExpr, nullableEpochMicrosExpr } from "../http/keyset-cursor.js";
 import { authContextOf } from "../http/require-auth.js";
 import {
   createRequireTripMember,
@@ -119,12 +119,11 @@ export function createBookingsRouter(deps: BookingsRouterDeps): Hono<RequestVars
               .where(eq(schema.itineraryItems.bookingId, schema.bookings.id)),
           ),
         );
-      } else if (query.unscheduled === false) {
-        // Explicit `unscheduled=false` = the scheduled complement.
-        predicates.push(
-          sql`exists (select 1 from itinerary_items where itinerary_items.booking_id = ${schema.bookings.id})`,
-        );
       }
+      // `unscheduled=false` deliberately behaves as ABSENT (no filter): the
+      // spec defines only `unscheduled=true` (R-ib-10) — a scheduled-only
+      // complement would be spec-uncovered behavior (Law #4; the product
+      // question is parked for the spec pass, round-1 A3).
       if (decoded) predicates.push(bookingCursorPredicate(decoded));
 
       // pageSize + 1 sentinel: know whether a next page exists without ever
@@ -132,7 +131,9 @@ export function createBookingsRouter(deps: BookingsRouterDeps): Hono<RequestVars
       const rows = await deps.db
         .select({
           booking: schema.bookings,
-          startsMicros: sql<string | null>`(extract(epoch from ${schema.bookings.startsAt}) * 1000000)::bigint`,
+          // One formula home (round-1 A4): the select-side sort keys and the
+          // cursor predicate share the keyset-cursor helpers — never drift.
+          startsMicros: nullableEpochMicrosExpr(schema.bookings.startsAt),
           updatedMicros: epochMicrosExpr(schema.bookings.updatedAt),
         })
         .from(schema.bookings)

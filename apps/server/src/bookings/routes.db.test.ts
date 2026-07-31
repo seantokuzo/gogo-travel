@@ -24,7 +24,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createLocalJWKSet, generateKeyPair } from "jose";
@@ -223,6 +223,43 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     await db.insert(schema.tripMembers).values({ tripId, userId, role });
   }
 
+  /** A custom place owned by `createdBy` (visibility per R-places-8). */
+  async function seedCustomPlace(createdBy: string) {
+    const [row] = await db
+      .insert(schema.places)
+      .values({
+        source: "custom",
+        sourceId: null,
+        name: `Custom ${uniq()}`,
+        lat: "35.659500",
+        lng: "139.700500",
+        createdBy,
+      })
+      .returning();
+    expect(row).toBeDefined();
+    return row!;
+  }
+
+  /** An open-data spine place — globally visible (R-places-8). */
+  async function seedSpinePlace() {
+    const [row] = await db
+      .insert(schema.places)
+      .values({
+        source: "overture",
+        sourceId: `ovt-${uniq()}`,
+        name: `Spine ${uniq()}`,
+        lat: "35.659500",
+        lng: "139.700500",
+      })
+      .returning();
+    expect(row).toBeDefined();
+    return row!;
+  }
+
+  /** Day-sorted copy of a marks batch — exact-set pins, order-independent. */
+  const sortedMarks = (marks: readonly DirtyDayMark[] | undefined) =>
+    [...(marks ?? [])].sort((a, b) => a.day.localeCompare(b.day));
+
   /** A trip with owner/editor/viewer members, created through the API. */
   async function seedCollabTrip() {
     const owner = await seedUserWithToken();
@@ -339,13 +376,12 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(items[0]?.startTime?.slice(0, 5)).toBe("11:05");
     expect(items[0]?.endTime?.slice(0, 5)).toBe("14:25");
 
-    // I-5: both chain days marked, post-commit.
-    expect(dirtyCalls.at(-1)).toEqual(
-      expect.arrayContaining([
-        { tripId: trip.id, day: "2026-09-01" },
-        { tripId: trip.id, day: "2026-09-02" },
-      ]),
-    );
+    // I-5: EXACTLY both chain days marked, post-commit (sorted exact-set —
+    // arrayContaining would let surplus phantom marks through).
+    expect(sortedMarks(dirtyCalls.at(-1))).toEqual([
+      { tripId: trip.id, day: "2026-09-01" },
+      { tripId: trip.id, day: "2026-09-02" },
+    ]);
   });
 
   it("POST: car_rental with dropoff derives TWO point items; lodging derives ONE spanning item (§3.3 table)", async () => {
@@ -432,6 +468,97 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     }
   });
 
+  it("A1: mixed-offset lodging with ordered instants but INVERTED wall-dates answers 400, never a 23514 CHECK 500 — POST, PATCH details, and the idea→planned promotion", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    // Security lane's worked example: UTC instants are ordered (check_in
+    // 2026-07-31T21:00Z < check_out 2026-08-01T02:00Z) so derivedInstantsOf
+    // passes, but check-in's LOCAL date (Aug 1) > check-out's (Jul 31) —
+    // deriveAutoItems emits end_day < day, tripping itinerary_items_end_day_ck.
+    const securityExample = {
+      category: "lodging",
+      check_in: "2026-08-01T02:00:00+05:00",
+      check_out: "2026-07-31T22:00:00-04:00",
+    };
+    // Correctness-lane shape of the same class, different offsets.
+    const correctnessExample = {
+      category: "lodging",
+      check_in: "2026-09-01T01:00:00+09:00", // 2026-08-31T16:00Z
+      check_out: "2026-08-31T20:00:00-07:00", // 2026-09-01T03:00Z
+    };
+
+    for (const inverted of [securityExample, correctnessExample]) {
+      const post = await postBooking(trip.id, editor.accessToken, {
+        category: "lodging",
+        title: "Inverted walls",
+        status: "planned",
+        details: inverted,
+      });
+      expect(post.status).toBe(400);
+      expect(((await post.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    }
+
+    // PATCH lane: a valid planned lodging patched into the inverted payload
+    // 400s and keeps its stored details (transaction rolled back).
+    const stay = await createBookingVia(trip.id, editor.accessToken, {
+      category: "lodging",
+      title: "Valid stay",
+      status: "planned",
+      details: {
+        category: "lodging",
+        check_in: "2026-09-01T15:00:00+09:00",
+        check_out: "2026-09-05T11:00:00+09:00",
+      },
+    });
+    const patch = await patchBooking(trip.id, stay.id, editor.accessToken, {
+      details: securityExample,
+    });
+    expect(patch.status).toBe(400);
+    expect((await dbBooking(stay.id))?.details).toMatchObject({
+      check_in: "2026-09-01T15:00:00+09:00",
+    });
+
+    // An IDEA may legally store the inverted details (zero items — the CHECK
+    // never fires); the guard bites where the items would be written: on the
+    // idea → planned promotion.
+    const idea = await createBookingVia(trip.id, editor.accessToken, {
+      category: "lodging",
+      title: "Inverted idea",
+      details: securityExample,
+    });
+    expect(await dbItems(idea.id)).toHaveLength(0);
+    const promote = await patchBooking(trip.id, idea.id, editor.accessToken, {
+      status: "planned",
+    });
+    expect(promote.status).toBe(400);
+    expect(((await promote.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("A6: derived end-before-start details 400 on POST and PATCH (bookings_time_order_ck mirrored — R-ib-4 guard)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const backwards = {
+      category: "activity",
+      starts_at: "2026-09-03T16:00:00+09:00",
+      ends_at: "2026-09-03T13:00:00+09:00",
+    };
+    const post = await postBooking(trip.id, editor.accessToken, {
+      category: "activity",
+      title: "Backwards",
+      details: backwards,
+    });
+    expect(post.status).toBe(400);
+    expect(((await post.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    const booking = await createBookingVia(trip.id, editor.accessToken, {
+      category: "activity",
+      title: "Fine until patched",
+    });
+    const patch = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      details: backwards,
+    });
+    expect(patch.status).toBe(400);
+    expect(((await patch.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
   it("POST: viewer 403 (R-ib-24 server-enforced)", async () => {
     const { viewer, trip } = await seedCollabTrip();
     const res = await postBooking(trip.id, viewer.accessToken, {
@@ -492,7 +619,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(byCategory.items.map((b) => b.id)).toEqual([booked.id]);
   });
 
-  it("GET list: unscheduled=true returns exactly the zero-item bookings (R-ib-10)", async () => {
+  it("GET list: unscheduled=true returns exactly the zero-item bookings; cancelled (zero items too) stays excluded by the default status set (R-ib-10)", async () => {
     const { owner, trip } = await seedCollabTrip();
     const timedBooked = await createBookingVia(trip.id, owner.accessToken, {
       category: "flight",
@@ -509,6 +636,17 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       category: "other",
       title: "Idea",
     });
+    // A cancelled booking has zero items (I-4) — it must NOT ride the
+    // unscheduled bucket unless status=cancelled is explicitly requested.
+    const cancelled = await createBookingVia(trip.id, owner.accessToken, {
+      category: "restaurant",
+      title: "Cancelled idea",
+      status: "planned",
+    });
+    expect(
+      (await patchBooking(trip.id, cancelled.id, owner.accessToken, { status: "cancelled" }))
+        .status,
+    ).toBe(200);
 
     const unscheduled = PaginatedBookingsSchema.parse(
       await (await listBookings(trip.id, owner.accessToken, "?unscheduled=true")).json(),
@@ -517,6 +655,41 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(ids).toContain(timelessPlanned.id);
     expect(ids).toContain(idea.id);
     expect(ids).not.toContain(timedBooked.id);
+    expect(ids).not.toContain(cancelled.id);
+
+    // Explicit status=cancelled + unscheduled=true DOES surface it.
+    const cancelledUnscheduled = PaginatedBookingsSchema.parse(
+      await (
+        await listBookings(trip.id, owner.accessToken, "?unscheduled=true&status=cancelled")
+      ).json(),
+    );
+    expect(cancelledUnscheduled.items.map((b) => b.id)).toEqual([cancelled.id]);
+  });
+
+  it("GET list: unscheduled=false behaves as ABSENT — no filter, identical page to the bare list (round-1 A3; only unscheduled=true is spec-defined)", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    // One scheduled + one unscheduled booking: a scheduled-only complement
+    // would drop the idea; absent-semantics keeps both, identically ordered.
+    await createBookingVia(trip.id, owner.accessToken, {
+      category: "flight",
+      title: "Scheduled",
+      status: "booked",
+      details: FLIGHT_DETAILS,
+    });
+    await createBookingVia(trip.id, owner.accessToken, {
+      category: "other",
+      title: "Unscheduled idea",
+    });
+
+    const bare = PaginatedBookingsSchema.parse(
+      await (await listBookings(trip.id, owner.accessToken)).json(),
+    );
+    const explicitFalse = PaginatedBookingsSchema.parse(
+      await (await listBookings(trip.id, owner.accessToken, "?unscheduled=false")).json(),
+    );
+    expect(bare.items).toHaveLength(2);
+    expect(explicitFalse.items.map((b) => b.id)).toEqual(bare.items.map((b) => b.id));
+    expect(explicitFalse.nextCursor).toBe(bare.nextCursor);
   });
 
   it("GET list: ordering is starts_at ASC NULLS LAST / updated_at DESC; the cursor walks the timed→timeless boundary losslessly", async () => {
@@ -663,6 +836,139 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       await scheduleBooking(trip.id, foreign.id, owner.accessToken, { day: "2026-09-03" }),
       await scheduleBooking(trip.id, NONEXISTENT_UUID, owner.accessToken, { day: "2026-09-03" }),
       await scheduleBooking(trip.id, "not-a-uuid", owner.accessToken, { day: "2026-09-03" }),
+    ]);
+  });
+
+  // ===========================================================================
+  // place_id visibility gate (round-1 B1; Law #3 / R-places-8): a booking's
+  // place_id is a VISIBILITY GRANT — places search widens custom-place
+  // visibility via a bookings subquery, so every write proves the caller can
+  // see the place. Invisible ≡ absent ≡ malformed-FK: one indistinguishable
+  // 404 (which also closes the 201-vs-500 existence oracle of the raw 23503).
+  // ===========================================================================
+
+  it("B1 POST place_id matrix: own custom + spine 201; foreign custom and nonexistent ids are byte-identical 404s (FK path closed — never a 500)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const victim = await seedUserWithToken();
+    const ownPlace = await seedCustomPlace(editor.userId);
+    const spine = await seedSpinePlace();
+    const victimPlace = await seedCustomPlace(victim.userId); // referenced NOWHERE
+
+    const withPlace = (placeId: string) => ({
+      category: "restaurant" as const,
+      title: `At a place ${uniq()}`,
+      place_id: placeId,
+    });
+
+    // Own custom place: visible to its creator.
+    const own = await createBookingVia(trip.id, editor.accessToken, withPlace(ownPlace.id));
+    expect(own.place_id).toBe(ownPlace.id);
+    // Spine/open-data rows are globally visible.
+    const spined = await createBookingVia(trip.id, editor.accessToken, withPlace(spine.id));
+    expect(spined.place_id).toBe(spine.id);
+
+    // Another user's unreferenced custom place ≡ a nonexistent id — the
+    // NONEXISTENT probe doubles as the FK-closure pin: without the gate it
+    // is an unmapped 23503 → 500, a 201-vs-500 existence oracle.
+    await expectIndistinguishable404s([
+      await postBooking(trip.id, editor.accessToken, withPlace(victimPlace.id)),
+      await postBooking(trip.id, editor.accessToken, withPlace(NONEXISTENT_UUID)),
+    ]);
+    // Neither refused write left a booking row behind.
+    const rows = await db
+      .select()
+      .from(schema.bookings)
+      .where(eq(schema.bookings.tripId, trip.id));
+    expect(rows.filter((r) => r.placeId === victimPlace.id)).toHaveLength(0);
+  });
+
+  it("B1 PATCH place_id matrix: own custom 200, null clears; foreign custom and nonexistent are byte-identical 404s and write NOTHING", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const victim = await seedUserWithToken();
+    const ownPlace = await seedCustomPlace(editor.userId);
+    const victimPlace = await seedCustomPlace(victim.userId);
+    const booking = await createBookingVia(trip.id, editor.accessToken, {
+      category: "activity",
+      title: "Locationless",
+    });
+
+    const ok = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      place_id: ownPlace.id,
+    });
+    expect(ok.status).toBe(200);
+    expect(BookingWithItemsSchema.parse(await ok.json()).place_id).toBe(ownPlace.id);
+
+    await expectIndistinguishable404s([
+      await patchBooking(trip.id, booking.id, editor.accessToken, {
+        place_id: victimPlace.id,
+      }),
+      await patchBooking(trip.id, booking.id, editor.accessToken, {
+        place_id: NONEXISTENT_UUID,
+      }),
+    ]);
+    // The rejected PATCHes rolled back — the booking kept the visible place.
+    expect((await dbBooking(booking.id))?.placeId).toBe(ownPlace.id);
+
+    // Explicit null clears without any visibility question.
+    const cleared = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      place_id: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect((await dbBooking(booking.id))?.placeId).toBeNull();
+  });
+
+  it("B1 revoked-membership walk: reference-granted visibility evaporates with the membership (security round-1)", async () => {
+    // The victim's custom place gains trip-scoped visibility by being
+    // referenced in a SHARED trip's booking (the search-query widening rule).
+    const victim = await seedUserWithToken();
+    const attacker = await seedUserWithToken();
+    const sharedTrip = await createTripVia(victim.accessToken);
+    await addMember(sharedTrip.id, attacker.userId, "editor");
+    const place = await seedCustomPlace(victim.userId);
+    await createBookingVia(sharedTrip.id, victim.accessToken, {
+      category: "lodging",
+      title: "Grants visibility",
+      place_id: place.id,
+    });
+
+    const attackerTrip = await createTripVia(attacker.accessToken);
+
+    // While a member of the shared trip the place is legitimately visible —
+    // referencing it from the attacker's own trip succeeds.
+    const whileMember = await postBooking(attackerTrip.id, attacker.accessToken, {
+      category: "other",
+      title: "Visible while member",
+      place_id: place.id,
+    });
+    expect(whileMember.status).toBe(201);
+    const minted = BookingSchema.parse(await whileMember.json());
+    // Remove the attacker-trip reference (kept, it would itself keep granting
+    // visibility — that is the documented reference rule, not a bypass).
+    expect((await deleteBooking(attackerTrip.id, minted.id, attacker.accessToken)).status).toBe(
+      204,
+    );
+
+    // Membership revoked → the grant is gone; the SAME write now answers the
+    // canonical 404, byte-identical to a nonexistent id.
+    await db
+      .delete(schema.tripMembers)
+      .where(
+        and(
+          eq(schema.tripMembers.tripId, sharedTrip.id),
+          eq(schema.tripMembers.userId, attacker.userId),
+        ),
+      );
+    await expectIndistinguishable404s([
+      await postBooking(attackerTrip.id, attacker.accessToken, {
+        category: "other",
+        title: "Visible while member",
+        place_id: place.id,
+      }),
+      await postBooking(attackerTrip.id, attacker.accessToken, {
+        category: "other",
+        title: "Visible while member",
+        place_id: NONEXISTENT_UUID,
+      }),
     ]);
   });
 
@@ -942,6 +1248,154 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     });
     const res = await patchBooking(trip.id, booking.id, viewer.accessToken, { title: "nope" });
     expect(res.status).toBe(403);
+  });
+
+  it("A6 §3.3 placement pins: auto-item lands before-first / at the midpoint; an untimed schedule appends past timed neighbors (sort_order asserted)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const day = "2026-09-07";
+    // Timed neighbors via scheduled ideas: 12:00 @ 1024, 18:00 @ 2048.
+    const mkIdea = (title: string) =>
+      createBookingVia(trip.id, editor.accessToken, { category: "other", title });
+    const n1 = await mkIdea("neighbor noon");
+    const n2 = await mkIdea("neighbor evening");
+    expect(
+      (
+        await scheduleBooking(trip.id, n1.id, editor.accessToken, {
+          day,
+          start_time: "12:00",
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await scheduleBooking(trip.id, n2.id, editor.accessToken, {
+          day,
+          start_time: "18:00",
+        })
+      ).status,
+    ).toBe(201);
+    expect((await dbItems(n1.id))[0]?.sortOrder).toBe(1024);
+    expect((await dbItems(n2.id))[0]?.sortOrder).toBe(2048);
+
+    // BEFORE-FIRST: a 09:00 auto-item precedes every timed neighbor →
+    // first.sortOrder − 1024 = 0.
+    const early = await createBookingVia(trip.id, editor.accessToken, {
+      category: "activity",
+      title: "Early",
+      status: "planned",
+      details: { category: "activity", starts_at: `${day}T09:00:00+09:00` },
+    });
+    expect((await dbItems(early.id))[0]?.sortOrder).toBe(0);
+
+    // MIDPOINT-BETWEEN: 15:00 slots after the 12:00 neighbor and before the
+    // 18:00 one → floor((1024 + 2048) / 2) = 1536.
+    const mid = await createBookingVia(trip.id, editor.accessToken, {
+      category: "activity",
+      title: "Mid",
+      status: "planned",
+      details: { category: "activity", starts_at: `${day}T15:00:00+09:00` },
+    });
+    expect((await dbItems(mid.id))[0]?.sortOrder).toBe(1536);
+
+    // UNTIMED APPEND with timed neighbors present: schedule with no
+    // start_time → appended after the day's last item (2048 + 1024 = 3072;
+    // §3.3 "untimed → appended" — the schedule path owns untimed placement,
+    // auto-items always carry their derived start_time).
+    const untimed = await mkIdea("untimed");
+    expect(
+      (await scheduleBooking(trip.id, untimed.id, editor.accessToken, { day })).status,
+    ).toBe(201);
+    expect((await dbItems(untimed.id))[0]?.sortOrder).toBe(3072);
+  });
+
+  it("A6 car_rental resync: PATCH gaining dropoff_at grows 1→2 items; dropping it shrinks 2→1 — the pickup item id survives both (I-2 index-matched resync)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const rental = await createBookingVia(trip.id, editor.accessToken, {
+      category: "car_rental",
+      title: "Grows and shrinks",
+      status: "booked",
+      details: { category: "car_rental", pickup_at: "2026-09-02T10:00:00+09:00" },
+    });
+    const initial = await dbItems(rental.id);
+    expect(initial).toHaveLength(1);
+    const pickupItemId = initial[0]?.id;
+
+    // GROW 1 → 2: dropoff_at appears → a second point item on its wall-date.
+    const grow = await patchBooking(trip.id, rental.id, editor.accessToken, {
+      details: {
+        category: "car_rental",
+        pickup_at: "2026-09-02T10:00:00+09:00",
+        dropoff_at: "2026-09-04T18:00:00+09:00",
+      },
+    });
+    expect(grow.status).toBe(200);
+    const grown = await dbItems(rental.id);
+    expect(grown).toHaveLength(2);
+    expect(grown[0]).toMatchObject({ id: pickupItemId, day: "2026-09-02" });
+    expect(grown[1]?.day).toBe("2026-09-04");
+
+    // SHRINK 2 → 1: dropoff_at removed → the surplus item is deleted and the
+    // ORIGINAL pickup item survives with its id (legs/caches key on it).
+    const shrink = await patchBooking(trip.id, rental.id, editor.accessToken, {
+      details: { category: "car_rental", pickup_at: "2026-09-02T10:00:00+09:00" },
+    });
+    expect(shrink.status).toBe(200);
+    const shrunk = await dbItems(rental.id);
+    expect(shrunk).toHaveLength(1);
+    expect(shrunk[0]).toMatchObject({ id: pickupItemId, day: "2026-09-02" });
+  });
+
+  it("A6 R-ib-20: a place_id change dirty-marks the items' days even though no item row moved (legs re-resolve booking-kind locations via the parent)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const place = await seedCustomPlace(editor.userId);
+    const booking = await createBookingVia(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "Relocated",
+      status: "planned",
+      details: FLIGHT_DETAILS, // items span 2026-09-01 → 2026-09-02
+    });
+    const before = await dbItems(booking.id);
+
+    dirtyCalls.length = 0;
+    const res = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      place_id: place.id,
+    });
+    expect(res.status).toBe(200);
+    // No item row changed…
+    expect(await dbItems(booking.id)).toEqual(before);
+    // …but BOTH chain days went dirty (sorted exact-set).
+    expect(sortedMarks(dirtyCalls.at(-1))).toEqual([
+      { tripId: trip.id, day: "2026-09-01" },
+      { tripId: trip.id, day: "2026-09-02" },
+    ]);
+
+    // Same-value rewrite is NOT a location change — no marks.
+    dirtyCalls.length = 0;
+    expect(
+      (await patchBooking(trip.id, booking.id, editor.accessToken, { place_id: place.id }))
+        .status,
+    ).toBe(200);
+    expect(dirtyCalls).toHaveLength(0);
+  });
+
+  it("A6: cancelled booking accepts no-op PATCHes — title-only and same-status both 200 (same-status is not a transition)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const booking = await seedTimedBooking(trip.id, editor.accessToken, "cancelled");
+
+    const titleOnly = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      title: "Renamed while cancelled",
+    });
+    expect(titleOnly.status).toBe(200);
+    const titled = BookingWithItemsSchema.parse(await titleOnly.json());
+    expect(titled.title).toBe("Renamed while cancelled");
+    expect(titled.status).toBe("cancelled");
+    expect(titled.items).toEqual([]);
+
+    const sameStatus = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      status: "cancelled",
+    });
+    expect(sameStatus.status).toBe(200);
+    expect(BookingWithItemsSchema.parse(await sameStatus.json()).status).toBe("cancelled");
   });
 
   // ===========================================================================

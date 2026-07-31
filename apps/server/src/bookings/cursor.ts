@@ -27,8 +27,14 @@ export interface BookingKeysetCursor {
   id: string;
 }
 
-/** ≤ 18 digits ⇒ always a valid, non-overflowing bigint (int64 max is 19 digits). */
-const MICROS_RE = /^\d{1,18}$/;
+/**
+ * Optionally-signed ≤ 18 digits ⇒ always a valid, non-overflowing bigint
+ * (int64 max is 19 digits). The sign admits pre-1970 `starts_at` instants
+ * (negative epoch-micros) — without it a legitimate historic booking mints a
+ * cursor its own decoder rejects → silent page-1 loop (round-1 A2). No
+ * NULL-sentinel collision: the bare `-` carries no digits and fails this RE.
+ */
+const MICROS_RE = /^-?\d{1,18}$/;
 /** The encoded NULL sentinel for the `starts_at` part. */
 const NULL_SENTINEL = "-";
 

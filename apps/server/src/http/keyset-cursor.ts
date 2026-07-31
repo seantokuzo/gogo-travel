@@ -62,9 +62,28 @@ export function keysetCursorPredicate(
 }
 
 /**
+ * THE one home of the epoch-micros formula (round-1 A4): select-side sort
+ * keys and predicate-side comparisons must never drift apart — both typed
+ * exports below wrap this single builder.
+ */
+const epochMicros = (column: AnyPgColumn): SQL =>
+  sql`(extract(epoch from ${column}) * 1000000)::bigint`;
+
+/**
  * Select expression for a row's exact epoch-microseconds — the cursor's
  * full-precision sort key. postgres-js returns a bigint column as a string.
+ * For NOT NULL timestamp columns (`created_at`/`updated_at` family); a
+ * nullable column wants `nullableEpochMicrosExpr`.
  */
 export function epochMicrosExpr(createdAtColumn: AnyPgColumn): SQL<string> {
-  return sql<string>`(extract(epoch from ${createdAtColumn}) * 1000000)::bigint`;
+  return epochMicros(createdAtColumn) as SQL<string>;
+}
+
+/**
+ * The same formula over a NULLABLE timestamp column (`bookings.starts_at`):
+ * SQL NULL rides through as `null` — the bookings cursor encodes it as its
+ * NULLS-LAST sentinel.
+ */
+export function nullableEpochMicrosExpr(column: AnyPgColumn): SQL<string | null> {
+  return epochMicros(column) as SQL<string | null>;
 }

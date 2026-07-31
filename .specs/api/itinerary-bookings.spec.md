@@ -612,11 +612,12 @@ unchanged):
 
 - `domains/booking.ts` adds `BookingCreate`, `BookingUpdate`,
   `BookingWithItems`, `ScheduleBookingInput` + this router's
-  `EndpointDescriptor`s (contracts §3.6 pattern).
+  `EndpointDescriptor`s (contracts §3.6 pattern), and the pure
+  time-derivation helpers of §3.3 (used by server writes and client
+  optimistic updates alike — they live beside the booking detail shapes
+  they derive from; inventory corrected at T-7.1 round-1).
 - `domains/itinerary.ts` adds `ItineraryItemCreate`, `ItineraryItemUpdate`,
-  `DayOrderInput`, `ItineraryRead` (`{ items, legs }`) + descriptors, and
-  the pure time-derivation helpers of §3.3 (used by server writes and client
-  optimistic updates alike).
+  `DayOrderInput`, `ItineraryRead` (`{ items, legs }`) + descriptors.
 - `scalars.ts` adds `ISOTime` (`HH:MM`, 24-hour) — `time` columns cross the
   wire as strings; contracts spec §3.3 currently lacks a time-of-day scalar.
 
