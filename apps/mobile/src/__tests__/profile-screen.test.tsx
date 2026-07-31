@@ -135,9 +135,10 @@ afterEach(async () => {
     hops += 1;
     idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
-  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
-  // the suite, not silently hand a wedged query to the next test. The check
-  // reads the RENDER's client — the prod singleton never fetches here.
+  // Loud exit (R1; scope corrected R2): fails on bound-exhaustion with a
+  // fetch still running at drain time on the RENDER's client — unmount-
+  // cancelled held fetches read idle here, so this is not a universal
+  // straggler catch.
   expect(lastClient?.isFetching() ?? 0).toBe(0);
   lastClient = null;
   jest.restoreAllMocks();

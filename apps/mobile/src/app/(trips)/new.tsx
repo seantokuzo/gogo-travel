@@ -126,8 +126,7 @@ export default function TripNewScreen() {
 
   const createTrip = useCreateTrip();
 
-  const dirty =
-    name !== "" || destinationQuery !== "" || startDate !== "" || endDate !== "";
+  const dirty = name !== "" || destinationQuery !== "" || startDate !== "" || endDate !== "";
   // The dialog decision needs the CURRENT dirty state inside a listener
   // that re-subscribes on change — refs keep the submit bypass race-free.
   const bypassGuardRef = useRef(false);

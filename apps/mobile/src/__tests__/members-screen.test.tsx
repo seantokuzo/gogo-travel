@@ -225,7 +225,8 @@ describe("role-gated affordances (R-tripui-13/14)", () => {
 
 describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
   it("remove flows through a ConfirmDialog naming the member + the balances note, then removes", async () => {
-    const { request } = await renderMembers({ role: "owner" });
+    const { request, client } = await renderMembers({ role: "owner" });
+    const invalidateSpy = jest.spyOn(client, "invalidateQueries");
 
     const rowB = await screen.findByTestId(`members-list-item-${MEMBER_B_ID}`);
     await settleList();
@@ -246,6 +247,19 @@ describe("remove & role change (R-tripui-15, §2.6 optimistic)", () => {
       expect.objectContaining({ method: "DELETE", path: "/trips/:tripId/members/:userId" }),
       { params: { tripId: TEST_TRIP_ID, userId: MEMBER_B_ID } },
     );
+    // R2 pin: member_count on the list rows goes stale — the remove site
+    // must reach BOTH trips-list keys via invalidateTripLists (the last
+    // unpinned helper site from the T-6.7 merge).
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.trips,
+      exact: true,
+      refetchType: "active",
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: queryKeys.tripsList,
+      exact: true,
+      refetchType: "active",
+    });
   });
 
   it("remove cancel makes no call and keeps the member", async () => {

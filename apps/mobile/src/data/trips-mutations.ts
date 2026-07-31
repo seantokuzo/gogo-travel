@@ -95,8 +95,7 @@ export function useTripList(): UseInfiniteQueryResult<
 export function useCreateTrip(): UseMutationResult<TripWithRole, Error, TripCreate> {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: TripCreate) =>
-      apiClient.request(tripEndpoints.createTrip, { body: input }),
+    mutationFn: (input: TripCreate) => apiClient.request(tripEndpoints.createTrip, { body: input }),
     onSuccess: (trip) => {
       qc.setQueryData(queryKeys.trip(trip.id), trip);
       invalidateTripLists(qc, { refetchType: "none" });

@@ -196,7 +196,7 @@ it.each(["expired", "revoked", "max_uses_reached"] as const)(
     await renderSettled();
 
     await screen.findByTestId("invite-join-button-accept");
-  await pressSettled("invite-join-button-accept");
+    await pressSettled("invite-join-button-accept");
 
     const title =
       reason === "expired" ? "This invite has expired" : "This invite is no longer valid";

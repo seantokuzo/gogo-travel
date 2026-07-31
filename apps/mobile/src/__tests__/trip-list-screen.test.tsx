@@ -72,9 +72,7 @@ async function renderScreen(opts?: { theme?: "persisted"; probe?: ("light" | "da
         <TripListScreen />
       </ThemeProvider>
     );
-  const result = await render(
-    <QueryClientProvider client={client}>{themed}</QueryClientProvider>,
-  );
+  const result = await render(<QueryClientProvider client={client}>{themed}</QueryClientProvider>);
   return { client, ...result };
 }
 
@@ -113,10 +111,11 @@ afterEach(async () => {
     hops += 1;
     idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
-  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
-  // the suite, not silently hand a wedged query to the next test. Tests
-  // that intentionally hold a fetch open unmount before ending (the
-  // consumed signal cancels the fetch).
+  // Loud exit (R1; scope corrected R2): this fails when the hop bound is
+  // hit with a fetch STILL RUNNING at drain time — it cannot see held
+  // fetches a test already unmounted (signal-consuming queryFns cancel on
+  // unmount, reading as idle here). Bound-exhaustion detector, not a
+  // universal straggler catch.
   expect(lastClient?.isFetching() ?? 0).toBe(0);
   lastClient = null;
   jest.restoreAllMocks();
@@ -263,6 +262,29 @@ describe("trip list states (CT-1)", () => {
     await fireEvent.press(screen.getByTestId("trip-list-banner-refresh-retry"));
     await waitFor(() => expect(screen.queryByTestId("trip-list-banner-refresh")).toBeNull());
     expect(screen.getByTestId(`trip-list-list-item-${TEST_TRIP_ID}`)).toBeOnTheScreen();
+  });
+
+  it("R2: a ZERO-trip user's failed refresh shows the banner ON the empty state — never a confident 'No trips yet'", async () => {
+    let fail = false;
+    mockNavApi({
+      overrides: {
+        "GET /trips": () =>
+          fail
+            ? Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom"))
+            : Promise.resolve({ items: [], nextCursor: null }),
+      },
+    });
+    await renderScreen();
+    await screen.findByTestId("trip-list-empty");
+
+    fail = true;
+    await act(async () => {
+      mockFocusHolder.current?.(); // refocus → invalidate → failing refetch
+    });
+
+    expect(await screen.findByTestId("trip-list-banner-refresh")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-list-empty")).toBeOnTheScreen();
+    expect(screen.queryByTestId("trip-list-error")).toBeNull();
   });
 
   it("§2.1 error state: banner + the spec-exact trip-list-retry control, retry refetches into rows", async () => {

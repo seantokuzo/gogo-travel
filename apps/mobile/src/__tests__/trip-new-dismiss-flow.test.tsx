@@ -56,9 +56,7 @@ it("R-tripui-8: the vendored navigator emits beforeRemove — a dirty modal is H
 
   // Keep editing: dialog closes, form intact, still on the modal.
   await fireEvent.press(screen.getByTestId("trip-new-button-cancel-cancel"));
-  await waitFor(() =>
-    expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull(),
-  );
+  await waitFor(() => expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull());
   expect(screen.getByTestId("trip-new-input-name").props.value).toBe("Kyoto Spring");
   expect(result.getPathname()).toBe("/new");
 

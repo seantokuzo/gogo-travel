@@ -28,7 +28,15 @@ import { useFocusEffect, useRouter, type Href } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { SectionList, StyleSheet, View } from "react-native";
 
-import { AppText, Button, EmptyState, ErrorBanner, PageHeader, Sheet, Skeleton } from "@/components";
+import {
+  AppText,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  PageHeader,
+  Sheet,
+  Skeleton,
+} from "@/components";
 import { invalidateTripLists, useTripList } from "@/data";
 import { Fab, TripRow, groupTripsIntoSections } from "@/features/trips";
 import { useLinkNoticeStore } from "@/navigation/link-notice";
@@ -55,7 +63,12 @@ const useStyles = createStyles((t) =>
 function JoinGuidanceSheet({ visible, onDismiss }: { visible: boolean; onDismiss(): void }) {
   const s = useStyles();
   return (
-    <Sheet visible={visible} onDismiss={onDismiss} title="Join a trip" testID="trip-list-sheet-join">
+    <Sheet
+      visible={visible}
+      onDismiss={onDismiss}
+      title="Join a trip"
+      testID="trip-list-sheet-join"
+    >
       <View style={s.sheetBody}>
         <AppText>
           Trips are joined with an invite link — ask a member of the trip to send you one.
@@ -106,6 +119,13 @@ export default function TripListScreen() {
   }, [list.data]);
   const sections = useMemo(() => groupTripsIntoSections(items), [items]);
 
+  // Background-refresh failure over RETAINED data (R1 review; hoisted R2):
+  // v5 flips status to "error" with data kept when a focus-invalidate
+  // refetch fails — BOTH the populated list and the zero-trip empty state
+  // must surface it inline (a 0-trip user offline must not read a
+  // confident "No trips yet" with no failure indication).
+  const refreshFailed = list.isError && !list.isFetchNextPageError;
+
   let content;
   if (list.status === "pending") {
     // Skeleton rows (§2.1 loading state, R-ds-15); non-screen loading region
@@ -142,6 +162,15 @@ export default function TripListScreen() {
     // join-by-link guidance — never a blank region (R-ds-16).
     content = (
       <View style={s.emptyWrap}>
+        {refreshFailed ? (
+          <View style={s.banner}>
+            <ErrorBanner
+              message="Couldn't refresh your trips."
+              onRetry={() => void list.refetch()}
+              testID="trip-list-banner-refresh"
+            />
+          </View>
+        ) : null}
         <EmptyState
           icon="airplane-outline"
           title="No trips yet"
@@ -164,11 +193,8 @@ export default function TripListScreen() {
       </View>
     );
   } else {
-    // Background-failure surfaces over RETAINED rows (R1 review): a failed
-    // focus-refetch shows an inline banner above the list; a failed page
-    // fetch shows a footer banner with its own retry (isFetchNextPageError
-    // discriminates the two — both flip status to "error" in v5).
-    const refreshFailed = list.isError && !list.isFetchNextPageError;
+    // Failed page fetches surface at the footer with their own retry
+    // (isFetchNextPageError discriminates them from refresh failures).
     content = (
       <>
         {refreshFailed ? (
@@ -181,54 +207,58 @@ export default function TripListScreen() {
           </View>
         ) : null}
         <SectionList
-        testID="trip-list-list"
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          // Dynamic trip targets aren't representable in the typed-route
-          // union — same documented cast as TripSwitcher/entry redirect.
-          <TripRow trip={item} onPress={() => router.push(`/${item.id}` as Href)} />
-        )}
-        renderSectionHeader={({ section }) => (
-          <View style={s.sectionHeader}>
-            <AppText role="heading">{section.title}</AppText>
-          </View>
-        )}
-        stickySectionHeadersEnabled={false}
-        contentContainerStyle={s.listContent}
-        onEndReachedThreshold={0.4}
-        onEndReached={() => {
-          if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
-        }}
-        ListFooterComponent={
-          <View style={s.footer}>
-            {list.isFetchingNextPage ? (
-              <Skeleton variant="rect" height={96} width="100%" testID="trip-list-loading-more" />
-            ) : list.isFetchNextPageError ? (
-              <ErrorBanner
-                message="Couldn't load more trips."
-                onRetry={() => void list.fetchNextPage()}
-                testID="trip-list-banner-page"
-              />
-            ) : null}
-            <Button
-              title="Join with an invite link"
-              variant="ghost"
-              onPress={() => setJoinSheetOpen(true)}
-              testID="trip-list-button-join"
-            />
-            {__DEV__ ? (
-              // Dev-only DS evidence surface (DS-10). The T-6.6 "Open sample
-              // trip" door is retired — the real list rows are the doors now.
+          testID="trip-list-list"
+          sections={sections}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            // Dynamic trip targets aren't representable in the typed-route
+            // union — same documented cast as TripSwitcher/entry redirect.
+            <TripRow trip={item} onPress={() => router.push(`/${item.id}` as Href)} />
+          )}
+          renderSectionHeader={({ section }) => (
+            <View style={s.sectionHeader}>
+              <AppText role="heading">{section.title}</AppText>
+            </View>
+          )}
+          stickySectionHeadersEnabled={false}
+          contentContainerStyle={s.listContent}
+          onEndReachedThreshold={0.4}
+          onEndReached={() => {
+            // !isFetchingNextPage is belt-and-braces (R2 accept-with-comment):
+            // v5's fetchNextPage already no-ops a concurrent call only via
+            // cancelRefetch, so the guard cheaply prevents cancel-restart
+            // churn from rapid end-reached events; it has no other semantics.
+            if (list.hasNextPage && !list.isFetchingNextPage) void list.fetchNextPage();
+          }}
+          ListFooterComponent={
+            <View style={s.footer}>
+              {list.isFetchingNextPage ? (
+                <Skeleton variant="rect" height={96} width="100%" testID="trip-list-loading-more" />
+              ) : list.isFetchNextPageError ? (
+                <ErrorBanner
+                  message="Couldn't load more trips."
+                  onRetry={() => void list.fetchNextPage()}
+                  testID="trip-list-banner-page"
+                />
+              ) : null}
               <Button
-                title="Component gallery"
+                title="Join with an invite link"
                 variant="ghost"
-                onPress={() => router.push("/gallery")}
-                testID="trip-list-button-gallery"
+                onPress={() => setJoinSheetOpen(true)}
+                testID="trip-list-button-join"
               />
-            ) : null}
-          </View>
-        }
+              {__DEV__ ? (
+                // Dev-only DS evidence surface (DS-10). The T-6.6 "Open sample
+                // trip" door is retired — the real list rows are the doors now.
+                <Button
+                  title="Component gallery"
+                  variant="ghost"
+                  onPress={() => router.push("/gallery")}
+                  testID="trip-list-button-gallery"
+                />
+              ) : null}
+            </View>
+          }
         />
       </>
     );

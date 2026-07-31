@@ -135,9 +135,7 @@ function fireBeforeRemove(): BeforeRemoveEvent {
 }
 
 const postCalls = (request: jest.Mock) =>
-  request.mock.calls.filter(
-    ([d]) => (d as { method: string; path: string }).method === "POST",
-  );
+  request.mock.calls.filter(([d]) => (d as { method: string; path: string }).method === "POST");
 
 /** The last render's client — the afterEach drain loop reads its isFetching. */
 let lastClient: QueryClient | null = null;
@@ -179,8 +177,9 @@ afterEach(async () => {
     hops += 1;
     idleHops = (lastClient?.isFetching() ?? 0) > 0 ? 0 : idleHops + 1;
   } while (idleHops < 2 && hops < 6);
-  // Loud exit (R1): hitting the hop bound while still fetching must FAIL
-  // the suite, not silently hand a wedged query to the next test.
+  // Loud exit (R1; scope corrected R2): fails on bound-exhaustion with a
+  // fetch still running at drain time — unmount-cancelled held fetches
+  // read idle here, so this is not a universal straggler catch.
   expect(lastClient?.isFetching() ?? 0).toBe(0);
   lastClient = null;
   jest.restoreAllMocks();
@@ -451,6 +450,17 @@ describe("dirty dismissal (R-tripui-8, nav §2.6 form-modal rule)", () => {
     expect(mockNavigation.dispatch).toHaveBeenCalledWith(event.data.action);
   });
 
+  it("R2 pin: a COLD modal-only stack (no list beneath) cancels via replace('/(trips)'), not an unhandled back", async () => {
+    mockApi();
+    mockRouter.canGoBack.mockReturnValueOnce(false); // gogo://new cold entry
+    await renderScreen();
+
+    await fireEvent.press(screen.getByTestId("trip-new-button-cancel"));
+
+    expect(mockRouter.replace).toHaveBeenCalledWith("/(trips)");
+    expect(mockRouter.back).not.toHaveBeenCalled();
+  });
+
   it("keep-editing cancels the dialog and stays put", async () => {
     mockApi();
     await renderScreen();
@@ -462,9 +472,7 @@ describe("dirty dismissal (R-tripui-8, nav §2.6 form-modal rule)", () => {
     });
     await fireEvent.press(await screen.findByTestId("trip-new-button-cancel-cancel"));
 
-    await waitFor(() =>
-      expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByTestId("trip-new-button-cancel-confirm")).toBeNull());
     expect(mockNavigation.dispatch).not.toHaveBeenCalled();
     expect(screen.getByTestId("trip-new-input-name").props.value).toBe("K");
   });

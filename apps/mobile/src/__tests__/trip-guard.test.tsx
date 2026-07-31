@@ -89,8 +89,8 @@ it("R-nav-15: nonexistent/non-member trip → the ONE generic no-access state, z
   expect(await screen.findByTestId("no-access-screen")).toBeOnTheScreen();
   // Zero trip data fetched into UI: the only trip call is the guard's 404'd
   // membership check — no tab ever mounted to fetch anything else.
-  const tripCalls = request.mock.calls.filter(
-    ([descriptor]) => (descriptor as { path: string }).path.startsWith("/trips"),
+  const tripCalls = request.mock.calls.filter(([descriptor]) =>
+    (descriptor as { path: string }).path.startsWith("/trips"),
   );
   expect(tripCalls).toEqual([GUARD_CALL(TRIP_B_ID)]);
   expect(screen.queryByTestId("itinerary-screen")).toBeNull();

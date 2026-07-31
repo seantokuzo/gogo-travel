@@ -7,6 +7,7 @@ import type { TripListItem } from "@gogo/shared";
 import {
   TRIP_SECTION_LABELS,
   formatDateRange,
+  formatFieldDate,
   formatMemberCount,
   groupTripsIntoSections,
 } from "./sections";
@@ -96,5 +97,12 @@ describe("formatMemberCount (R-tripui-2)", () => {
   it("pluralizes", () => {
     expect(formatMemberCount(1)).toBe("1 member");
     expect(formatMemberCount(4)).toBe("4 members");
+  });
+});
+
+describe("formatFieldDate (DateField display)", () => {
+  it("formats a single wire date tz-free", () => {
+    expect(formatFieldDate("2027-05-01")).toBe("May 1, 2027");
+    expect(formatFieldDate("2026-12-31")).toBe("Dec 31, 2026");
   });
 });
