@@ -56,10 +56,11 @@ import {
 } from "@gogo/shared/domains/booking";
 import type { BookingDetails } from "@gogo/shared/domains/booking";
 import type { BookingSource, BookingStatus } from "@gogo/shared/enums";
-import { and, asc, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
+import { resolvePlaceAccess } from "../places/visibility.js";
 import type { DirtyDayMark } from "./dirty-days.js";
 import type { BookingRow, ItineraryItemRow } from "./serialize.js";
 
@@ -174,43 +175,66 @@ function derivedPlacementsOf(details: BookingDetails): DerivedItemPlacement[] {
  * custom-place visibility to trip members via a bookings subquery
  * (`places/search-query.ts`), so writing it unchecked would let a caller
  * re-grant themselves (and everyone they invite) a custom place they cannot
- * see. Mirrors the places surface's exact rule (`customPlaceAccess`,
- * `places/routes.ts`): spine/open-data rows pass for everyone; custom rows
- * pass for their creator OR when referenced (saved / itinerary / booking) in
- * SOME trip the caller belongs to — evaluated at write time, so revoked
- * membership revokes the grant. Unknown and invisible ids answer the SAME
- * indistinguishable 404 (Law #3: invisible ≡ absent), which also closes the
- * 201-vs-500 existence oracle of the unmapped FK 23503 (custom places are
- * client-deletable — a stale id is a legitimate flow, not an edge case).
- * Runs INSIDE the write transaction: the FK is validated against the same
- * snapshot the insert/update commits with.
+ * see. The rule itself lives in the shared predicate
+ * (`places/visibility.ts`, round-2 A1 — one copy for every surface); this
+ * wrapper folds everything except visible into the canonical 404 (Law #3:
+ * invisible ≡ absent), which also closes the 201-vs-500 existence oracle of
+ * the unmapped FK 23503 (custom places are client-deletable — a stale id is
+ * a legitimate flow, not an edge case). It runs inside the write
+ * transaction, but under READ COMMITTED that is NO snapshot guarantee: a
+ * place hard-deleted between this check and the row write still fires the
+ * place FK — `isPlaceFkViolation` below maps that residue onto the SAME 404.
  */
 async function assertPlaceVisible(
   tx: Tx,
   args: { placeId: string; userId: string },
 ): Promise<void> {
-  const [place] = await tx
-    .select({ source: schema.places.source, createdBy: schema.places.createdBy })
-    .from(schema.places)
-    .where(eq(schema.places.id, args.placeId));
-  if (!place) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
-  if (place.source !== "custom" || place.createdBy === args.userId) return;
+  const access = await resolvePlaceAccess(tx, args);
+  if (access.kind === "not_found") throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+}
 
-  const [visible] = await tx
-    .select({ one: sql<number>`1` })
-    .from(schema.tripMembers)
-    .where(
-      and(
-        eq(schema.tripMembers.userId, args.userId),
-        sql`(
-          exists (select 1 from saved_places sp where sp.trip_id = ${schema.tripMembers.tripId} and sp.place_id = ${args.placeId}::uuid)
-          or exists (select 1 from itinerary_items ii where ii.trip_id = ${schema.tripMembers.tripId} and ii.place_id = ${args.placeId}::uuid)
-          or exists (select 1 from bookings b where b.trip_id = ${schema.tripMembers.tripId} and b.place_id = ${args.placeId}::uuid)
-        )`,
-      ),
-    )
-    .limit(1);
-  if (!visible) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+/** The Drizzle-generated FK constraint guarding `bookings.place_id`. */
+export const BOOKINGS_PLACE_FK = "bookings_place_id_places_id_fk";
+
+/**
+ * Round-2 A2: is this the place-FK 23503? The `assertPlaceVisible` →
+ * insert/update window is a real race (READ COMMITTED — see above), so the
+ * constraint is the last line and its violation must converge on the same
+ * canonical 404, not a 500. Constraint-PRECISE on purpose: the other FKs on
+ * this write path (trip, creator) are gate-proven and should stay loud if
+ * they ever fire. 🔴 Driver trap (the `fkViolationTable` precedent,
+ * `places/routes.ts`): postgres-js — the TEST driver — exposes the wire
+ * field as `constraint_name`; pg-protocol's `DatabaseError` — what the PROD
+ * Neon serverless driver throws — exposes `constraint`. Accept BOTH and walk
+ * `cause` for wrapped shapes; exported so the unit test can pin the prod
+ * shape no container ever produces.
+ */
+export function isPlaceFkViolation(error: unknown): boolean {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    const candidate = current as {
+      code?: unknown;
+      constraint_name?: unknown;
+      constraint?: unknown;
+    };
+    if (candidate.code === "23503") {
+      const constraint =
+        typeof candidate.constraint_name === "string"
+          ? candidate.constraint_name
+          : typeof candidate.constraint === "string"
+            ? candidate.constraint
+            : null;
+      return constraint === BOOKINGS_PLACE_FK;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
+/** Rethrow, mapping the race-window place-FK violation onto the canonical 404 (A2). */
+function rethrowPlaceFkMapped(error: unknown): never {
+  if (isPlaceFkViolation(error)) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+  throw error;
 }
 
 /**
@@ -452,7 +476,7 @@ export async function createBooking(
       items: await itemsOf(tx, booking.id),
       dirtyDays: marksFor(tripId, dirty),
     };
-  });
+  }).catch(rethrowPlaceFkMapped); // A2: race-window place-FK 23503 → canonical 404
 }
 
 /**
@@ -477,11 +501,15 @@ export async function updateBooking(
       .for("update");
     if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
-    // B1: every non-null `place_id` write re-proves visibility — including a
-    // same-value rewrite (the caller's visibility may have been revoked
-    // since it was set; the grant must not survive on replay). Lock order
-    // holds: the booking row is already held FOR UPDATE; places/members are
-    // plain reads.
+    // B1: every non-null `place_id` write runs the visibility gate. NOTE the
+    // scope honestly (round-2 A3): on a SAME-VALUE rewrite this booking's own
+    // row already references the place in a trip the caller is a proven
+    // member of, so the reference rule is satisfied by construction — that is
+    // the documented grant rule (an existing reference keeps granting
+    // visibility; the revoked-membership walk in routes.db.test.ts pins the
+    // rule's real edge), not a replay-revocation check. The gate BITES on
+    // place_id CHANGES. Lock order holds: the booking row is already held
+    // FOR UPDATE; places/members are plain reads.
     if (input.place_id !== undefined && input.place_id !== null) {
       await assertPlaceVisible(tx, { placeId: input.place_id, userId });
     }
@@ -595,7 +623,7 @@ export async function updateBooking(
       items: await itemsOf(tx, bookingId),
       dirtyDays: marksFor(tripId, dirty),
     };
-  });
+  }).catch(rethrowPlaceFkMapped); // A2: race-window place-FK 23503 → canonical 404
 }
 
 /**

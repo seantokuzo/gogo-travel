@@ -46,9 +46,18 @@ export function decodeKeysetCursor(raw: string): KeysetCursor | null {
 }
 
 /**
+ * THE one home of the epoch-micros formula (round-1 A4; round-2 A6):
+ * select-side sort keys and predicate-side comparisons must never drift
+ * apart — the predicate and both typed exports below wrap this single
+ * builder (Postgres 14+ `extract` returns numeric, so ×1e6 → bigint is
+ * lossless).
+ */
+const epochMicros = (column: AnyPgColumn): SQL =>
+  sql`(extract(epoch from ${column}) * 1000000)::bigint`;
+
+/**
  * Row-value predicate for the strictly-older page, compared in epoch-micros
- * space (Postgres 14+ `extract` returns numeric, so ×1e6 → bigint is
- * lossless). Mirrors the `created_at DESC, id DESC` ordering — micros is
+ * space. Mirrors the `created_at DESC, id DESC` ordering — micros is
  * monotonic in created_at — while carrying full timestamptz precision so no
  * sub-millisecond row is skipped. Both operands are pre-validated (integer /
  * uuid) by `decodeKeysetCursor`, so the casts are crash-proof.
@@ -58,16 +67,8 @@ export function keysetCursorPredicate(
   idColumn: AnyPgColumn,
   cursor: KeysetCursor,
 ): SQL {
-  return sql`((extract(epoch from ${createdAtColumn}) * 1000000)::bigint, ${idColumn}) < (${cursor.micros}::bigint, ${cursor.id}::uuid)`;
+  return sql`(${epochMicros(createdAtColumn)}, ${idColumn}) < (${cursor.micros}::bigint, ${cursor.id}::uuid)`;
 }
-
-/**
- * THE one home of the epoch-micros formula (round-1 A4): select-side sort
- * keys and predicate-side comparisons must never drift apart — both typed
- * exports below wrap this single builder.
- */
-const epochMicros = (column: AnyPgColumn): SQL =>
-  sql`(extract(epoch from ${column}) * 1000000)::bigint`;
 
 /**
  * Select expression for a row's exact epoch-microseconds — the cursor's

@@ -28,7 +28,14 @@ import {
 } from "../scalars.js";
 import { ItineraryItemSchema } from "./itinerary.js";
 
-const localTime = ISODateTimeSchema.optional();
+/**
+ * Round-2 B1: `z.iso.datetime` places NO bound on fractional seconds — a
+ * multi-MB "datetime" parses valid, derives instants, and lands whole in
+ * jsonb. 64 chars fits every real offset+microseconds datetime with slack;
+ * the cap is LOCAL (the shared scalar stays uncapped — its other uses are
+ * server-generated, never client-writable).
+ */
+const localTime = ISODateTimeSchema.max(64).optional();
 /**
  * Free-text caps — DoS headroom, the T-6.1 convention (`trip.ts`/`place.ts`
  * caps): generous for any real input, bounded so no client-writable string

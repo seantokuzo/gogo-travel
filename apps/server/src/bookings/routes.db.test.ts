@@ -49,6 +49,7 @@ import {
   NONEXISTENT_UUID,
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
+import { decodeBookingCursor } from "./cursor.js";
 import type { DirtyDayMark } from "./dirty-days.js";
 
 const dockerAvailable = await (async () => {
@@ -692,10 +693,11 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(explicitFalse.nextCursor).toBe(bare.nextCursor);
   });
 
-  it("GET list: ordering is starts_at ASC NULLS LAST / updated_at DESC; the cursor walks the timed→timeless boundary losslessly", async () => {
+  it("GET list: ordering is starts_at ASC NULLS LAST / updated_at DESC; the cursor walks the timed→timeless boundary losslessly — pre-1970 negative-micros lane included", async () => {
     const { owner, trip } = await seedCollabTrip();
-    // 3 timed (Sep 3, 1, 5) + 2 timeless — expected order: 1st, 3rd, 5th,
-    // then the timeless pair freshest-updated first.
+    // 1 pre-epoch + 3 timed (Sep 3, 1, 5) + 2 timeless — expected order:
+    // 1969 first, then Sep 1/3/5, then the timeless pair freshest-updated
+    // first.
     const mk = (title: string, departs?: string) =>
       createBookingVia(trip.id, owner.accessToken, {
         category: "flight",
@@ -708,6 +710,9 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     const sep3 = await mk("Sep 3", "2026-09-03T10:00:00+09:00");
     const sep1 = await mk("Sep 1", "2026-09-01T10:00:00+09:00");
     const sep5 = await mk("Sep 5", "2026-09-05T10:00:00+09:00");
+    // Pre-1970 `starts_at` → NEGATIVE epoch-micros (round-1 A2's signed
+    // decoder, walked end-to-end below).
+    const apollo = await mk("Apollo 11", "1969-07-20T20:17:00Z");
     const timelessOld = await mk("Timeless old");
     const timelessNew = await mk("Timeless new");
 
@@ -722,13 +727,41 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       cursor = body.nextCursor;
       if (cursor === null) break;
     }
-    expect(walked).toEqual([sep1.id, sep3.id, sep5.id, timelessNew.id, timelessOld.id]);
+    expect(walked).toEqual([
+      apollo.id,
+      sep1.id,
+      sep3.id,
+      sep5.id,
+      timelessNew.id,
+      timelessOld.id,
+    ]);
 
     // Malformed cursor falls back to page 1 (opaque token, no 400 door).
     const malformed = PaginatedBookingsSchema.parse(
       await (await listBookings(trip.id, owner.accessToken, "?limit=2&cursor=%21junk")).json(),
     );
-    expect(malformed.items.map((b) => b.id)).toEqual([sep1.id, sep3.id]);
+    expect(malformed.items.map((b) => b.id)).toEqual([apollo.id, sep1.id]);
+
+    // A5 round-2: the negative-micros lane END-TO-END — a limit-1 page mints
+    // its cursor AT the 1969 row (negative `startsMicros` on the wire), and
+    // dereferencing that cursor resumes at Sep 1: no silent page-1 loop, no
+    // skipped row.
+    const first = PaginatedBookingsSchema.parse(
+      await (await listBookings(trip.id, owner.accessToken, "?limit=1")).json(),
+    );
+    expect(first.items.map((b) => b.id)).toEqual([apollo.id]);
+    expect(first.nextCursor).not.toBeNull();
+    expect(decodeBookingCursor(first.nextCursor!)?.startsMicros?.startsWith("-")).toBe(true);
+    const second = PaginatedBookingsSchema.parse(
+      await (
+        await listBookings(
+          trip.id,
+          owner.accessToken,
+          `?limit=1&cursor=${encodeURIComponent(first.nextCursor!)}`,
+        )
+      ).json(),
+    );
+    expect(second.items.map((b) => b.id)).toEqual([sep1.id]);
   });
 
   // ===========================================================================
@@ -967,6 +1000,68 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       await postBooking(attackerTrip.id, attacker.accessToken, {
         category: "other",
         title: "Visible while member",
+        place_id: NONEXISTENT_UUID,
+      }),
+    ]);
+  });
+
+  it("A5 grant-arm walk: saved-place and place_visit-item references each grant place_id visibility on POST; a stranger still gets the canonical 404", async () => {
+    // The reference rule's EXISTS has three arms (saved / itinerary /
+    // booking). The bookings arm is pinned by the revoked-membership walk
+    // above — this walks the OTHER two through the real POST path. The
+    // itinerary arm's `place_visit` item is a direct fixture insert (item
+    // CRUD is IB-2's surface — noted, not dodged).
+    const victim = await seedUserWithToken();
+    const member = await seedUserWithToken();
+
+    // saved_places arm: victim's custom place pinned in a trip shared with `member`.
+    const savedTrip = await createTripVia(victim.accessToken);
+    await addMember(savedTrip.id, member.userId, "editor");
+    const savedPlace = await seedCustomPlace(victim.userId);
+    await db.insert(schema.savedPlaces).values({
+      tripId: savedTrip.id,
+      placeId: savedPlace.id,
+      createdBy: victim.userId,
+    });
+
+    // itinerary_items arm: victim's custom place visited in another shared trip.
+    const itemTrip = await createTripVia(victim.accessToken);
+    await addMember(itemTrip.id, member.userId, "editor");
+    const visitedPlace = await seedCustomPlace(victim.userId);
+    await db.insert(schema.itineraryItems).values({
+      tripId: itemTrip.id,
+      kind: "place_visit",
+      placeId: visitedPlace.id,
+      day: "2026-09-02",
+      createdBy: victim.userId,
+    });
+
+    // Each reference grants the member visibility — usable from the member's
+    // OWN trip (the grant follows the caller, not the referencing trip).
+    const memberTrip = await createTripVia(member.accessToken);
+    for (const placeId of [savedPlace.id, visitedPlace.id]) {
+      const res = await postBooking(memberTrip.id, member.accessToken, {
+        category: "activity",
+        title: `Granted ${uniq()}`,
+        place_id: placeId,
+      });
+      expect(res.status).toBe(201);
+      expect(BookingSchema.parse(await res.json()).place_id).toBe(placeId);
+    }
+
+    // Control: no membership in the referencing trips ⇒ no grant — the same
+    // canonical 404 as a nonexistent id.
+    const stranger = await seedUserWithToken();
+    const strangerTrip = await createTripVia(stranger.accessToken);
+    await expectIndistinguishable404s([
+      await postBooking(strangerTrip.id, stranger.accessToken, {
+        category: "activity",
+        title: "No grant",
+        place_id: savedPlace.id,
+      }),
+      await postBooking(strangerTrip.id, stranger.accessToken, {
+        category: "activity",
+        title: "No grant",
         place_id: NONEXISTENT_UUID,
       }),
     ]);

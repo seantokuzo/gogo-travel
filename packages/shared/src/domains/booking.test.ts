@@ -218,6 +218,32 @@ describe("BookingDetails caps (B2 — T-6.1 DoS convention)", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("local-time datetimes cap at 64 chars (round-2 B1 — iso.datetime puts no bound on fractional seconds)", () => {
+    // Boundary pass: a real offset+milliseconds datetime is well under 64.
+    expect(
+      BookingDetailsSchema.safeParse({
+        category: "flight",
+        departs_at: "2026-09-01T11:05:00.123456+09:00",
+      }).success,
+    ).toBe(true);
+    // Otherwise-valid ISO datetime whose fractional seconds run past 64 chars
+    // — iso.datetime alone accepts it (any-length fraction); the cap rejects.
+    const long = `2026-09-01T11:05:00.${"1".repeat(60)}+09:00`;
+    expect(BookingDetailsSchema.safeParse({ category: "flight", departs_at: long }).success).toBe(
+      false,
+    );
+    // The cap rides every localTime field, segments included.
+    expect(
+      BookingDetailsSchema.safeParse({
+        category: "flight",
+        segments: [{ departs_at: long }],
+      }).success,
+    ).toBe(false);
+    expect(
+      BookingDetailsSchema.safeParse({ category: "lodging", check_in: long }).success,
+    ).toBe(false);
+  });
 });
 
 describe("Booking row schema", () => {
