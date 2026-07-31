@@ -25,155 +25,109 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-6 — Trips, collaboration & places spine (ACTIVE since 2026-07-25)
+### P-7 — Itinerary & bookings (ACTIVE since 2026-07-31)
 
-- **The app's spine** (~6 PRs, 9 tasks). Trip CRUD + §3.2 permission matrix
-  (authz source of truth for every later domain), members/roles/ownership
-  transfer, multi-use invites + deep links, push-invalidation emitter seam,
-  open-data places spine (region ingest + search), trips client screens +
-  entry-redirect/default-tab. Ledger **F-030..F-042**. Specs: `api/trips`,
-  `api/places`, `client/navigation` (NAV-3/4/5), `shared/contracts`.
-- **NO blocking escalations** (scoped 2026-07-25): places spine ingests OPEN
-  datasets only (Overture + FSQ-OS GeoParquet via DuckDB, $0/no-key/no-account;
-  Foursquare premium DEFERRED out of MVP → dormant R-places-11..14). Invites
-  ship on `gogo://` + a `LINK_DOMAIN` placeholder; universal-link domain stays
-  a P-14 Sean item. Permission matrix + transfer are fully specced (no
-  security-model divergence). **No migration owed** — the P-3 baseline
-  (`0000_certain_texas_twister.sql`) already has trips/trip_members/invites/
-  places/saved_places/place_ingest_regions + `pg_trgm` GIN.
-- **Task breakdown + build order (waves):**
-  - **T-6.1** (S) trip CRUD router (POST/GET/GET:id/PATCH/DELETE `/trips`) —
-    **first real consumer of the dormant `require-trip-member.ts`**; adds
-    `TripListItem` shared shape + `expect_updated_at` conflict helper + status
-    reconciliation + `base_currency` lock. Flips F-030/031/033, establishes
-    F-038 IDOR harness. NO migration. **✅ MERGED f11f686 (PR #2) 2026-07-25** —
-    round-1 fix-then-ship (1 blocking: unbounded string caps; fixed 758f0be),
-    judge merge/high, ultra waived. F-030/031/033 code-complete; flips pend
-    phase QA (need Wave-4/5 client screens to exercise).
-  - **Wave 2 — COMPLETE 2026-07-25:** T-6.2 **✅ MERGED 5694f83 (PR #4)** —
-    2 dual-lane-convergent blockers (zero-owner strand, cascade deadlock)
-    fixed + pinned with deterministic held-lock tests; global lock order
-    users → trip_members → invites now codified in code docs. T-6.4
-    **✅ MERGED e5a2c97 (PR #3)** — sargable dedup EXPLAIN-pinned; new dep
-    @duckdb/node-api@1.5.5-r.1. Server suite 433, shared 348.
-    T-6.5 carry-forwards: enqueue-volume bounds; consumes `enqueueSearchMiss`;
-    adds PlaceCreate/coarseCategory shared shapes.
-  - **Wave 3 — COMPLETE 2026-07-26. P-6 SERVER SURFACE DONE (6/6 tasks,
-    5 PRs, all judge merge/high):** T-6.3 **✅ 0cc55d1 (PR #5)** — clean
-    round-1 SHIP; emitter dormant until P-13. T-6.5 **✅ 3f6a8ce (PR #6)** —
-    search + custom places; prod-driver FK-field landmine caught in review;
-    scale caps added (bare-text ≥4 chars, bbox 2°-clamp — Wave 4/5 clients
-    build against these; constants in shared config/places.ts). Server suite
-    515, shared 378.
-  - **Wave 4:** T-6.6 **✅ MERGED e180d0f (PR #7) 2026-07-26** — guard
-    verification window (3-lane convergent) + unbounded-splash blockers fixed;
-    12s request-timeout cap now app-wide; mobile 354. **Phase-QA simulator
-    checklist (accumulating, run at phase close):** warm-start deep-link URL
-    transport (untestable in jest — unit parity pinned only); offline
-    cached-shell mount leg (source-verified only, no renderApp test);
-    two-account collab loop (create → invite → join → role change → transfer →
-    removal); native universal-link modals.
-  - **Wave 5 (parallel):** T-6.8 **✅ MERGED 04b00a8 (PR #8) 2026-07-30** —
-    invite-join + members; leave button TRIMMED per Law #4 (§2.5: leave lives
-    on settings/CT-5 — T-6.9 wires it via preserved `useRemoveMember` +
-    `LEAVE_TRIP_CONFIRM` + 409 mappings); REAL FIND: TanStack v5 drops
-    per-call mutate callbacks for superseded calls → hook-level
-    `onMutationError` seam on all 5 member mutation hooks (T-6.9: add the
-    `onMutationSuccess` twin or document the drop — QUEUE carry row). Round-2
-    tests lane falsification-probed every fix (mutate→red, restore→green).
-    Mobile 406. T-6.7 **✅ MERGED dd5304a (PR #9) 2026-07-30** — trip list +
-    create modal. KEY-CACHE LAW (new landmine, pin-tested): `tripsList` is the
-    DISJOINT root `["trip-list"]` — the guard's 404-scrub `removeQueries`
-    matches by PREFIX, so NOTHING else may ever live under a `["trips", ...]`
-    prefix except the trip-detail subtree the scrub is meant to evict;
-    `invalidateTripLists(qc)` is THE only sanctioned way to invalidate list
-    caches (two keys, exact — also retrofitted into T-6.8's members sites).
-    Native range picker via `@react-native-community/datetimepicker` 9.1.0 —
-    **dev clients must be REBUILT before sim QA / device install** (QUEUE
-    row). Vendored-fork `beforeRemove`/preventDefault PROVEN working
-    (first consumer, real-tree red/green probe). Round 2: all 3 lanes SHIP,
-    every fix falsification-probed; judge merge/high. Mobile 466 (65 suites).
-    T-6.9 **✅ MERGED 322807a (PR #10) 2026-07-31 — P-6 CODE-COMPLETE
-    (9/9 tasks, PRs #2–#10, every judge merge/high).** Settings (details w/
-    structured destination edit + DateField, theme/currency sheets, leave
-    via useRemoveMember(me), delete, stale-409 conflict UX) + CT-6 collab
-    wiring (exhaustive 10-event plan, foreground/focus legs). Mobile 517
-    (72 suites). Three rounds: R1 7-blocking (incl. per-call-callback
-    superseded drop reintroduced on updateTrip — the PR's own T-6.8 class;
-    theme:"constructor" prototype crash) → R2 found 3 NEW blockers in the
-    fix diff (armed-latch delayed silent re-seed; builder's "UI-unreachable"
-    amendment REJECTED via an empirical counter-test — Sheet exit window
-    drives two-in-flight) → R3 both lanes SHIP, 8/8 falsification probes
-    discriminating.
-  - **T-6.9 landmines (add to the running list):** (1) NEVER hang per-call
-    callbacks on a SHARED mutation instance — TanStack v5 fires per-call
-    callbacks only for the latest call; use the hook-level
-    `onMutationError`/`onMutationSuccess` seam pattern (members.ts +
-    trip-settings.ts precedents) or pending-gate every affordance. (2) A
-    conflict latch must be CONSUMED on every terminal path (re-seed, effect,
-    dismiss) — invariant: latch armed ⟺ notice visible; an armed-but-orphaned
-    latch = delayed silent overwrite. (3) DS Sheet is hit-testable through
-    its ~200ms exit animation (mounted = visible || exiting) — role-item-class
-    presses inside the exit window fire real mutations (QUEUE row for the DS
-    guard). (4) `expect_updated_at` must always read the FRESH context row
-    (buildTripPatch), never the seeded form snapshot.
-    **PHASE-QA CHECKLIST (consolidated — run on sim before ledger flips;
-    REBUILD the dev client FIRST, datetimepicker native module):**
-    ① two-account collab loop: create → invite (share sheet opens) → join
-    via gogo:// link → role change → transfer → remove (T-6.2/6.8/6.9);
-    ② warm-start deep-link URL transport (jest-untestable leg, T-6.6);
-    ③ offline cached-shell mount (source-verified only, T-6.6); ④ native
-    universal-link modals (T-6.6); ⑤ trip create golden path w/ native
-    range picker + destination typeahead (T-6.7); ⑥ settings: edit
-    name/destination/dates/theme/currency, stale-409 two-device conflict
-    (edit on A, save on B, save on A → notice), leave (non-owner), delete
-    (owner), owner-leave 409 copy (T-6.9); ⑦ trip list: pagination past
-    page 1, offline refocus retains rows w/ banner (T-6.7). **B-2 ledger
-    note (T-6.7 R2):** the press→settle act-stabilization is load-sensitive
-    under harsher-than-CI starvation (one repro during a Docker-saturated
-    concurrent run; canonical `--ci --maxWorkers=2` guard + CI both print 0)
-    — if act warnings resurface under host contention, that's the class.
-- **Existing seams:** `apps/server/src/http/require-trip-member.ts` (dormant,
-  404-indistinguishable, `createRequireTripMember`); `apps/server/src/app.ts`
-  (only auth+users mounted at :82/:86 — T-6.1 mounts `/trips`);
-  `packages/shared/src/domains/trip.ts` (`deriveTripStatus` done; ADD
-  `TripListItem`/`InvitePreview`/`OwnershipTransfer`/`PlaceCreate`/
-  `coarseCategory`/`LINK_DOMAIN`); P-4 mobile placeholders in
-  `apps/mobile/src/app/(trips)/` + `[tripId]/_layout.tsx` (NAV-3/4 seams marked).
-- **Carry-forwards:** sole-owner-ghost + account-deletion trip reconcile
-  RESOLVED at T-6.1 (solely-owned trips cascade — judge-validated as the only
-  invariant-consistent mechanization; **spec-amendment note**: no spec sentence
-  says it verbatim, derived from R-trips-1/8/10 + R-db-8). Remaining, with
-  owners: invite-accept TOCTOU + `FOR UPDATE` sole-owner guard + keyset-cursor
-  helper extraction → T-6.2; push-event test bullets (§3.3 trip.updated/deleted,
-  §3.5 status_changed) → T-6.3; base-currency TOCTOU → P-9 money QUEUE row;
-  users' `:userId` 400-vs-404 convergence → P3 QUEUE row. notification-priming
-  wires to the T-6.3 push seam (transport still P-13, stays partial). Txn
-  landmine: atomic multi-writes (owner+member, transfer, invite-accept) MUST
-  use the WS `Pool`/`postgres-js`, never Neon-HTTP.
-- **T-6.1 landmines (fresh sessions, don't re-walk):** timestamptz stores µs
-  but the wire is ms — naive `updated_at` equality 409s every fresh row; use
-  `date_trunc('milliseconds', col) = $iso::timestamptz` (parity proven on both
-  drivers). Raw `Date` params crash postgres-js drizzle `sql` templates — bind
-  canonical ISO string + explicit cast. Key-presence authz needs falsy-value
-  pinning tests (`{status: null}` — a truthiness refactor passes green suites).
-  Membership aggregates (member_count-style) must join LIVE users or legacy
-  ghost rows inflate counts. Observer-less TanStack cache asserts under
-  `gcTime: 0` are GC-timer races — pin `gcTime: Infinity` per-key in that test.
-- **T-6.2 landmines (add to the T-6.1 list):** write predicates on
-  role-bearing rows must PIN the role (`ne(role,'owner')`) — EPQ re-evaluation
-  after a lock wait lands unguarded writes on the promoted row version.
-  ON DELETE CASCADE lock order = FK-trigger CREATION order (0000: invites
-  before trip_members) — never assume cascades follow your explicit order;
-  fence multi-row deleters with an ordered `FOR UPDATE` SELECT first. Global
-  lock order is users → trip_members → invites; multi-row lockers order by
-  user_id (in-trip) / trip_id (cross-trip). Liveness doors: any INSERT
-  creating a membership/ownership for the caller takes the caller's users row
-  FOR SHARE (live-only) as FIRST lock, or account-deletion mints ghosts.
-- **Status:** Waves 1+2 MERGED 2026-07-25 (T-6.1 f11f686, T-6.4 e5a2c97,
-  T-6.2 5694f83 — main green, server 433). Wave 3 (T-6.3 ∥ T-6.5) dispatched
-  2026-07-26. Auth on-device QA (P-5 ledger) runs in parallel whenever Sean
-  wires OAuth.
+- **The plan surface** (~6 PRs, 9 tasks T-7.1..T-7.9, PLANNING § P-7):
+  bookings by category (10 detail types, §3.2 status machine, single-source
+  calendar items via the §3.1 booking↔item contract), Ideas bucket, day list
+  w/ drag reorder + inline travel times (Mapbox/Transitous leg jobs),
+  calendar-grid gap view (the differentiator), add/edit flows for all types,
+  deeplink-out → return-prompt loop. Ledger **F-043..F-054**. Specs:
+  `.specs/api/itinerary-bookings.spec.md`, `.specs/client/itinerary.spec.md`.
+- **Scoped 2026-07-31 — NO migration owed** (0000 baseline has bookings /
+  itinerary_items / travel_legs, verified) and **NO blocking escalations**:
+  travel-leg adapters build fixture-driven behind ports (T-6.4 $0 precedent);
+  the **Mapbox account + token is a PARKED Sean item** (QUEUE Blocked row —
+  needed for live leg QA later and P-8 maps SDK anyway; Transitous is a
+  keyless community MOTIS instance). Deeplink-out is pure client URL
+  construction (§2.7, research-verified) — no partner APIs, no keys.
+- **Wave plan (build order):**
+  - **W1:** T-7.1 [IB-1] booking domain service + bookings router + §3.7
+    shared contract additions + §3.3 time-derivation helpers (shared — server
+    writes AND client optimistic updates use the same functions) + a
+    **dirty-day no-op seam** (T-6.3 dormant-emitter precedent: frozen
+    `markDaysDirty` contract now, T-7.3 fills the internals — zero cross-wave
+    file contention). **RIDER:** T-6.8 security defer — strip the raw invite
+    `token` from the invites-list envelope (separate commit, same PR; QUEUE
+    row said "next server touch").
+  - **W2 (parallel, worktrees):** T-7.2 [IB-2] itinerary router (item CRUD +
+    kind checks + booking-item protection, day-order PUT, composite read
+    `{items, legs}`) — calls the W1 seam from item mutations ∥ T-7.3 [IB-3]
+    travel-leg dirty-day queue + debounced worker + Mapbox/Transitous
+    adapters + staleness refresh + rate-limited `refresh-legs` — fills the
+    seam internals; files disjoint by construction.
+  - **W3:** T-7.4 [IT-1, IT-2] itinerary tab shell: plan-mode day list,
+    sections, day-jump strip, view-toggle + per-trip persistence, drag
+    reorder (new DnD dependency — exact-pin + provenance per T-6.4
+    precedent), TanStack hooks layer over the new descriptors.
+  - **W4 (parallel):** T-7.7 [IT-6] calendar grid + spanning-lodging lane ∥
+    T-7.6 [IT-5, IT-7] Ideas bucket + add/edit flows (10 types, place picker).
+  - **W5 (parallel):** T-7.5 [IT-3, IT-4] travel-time chips + conflict
+    surfacing ∥ T-7.8 [IT-8] deeplink-out builders + return-prompt loop
+    (built as a self-contained panel component + URL-builder module so W4/W6
+    surfaces consume it rather than collide with it).
+  - **W6:** T-7.9 [IT-9, IT-10] booking/item detail screens + offline
+    degrade of the tab.
+  - Client-wave composition firms up as server waves land (P-6 pattern).
+- **Contract notes:** §3.7 additions land at W1 — `BookingCreate`/`Update`/
+  `BookingWithItems`/`ScheduleBookingInput`, `ItineraryItemCreate`/`Update`,
+  `DayOrderInput`, `ItineraryRead`, `ISOTime` scalar, endpoint descriptors.
+  Viewer role is read-only here, server-enforced (R-ib-24) — reuse the F-038
+  byte-identity IDOR harness. LWW semantics (R-ib-18) are the offline-sync
+  spec's foundation — don't improvise beyond them.
+
+### P-6 — Trips, collaboration & places spine (CODE-COMPLETE 2026-07-31 → archived; PHASE QA PENDING)
+
+- 9/9 tasks merged (PRs #2–#10, every judge merge/high). Narrative archived:
+  [PHASE-006](history/PHASE-006-trips-collab-places.md); per-PR detail in
+  QUEUE "Recently done". Ledger **F-030..F-042 stays `passes:false`** until
+  the checklist below runs (Law #7).
+- **PHASE-QA CHECKLIST (run on sim before ledger flips; REBUILD the dev
+  client FIRST — datetimepicker native module):** ① two-account collab loop:
+  create → invite (share sheet opens) → join via gogo:// link → role change →
+  transfer → remove (T-6.2/6.8/6.9); ② warm-start deep-link URL transport
+  (jest-untestable leg, T-6.6); ③ offline cached-shell mount
+  (source-verified only, T-6.6); ④ native universal-link modals (T-6.6);
+  ⑤ trip create golden path w/ native range picker + destination typeahead
+  (T-6.7); ⑥ settings: edit name/destination/dates/theme/currency, stale-409
+  two-device conflict, leave (non-owner), delete (owner), owner-leave 409
+  copy (T-6.9); ⑦ trip list: pagination past page 1, offline refocus retains
+  rows w/ banner (T-6.7). **B-2 note:** press→settle act-stabilization is
+  load-sensitive under harsher-than-CI starvation — if act warnings
+  resurface under host contention, that's the class.
+- **LIVE LANDMINE DIGEST (P-7+ hits these classes — full narratives in the
+  archive):**
+  - **TanStack v5 drops per-call mutate callbacks for superseded calls** —
+    NEVER hang per-call callbacks on a shared mutation instance; use the
+    hook-level `onMutationError`/`onMutationSuccess` seam (members.ts +
+    trip-settings.ts precedents) or pending-gate every affordance. Bit P-6
+    twice (T-6.8 found it; T-6.9 reintroduced it).
+  - **KEY-CACHE LAW:** `["trip-list"]` is a disjoint root; NOTHING may live
+    under a `["trips", ...]` prefix except the trip-detail subtree the
+    guard's 404-scrub evicts. `invalidateTripLists(qc)` is the ONLY
+    sanctioned list invalidation. New P-7 keys (itinerary, bookings) must
+    join the detail subtree or their own disjoint root — decide at T-7.4.
+  - **Conflict latch must be CONSUMED on every terminal path** (re-seed,
+    effect, dismiss); invariant: latch armed ⟺ notice visible.
+  - **DS Sheet is hit-testable through its ~200ms exit animation** — QUEUE
+    row for the DS-level guard; until it lands, every new sheet consumer
+    needs its own pending-gate posture.
+  - `expect_updated_at` always reads the FRESH context row, never the seeded
+    form snapshot.
+  - **Server:** write predicates on role-bearing rows PIN the role (EPQ
+    re-eval); global lock order users → trip_members → invites (extend, don't
+    reorder, if P-7 adds locked tables); cascade lock order = FK-trigger
+    CREATION order — fence multi-row deleters with an ordered `FOR UPDATE`
+    SELECT; membership INSERTs take the caller's users row FOR SHARE
+    (live-only) FIRST; atomic multi-writes use the WS `Pool`/`postgres-js`,
+    never Neon-HTTP; timestamptz µs-vs-ms — `date_trunc('milliseconds')`
+    for wire equality; raw `Date` params crash postgres-js drizzle `sql`
+    templates — bind ISO string + explicit cast; membership aggregates join
+    LIVE users only.
+  - **Tests:** key-presence authz needs falsy-value pins; observer-less
+    cache asserts pin `gcTime: Infinity`; RNTL v14 async-act boundaries
+    awaited; server DB suites run `--no-file-parallelism` (Testcontainers
+    contention, QUEUE P1).
 
 ### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
 
@@ -212,34 +166,17 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   CocoaPods needs UTF-8 locale; JS-only changes reach the device app via
   kill+reopen (Metro), no rebuild.
 
-### P-2 — Upfront spec suite (CLOSED 2026-07-10; P-1 push still pending)
+### P-2 — Upfront spec suite (CLOSED 2026-07-10)
 
-- **Where we are:** Gates 1 AND 2 passed 2026-07-09. Full spec suite written
-  (18 files, ~280 EARS requirements) by 11 parallel spec agents; all 59
-  punch-list questions approved wholesale (see `.specs/OPEN-QUESTIONS.md` —
-  now the decision record); both resolution agents ran — **zero markers
-  remain**. Cross-agent sync items applied (push_tokens.timezone, packing
-  live-uncached, map search bar). Judgment calls flagged by resolvers are
-  logged in their reports; notable: editors can only edit/delete their OWN
-  expenses (per approved permission matrix), sole-owner account deletion →
-  409 transfer-first.
-- **T-2.4 DONE:** `feature-ledger.json` (118 features, F-001..F-118, all
-  `passes:false`, 466 requirement IDs verified) + frozen roadmap **P-3..P-14**
-  (12 phases, ~62 PRs) in PLANNING § Phase Detail. **GATE 3 OPEN — Sean
-  approves the phase plan → P-3 build starts.**
-- Sequencing notes from T-2.4 (binding): places spine ships with trips (P-6);
-  AI expense-estimate CTA stubs in P-9, wires in P-10; capture (P-11) needs
-  the AI platform (P-10); push emitter stubs P-6, transport lands P-13.
-- Sean's open action items: **Gate 3 approval** · palette pick (artifact
-  claude.ai/code/artifact/229f853e-c9d3-49a9-b439-96a0c27f914f) · gh auth
-  login (push) · (later, P-14) buy universal-link domain.
+- Gates 1+2+3 ALL passed. 18 spec files, ~280 EARS requirements, zero markers.
+  `feature-ledger.json` (118 features F-001..F-118) + frozen roadmap P-3..P-14
+  in PLANNING § Phase Detail. Notable resolver calls: editors edit/delete only
+  their OWN expenses; sole-owner account deletion → 409 transfer-first.
 - **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
   pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
   (canonical GSD template: doc system, autonomous loop, naming ADRs),
   `../bartling-bachelor` (product exemplar — mobile PWA, design system, itinerary
   UX), `../roi-gen` (STATE discipline), `../seantokuzo-mcp` (rules/hooks patterns).
-- **Research base:** autonomous-build patterns synthesis (Anthropic harness
-  posts, Spec Kit, Kiro, Ralph loop) — see PLANNING.md § P-2 for how it lands.
 
 ## In-flight decisions
 
@@ -261,6 +198,11 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Blockers / Waiting on Sean
 
-- ~~Push blocked~~ → RESOLVED 2026-07-16: pushed to origin.
-- ~~All P-2 gates~~ → passed. No open Sean items except: (P-14) buy the
-  universal-link domain.
+- **Mapbox account + access token** (escalation #3, PARKED — does not block
+  the P-7 build; adapters are fixture-driven behind ports). Needed for: live
+  travel-leg QA (P-7 phase QA at the earliest) and the P-8 `@rnmapbox/maps`
+  SDK regardless. Free tier covers dev (100k Directions requests/mo);
+  research run-rate estimate already includes it. QUEUE Blocked row.
+- **P-6 phase QA** — sim checklist above (Claude-runnable after dev-client
+  rebuild) + Sean's device pass; ledger F-030..F-042 flips after.
+- (P-14) buy the universal-link domain.

@@ -223,22 +223,22 @@ trip+place, offline-downloadable).
 > 2–6 reviewable PRs (ADR-001 sizing); spec task IDs (SH/DB/DS/NAV/AU/…) map
 > to `T-N.M` rows in the Phase Detail blocks below.
 
-| ID   | Type  | Title                                                                                                                     | Status                                             | Priority | Depends on      |
-| ---- | ----- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | -------- | --------------- |
-| P-1  | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision)                                           | in-progress                                        | P0       | —               |
-| P-2  | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress                                        | P0       | P-1             |
-| P-3  | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema                                                               | done ([archive](history/PHASE-003-foundations.md)) | P0       | P-2             |
-| P-4  | Phase | Design system + navigation skeleton                                                                                       | done                                               | P0       | P-3             |
-| P-5  | Phase | Auth, profiles & entitlements                                                                                             | in-progress                                        | P0       | P-3, P-4        |
-| P-6  | Phase | Trips, collaboration & places spine                                                                                       | queued                                             | P0       | P-5             |
-| P-7  | Phase | Itinerary & bookings (incl. deeplink-out)                                                                                 | queued                                             | P0       | P-6             |
-| P-8  | Phase | Maps, saved places & offline tile packs                                                                                   | queued                                             | P0       | P-7             |
-| P-9  | Phase | Money: budgets, expenses, splits & settle-up                                                                              | queued                                             | P0       | P-7             |
-| P-10 | Phase | AI layer: platform, recommendations, estimates, tour guide, packing, recap                                                | queued                                             | P1       | P-8, P-9        |
-| P-11 | Phase | Booking capture: email + share pipeline                                                                                   | queued                                             | P1       | P-7, P-10       |
-| P-12 | Phase | Photos & memories                                                                                                         | queued                                             | P1       | P-8             |
-| P-13 | Phase | Today view, offline sync, notifications & utilities                                                                       | queued                                             | P1       | P-9, P-10, P-12 |
-| P-14 | Phase | Launch readiness: device tests, Android pass, EAS, App Store                                                              | queued                                             | P1       | P-13            |
+| ID   | Type  | Title                                                                                                                     | Status                                                                                   | Priority | Depends on      |
+| ---- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------- | --------------- |
+| P-1  | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision)                                           | in-progress                                                                              | P0       | —               |
+| P-2  | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress                                                                              | P0       | P-1             |
+| P-3  | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema                                                               | done ([archive](history/PHASE-003-foundations.md))                                       | P0       | P-2             |
+| P-4  | Phase | Design system + navigation skeleton                                                                                       | done                                                                                     | P0       | P-3             |
+| P-5  | Phase | Auth, profiles & entitlements                                                                                             | done ([archive](history/PHASE-005-auth-profiles-entitlements.md), ledger pends OAuth QA) | P0       | P-3, P-4        |
+| P-6  | Phase | Trips, collaboration & places spine                                                                                       | done ([archive](history/PHASE-006-trips-collab-places.md), ledger pends phase QA)        | P0       | P-5             |
+| P-7  | Phase | Itinerary & bookings (incl. deeplink-out)                                                                                 | in-progress since 2026-07-31                                                             | P0       | P-6             |
+| P-8  | Phase | Maps, saved places & offline tile packs                                                                                   | queued                                                                                   | P0       | P-7             |
+| P-9  | Phase | Money: budgets, expenses, splits & settle-up                                                                              | queued                                                                                   | P0       | P-7             |
+| P-10 | Phase | AI layer: platform, recommendations, estimates, tour guide, packing, recap                                                | queued                                                                                   | P1       | P-8, P-9        |
+| P-11 | Phase | Booking capture: email + share pipeline                                                                                   | queued                                                                                   | P1       | P-7, P-10       |
+| P-12 | Phase | Photos & memories                                                                                                         | queued                                                                                   | P1       | P-8             |
+| P-13 | Phase | Today view, offline sync, notifications & utilities                                                                       | queued                                                                                   | P1       | P-9, P-10, P-12 |
+| P-14 | Phase | Launch readiness: device tests, Android pass, EAS, App Store                                                              | queued                                                                                   | P1       | P-13            |
 
 ---
 
@@ -373,7 +373,7 @@ pnpm test && pnpm build`
 
 ### P-6 — Trips, collaboration & places spine
 
-- **Status:** in-progress since 2026-07-25 · **Priority:** P0 · **Depends on:** P-5 · **~6 PRs** · tasks T-6.1..T-6.9 (see QUEUE)
+- **Status:** done — CODE-COMPLETE 2026-07-31, 9/9 tasks merged (PRs #2–#10), [archive](history/PHASE-006-trips-collab-places.md); ledger F-030..F-042 pends phase QA · **Priority:** P0 · **Depends on:** P-5
 - **Goal:** The app's spine: trip CRUD with the §3.2 permission matrix (the
   authz source of truth for every domain), members/roles/ownership transfer,
   multi-use invites with deep links, the push-invalidation event seam, the
@@ -405,7 +405,7 @@ pnpm test && pnpm build`
 
 ### P-7 — Itinerary & bookings
 
-- **Status:** queued · **Priority:** P0 · **Depends on:** P-6 · **~6 PRs**
+- **Status:** in-progress since 2026-07-31 (scoped: 9 tasks T-7.1..T-7.9, wave plan in STATE § P-7) · **Priority:** P0 · **Depends on:** P-6 · **~6 PRs**
 - **Goal:** The plan surface: bookings by category (typed details, status
   machine, single-source-of-truth calendar items), the Ideas bucket, the
   day list with drag reorder + inline travel times (Mapbox/Transitous leg
