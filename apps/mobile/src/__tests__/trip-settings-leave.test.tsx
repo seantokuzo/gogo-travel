@@ -45,7 +45,7 @@ it("R-tripui-20: leave (editor) = Confirm → DELETE members/:me → trip list +
   const listUpdatesBefore = queryClient.getQueryState(queryKeys.trips)?.dataUpdateCount ?? 0;
 
   await fireEvent.press(screen.getByTestId("trip-settings-button-leave"));
-  await fireEvent.press(screen.getByTestId("trip-settings-leave-dialog-confirm"));
+  await fireEvent.press(screen.getByTestId("trip-settings-button-leave-confirm"));
 
   // The wire call targets the CALLER's own membership row.
   await waitFor(() => expect(removed).toHaveLength(1));

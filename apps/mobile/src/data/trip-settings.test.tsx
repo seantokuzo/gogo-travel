@@ -107,6 +107,20 @@ describe("buildTripPatch (diffField semantics on the trip row)", () => {
     expect(patch?.status).toBeNull();
   });
 
+  it("destination fields diff independently — an unchanged name still ships changed coordinates", () => {
+    const patch = buildTripPatch(current, {
+      destination_name: current.destination_name, // unchanged → omitted
+      destination_lat: 34.6937,
+      destination_lng: 135.5023,
+    });
+    expect(patch).not.toBeNull();
+    expect(Object.keys(patch ?? {}).sort()).toEqual([
+      "destination_lat",
+      "destination_lng",
+      "expect_updated_at",
+    ]);
+  });
+
   it("theme null (back to app default) survives when a theme is set; no-ops when already default", () => {
     const themed: Trip = { ...current, theme: "deepWaters" };
     expect(buildTripPatch(themed, { theme: null })?.theme).toBeNull();

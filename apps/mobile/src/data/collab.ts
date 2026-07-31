@@ -234,7 +234,14 @@ export function useAppForegroundRefetch(): void {
     const subscription = AppState.addEventListener("change", (status) => {
       if (status === "active") {
         invalidateTripLists(client);
-        void client.invalidateQueries({ queryKey: queryKeys.trips });
+        // Detail subtrees ONLY (length > 1): the bare ["trips"] page is the
+        // helper's exact leg above — matching it again here would abort +
+        // restart the just-dispatched switcher refetch (v5 cancelRefetch
+        // default; round-1 perf finding).
+        void client.invalidateQueries({
+          queryKey: queryKeys.trips,
+          predicate: (query) => query.queryKey.length > 1,
+        });
       }
     });
     return () => subscription.remove();

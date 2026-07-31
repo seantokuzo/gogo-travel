@@ -199,7 +199,7 @@ describe("handleCollabEvent", () => {
     expect(invalidated(client, queryKeys.trip(TEST_TRIP_ID))).toBe(true);
   });
 
-  it("trip.deleted while INSIDE forces exit, then evicts the subtree on the microtask", async () => {
+  it("trip.deleted while INSIDE forces exit, then evicts the subtree on the deferred macrotask", async () => {
     const client = makeTestQueryClient();
     seedTripFamily(client);
     const deps = makeDeps(client, { currentTripId: TEST_TRIP_ID });

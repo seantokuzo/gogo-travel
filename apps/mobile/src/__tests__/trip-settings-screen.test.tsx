@@ -31,7 +31,7 @@ afterEach(() => {
 
 const SETTINGS_URL = `/${TEST_TRIP_ID}/more/settings`;
 
-it("R-tripui-14/18: OWNER sees every row — details form, theme, currency, archive, transfer-first leave, delete", async () => {
+it("R-tripui-14/18: OWNER sees every row — details form, theme, currency, transfer-first leave, delete", async () => {
   mockNavApi({ trips: [makePlanningTrip(TEST_TRIP_ID, { role: "owner" })] });
   await renderApp(SETTINGS_URL);
   await screen.findByTestId("trip-settings-screen");
@@ -50,12 +50,13 @@ it("R-tripui-14/18: OWNER sees every row — details form, theme, currency, arch
     expect(screen.getByTestId(id)).toBeOnTheScreen();
   }
   expect(screen.getByTestId("trip-settings-input-name")).toBeOnTheScreen();
-  expect(screen.getByTestId("trip-settings-button-archive")).toBeOnTheScreen();
+  expect(screen.getByTestId("trip-settings-input-destination")).toBeOnTheScreen();
+  expect(screen.getByTestId("trip-settings-input-dates")).toBeOnTheScreen();
   // Owner leave = transfer-first hint, not a leave action (R-tripui-20).
   expect(screen.getByText(/Transfer ownership first/)).toBeOnTheScreen();
 });
 
-it("R-tripui-14/18: EDITOR sees the form + theme but no owner-only rows (currency/archive/delete)", async () => {
+it("R-tripui-14/18: EDITOR sees the form + theme but no owner-only rows (currency/delete)", async () => {
   mockNavApi({ trips: [makePlanningTrip(TEST_TRIP_ID, { role: "editor" })] });
   await renderApp(SETTINGS_URL);
   await screen.findByTestId("trip-settings-screen");
@@ -64,7 +65,6 @@ it("R-tripui-14/18: EDITOR sees the form + theme but no owner-only rows (currenc
   expect(screen.getByTestId("trip-settings-list-item-theme")).toBeOnTheScreen();
   expect(screen.getByTestId("trip-settings-button-leave")).toBeOnTheScreen();
   expect(screen.queryByTestId("trip-settings-list-item-currency")).toBeNull();
-  expect(screen.queryByTestId("trip-settings-button-archive")).toBeNull();
   expect(screen.queryByTestId("trip-settings-button-delete")).toBeNull();
   expect(screen.queryByText(/Transfer ownership first/)).toBeNull();
 });
@@ -79,7 +79,6 @@ it("R-tripui-14/18: VIEWER sees no edit surfaces at all — only offline, member
   expect(screen.queryByTestId("trip-settings-button-save")).toBeNull();
   expect(screen.queryByTestId("trip-settings-list-item-theme")).toBeNull();
   expect(screen.queryByTestId("trip-settings-list-item-currency")).toBeNull();
-  expect(screen.queryByTestId("trip-settings-button-archive")).toBeNull();
   expect(screen.queryByTestId("trip-settings-button-delete")).toBeNull();
   expect(screen.getByTestId("trip-settings-list-item-offline")).toBeOnTheScreen();
   expect(screen.getByTestId("trip-settings-list-item-members")).toBeOnTheScreen();
@@ -129,7 +128,7 @@ it("R-tripui-19: stale-409 save → rollback + refetch → fresh values surface 
   expect(patchInput.body.name).toBe("My rename");
 
   // Conflict UX: non-blocking notice + the form re-renders with FRESH values.
-  expect(await screen.findByTestId("trip-settings-conflict-notice")).toBeOnTheScreen();
+  expect(await screen.findByTestId("trip-settings-banner-conflict")).toBeOnTheScreen();
   await waitFor(() =>
     expect(screen.getByTestId("trip-settings-input-name").props.value).toBe("Renamed by Bob"),
   );

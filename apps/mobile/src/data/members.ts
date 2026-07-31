@@ -58,8 +58,8 @@ import { invalidateTripLists, queryKeys } from "./query-client";
  * round 2): the same superseded-call drop swallowed success side effects —
  * concretely the invite-create share-sheet open, which rode a per-call
  * `onSuccess` (a second create mid-flight silently ate the first's sheet).
- * Opt-in per hook: wired where a screen hangs a side effect on success
- * (currently `useCreateInvite`); cache reconciliation never rides it.
+ * Honored by ALL five hooks (round-1: an accepted-but-ignored option is a
+ * silent drop of its own); cache reconciliation never rides it.
  */
 export interface MemberMutationOptions<TData = unknown> {
   onMutationError?(error: unknown): void;
@@ -157,7 +157,7 @@ interface MembersSnapshot {
  */
 export function useUpdateMemberRole(
   tripId: string,
-  options?: MemberMutationOptions,
+  options?: MemberMutationOptions<TripMember>,
 ): UseMutationResult<TripMember, Error, MemberRoleUpdateVars, MembersSnapshot> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -194,6 +194,7 @@ export function useUpdateMemberRole(
               ),
             },
       );
+      options?.onMutationSuccess?.(row);
     },
   });
 }
@@ -209,7 +210,7 @@ export function useUpdateMemberRole(
  */
 export function useRemoveMember(
   tripId: string,
-  options?: MemberMutationOptions,
+  options?: MemberMutationOptions<void>,
 ): UseMutationResult<void, Error, { userId: string }, MembersSnapshot> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -233,6 +234,7 @@ export function useRemoveMember(
       // 204 — nothing to reconcile; the trips list's member_count is stale
       // (two-key op since the T-6.7 key split).
       invalidateTripLists(qc);
+      options?.onMutationSuccess?.();
     },
   });
 }
@@ -246,7 +248,7 @@ export function useRemoveMember(
  */
 export function useTransferOwnership(
   tripId: string,
-  options?: MemberMutationOptions,
+  options?: MemberMutationOptions<OwnershipTransferResult>,
 ): UseMutationResult<OwnershipTransferResult, Error, { toUserId: string }> {
   const qc = useQueryClient();
   const key = queryKeys.tripMembers(tripId);
@@ -270,6 +272,7 @@ export function useTransferOwnership(
       void qc.invalidateQueries({ queryKey: queryKeys.trip(tripId), exact: true });
       // Two-key op since the T-6.7 key split (role column on the list rows).
       invalidateTripLists(qc);
+      options?.onMutationSuccess?.(result);
     },
     onError: (err) => {
       // Not optimistic, so nothing to roll back — but a 404 means the target
@@ -329,7 +332,7 @@ export function useCreateInvite(
  */
 export function useRevokeInvite(
   tripId: string,
-  options?: MemberMutationOptions,
+  options?: MemberMutationOptions<void>,
 ): UseMutationResult<
   void,
   Error,
@@ -361,6 +364,9 @@ export function useRevokeInvite(
       // 409 already_revoked / 404 mean the cache lied — refetch the truth.
       void qc.invalidateQueries({ queryKey: key });
       options?.onMutationError?.(err);
+    },
+    onSuccess: () => {
+      options?.onMutationSuccess?.();
     },
   });
 }

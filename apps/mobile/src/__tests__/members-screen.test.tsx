@@ -629,6 +629,62 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     await settleList();
   });
 
+  it("a create in flight pending-gates the CTA; both sequential creates open their share sheet via the seam (T-6.9 round-1 pin)", async () => {
+    // The two-in-flight overlap the hook-level seam guards is UI-UNREACHABLE
+    // on this screen: the CTA disables while a create is pending (asserted
+    // below) — which is exactly why the round-1 probe's per-call revert left
+    // every test green. This pin turns that gate into an explicit invariant
+    // (remove the gate OR the seam and this file's contract breaks) and
+    // drives TWO creates through the seam asserting Share.share CALL COUNT;
+    // the superseded-call mechanics themselves are pinned at hook grain
+    // (data/members.test.tsx two-held-POST).
+    const shareSpy = jest
+      .spyOn(Share, "share")
+      .mockResolvedValue({ action: "sharedAction" } as never);
+    const resolvers: ((invite: unknown) => void)[] = [];
+    await renderMembers({
+      role: "owner",
+      overrides: {
+        "POST /trips/:tripId/invites": () =>
+          new Promise((resolve) => resolvers.push(resolve as (invite: unknown) => void)),
+      },
+    });
+
+    // Create #1 held open…
+    await fireEvent.press(await screen.findByTestId("members-button-invite"));
+    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
+    await settleSheetExit();
+    // …the CTA is pending-gated: a re-press opens NO sheet mid-flight.
+    expect(screen.getByTestId("members-button-invite")).toBeDisabled();
+    await fireEvent.press(screen.getByTestId("members-button-invite"));
+    expect(screen.queryByTestId("members-button-invite-editor")).toBeNull();
+    expect(resolvers).toHaveLength(1);
+
+    const wireInvite = (id: string, role: InviteListItem["role"], url: string) => {
+      const { state: _state, ...row } = makeInvite({ id, role, token: `tok-${id}` });
+      return { ...row, url };
+    };
+    await act(async () =>
+      resolvers[0]?.(wireInvite(CREATED_INVITE_ID, "editor", "https://links.test/invite/first")),
+    );
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(1));
+
+    // CTA re-enables on settle; the SECOND create opens its own sheet.
+    await waitFor(() => expect(screen.getByTestId("members-button-invite")).toBeEnabled());
+    await fireEvent.press(screen.getByTestId("members-button-invite"));
+    await fireEvent.press(await screen.findByTestId("members-button-invite-viewer"));
+    await settleSheetExit();
+    expect(resolvers).toHaveLength(2);
+    await act(async () =>
+      resolvers[1]?.(wireInvite(INVITE_B_ID, "viewer", "https://links.test/invite/second")),
+    );
+
+    await waitFor(() => expect(shareSpy).toHaveBeenCalledTimes(2));
+    expect(shareSpy).toHaveBeenNthCalledWith(1, { url: "https://links.test/invite/first" });
+    expect(shareSpy).toHaveBeenNthCalledWith(2, { url: "https://links.test/invite/second" });
+    await settleList();
+  });
+
   it("revoke confirms then optimistically drops the invite from the active list", async () => {
     const { request } = await renderMembers({ role: "owner", invites: [makeInvite()] });
 

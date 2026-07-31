@@ -75,11 +75,16 @@ export function isBaseCurrencyLocked(error: unknown): boolean {
 
 /**
  * The fields the settings screen can touch. `theme: null` = back to app
- * default; `status: null` = clear the manual override (unarchive —
- * derivation resumes). Absent key = untouched.
+ * default; `status: null` = clear the manual override (wire capability,
+ * R-trips-20 — no client surface renders it in P-6). Destination fields
+ * travel TOGETHER from a structured pick (name+lat+lng — §2.3 posture, no
+ * free text). Absent key = untouched.
  */
 export interface TripSettingsEdits {
   name?: string;
+  destination_name?: string;
+  destination_lat?: number;
+  destination_lng?: number;
   start_date?: string;
   end_date?: string;
   theme?: string | null;
@@ -100,6 +105,18 @@ export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpd
   let touched = false;
   if (edits.name !== undefined && edits.name !== current.name) {
     patch.name = edits.name;
+    touched = true;
+  }
+  if (edits.destination_name !== undefined && edits.destination_name !== current.destination_name) {
+    patch.destination_name = edits.destination_name;
+    touched = true;
+  }
+  if (edits.destination_lat !== undefined && edits.destination_lat !== current.destination_lat) {
+    patch.destination_lat = edits.destination_lat;
+    touched = true;
+  }
+  if (edits.destination_lng !== undefined && edits.destination_lng !== current.destination_lng) {
+    patch.destination_lng = edits.destination_lng;
     touched = true;
   }
   if (edits.start_date !== undefined && edits.start_date !== current.start_date) {
@@ -130,6 +147,22 @@ export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpd
 // ---------------------------------------------------------------------------
 
 /**
+ * Hook-LEVEL callback seam for the settings screen (round-1 blocker — the
+ * exact superseded-call class this PR's `MemberMutationOptions` seam fixes
+ * for invites): all four PATCH affordances share ONE `useUpdateTrip`
+ * instance, and TanStack v5 fires PER-CALL `mutate` callbacks only for the
+ * LATEST call — two overlapping PATCHes would silently drop the first's
+ * error surface (rollback with no banner — §2.6/R-tripui-21 violation) or
+ * its success re-seed. Hook-level callbacks fire for EVERY settled call, so
+ * the screen hands its triage/re-seed here, never per-call.
+ */
+export interface TripMutationOptions {
+  onMutationError?(error: unknown): void;
+  /** Receives the returned row AND the patch (the screen re-seeds only on details-field saves). */
+  onMutationSuccess?(row: Trip, patch: TripUpdate): void;
+}
+
+/**
  * `PATCH /trips/:tripId` — optimistic (§2.6 "settings save" / "theme
  * change"): apply → reconcile with the returned row → rollback + surface on
  * error. A stale-409 additionally refetches the detail + list so the form can
@@ -138,7 +171,10 @@ export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpd
  * (`base_currency_locked`) only rolls back — the stored row didn't move, so
  * there is nothing to refetch; the screen explains the lock.
  */
-export function useUpdateTrip(tripId: string): UseMutationResult<Trip, Error, TripUpdate> {
+export function useUpdateTrip(
+  tripId: string,
+  options?: TripMutationOptions,
+): UseMutationResult<Trip, Error, TripUpdate> {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (patch: TripUpdate) =>
@@ -150,13 +186,16 @@ export function useUpdateTrip(tripId: string): UseMutationResult<Trip, Error, Tr
         void client.invalidateQueries({ queryKey: queryKeys.trip(tripId), exact: true });
         invalidateTripLists(client);
       }
+      // HOOK-level (module doc: superseded-call drop) — every settled call.
+      options?.onMutationError?.(error);
     },
-    onSuccess: (row) => {
+    onSuccess: (row, patch) => {
       reconcileTripRow(client, tripId, row);
       // Row contents are reconciled in place; the lists still refetch for
       // section/sort placement (status/date moves re-bucket the row) — the
       // mandatory two-key helper (key-cache law, T-6.7 merge).
       invalidateTripLists(client);
+      options?.onMutationSuccess?.(row, patch);
     },
   });
 }
@@ -189,7 +228,11 @@ export function useDeleteTrip(tripId: string): UseMutationResult<void, Error, vo
       }
     },
     onSuccess: () => {
-      invalidateTripLists(client);
+      // "none": delete always exits to the trip-list screen, whose T-6.7
+      // focus effect invalidates+refetches on arrival — an active refetch
+      // here would just be cancelled and restarted by it (the helper
+      // documents this exact case).
+      invalidateTripLists(client, { refetchType: "none" });
     },
   });
 }

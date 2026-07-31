@@ -45,7 +45,7 @@ it("R-tripui-20: delete = Confirm → DELETE → trip list, with the dead trip's
 
   // Cancel first — a cancelled dialog must NOT delete (R-ds-18).
   await fireEvent.press(screen.getByTestId("trip-settings-button-delete"));
-  await fireEvent.press(screen.getByTestId("trip-settings-delete-dialog-cancel"));
+  await fireEvent.press(screen.getByTestId("trip-settings-button-delete-cancel"));
   expect(
     request.mock.calls.filter(
       ([descriptor]) => (descriptor as { method: string }).method === "DELETE",
@@ -54,7 +54,7 @@ it("R-tripui-20: delete = Confirm → DELETE → trip list, with the dead trip's
 
   const listUpdatesBefore = queryClient.getQueryState(queryKeys.trips)?.dataUpdateCount ?? 0;
   await fireEvent.press(screen.getByTestId("trip-settings-button-delete"));
-  await fireEvent.press(screen.getByTestId("trip-settings-delete-dialog-confirm"));
+  await fireEvent.press(screen.getByTestId("trip-settings-button-delete-confirm"));
 
   await waitFor(() =>
     expect(
