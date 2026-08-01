@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
+import { buildItineraryDeps } from "./itinerary/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
@@ -55,6 +56,9 @@ if (authDeps) {
     // Booking service + router (T-7.1); the dirty-day seam rides dormant
     // until T-7.3 wires the leg-computation worker.
     bookings: buildBookingsDeps(),
+    // Itinerary router (T-7.2): item CRUD + day reorder + composite read;
+    // same dormant dirty-day seam.
+    itinerary: buildItineraryDeps(),
   };
 }
 const app = createApp(appOptions);
