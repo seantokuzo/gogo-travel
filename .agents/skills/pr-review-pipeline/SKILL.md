@@ -1,6 +1,6 @@
 ---
 name: pr-review-pipeline
-description: In-session, multi-specialist PR review for GoGo Travel. The main agent spawns one subagent per lane (correctness/security/tests/performance/conventions), aggregates their line-format sentinels with a deterministic Node script, then drives the categorize → fix → reply → re-review → judge → merge loop. Runs on Sean's Max plan in-session — NOT a GitHub Action, no API billing. Invoke after creating a PR for any functional change.
+description: In-session, multi-specialist PR review for GoGo Travel. The main agent spawns one subagent per lane (correctness/security/tests/performance/conventions), aggregates their line-format sentinels with a deterministic Node script, then drives the categorize → fix → record → re-review → judge → merge loop. Runs on Sean's Max plan in-session — NOT a GitHub Action, no API billing. Invoke after creating a PR for any functional change.
 ---
 
 # PR Review Pipeline (in-session, 5-lane)
@@ -84,20 +84,13 @@ node .github/scripts/aggregate-verdict.mjs \
 
 Verdict logic (deterministic): any lane `rethink` → `rethink`; else any blocking → `fix-then-ship`; else `ship`. A degraded lane (missing/malformed/invalid sentinel) can **never** yield `ship` — re-run that lane.
 
-### 4. Post the verdict sticky
+### 4. Write the local verdict record (LOCAL-ONLY — changed 2026-08-01)
 
-Post the captured body as a PR comment so each round is on the record (body via stdin so no shell parses it):
+The captured stdout IS the round's verdict record: `.tmp/review/round-<N>/VERDICT.md`. It lives only there for the run's duration — **do NOT post it to the PR** (PR #13's sticky was the last; `gh api …/issues/<PR>/comments` posting is retired). The durable record is the QUEUE "Recently done" row narrative — already the richer record. CI (Guard/Verify) stays on GitHub; that's CI, not review.
 
-```bash
-jq -Rs '{body: .}' .tmp/review/round-<N>/VERDICT.md \
-  | gh api -X POST repos/seantokuzo/gogo-travel/issues/<PR>/comments --input -
-```
+### 5. Triage every finding → fix / record
 
-(Update the same sticky on later rounds with `PATCH …/issues/comments/<id>` if you want one rolling comment.)
-
-### 5. Triage every finding → fix / reply
-
-Categorize each: **fix-now** (apply this PR), **respond** (no change — cite the framework/type/convention that makes it wrong), **defer** (valid, out of scope — file a follow-up issue, link it). Apply fix-now changes, commit (`fix(scope): address round N review`), push. Record each disposition — if you posted findings inline, reply in-thread (`gh api …/pulls/<PR>/comments/<id>/replies`); otherwise roll the dispositions into the round's sticky/summary. Fix replies cite the SHA.
+Categorize each: **fix-now** (apply this PR), **respond** (no change — cite the framework/type/convention that makes it wrong), **defer** (valid, out of scope — file a follow-up issue, link it). Apply fix-now changes, commit (`fix(scope): address round N review`), push. Record every disposition in the round's local record (append to `VERDICT.md` or a sibling triage file) and carry the substance into the QUEUE row narrative at merge — no PR-comment replies required. Fix dispositions cite the SHA; defers link the follow-up.
 
 ### 6. Re-review decision
 
@@ -105,7 +98,7 @@ Re-run a lane (→ step 1) only when its code changed, it had unresolved blockin
 
 ### 7. Impartial judge (fresh subagent)
 
-After fixes settle, spawn an **impartial judge** — a fresh `general-purpose` subagent with no review history (prompt shape is canonical in `~/.claude/CLAUDE.md` § "Round-N decision"). Feed it: PR URL, round N, the latest sticky body, each lane's sentinel + findings, what you fixed (SHAs) and pushed back on (reasons), `gh pr diff <PR>`, and CI status. It returns strict JSON `{"decision":"merge|re-review|human-decides","confidence":"…","reasoning":"…"}`.
+After fixes settle, spawn an **impartial judge** — a fresh `general-purpose` subagent with no review history (prompt shape is canonical in `~/.claude/CLAUDE.md` § "Round-N decision"). Feed it: PR URL, round N, the latest `VERDICT.md` body, each lane's sentinel + findings, what you fixed (SHAs) and pushed back on (reasons), `gh pr diff <PR>`, and CI status. It returns strict JSON `{"decision":"merge|re-review|human-decides","confidence":"…","reasoning":"…"}`.
 
 - `merge` → step 8
 - `re-review` → step 1 (affected lanes)

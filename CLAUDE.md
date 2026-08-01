@@ -93,9 +93,12 @@ research → ADR if non-obvious.
 
 ## Agent workflow
 
-Thin orchestrator, fat workers — decompose into waves, spawn specialists in
-parallel, pass **paths** not contents, no nesting, verify after each wave.
-Full directive: `.agents/agents/orchestrator.md`.
+**Pure orchestrator, fat workers** — the central agent only reads state,
+decomposes, dispatches, tracks, and verifies wave gates; everything else
+(research, specs, code, review lanes, fixes, judging, doc updates, merges,
+handoffs) is delegated to subagents. Pass **paths** not contents, no nesting.
+Full directive + parallelism doctrine (its canonical home):
+`.agents/agents/orchestrator.md`.
 
 **Shared-worktree rule** (learned 2026-07-10, P-3): background agents share
 the session's working tree — a checkout by either side moves HEAD for both.
@@ -126,8 +129,11 @@ ADRs/history, derived execution order. Canonical: [ADR-001](docs/decisions/ADR-0
 
 Every functional PR: 5 parallel reviewer lanes → deterministic aggregation
 (`.github/scripts/aggregate-verdict.mjs`) → triage every finding
-(`fix-now`/`respond`/`defer`) → inline replies → fresh impartial judge →
-`merge | re-review | human-decides`. Hard cap 4 rounds.
+(`fix-now`/`respond`/`defer`) → local disposition record → fresh impartial
+judge → `merge | re-review | human-decides`. Hard cap 4 rounds. Review
+records are **local-only** (2026-08-01): verdicts live in `.tmp/review*/`
+during the run; the durable record is the QUEUE "Recently done" row —
+nothing posted to GitHub (CI stays; that's CI, not review).
 **Run it with `/review`; fix loop is `/address-comments`.**
 Sentinel format: `.claude/rules/pr-review-files.md` (canonical — don't restate).
 Sensitive paths + blocking criteria: `docs/PLANNING.md § Review Pipeline

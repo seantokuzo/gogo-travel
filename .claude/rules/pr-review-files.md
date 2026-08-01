@@ -28,9 +28,11 @@ ci_failing: true | false      (correctness lane only; omit elsewhere)
 
 Required keys: `verdict`, `blocking`, `advisory`, `sensitive`. Don't rename keys, don't add a required key without updating the aggregator. One sentinel per lane per round.
 
-## Verdict sticky (written by `aggregate-verdict.mjs` — deterministic, NOT an LLM)
+## Verdict record (LOCAL-ONLY; written by `aggregate-verdict.mjs` — deterministic, NOT an LLM)
 
-The aggregator reads the lane sentinels and emits ONE sticky (updated in place each round), keyed by a marker + round/SHA comment lines, then a human-readable body:
+**As of 2026-08-01, review records never touch GitHub** (PR #13's sticky was the last). The aggregator's output lives ONLY in `.tmp/review*/round-<N>/VERDICT.md` for the run's duration; the durable record is the QUEUE "Recently done" row narrative (the richer record). No `gh api …/comments` sticky posting, no required PR-comment replies. CI (Guard/Verify) stays on GitHub — that's CI, not review.
+
+The aggregator reads the lane sentinels and emits ONE record per round, keyed by a marker + round/SHA comment lines, then a human-readable body (marker names unchanged — the script's output format is stable):
 
 ```
 <!-- GOGO-VERDICT-STICKY -->
@@ -41,11 +43,11 @@ verdict: ship | fix-then-ship | rethink  ·  blocking: <total>  ·  advisory: <t
 <escalation / round-cap banners when applicable>
 ```
 
-`verdict` = worst lane (any `rethink` → rethink; else any blocking → fix-then-ship; else ship; a degraded/missing lane downgrades ship → fix-then-ship). The sticky recommends a deep `/code-review ultra` when escalation criteria hit: verdict `rethink`, OR a `sensitive` lane with blocking>0, OR total blocking > 5, OR a large diff (>500 LOC). Round ≥ 4 is the final round; round > 4 forces `rethink`.
+`verdict` = worst lane (any `rethink` → rethink; else any blocking → fix-then-ship; else ship; a degraded/missing lane downgrades ship → fix-then-ship). The record recommends a deep `/code-review ultra` when escalation criteria hit: verdict `rethink`, OR a `sensitive` lane with blocking>0, OR total blocking > 5, OR a large diff (>500 LOC). Round ≥ 4 is the final round; round > 4 forces `rethink`.
 
 ## File layout
 
-Per round, specialists write `.tmp/review/round-<N>/<lane>.md` (findings + trailing sentinel). The aggregator scans that dir, parses sentinels, writes `.tmp/review/round-<N>/VERDICT.md`. `.tmp/` is git-ignored.
+Per round, specialists write `.tmp/review/round-<N>/<lane>.md` (findings + trailing sentinel); use `.tmp/review-<pr>/` when two PRs' rounds run concurrently. The aggregator scans that dir, parses sentinels, writes `round-<N>/VERDICT.md` alongside. `.tmp/` is git-ignored — these files are the review record for the run's duration only (durable home: QUEUE row narrative).
 
 ## Hard rules
 
