@@ -10,18 +10,28 @@ import { createDirtyDayMarker } from "../bookings/dirty-days.js";
 import { ProviderRequestError } from "./providers.js";
 import { createTravelLegWorker, safeErrorLabel, type LegBatch } from "./worker.js";
 
-/** Manual scheduler: tasks run only when the test fires them. */
+/**
+ * Manual scheduler: tasks run only when the test fires them. Carries
+ * LIFETIME counters (`totalScheduled` / `cancelled`) so fixed-window pins
+ * can tell "one deadline ever" from "cancel + reschedule per mark" — a
+ * sliding-window regression also ends with exactly one PENDING task, so
+ * `count` alone cannot falsify it.
+ */
 function fakeScheduler() {
   let nextId = 1;
+  let totalScheduled = 0;
+  let cancelled = 0;
   const tasks = new Map<number, { fn: () => void; delayMs: number }>();
   return {
     scheduler: {
       schedule(fn: () => void, delayMs: number): unknown {
+        totalScheduled += 1;
         const id = nextId++;
         tasks.set(id, { fn, delayMs });
         return id;
       },
       cancel(handle: unknown): void {
+        cancelled += 1;
         tasks.delete(handle as number);
       },
     },
@@ -33,6 +43,14 @@ function fakeScheduler() {
     },
     get count(): number {
       return tasks.size;
+    },
+    /** Every schedule() call ever made (fired or not). */
+    get totalScheduled(): number {
+      return totalScheduled;
+    },
+    /** Every cancel() call ever made. */
+    get cancelled(): number {
+      return cancelled;
     },
     get delays(): number[] {
       return [...tasks.values()].map((t) => t.delayMs);
@@ -90,7 +108,12 @@ describe("debounce coalescing (§3.5 step 1)", () => {
       worker.markDaysDirty([{ tripId: TRIP_A, day: `2026-09-0${(i % 9) + 1}` }]);
     }
     // A mark storm schedules NOTHING new — one deadline, one recompute.
+    // LIFETIME counters, not pending count: a sliding-window regression
+    // (cancel + reschedule per mark) also leaves exactly one pending task,
+    // so only totalScheduled/cancelled can falsify it.
     expect(fake.count).toBe(1);
+    expect(fake.totalScheduled).toBe(1);
+    expect(fake.cancelled).toBe(0);
   });
 
   it("separate trips get separate windows and separate batches", async () => {

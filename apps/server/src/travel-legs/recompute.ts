@@ -43,20 +43,24 @@
  * write transaction touches ONLY `travel_legs` (reads run before it, plain,
  * un-locked) — it can never deadlock against the booking/itinerary service
  * chains, and races are tolerated instead of locked out: an item deleted
- * between read and write fires the legs FK (23503) and the batch is DROPPED
- * (the deleting mutation marks post-commit, so a fresh recompute follows —
- * the T-7.1 handoff contract).
+ * between read and write fires the legs FK (23503). The batch's days are
+ * then RE-ENQUEUED once through the `requeue` marker (they ride the normal
+ * debounce and coalesce with the deleting mutation's own post-commit marks
+ * — the T-7.1 handoff contract), so unrelated days coalesced into the same
+ * window are never lost. A batch that races AGAIN on its retry is dropped
+ * with a warn (per-trip one-retry guard, reset on success — no re-enqueue
+ * loop is possible); the staleness sweep remains the safety net.
  *
  * DRIVER: the write transaction runs on the transaction-capable client (WS
  * Pool prod / postgres-js tests) — never Neon-HTTP (landmine #1).
  */
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { TravelMode } from "@gogo/shared/enums";
 import { COMPUTED_TRAVEL_MODES } from "@gogo/shared/config/travel-legs";
-import { sql } from "drizzle-orm";
 import { TRAVEL_LEGS_PROVIDER_TIMEOUT_MS, TRAVEL_LEGS_TTL_MS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
+import { markDaysDirty, type DirtyDayMarker } from "../bookings/dirty-days.js";
 import { ProviderRequestError, type RouteResult, type RoutingPort } from "./providers.js";
 import {
   chainForDay,
@@ -65,15 +69,10 @@ import {
   type ChainItem,
   type LegPair,
 } from "./adjacency.js";
-import { safeErrorLabel, type LegBatch, type TravelLegScheduler } from "./worker.js";
+import { realScheduler, safeErrorLabel, type LegBatch, type TravelLegScheduler } from "./worker.js";
 
 /** Zero-leg provenance (§3.5 step 2 — no provider was consulted). */
 export const SAME_PLACE_PROVIDER = "same_place";
-
-const realScheduler: TravelLegScheduler = {
-  schedule: (fn, delayMs) => setTimeout(fn, delayMs),
-  cancel: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
-};
 
 /**
  * Is this a `travel_legs` FK violation (23503)? The item-deletion race's
@@ -146,6 +145,13 @@ export interface LegRecomputerDeps {
   scheduler?: TravelLegScheduler;
   now?: () => Date;
   logger?: { warn(message: string): void };
+  /**
+   * FK-race recovery seam (module LOCK ORDER doc): on the insert-side 23503
+   * race the batch's days are re-marked here ONCE so no coalesced day is
+   * lost. Prod wiring hands in the live dirty-day marker; absent (tests /
+   * dormant wiring) the batch is dropped with a warn as before.
+   */
+  requeue?: DirtyDayMarker;
 }
 
 interface LegRowValues {
@@ -174,6 +180,14 @@ export function createLegRecomputer(deps: LegRecomputerDeps): (batch: LegBatch) 
       if (!portByMode.has(mode)) portByMode.set(mode, port);
     }
   }
+
+  /**
+   * Per-trip one-retry guard for the FK race: a trip in this set already
+   * spent its retry — the next race drops the batch. Reset on any batch
+   * that completes without racing (single-instance in-memory, the same
+   * posture as the worker's queue).
+   */
+  const fkRaceRetried = new Set<string>();
 
   return async function recompute(batch: LegBatch): Promise<void> {
     const days = [...new Set(batch.days)];
@@ -428,7 +442,10 @@ export function createLegRecomputer(deps: LegRecomputerDeps): (batch: LegBatch) 
       if (coChain.every((day) => daySet.has(day))) deleteIds.push(leg.id);
     }
 
-    if (upserts.length === 0 && deleteIds.length === 0) return;
+    if (upserts.length === 0 && deleteIds.length === 0) {
+      fkRaceRetried.delete(batch.tripId);
+      return;
+    }
 
     // ---- write phase: ONE transaction, travel_legs only (lock-order doc)
     const uniqueDeleteIds = [...new Set(deleteIds)];
@@ -458,13 +475,29 @@ export function createLegRecomputer(deps: LegRecomputerDeps): (batch: LegBatch) 
       });
     } catch (err) {
       if (isTravelLegFkViolation(err)) {
-        // Item-deletion race (T-7.1 handoff): drop the batch quietly — the
-        // deleting mutation marked its days post-commit, so a fresh
-        // recompute with consistent reads follows.
+        // Item-deletion race (T-7.1 handoff): the deleting mutation marked
+        // ITS days post-commit, but this batch may carry unrelated coalesced
+        // days too — re-enqueue the WHOLE batch once (rides the debounce; a
+        // retry's reads run after the deleter committed, so they are
+        // consistent). Second race for the same trip ⇒ drop with a warn
+        // (never-throws holds either way; the sweep is the safety net).
+        if (deps.requeue && !fkRaceRetried.has(batch.tripId)) {
+          fkRaceRetried.add(batch.tripId);
+          logger.warn(
+            "travel-legs: item deleted during recompute (FK race) — re-enqueueing batch days",
+          );
+          markDaysDirty(
+            deps.requeue,
+            days.map((day) => ({ tripId: batch.tripId, day })),
+          );
+          return;
+        }
+        fkRaceRetried.delete(batch.tripId);
         logger.warn("travel-legs: batch dropped — item deleted during recompute (FK race)");
         return;
       }
       throw err;
     }
+    fkRaceRetried.delete(batch.tripId);
   };
 }

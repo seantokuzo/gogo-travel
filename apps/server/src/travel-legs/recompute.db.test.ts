@@ -250,9 +250,12 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
 
   function buildRecomputer(overrides?: {
     ports?: RoutingPort[];
+    modes?: TravelMode[];
     ttlMs?: number;
     providerTimeoutMs?: number;
     scheduler?: TravelLegScheduler;
+    now?: () => Date;
+    requeue?: { markDaysDirty(marks: readonly DirtyDayMark[]): void };
     logger?: { warn(m: string): void };
   }) {
     const mapbox = fakePort("mapbox", ["driving", "walking", "cycling"]);
@@ -260,11 +263,14 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     const recompute = createLegRecomputer({
       db,
       ports: overrides?.ports ?? [mapbox.port, transitous.port],
+      ...(overrides?.modes ? { modes: overrides.modes } : {}),
       ...(overrides?.ttlMs !== undefined ? { ttlMs: overrides.ttlMs } : {}),
       ...(overrides?.providerTimeoutMs !== undefined
         ? { providerTimeoutMs: overrides.providerTimeoutMs }
         : {}),
       ...(overrides?.scheduler ? { scheduler: overrides.scheduler } : {}),
+      ...(overrides?.now ? { now: overrides.now } : {}),
+      ...(overrides?.requeue ? { requeue: overrides.requeue } : {}),
       logger: overrides?.logger ?? { warn: () => undefined },
     });
     return { recompute, mapbox, transitous };
@@ -443,6 +449,33 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     expect(refreshed.every((l) => Date.now() - l.computedAt.getTime() < HOUR_MS)).toBe(true);
   });
 
+  it("reuse TTL boundary: age === ttl re-calls; age === ttl − 1 ms reuses (exact edge)", async () => {
+    const trip = await seedTrip();
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const p2 = await seedPlace("35.659500", "139.700500");
+    await seedItem(trip.id, { day: "2026-09-02", sortOrder: 1024, placeId: p1.id });
+    await seedItem(trip.id, { day: "2026-09-02", sortOrder: 2048, placeId: p2.id });
+
+    const ttlMs = HOUR_MS;
+    const t0 = Date.now();
+    const at = (ms: number) => ({ ttlMs, now: () => new Date(ms) });
+
+    const first = buildRecomputer(at(t0));
+    await first.recompute({ tripId: trip.id, days: ["2026-09-02"] });
+    expect(first.mapbox.calls).toHaveLength(3); // rows stamped computed_at = t0
+
+    // ttl − 1 ms: strictly inside the window — every row reused, zero calls.
+    const inside = buildRecomputer(at(t0 + ttlMs - 1));
+    await inside.recompute({ tripId: trip.id, days: ["2026-09-02"] });
+    expect(inside.mapbox.calls).toHaveLength(0);
+
+    // EXACTLY ttl: `now − computed_at < ttl` is false — the row is expired
+    // and re-called (mutating `<` to `<=` in isReusable flips this red).
+    const edge = buildRecomputer(at(t0 + ttlMs));
+    await edge.recompute({ tripId: trip.id, days: ["2026-09-02"] });
+    expect(edge.mapbox.calls).toHaveLength(3);
+  });
+
   // ---- cleanup (§3.5 step 4 / R-ib-22) -------------------------------------
 
   it("reorder: pairs no longer adjacent are deleted, new adjacency is computed", async () => {
@@ -526,6 +559,26 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     const keys = await legKeys(trip.id);
     expect(keys).toHaveLength(4);
     expect(keys.every((k) => k.startsWith(`${lodging.id}|${d1Cafe.id}|`))).toBe(true);
+  });
+
+  it("mode-set SHRINK prunes rows outside the configured set (R-ib-21 config lever)", async () => {
+    const trip = await seedTrip();
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const p2 = await seedPlace("35.659500", "139.700500");
+    const a = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 1024, placeId: p1.id });
+    const b = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 2048, placeId: p2.id });
+
+    const full = buildRecomputer();
+    await full.recompute({ tripId: trip.id, days: ["2026-09-02"] });
+    expect(await legsOf(trip.id)).toHaveLength(4);
+
+    // Same batch under a shrunk mode set: the surviving mode's fresh row is
+    // REUSED (no provider call), every out-of-set row is pruned.
+    const shrunk = buildRecomputer({ modes: ["driving"] });
+    await shrunk.recompute({ tripId: trip.id, days: ["2026-09-02"] });
+    expect(await legKeys(trip.id)).toEqual([`${a.id}|${b.id}|driving`]);
+    expect(shrunk.mapbox.calls).toHaveLength(0);
+    expect(shrunk.transitous.calls).toHaveLength(0);
   });
 
   // ---- degradation (§3.5 step 5, R-ib-19/21) -------------------------------
@@ -672,6 +725,96 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     expect(warnings.some((m) => m.includes("FK race"))).toBe(true);
   });
 
+  it("FK race with a requeue seam: the WHOLE batch re-enqueues — unrelated days survive", async () => {
+    const trip = await seedTrip();
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const p2 = await seedPlace("35.659500", "139.700500");
+    const p3 = await seedPlace("35.669500", "139.710500");
+    const p4 = await seedPlace("35.679500", "139.720500");
+    await seedItem(trip.id, { day: "2026-09-02", sortOrder: 1024, placeId: p1.id });
+    const victim = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 2048, placeId: p2.id });
+    // The UNRELATED day coalesced into the same window — must not be lost.
+    const c = await seedItem(trip.id, { day: "2026-09-03", sortOrder: 1024, placeId: p3.id });
+    const d = await seedItem(trip.id, { day: "2026-09-03", sortOrder: 2048, placeId: p4.id });
+
+    const racing = fakePort("mapbox", ["driving"], async () => {
+      await db.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, victim.id));
+      return { durationSeconds: 600, distanceMeters: 1000 };
+    });
+    const requeued: DirtyDayMark[] = [];
+    const warnings: string[] = [];
+    const { recompute } = buildRecomputer({
+      ports: [racing.port],
+      requeue: { markDaysDirty: (marks) => void requeued.push(...marks) },
+      logger: { warn: (m) => void warnings.push(m) },
+    });
+
+    await expect(
+      recompute({ tripId: trip.id, days: ["2026-09-02", "2026-09-03"] }),
+    ).resolves.toBeUndefined();
+    expect(await legsOf(trip.id)).toHaveLength(0); // the raced write rolled back whole
+    expect(requeued.map((m) => m.day).sort()).toEqual(["2026-09-02", "2026-09-03"]);
+    expect(requeued.every((m) => m.tripId === trip.id)).toBe(true);
+    expect(warnings.some((m) => m.includes("re-enqueueing"))).toBe(true);
+
+    // The retry (as the worker drains the re-marks): reads are consistent
+    // now — the victim's day is pairless, the unrelated day's legs land.
+    await recompute({ tripId: trip.id, days: [...new Set(requeued.map((m) => m.day))].sort() });
+    expect(await legKeys(trip.id)).toEqual([`${c.id}|${d.id}|driving`]);
+  });
+
+  it("FK-race requeue guard: ONE retry per episode (second race drops); success re-arms", async () => {
+    const trip = await seedTrip();
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const p2 = await seedPlace("35.659500", "139.700500");
+    await seedItem(trip.id, { day: "2026-09-02", sortOrder: 1024, placeId: p1.id });
+    const victim1 = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 2048, placeId: p2.id });
+
+    let victimId = victim1.id;
+    const racing = fakePort("mapbox", ["driving"], async () => {
+      await db.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, victimId));
+      return { durationSeconds: 600, distanceMeters: 1000 };
+    });
+    let requeueCalls = 0;
+    const warnings: string[] = [];
+    const { recompute } = buildRecomputer({
+      ports: [racing.port],
+      requeue: {
+        markDaysDirty: () => {
+          requeueCalls += 1;
+        },
+      },
+      logger: { warn: (m) => void warnings.push(m) },
+    });
+    const batch = { tripId: trip.id, days: ["2026-09-02"] };
+
+    await recompute(batch); // race #1 → retry spent
+    expect(requeueCalls).toBe(1);
+
+    // Stage the RETRY to race again: a fresh victim in the same chain.
+    const victim2 = await seedItem(trip.id, {
+      day: "2026-09-02",
+      sortOrder: 3072,
+      placeId: p2.id,
+    });
+    victimId = victim2.id;
+    await recompute(batch); // race #2 → guard: dropped, NOT re-enqueued
+    expect(requeueCalls).toBe(1);
+    expect(warnings.some((m) => m.includes("batch dropped"))).toBe(true);
+
+    // A raceless completion re-arms the guard (victims gone ⇒ pairless
+    // no-op run), so the NEXT distinct episode gets its retry again.
+    await recompute(batch);
+    const victim3 = await seedItem(trip.id, {
+      day: "2026-09-02",
+      sortOrder: 4096,
+      placeId: p2.id,
+    });
+    victimId = victim3.id;
+    await recompute(batch); // race #3, fresh episode → retried
+    expect(requeueCalls).toBe(2);
+  });
+
   it("isTravelLegFkViolation pins BOTH driver shapes (postgres-js vs pg-protocol)", () => {
     const pgJs = Object.assign(new Error("violates fk"), {
       code: "23503",
@@ -695,32 +838,38 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
 
   // ---- staleness sweep (R-ib-23) -------------------------------------------
 
-  it("sweep marks stale legs' days for active / starting-soon trips only", async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const shift = (days: number) => {
-      const d = new Date(`${today}T00:00:00Z`);
-      d.setUTCDate(d.getUTCDate() + days);
-      return d.toISOString().slice(0, 10);
-    };
+  /** `base + n days` on the UTC calendar (mirror of staleness.ts's addDaysIso). */
+  const shiftFrom = (base: Date, days: number) => {
+    const d = new Date(`${base.toISOString().slice(0, 10)}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
 
-    async function seedTripWithStaleLeg(dates: { start: string; end: string }) {
-      const trip = await seedTrip(dates);
-      const p1 = await seedPlace("35.689500", "139.691700");
-      const p2 = await seedPlace("35.659500", "139.700500");
-      const a = await seedItem(trip.id, { day: dates.start, sortOrder: 1024, placeId: p1.id });
-      const b = await seedItem(trip.id, { day: dates.start, sortOrder: 2048, placeId: p2.id });
-      await db.insert(schema.travelLegs).values({
-        tripId: trip.id,
-        fromItemId: a.id,
-        toItemId: b.id,
-        mode: "driving",
-        durationSeconds: 600,
-        distanceMeters: 1000,
-        provider: "mapbox",
-        computedAt: new Date(Date.now() - 25 * HOUR_MS), // past the 24 h TTL
-      });
-      return trip;
-    }
+  /** Trip + one located pair + one driving leg stamped `computedAt`. */
+  async function seedTripWithLeg(dates: { start: string; end: string }, computedAt: Date) {
+    const trip = await seedTrip(dates);
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const p2 = await seedPlace("35.659500", "139.700500");
+    const a = await seedItem(trip.id, { day: dates.start, sortOrder: 1024, placeId: p1.id });
+    const b = await seedItem(trip.id, { day: dates.start, sortOrder: 2048, placeId: p2.id });
+    await db.insert(schema.travelLegs).values({
+      tripId: trip.id,
+      fromItemId: a.id,
+      toItemId: b.id,
+      mode: "driving",
+      durationSeconds: 600,
+      distanceMeters: 1000,
+      provider: "mapbox",
+      computedAt,
+    });
+    return trip;
+  }
+
+  it("sweep marks stale legs' days for active / starting-soon trips only", async () => {
+    const shift = (days: number) => shiftFrom(new Date(), days);
+    const staleStamp = () => new Date(Date.now() - 25 * HOUR_MS); // past the 24 h TTL
+    const seedTripWithStaleLeg = (dates: { start: string; end: string }) =>
+      seedTripWithLeg(dates, staleStamp());
 
     const activeTrip = await seedTripWithStaleLeg({ start: shift(-2), end: shift(5) });
     const soonTrip = await seedTripWithStaleLeg({ start: shift(3), end: shift(9) });
@@ -753,5 +902,52 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
       marker: { markDaysDirty: (marks) => void marked2.push(...marks) },
     });
     expect(new Set(marked2.map((m) => m.tripId)).has(activeTrip.id)).toBe(false);
+  });
+
+  it("sweep horizon boundary: start EXACTLY at +horizonDays is swept; one day past is not", async () => {
+    const now = new Date();
+    const shift = (days: number) => shiftFrom(now, days);
+    const stale = new Date(now.getTime() - 25 * HOUR_MS);
+    // R-ib-23 `startDate <= horizon` is inclusive — the +horizonDays fixture
+    // flips red if either the SQL or the seam-side `<=` degrades to `<`.
+    const edgeTrip = await seedTripWithLeg({ start: shift(5), end: shift(9) }, stale);
+    const beyondTrip = await seedTripWithLeg({ start: shift(6), end: shift(9) }, stale);
+
+    const marked: DirtyDayMark[] = [];
+    await sweepStaleLegs({
+      db,
+      marker: { markDaysDirty: (marks) => void marked.push(...marks) },
+      now: () => now,
+      horizonDays: 5,
+    });
+    const markedTrips = new Set(marked.map((m) => m.tripId));
+    expect(markedTrips.has(edgeTrip.id)).toBe(true);
+    expect(markedTrips.has(beyondTrip.id)).toBe(false);
+  });
+
+  it("sweep TTL boundary: age === ttl is NOT yet stale (strict cutoff); 1 ms older is", async () => {
+    const now = new Date();
+    const shift = (days: number) => shiftFrom(now, days);
+    const ttlMs = HOUR_MS;
+    // Both trips date-window active — eligibility is not the variable here.
+    const edgeTrip = await seedTripWithLeg(
+      { start: shift(-1), end: shift(3) },
+      new Date(now.getTime() - ttlMs), // computed_at === cutoff exactly
+    );
+    const staleTrip = await seedTripWithLeg(
+      { start: shift(-1), end: shift(3) },
+      new Date(now.getTime() - ttlMs - 1),
+    );
+
+    const marked: DirtyDayMark[] = [];
+    await sweepStaleLegs({
+      db,
+      marker: { markDaysDirty: (marks) => void marked.push(...marks) },
+      now: () => now,
+      ttlMs,
+    });
+    const markedTrips = new Set(marked.map((m) => m.tripId));
+    expect(markedTrips.has(edgeTrip.id)).toBe(false); // `<` cutoff, not `<=`
+    expect(markedTrips.has(staleTrip.id)).toBe(true);
   });
 });

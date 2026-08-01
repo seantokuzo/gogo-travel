@@ -18,6 +18,15 @@ const SRC_ROOT = fileURLToPath(new URL("..", import.meta.url));
 /** Drizzle write entry points against the travelLegs table object. */
 const WRITE_PATTERN = /\.(?:insert|update|delete)\(\s*(?:schema\.)?travelLegs\s*[),]/;
 
+/**
+ * Raw-SQL evasion channel: the builder scan above cannot see
+ * `db.execute(sql`…travel_legs…`)`. Any sql-template mention of the table
+ * outside recompute.ts / the schema definition fails the scan — a raw READ
+ * would trip it too, deliberately: whoever needs one amends this pin
+ * consciously instead of slipping past it.
+ */
+const RAW_SQL_PATTERN = /sql`[^`]*travel_legs/;
+
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -48,6 +57,26 @@ describe("travel_legs only-writer invariant (R-ib-22)", () => {
     const offenders = sources.filter((file) => {
       if (file.endsWith(join("travel-legs", "recompute.ts"))) return false;
       return WRITE_PATTERN.test(readFileSync(file, "utf8"));
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it("raw-SQL pattern catches the evasion shapes (positive control)", () => {
+    expect(
+      RAW_SQL_PATTERN.test("await db.execute(sql`DELETE FROM travel_legs WHERE id = ${id}`)"),
+    ).toBe(true);
+    expect(RAW_SQL_PATTERN.test("sql`UPDATE travel_legs SET provider = 'x'`")).toBe(true);
+    expect(RAW_SQL_PATTERN.test("sql`INSERT INTO\n  travel_legs (trip_id)`")).toBe(true);
+    // Builder writes and prose mentions do NOT trip it.
+    expect(RAW_SQL_PATTERN.test("tx.insert(schema.travelLegs).values(x)")).toBe(false);
+    expect(RAW_SQL_PATTERN.test("// the travel_legs table is derived data")).toBe(false);
+  });
+
+  it("NO production module outside recompute.ts/schema touches travel_legs via raw sql", () => {
+    const offenders = sources.filter((file) => {
+      if (file.endsWith(join("travel-legs", "recompute.ts"))) return false;
+      if (file.includes(join("db", "schema"))) return false;
+      return RAW_SQL_PATTERN.test(readFileSync(file, "utf8"));
     });
     expect(offenders).toEqual([]);
   });

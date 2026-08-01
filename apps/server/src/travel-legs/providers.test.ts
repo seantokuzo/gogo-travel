@@ -13,6 +13,9 @@ import { describe, expect, it } from "vitest";
 import {
   createMapboxDirectionsPort,
   createTransitousPort,
+  MAX_PROVIDER_BODY_BYTES,
+  MAX_ROUTE_DISTANCE_METERS,
+  MAX_ROUTE_DURATION_SECONDS,
   ProviderRequestError,
   TRANSITOUS_USER_AGENT,
   type FetchLike,
@@ -20,20 +23,30 @@ import {
 
 const TOKEN = "pk.super-secret-mapbox-token-000";
 
-/** Stub fetch capturing calls and returning a canned response. */
-function stubFetch(responder: (url: string) => { status?: number; body?: unknown } | Error): {
+/**
+ * Stub fetch capturing calls (incl. the requested `redirect` posture) and
+ * returning a canned response. `rawBody` overrides the JSON-serialized
+ * `body` for byte-cap tests.
+ */
+function stubFetch(
+  responder: (url: string) => { status?: number; body?: unknown; rawBody?: string } | Error,
+): {
   fetchImpl: FetchLike;
-  calls: { url: string; headers?: Record<string, string> }[];
+  calls: { url: string; headers?: Record<string, string>; redirect?: "error" }[];
 } {
-  const calls: { url: string; headers?: Record<string, string> }[] = [];
+  const calls: { url: string; headers?: Record<string, string>; redirect?: "error" }[] = [];
   const fetchImpl: FetchLike = (url, init) => {
-    calls.push({ url, ...(init?.headers ? { headers: init.headers } : {}) });
+    calls.push({
+      url,
+      ...(init?.headers ? { headers: init.headers } : {}),
+      ...(init?.redirect ? { redirect: init.redirect } : {}),
+    });
     const out = responder(url);
     if (out instanceof Error) return Promise.reject(out);
     return Promise.resolve({
       ok: (out.status ?? 200) >= 200 && (out.status ?? 200) < 300,
       status: out.status ?? 200,
-      json: () => Promise.resolve(out.body),
+      text: () => Promise.resolve(out.rawBody ?? JSON.stringify(out.body)),
     });
   };
   return { fetchImpl, calls };
@@ -157,10 +170,105 @@ describe("Mapbox Directions adapter", () => {
     const badPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: bad.fetchImpl });
     await expect(badPort.route(QUERY, "driving")).rejects.toThrow(/code InvalidInput/);
 
-    const broken: FetchLike = () =>
-      Promise.resolve({ ok: true, status: 200, json: () => Promise.reject(new Error("nope")) });
-    const brokenPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: broken });
+    const broken = stubFetch(() => ({ rawBody: "<html>not json</html>" }));
+    const brokenPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: broken.fetchImpl });
     await expect(brokenPort.route(QUERY, "driving")).rejects.toThrow(/invalid JSON/);
+
+    const unreadable: FetchLike = () =>
+      Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(new Error("nope")) });
+    const unreadablePort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: unreadable });
+    await expect(unreadablePort.route(QUERY, "driving")).rejects.toThrow(/unreadable body/);
+  });
+
+  it("provider-controlled `code` is truncated + control-stripped before embedding (A1a)", async () => {
+    // 500 chars of hostile code with embedded control chars (\u0007 BEL,
+    // \u001b ESC — written as escapes per the server rules landmine).
+    const hostile = `EVIL\u0007\u001b${"x".repeat(500)}`;
+    const { fetchImpl } = stubFetch(() => ({ body: { code: hostile, routes: [] } }));
+    const port = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl });
+    const err = await port.route(QUERY, "driving").then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(ProviderRequestError);
+    expect(err?.message).not.toContain("\u0007");
+    expect(err?.message).not.toContain("\u001b");
+    // 64-char cap: the fixed prefix + EVIL + 60 x's, and nothing more.
+    expect(err?.message).toContain(`code EVIL${"x".repeat(60)}`);
+    expect(err?.message).not.toContain("x".repeat(61));
+  });
+
+  it("body reads are byte-capped BEFORE JSON parse: cap passes, cap+1 throws (A1b)", async () => {
+    // A valid mapbox body padded to EXACTLY the cap → parses fine.
+    const skeleton = (pad: string) =>
+      `{"code":"Ok","routes":[{"duration":600,"distance":1000}],"pad":"${pad}"}`;
+    const overhead = Buffer.byteLength(skeleton(""), "utf8");
+    const atCap = skeleton("y".repeat(MAX_PROVIDER_BODY_BYTES - overhead));
+    expect(Buffer.byteLength(atCap, "utf8")).toBe(MAX_PROVIDER_BODY_BYTES);
+    const ok = stubFetch(() => ({ rawBody: atCap }));
+    const okPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: ok.fetchImpl });
+    await expect(okPort.route(QUERY, "driving")).resolves.toEqual({
+      durationSeconds: 600,
+      distanceMeters: 1000,
+    });
+
+    // One byte over → sanitized throw, no parse attempt on the payload.
+    const over = stubFetch(() => ({ rawBody: `${atCap}z` }));
+    const overPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: over.fetchImpl });
+    const err = await overPort.route(QUERY, "driving").then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(ProviderRequestError);
+    expect(err?.message).toContain("response body too large");
+    expect(err?.message).not.toContain(TOKEN);
+  });
+
+  it("both adapters request redirect: 'error' (A1b — token URL must never follow a bounce)", async () => {
+    // The REJECTION itself is native-fetch behavior (not reachable through
+    // the injected seam) — the pin locks the requested posture instead.
+    const mapbox = stubFetch(() => ({ body: mapboxOk }));
+    await createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: mapbox.fetchImpl }).route(
+      QUERY,
+      "driving",
+    );
+    expect(mapbox.calls[0]?.redirect).toBe("error");
+
+    const transitous = stubFetch(() => ({ body: transitousOk }));
+    await createTransitousPort({
+      baseUrl: "https://api.transitous.org",
+      fetchImpl: transitous.fetchImpl,
+    }).route(QUERY, "transit");
+    expect(transitous.calls[0]?.redirect).toBe("error");
+  });
+
+  it("absurd provider values are clamped to the documented domain maxima (A1c)", async () => {
+    const absurd = {
+      code: "Ok",
+      routes: [{ duration: 9e12, distance: 9e12 }], // would overflow int4 unclamped
+    };
+    const { fetchImpl } = stubFetch(() => ({ body: absurd }));
+    const port = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl });
+    await expect(port.route(QUERY, "driving")).resolves.toEqual({
+      durationSeconds: MAX_ROUTE_DURATION_SECONDS,
+      distanceMeters: MAX_ROUTE_DISTANCE_METERS,
+    });
+    // The caps themselves stay below int4 (the reason they exist).
+    expect(MAX_ROUTE_DURATION_SECONDS).toBeLessThan(2_147_483_647);
+    expect(MAX_ROUTE_DISTANCE_METERS).toBeLessThan(2_147_483_647);
+
+    const transitAbsurd = {
+      itineraries: [{ duration: 9e12, legs: [{ mode: "WALK", distance: 9e12 }] }],
+    };
+    const transitStub = stubFetch(() => ({ body: transitAbsurd }));
+    const transitPort = createTransitousPort({
+      baseUrl: "https://api.transitous.org",
+      fetchImpl: transitStub.fetchImpl,
+    });
+    await expect(transitPort.route(QUERY, "transit")).resolves.toEqual({
+      durationSeconds: MAX_ROUTE_DURATION_SECONDS,
+      distanceMeters: MAX_ROUTE_DISTANCE_METERS,
+    });
   });
 });
 

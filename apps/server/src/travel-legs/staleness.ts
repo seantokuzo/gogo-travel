@@ -12,12 +12,22 @@
  * the stored column, which converges lazily. Day-of traffic-aware cadence is
  * explicitly out of scope (§3.5 step 7 — today bundle).
  *
+ * QUERY SHAPE (bounded, sargable): the stale set of finished trips grows
+ * monotonically forever (their legs are never recomputed and never deleted),
+ * so the sweep NEVER scans `travel_legs` by `computed_at` alone. It selects
+ * the ELIGIBLE trips first — a bounded set (`status_override = 'active'`,
+ * date-window active, or starting inside the horizon; the SQL predicate
+ * mirrors `effectiveTripStatus` + the starts-soon rule and the JS filter
+ * below stays the authoritative seam arbiter) — then fetches only THOSE
+ * trips' stale legs via `travel_legs_trip_id_idx` + the `computed_at`
+ * cutoff. Historical legs of past/archived trips are never materialized.
+ *
  * The sweep only MARKS (via the seam's swallow helper — it can never throw
  * into the interval driver); the worker/recomputer own all writes (R-ib-22
  * only-writer holds). Prod cadence: an in-process interval in wire.ts —
  * this module stays pure-async for tests.
  */
-import { eq, lt } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { TRAVEL_LEGS_REFRESH_HORIZON_DAYS, TRAVEL_LEGS_TTL_MS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
@@ -57,33 +67,63 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
   const today = todayUtc(now);
   const horizon = addDaysIso(today, horizonDays);
 
+  // ---- step 1: the bounded eligible-trip set (see the QUERY SHAPE doc).
+  // SQL mirror of the JS predicate below — a candidate pre-filter that keeps
+  // the scan sargable; the seam-backed JS filter remains authoritative.
+  const candidateTrips = await deps.db
+    .select({
+      id: schema.trips.id,
+      statusOverride: schema.trips.statusOverride,
+      startDate: schema.trips.startDate,
+      endDate: schema.trips.endDate,
+    })
+    .from(schema.trips)
+    .where(
+      or(
+        eq(schema.trips.statusOverride, "active"),
+        and(
+          isNull(schema.trips.statusOverride),
+          lte(schema.trips.startDate, today),
+          gte(schema.trips.endDate, today),
+        ),
+        and(gte(schema.trips.startDate, today), lte(schema.trips.startDate, horizon)),
+      ),
+    );
+
+  const eligibleTripIds: string[] = [];
+  for (const trip of candidateTrips) {
+    // R-ib-23 eligibility: `active` now, or starting inside the horizon —
+    // decided through the effective-status seam (override wins).
+    const status = effectiveTripStatus(trip, today);
+    const startsSoon = trip.startDate >= today && trip.startDate <= horizon;
+    if (status === "active" || startsSoon) eligibleTripIds.push(trip.id);
+  }
+  if (eligibleTripIds.length === 0) return { staleLegs: 0, markedDays: 0 };
+
+  // ---- step 2: only the eligible trips' stale legs (trip-id index + cutoff).
   const fromItem = alias(schema.itineraryItems, "stale_from_item");
   const toItem = alias(schema.itineraryItems, "stale_to_item");
   const rows = await deps.db
     .select({
       tripId: schema.travelLegs.tripId,
-      statusOverride: schema.trips.statusOverride,
-      startDate: schema.trips.startDate,
-      endDate: schema.trips.endDate,
       fromDay: fromItem.day,
       fromEndDay: fromItem.endDay,
       toDay: toItem.day,
       toEndDay: toItem.endDay,
     })
     .from(schema.travelLegs)
-    .innerJoin(schema.trips, eq(schema.trips.id, schema.travelLegs.tripId))
     .innerJoin(fromItem, eq(fromItem.id, schema.travelLegs.fromItemId))
     .innerJoin(toItem, eq(toItem.id, schema.travelLegs.toItemId))
-    .where(lt(schema.travelLegs.computedAt, cutoff));
+    .where(
+      and(
+        inArray(schema.travelLegs.tripId, eligibleTripIds),
+        lt(schema.travelLegs.computedAt, cutoff),
+      ),
+    );
 
   const marks = new Map<string, DirtyDayMark>();
   let staleLegs = 0;
   for (const row of rows) {
-    // R-ib-23 eligibility: `active` now, or starting inside the horizon.
-    const status = effectiveTripStatus(row, today);
-    const startsSoon = row.startDate >= today && row.startDate <= horizon;
-    if (status !== "active" && !startsSoon) continue;
-
     staleLegs += 1;
     // Mark BOTH endpoints' chain days (superset of the leg's co-chain day —
     // duplicates are the seam's tolerated currency; this also re-marks any

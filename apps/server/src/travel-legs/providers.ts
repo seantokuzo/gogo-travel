@@ -65,11 +65,21 @@ export interface RoutingPort {
   route(query: RouteQuery, mode: TravelMode): Promise<RouteResult | null>;
 }
 
-/** Injectable fetch seam — tests supply fixture-backed stubs (never live). */
+/**
+ * Injectable fetch seam — tests supply fixture-backed stubs (never live).
+ * `redirect: "error"` is always requested: a provider (or an interposed box)
+ * answering with a redirect could bounce the token-bearing request to an
+ * attacker-chosen host — native fetch rejects the redirect outright (the
+ * rejection rides the transport-error redaction path; the rejection itself
+ * is native-fetch behavior, so tests pin the requested posture).
+ * The response is consumed via `text()` so the body can be BYTE-CAPPED
+ * before any JSON parse (`MAX_PROVIDER_BODY_BYTES`) — global `fetch`
+ * satisfies this shape structurally.
+ */
 export type FetchLike = (
   url: string,
-  init?: { headers?: Record<string, string>; signal?: AbortSignal },
-) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+  init?: { headers?: Record<string, string>; signal?: AbortSignal; redirect?: "error" },
+) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;
 
 /** Provider failure with NO url/token — safe to log verbatim. */
 export class ProviderRequestError extends Error {
@@ -85,8 +95,59 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
 const finiteNumber = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
-/** Negative durations/distances can't exist; clamp defensively for the DB CHECKs. */
-const toNonNegativeInt = (value: number): number => Math.max(0, Math.round(value));
+/**
+ * Domain caps at ingestion (defense in depth, far below int4's 2 147 483 647
+ * — one absurd provider value must never poison a batch insert):
+ *  - duration: 14 days of travel (1 209 600 s) exceeds any real leg;
+ *  - distance: 50 000 km (50 000 000 m) exceeds any surface route on Earth.
+ */
+export const MAX_ROUTE_DURATION_SECONDS = 14 * 24 * 60 * 60;
+export const MAX_ROUTE_DISTANCE_METERS = 50_000_000;
+
+/**
+ * Response bodies are read as text and byte-capped BEFORE any JSON parse —
+ * a hostile/broken provider cannot make the worker buffer-and-parse an
+ * unbounded payload. 2 MB is ~three orders of magnitude above a real
+ * Directions/MOTIS answer for a single pair.
+ */
+export const MAX_PROVIDER_BODY_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Clamp into `[0, max]` (negative can't exist; the ceiling is the domain
+ * cap above) and round to the schema's whole units.
+ */
+const toBoundedInt = (value: number, max: number): number =>
+  Math.min(max, Math.max(0, Math.round(value)));
+
+/**
+ * Provider-controlled text embedded in an error detail: control chars
+ * stripped (log-injection hygiene), hard-capped so a hostile body cannot
+ * balloon error messages/logs.
+ */
+const MAX_ERROR_DETAIL_CHARS = 64;
+const sanitizeDetail = (value: string): string =>
+  value.replace(/\p{Cc}/gu, "").slice(0, MAX_ERROR_DETAIL_CHARS);
+
+/** Shared capped body read (see MAX_PROVIDER_BODY_BYTES) → parsed JSON. */
+async function readBodyCapped(
+  response: Awaited<ReturnType<FetchLike>>,
+  provider: string,
+): Promise<unknown> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw new ProviderRequestError(provider, "unreadable body");
+  }
+  if (Buffer.byteLength(text, "utf8") > MAX_PROVIDER_BODY_BYTES) {
+    throw new ProviderRequestError(provider, "response body too large");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new ProviderRequestError(provider, "invalid JSON body");
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Mapbox Directions (driving / walking / cycling)
@@ -135,7 +196,11 @@ export function createMapboxDirectionsPort(deps: MapboxDirectionsPortDeps): Rout
 
       let response: Awaited<ReturnType<FetchLike>>;
       try {
-        response = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+        response = await fetchImpl(url, {
+          signal: AbortSignal.timeout(timeoutMs),
+          // A redirect could bounce the token-bearing URL elsewhere — reject.
+          redirect: "error",
+        });
       } catch (err) {
         // Redact: the thrown cause may embed the URL (undici does) — keep
         // only the error NAME (AbortError/TypeError), never the message.
@@ -146,16 +211,15 @@ export function createMapboxDirectionsPort(deps: MapboxDirectionsPortDeps): Rout
         throw new ProviderRequestError(MAPBOX_PROVIDER, `HTTP ${response.status}`);
       }
 
-      let body: Record<string, unknown> | null;
-      try {
-        body = asRecord(await response.json());
-      } catch {
-        throw new ProviderRequestError(MAPBOX_PROVIDER, "invalid JSON body");
-      }
+      const body = asRecord(await readBodyCapped(response, MAPBOX_PROVIDER));
       const code = typeof body?.code === "string" ? body.code : null;
       if (code !== null && MAPBOX_NO_ROUTE_CODES.has(code)) return null;
       if (code !== "Ok") {
-        throw new ProviderRequestError(MAPBOX_PROVIDER, `code ${code ?? "missing"}`);
+        // `code` is provider-controlled text — sanitized before embedding.
+        throw new ProviderRequestError(
+          MAPBOX_PROVIDER,
+          `code ${code === null ? "missing" : sanitizeDetail(code)}`,
+        );
       }
 
       const routes = Array.isArray(body?.routes) ? body.routes : [];
@@ -166,8 +230,8 @@ export function createMapboxDirectionsPort(deps: MapboxDirectionsPortDeps): Rout
       if (first === null || duration === null || distance === null) return null;
 
       return {
-        durationSeconds: toNonNegativeInt(duration),
-        distanceMeters: toNonNegativeInt(distance),
+        durationSeconds: toBoundedInt(duration, MAX_ROUTE_DURATION_SECONDS),
+        distanceMeters: toBoundedInt(distance, MAX_ROUTE_DISTANCE_METERS),
       };
     },
   };
@@ -218,6 +282,8 @@ export function createTransitousPort(deps: TransitousPortDeps): RoutingPort {
         response = await fetchImpl(url, {
           headers: { "User-Agent": TRANSITOUS_USER_AGENT },
           signal: AbortSignal.timeout(timeoutMs),
+          // Same posture as Mapbox: never follow a provider redirect.
+          redirect: "error",
         });
       } catch (err) {
         const name = err instanceof Error ? err.name : "unknown";
@@ -227,12 +293,7 @@ export function createTransitousPort(deps: TransitousPortDeps): RoutingPort {
         throw new ProviderRequestError(TRANSITOUS_PROVIDER, `HTTP ${response.status}`);
       }
 
-      let body: Record<string, unknown> | null;
-      try {
-        body = asRecord(await response.json());
-      } catch {
-        throw new ProviderRequestError(TRANSITOUS_PROVIDER, "invalid JSON body");
-      }
+      const body = asRecord(await readBodyCapped(response, TRANSITOUS_PROVIDER));
       // `itineraries` are the transit connections; `direct` are non-transit
       // (walk/bike) fallbacks — deliberately ignored: walking already has its
       // own mode/provider, and a transit chip must mean transit (R-ib-21).
@@ -253,8 +314,8 @@ export function createTransitousPort(deps: TransitousPortDeps): RoutingPort {
       }
 
       return {
-        durationSeconds: toNonNegativeInt(duration),
-        distanceMeters: toNonNegativeInt(distance),
+        durationSeconds: toBoundedInt(duration, MAX_ROUTE_DURATION_SECONDS),
+        distanceMeters: toBoundedInt(distance, MAX_ROUTE_DISTANCE_METERS),
       };
     },
   };

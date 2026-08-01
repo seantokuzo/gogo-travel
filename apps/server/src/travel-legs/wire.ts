@@ -47,7 +47,12 @@ export interface TravelLegsBuild {
   startStalenessJob(): () => void;
 }
 
-export function buildTravelLegs(env: Env): TravelLegsBuild {
+/** The one logger seam for the whole surface — prod swaps happen HERE. */
+export interface TravelLegsLogger {
+  warn(message: string): void;
+}
+
+export function buildTravelLegs(env: Env, logger: TravelLegsLogger = console): TravelLegsBuild {
   const db = getDb();
 
   const ports: RoutingPort[] = [];
@@ -57,12 +62,24 @@ export function buildTravelLegs(env: Env): TravelLegsBuild {
   }
   ports.push(createTransitousPort({ baseUrl: env.TRANSITOUS_BASE_URL }));
 
+  // FK-race requeue is LATE-BOUND: the recomputer needs the marker, the
+  // marker wraps the worker, and the worker drains the recomputer — the ref
+  // indirection closes that cycle (until `current` is assigned below, a
+  // requeue is a no-op; nothing drains before wiring completes).
+  const liveMarker: { current?: DirtyDayMarker } = {};
   const worker = createTravelLegWorker({
-    recompute: createLegRecomputer({ db, ports }),
+    recompute: createLegRecomputer({
+      db,
+      ports,
+      logger,
+      requeue: { markDaysDirty: (marks) => liveMarker.current?.markDaysDirty(marks) },
+    }),
+    logger,
   });
   // The frozen seam factory wraps the worker in its never-throws guard —
   // T-7.3's "fill the internals" (bookings/dirty-days.ts module doc).
   const marker = createDirtyDayMarker(worker);
+  liveMarker.current = marker;
 
   return {
     marker,
@@ -77,7 +94,7 @@ export function buildTravelLegs(env: Env): TravelLegsBuild {
         handle = setTimeout(() => {
           void sweepStaleLegs({ db, marker })
             .catch((err: unknown) => {
-              console.warn(`[travel-legs] staleness sweep failed: ${safeErrorLabel(err)}`);
+              logger.warn(`[travel-legs] staleness sweep failed: ${safeErrorLabel(err)}`);
             })
             .finally(() => {
               if (!stopped) scheduleNext();

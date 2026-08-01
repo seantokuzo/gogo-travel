@@ -316,6 +316,32 @@ describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () 
     expect((await refresh(app, trip.id, owner.accessToken)).status).toBe(202);
   });
 
+  it("rate-limit posture: exhausted window + NON-member → byte-identical 404, never 429", async () => {
+    // Locks gate-BEFORE-limiter against middleware reshuffles: a 429 to a
+    // non-member would be an existence oracle (R-ib-24 — invisible ≡ absent).
+    const nowMs = 1_700_000_000_000;
+    const app = buildApp({
+      db,
+      dirtyDays: createDirtyDayMarker(),
+      rateLimit: { store: new InMemoryRateLimitStore(), now: () => nowMs },
+    });
+    const owner = await seedUserWithToken();
+    const stranger = await seedUserWithToken();
+    const trip = await createTripVia(app, owner.accessToken);
+
+    for (let i = 0; i < RATE_LIMITS.refreshLegs.limit; i += 1) {
+      expect((await refresh(app, trip.id, owner.accessToken)).status).toBe(202);
+    }
+    expect((await refresh(app, trip.id, owner.accessToken)).status).toBe(429); // exhausted
+
+    // Same trip, same exhausted window, NON-member: still the one 404 door.
+    await expectIndistinguishable404s([
+      await refresh(app, trip.id, stranger.accessToken),
+      await refresh(app, NONEXISTENT_UUID, stranger.accessToken),
+      await refresh(app, "not-a-uuid", stranger.accessToken),
+    ]);
+  });
+
   it("authz: byte-identical 404s (non-member / nonexistent / malformed); viewer allowed; 401 bare", async () => {
     const app = buildApp({ db, dirtyDays: createDirtyDayMarker() });
     const owner = await seedUserWithToken();

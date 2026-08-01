@@ -41,7 +41,8 @@ export interface TravelLegScheduler {
   cancel(handle: unknown): void;
 }
 
-const realScheduler: TravelLegScheduler = {
+/** The one prod scheduler (recompute.ts shares it — single definition). */
+export const realScheduler: TravelLegScheduler = {
   schedule: (fn, delayMs) => setTimeout(fn, delayMs),
   cancel: (handle) => clearTimeout(handle as Parameters<typeof clearTimeout>[0]),
 };
