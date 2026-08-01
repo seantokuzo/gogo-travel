@@ -4,7 +4,13 @@ import { loadEnv } from "./env.js";
 describe("loadEnv", () => {
   it("applies defaults for an empty environment", () => {
     const env = loadEnv({});
-    expect(env).toEqual({ NODE_ENV: "development", PORT: 3000 });
+    expect(env).toEqual({
+      NODE_ENV: "development",
+      PORT: 3000,
+      // T-7.3: the community Transitous instance is keyless, so the base URL
+      // DEFAULTS instead of degrading (unlike the Mapbox token, absent here).
+      TRANSITOUS_BASE_URL: "https://api.transitous.org",
+    });
   });
 
   it("coerces PORT to a number", () => {
@@ -52,5 +58,20 @@ describe("loadEnv", () => {
     expect(() => loadEnv({ PLACES_FSQ_OS_PARQUET_URL: "" })).toThrowError(
       /PLACES_FSQ_OS_PARQUET_URL/,
     );
+  });
+
+  // T-7.3: travel-leg provider seams (itinerary-bookings §3.5/R-ib-21).
+  it("MAPBOX_ACCESS_TOKEN is optional (absent ⇒ modes degrade) and never empty", () => {
+    expect(loadEnv({}).MAPBOX_ACCESS_TOKEN).toBeUndefined();
+    expect(loadEnv({ MAPBOX_ACCESS_TOKEN: "pk.test" }).MAPBOX_ACCESS_TOKEN).toBe("pk.test");
+    expect(() => loadEnv({ MAPBOX_ACCESS_TOKEN: "" })).toThrowError(/MAPBOX_ACCESS_TOKEN/);
+  });
+
+  it("TRANSITOUS_BASE_URL accepts overrides and rejects non-URLs without leaking values", () => {
+    expect(
+      loadEnv({ TRANSITOUS_BASE_URL: "https://staging.api.transitous.org" }).TRANSITOUS_BASE_URL,
+    ).toBe("https://staging.api.transitous.org");
+    expect(() => loadEnv({ TRANSITOUS_BASE_URL: "not-a-url" })).toThrowError(/TRANSITOUS_BASE_URL/);
+    expect(() => loadEnv({ TRANSITOUS_BASE_URL: "not-a-url" })).not.toThrowError(/not-a-url/);
   });
 });

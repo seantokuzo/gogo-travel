@@ -3,6 +3,7 @@ import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
+import { buildTravelLegs } from "./travel-legs/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
 import { loadEnv } from "./env.js";
@@ -45,6 +46,18 @@ if (authDeps) {
       )}) — those region ingests will record 'failed' until PLACES_*_PARQUET_URL are set`,
     );
   }
+  // Travel-leg job (T-7.3): ONE worker per process; every mutation surface's
+  // dirty-day marks funnel into it. No Mapbox token ⇒ driving/walking/
+  // cycling legs degrade to absent (R-ib-19/21) — warned HERE (wire modules
+  // stay silent, the T-5.5 precedent); transit rides the keyless Transitous
+  // default.
+  const travelLegs = buildTravelLegs(env);
+  if (!travelLegs.mapboxConfigured) {
+    console.warn(
+      "[boot] MAPBOX_ACCESS_TOKEN not configured — driving/walking/cycling travel legs " +
+        "will be absent until it is set (transit via Transitous still computes)",
+    );
+  }
   appOptions = {
     auth: authDeps,
     users: await buildUsersDepsFromEnv(env),
@@ -52,10 +65,13 @@ if (authDeps) {
     // Same queue instance as trips: destination + search-miss triggers feed
     // one serial drain (T-6.5).
     places: buildPlacesRouterDeps(placesIngest.trigger),
-    // Booking service + router (T-7.1); the dirty-day seam rides dormant
-    // until T-7.3 wires the leg-computation worker.
-    bookings: buildBookingsDeps(),
+    // Booking service + router (T-7.1); mutations mark the LIVE leg worker
+    // (T-7.3) post-commit.
+    bookings: buildBookingsDeps(travelLegs.marker),
+    // Refresh-legs endpoint (T-7.3) + the staleness sweep below.
+    travelLegs: travelLegs.routerDeps,
   };
+  travelLegs.startStalenessJob();
 }
 const app = createApp(appOptions);
 

@@ -65,6 +65,27 @@ const EnvSchema = z.object({
    * escalation (account signup), not a config value to improvise.
    */
   PLACES_FSQ_OS_PARQUET_URL: z.string().min(1).optional(),
+
+  // -------------------------------------------------------------------------
+  // Travel-leg providers (T-7.3, itinerary-bookings spec §3.5/R-ib-21 —
+  // server-side only, keys never reach the client). Law #1: values only ever
+  // live in env; never logged, never in error messages (the Mapbox token
+  // rides provider URLs — adapters redact, see travel-legs/providers.ts).
+  // -------------------------------------------------------------------------
+
+  /**
+   * Mapbox Directions token (driving/walking/cycling legs). Absent ⇒ the
+   * Mapbox port is not constructed and those modes DEGRADE per R-ib-19/21 —
+   * legs absent, never an error on any mutation path. The account/token is
+   * the PARKED Sean item (QUEUE Blocked row); the build is fixture-driven.
+   */
+  MAPBOX_ACCESS_TOKEN: z.string().min(1).optional(),
+  /**
+   * Transitous (MOTIS) instance for `transit` legs — the public community
+   * instance is keyless, so this defaults instead of degrading. Override for
+   * staging (`https://staging.api.transitous.org`) or a self-hosted MOTIS.
+   */
+  TRANSITOUS_BASE_URL: z.url().default("https://api.transitous.org"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
 import type { PlacesRouterDeps } from "./places/routes.js";
+import type { TravelLegsRouterDeps } from "./travel-legs/routes.js";
 import type { TripsRouterDeps } from "./trips/routes.js";
 import type { UsersRouterDeps } from "./users/routes.js";
 
@@ -80,6 +81,20 @@ describe("createApp wiring guard", () => {
     let error: unknown;
     try {
       createApp({ places: {} as PlacesRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the travel-legs router is mounted without auth deps", () => {
+    // Same pairing rule (T-7.3): the refresh-legs route is Auth: Required
+    // behind the trip-membership gate (R-ib-24) — never silently unguarded.
+    let error: unknown;
+    try {
+      createApp({ travelLegs: {} as TravelLegsRouterDeps });
     } catch (e) {
       error = e;
     }

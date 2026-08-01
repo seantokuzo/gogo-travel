@@ -6,6 +6,7 @@ import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
+import { createTravelLegsRouter, type TravelLegsRouterDeps } from "./travel-legs/routes.js";
 import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
 import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
@@ -72,6 +73,13 @@ export interface CreateAppOptions {
    * trip-membership gate (R-ib-24) — bookings-without-auth is a wiring bug.
    */
   bookings?: BookingsRouterDeps;
+  /**
+   * Travel-legs surface dependencies (T-7.3 refresh-legs + the leg worker's
+   * marker). Same pairing rule: the route is Auth: Required AND sits behind
+   * the trip-membership gate (R-ib-24) — travel-legs-without-auth is a
+   * wiring bug.
+   */
+  travelLegs?: TravelLegsRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -86,6 +94,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.bookings && !options.auth) {
     throw new Error("bookings router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.travelLegs && !options.auth) {
+    throw new Error("travel-legs router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -133,6 +144,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.bookings) {
     app.route(API_BASE, createBookingsRouter(options.bookings));
+  }
+
+  if (options.travelLegs) {
+    app.route(API_BASE, createTravelLegsRouter(options.travelLegs));
   }
 
   return app;
