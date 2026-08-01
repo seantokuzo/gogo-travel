@@ -8,6 +8,7 @@ import {
   ItineraryRangeQuerySchema,
   ItineraryReadSchema,
   itineraryEndpoints,
+  SORT_ORDER_ABS_MAX,
   TravelLegSchema,
   violatesSingleDayTimeOrder,
 } from "./itinerary.js";
@@ -201,6 +202,31 @@ describe("ItineraryItemUpdate", () => {
   it("title/place_id are non-nullable (clearing would break the kind CHECK)", () => {
     expect(ItineraryItemUpdateSchema.safeParse({ title: null }).success).toBe(false);
     expect(ItineraryItemUpdateSchema.safeParse({ place_id: null }).success).toBe(false);
+  });
+
+  it("bounds sort_order at ±SORT_ORDER_ABS_MAX — int4 append headroom (the member.ts max_uses convention)", () => {
+    expect(ItineraryItemUpdateSchema.parse({ sort_order: SORT_ORDER_ABS_MAX }).sort_order).toBe(
+      SORT_ORDER_ABS_MAX,
+    );
+    expect(ItineraryItemUpdateSchema.parse({ sort_order: -SORT_ORDER_ABS_MAX }).sort_order).toBe(
+      -SORT_ORDER_ABS_MAX,
+    );
+    expect(
+      ItineraryItemUpdateSchema.safeParse({ sort_order: SORT_ORDER_ABS_MAX + 1 }).success,
+    ).toBe(false);
+    expect(
+      ItineraryItemUpdateSchema.safeParse({ sort_order: -SORT_ORDER_ABS_MAX - 1 }).success,
+    ).toBe(false);
+    // The original failure mode: int4 max is schema-valid only below the cap —
+    // 2147483648 must be a 400, never a driver 22003 → 500.
+    expect(ItineraryItemUpdateSchema.safeParse({ sort_order: 2_147_483_648 }).success).toBe(false);
+  });
+
+  it("caps title/notes on the Update surface independently of Create (each wire surface pins its own caps)", () => {
+    expect(ItineraryItemUpdateSchema.safeParse({ title: "x".repeat(201) }).success).toBe(false);
+    expect(ItineraryItemUpdateSchema.parse({ title: "x".repeat(200) }).title).toHaveLength(200);
+    expect(ItineraryItemUpdateSchema.safeParse({ notes: "x".repeat(2001) }).success).toBe(false);
+    expect(ItineraryItemUpdateSchema.parse({ notes: "x".repeat(2000) }).notes).toHaveLength(2000);
   });
 
   it("body-internal end_day < day is rejected; lone end_day defers to the merged-row check", () => {

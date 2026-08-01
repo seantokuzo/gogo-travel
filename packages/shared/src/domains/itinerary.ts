@@ -217,6 +217,20 @@ export const ItineraryItemCreateSchema = z
 export type ItineraryItemCreate = z.infer<typeof ItineraryItemCreateSchema>;
 
 /**
+ * `sort_order` write bound — a purely technical cap like
+ * `InviteCreateSchema.max_uses` (member.ts, the T-6.1 round-1 convention:
+ * client-writable ints over a Postgres `integer` column get explicit caps).
+ * An uncapped `z.int()` admits 2^53, so a schema-valid PATCH of 2147483648
+ * lands as a driver 22003 → unmapped 500 — AND even an in-range PATCH near
+ * int4 max poisons the day: every subsequent append-create assigns
+ * `last + 1024`, overflowing until a reorder compacts. ±1e9 keeps the whole
+ * usable range while leaving >1.1e9 of append headroom (a million+ gapped
+ * appends) below int4 max. Symmetric: a negative sort_order is a legal
+ * "place before 0" midpoint.
+ */
+export const SORT_ORDER_ABS_MAX = 1_000_000_000;
+
+/**
  * `PATCH /trips/:tripId/itinerary/items/:itemId` (§3.4, R-ib-16/17/18).
  * Field legality against the STORED row is the service's: `title` is
  * `custom`-only, `place_id` is `place_visit`-only (spec §3.4 PATCH), and
@@ -237,7 +251,7 @@ export const ItineraryItemUpdateSchema = z
     end_day: ISODateSchema.nullable().optional(),
     start_time: ISOTimeSchema.nullable().optional(),
     end_time: ISOTimeSchema.nullable().optional(),
-    sort_order: z.int().optional(),
+    sort_order: z.int().min(-SORT_ORDER_ABS_MAX).max(SORT_ORDER_ABS_MAX).optional(),
   })
   .superRefine((val, ctx) => {
     // Body-internal arm only: both sides present in ONE body can never merge

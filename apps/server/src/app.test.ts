@@ -1,6 +1,11 @@
 import { createRequire } from "node:module";
+import { createLocalJWKSet, generateKeyPair } from "jose";
 import { describe, expect, it } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
+import type { AuthRouterDeps } from "./auth/routes.js";
+import type { BookingsRouterDeps } from "./bookings/routes.js";
+import type { DbClient } from "./db/create-user.js";
+import type { ItineraryRouterDeps } from "./itinerary/routes.js";
 import type { PlacesRouterDeps } from "./places/routes.js";
 import type { TripsRouterDeps } from "./trips/routes.js";
 import type { UsersRouterDeps } from "./users/routes.js";
@@ -87,6 +92,34 @@ describe("createApp wiring guard", () => {
     expect((error as Error).message).toContain("auth");
     expect((error as Error).message).toContain("requireAuth");
   });
+
+  it("throws when the bookings router is mounted without auth deps", () => {
+    // Same pairing rule (T-7.1): every bookings route is Auth: Required AND
+    // sits behind the trip-membership gate (R-ib-24).
+    let error: unknown;
+    try {
+      createApp({ bookings: {} as BookingsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the itinerary router is mounted without auth deps", () => {
+    // Same pairing rule (T-7.2): every itinerary route is Auth: Required AND
+    // sits behind the trip-membership gate (R-ib-24).
+    let error: unknown;
+    try {
+      createApp({ itinerary: {} as ItineraryRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
 });
 
 describe("app-wide bodyLimit (PR #11 R1 defer)", () => {
@@ -114,6 +147,46 @@ describe("app-wide bodyLimit (PR #11 R1 defer)", () => {
     const res = await post(testApp, JSON.stringify({ size: 1 }));
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, size: 1 });
+  });
+
+  it("auth precedes the body cap: an oversized UNAUTHENTICATED body is the uniform 401, never a 413 oracle (R-authz-4)", async () => {
+    // Real auth-mounted app — the guard only reads `accessVerify`; the other
+    // deps are construction-time stubs no request on this path ever touches
+    // (the 401 fires in middleware, before any router or the DB).
+    const pair = await generateKeyPair("ES256");
+    const authDeps: AuthRouterDeps = {
+      db: {} as DbClient,
+      verifier: {
+        appleJwks: createLocalJWKSet({ keys: [] }),
+        googleJwks: createLocalJWKSet({ keys: [] }),
+        appleAudience: "com.gogo.travel",
+        googleAudiences: ["gid.apps.example"],
+      },
+      signer: { privateKey: pair.privateKey, kid: "test-kid" },
+      accessVerify: { publicKey: pair.publicKey },
+      appleExchange: { exchange: () => Promise.reject(new Error("unused in this test")) },
+      appleCredentialsKey: Buffer.alloc(32, 7),
+      logger: { warn: () => undefined },
+    };
+    const authedApp = createApp({ auth: authDeps });
+
+    // Over-cap body, no token, non-allowlisted path. Content-Length is set
+    // EXPLICITLY (undici does not auto-attach it to constructed Requests):
+    // bodyLimit rejects off that header at middleware time, so ONLY the
+    // auth-first ordering in createApp produces the 401 — flipped middleware
+    // would 413 and hand unauthenticated callers a free size oracle.
+    const oversized = `{"pad":"${"x".repeat(256 * 1024)}"}`;
+    const res = await authedApp.request("/api/trips", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(oversized, "utf8")),
+      },
+      body: oversized,
+    });
+    expect(res.status).toBe(401);
+    const envelope = (await res.json()) as { error: { code: string } };
+    expect(envelope.error.code).toBe("UNAUTHENTICATED");
   });
 
   it("passes a body just under the cap; 413s one byte over it (shared PAYLOAD_TOO_LARGE envelope)", async () => {

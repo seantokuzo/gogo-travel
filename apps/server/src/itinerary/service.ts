@@ -157,19 +157,26 @@ export async function readItinerary(
   let to = args.to ?? null;
 
   if (from === null || to === null) {
-    const [trip] = await db
-      .select({ startDate: schema.trips.startDate, endDate: schema.trips.endDate })
-      .from(schema.trips)
-      .where(eq(schema.trips.id, tripId));
-    const [span] = await db
-      .select({
-        minDay: sql<string | null>`min(${schema.itineraryItems.day})`,
-        maxDay: sql<
-          string | null
-        >`max(coalesce(${schema.itineraryItems.endDay}, ${schema.itineraryItems.day}))`,
-      })
-      .from(schema.itineraryItems)
-      .where(eq(schema.itineraryItems.tripId, tripId));
+    // Independent single-row reads — in parallel (`deps.db` is a pool; inside
+    // a transaction scope postgres-js queues on the one connection, still
+    // correct, just sequential).
+    const [tripRows, spanRows] = await Promise.all([
+      db
+        .select({ startDate: schema.trips.startDate, endDate: schema.trips.endDate })
+        .from(schema.trips)
+        .where(eq(schema.trips.id, tripId)),
+      db
+        .select({
+          minDay: sql<string | null>`min(${schema.itineraryItems.day})`,
+          maxDay: sql<
+            string | null
+          >`max(coalesce(${schema.itineraryItems.endDay}, ${schema.itineraryItems.day}))`,
+        })
+        .from(schema.itineraryItems)
+        .where(eq(schema.itineraryItems.tripId, tripId)),
+    ]);
+    const trip = tripRows[0];
+    const span = spanRows[0];
 
     const froms = [trip?.startDate, span?.minDay].filter((d): d is string => d != null);
     const tos = [trip?.endDate, span?.maxDay].filter((d): d is string => d != null);
@@ -180,42 +187,45 @@ export async function readItinerary(
   // empty arm): an empty calendar, not an error.
   if (from === null || to === null) return { items: [], legs: [] };
 
-  const items = await db
-    .select()
-    .from(schema.itineraryItems)
-    .where(
-      and(
-        eq(schema.itineraryItems.tripId, tripId),
-        lte(schema.itineraryItems.day, to),
-        gte(sql`coalesce(${schema.itineraryItems.endDay}, ${schema.itineraryItems.day})`, from),
-      ),
-    )
-    .orderBy(
-      asc(schema.itineraryItems.day),
-      asc(schema.itineraryItems.sortOrder),
-      asc(schema.itineraryItems.id),
-    );
-
-  // Legs: both endpoints' spans in range (R-ib-13). One query — the legs
-  // table joined to the items table twice; ordered along the from-item's
-  // chain position for a deterministic wire order.
+  // Items + legs are independent reads over the resolved range — in parallel
+  // (same pool/tx note as above). Legs: both endpoints' spans in range
+  // (R-ib-13). One query — the legs table joined to the items table twice;
+  // ordered along the from-item's chain position for a deterministic wire
+  // order.
   const fromItem = alias(schema.itineraryItems, "leg_from_item");
   const toItem = alias(schema.itineraryItems, "leg_to_item");
-  const legRows = await db
-    .select({ leg: schema.travelLegs })
-    .from(schema.travelLegs)
-    .innerJoin(fromItem, eq(schema.travelLegs.fromItemId, fromItem.id))
-    .innerJoin(toItem, eq(schema.travelLegs.toItemId, toItem.id))
-    .where(
-      and(
-        eq(schema.travelLegs.tripId, tripId),
-        lte(fromItem.day, to),
-        gte(sql`coalesce(${fromItem.endDay}, ${fromItem.day})`, from),
-        lte(toItem.day, to),
-        gte(sql`coalesce(${toItem.endDay}, ${toItem.day})`, from),
+  const [items, legRows] = await Promise.all([
+    db
+      .select()
+      .from(schema.itineraryItems)
+      .where(
+        and(
+          eq(schema.itineraryItems.tripId, tripId),
+          lte(schema.itineraryItems.day, to),
+          gte(sql`coalesce(${schema.itineraryItems.endDay}, ${schema.itineraryItems.day})`, from),
+        ),
+      )
+      .orderBy(
+        asc(schema.itineraryItems.day),
+        asc(schema.itineraryItems.sortOrder),
+        asc(schema.itineraryItems.id),
       ),
-    )
-    .orderBy(asc(fromItem.day), asc(fromItem.sortOrder), asc(schema.travelLegs.id));
+    db
+      .select({ leg: schema.travelLegs })
+      .from(schema.travelLegs)
+      .innerJoin(fromItem, eq(schema.travelLegs.fromItemId, fromItem.id))
+      .innerJoin(toItem, eq(schema.travelLegs.toItemId, toItem.id))
+      .where(
+        and(
+          eq(schema.travelLegs.tripId, tripId),
+          lte(fromItem.day, to),
+          gte(sql`coalesce(${fromItem.endDay}, ${fromItem.day})`, from),
+          lte(toItem.day, to),
+          gte(sql`coalesce(${toItem.endDay}, ${toItem.day})`, from),
+        ),
+      )
+      .orderBy(asc(fromItem.day), asc(fromItem.sortOrder), asc(schema.travelLegs.id)),
+  ]);
 
   return { items, legs: legRows.map((row) => row.leg) };
 }
@@ -676,6 +686,26 @@ export async function reorderDay(
         throw new HttpError("VALIDATION_FAILED", "end_day must be on or after day", {
           item_ids: "span would invert",
         });
+      }
+      if (
+        crossDay &&
+        violatesSingleDayTimeOrder({
+          day,
+          end_day: row.endDay,
+          start_time: wallHHMM(row.startTime),
+          end_time: wallHHMM(row.endTime),
+        })
+      ) {
+        // R-ib-17's TIME arm on the pulled row: dragging a spanning item to
+        // exactly its own end_day collapses it single-day while keeping the
+        // stored times — an inverted pair must 400 here exactly as the same
+        // transition does via `PATCH {day}` (the two write paths agree; there
+        // is no DB CHECK backstop for the time rule).
+        throw new HttpError(
+          "VALIDATION_FAILED",
+          "end_time must be on or after start_time on a single-day item",
+          { item_ids: "single-day time order would invert" },
+        );
       }
 
       const sortOrder = SORT_GAP * (position + 1);

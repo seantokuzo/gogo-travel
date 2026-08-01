@@ -32,6 +32,7 @@ import {
   DayOrderResultSchema,
   ItineraryItemSchema,
   ItineraryReadSchema,
+  SORT_ORDER_ABS_MAX,
   type ItineraryItem,
 } from "@gogo/shared/domains/itinerary";
 import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
@@ -352,7 +353,7 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
   // GET /trips/:tripId/itinerary (§3.4; R-ib-13, R-ib-24)
   // ===========================================================================
 
-  it("GET: items ordered (day, sort_order); legs limited to in-range endpoint pairs; explicit range filters both", async () => {
+  it("GET: items ordered (day, sort_order) — NOT insertion order; legs need BOTH endpoints in range; explicit range filters both", async () => {
     const { owner, viewer, trip } = await seedCollabTrip();
     const d2a = await createItemVia(trip.id, owner.accessToken, {
       kind: "custom",
@@ -376,21 +377,40 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
     });
     const inRangeLeg = await seedLeg(trip.id, d2a.id, d2b.id, "walking");
     const outOfRangeLeg = await seedLeg(trip.id, d3a.id, d3b.id, "walking");
+    // Straddling leg: from-endpoint on day 2, to-endpoint on day 3 — the
+    // discriminator between "both endpoints in range" (AND) and an OR.
+    const straddlingLeg = await seedLeg(trip.id, d2b.id, d3a.id, "driving");
 
     // Viewer read (any role, R-ib-24) over the full default range.
     const full = ItineraryReadSchema.parse(
       await (await getItinerary(trip.id, viewer.accessToken)).json(),
     );
     expect(full.items.map((i) => i.id)).toEqual([d2a.id, d2b.id, d3a.id, d3b.id]);
-    expect(full.legs.map((l) => l.id).sort()).toEqual([inRangeLeg.id, outOfRangeLeg.id].sort());
+    expect(full.legs.map((l) => l.id).sort()).toEqual(
+      [inRangeLeg.id, outOfRangeLeg.id, straddlingLeg.id].sort(),
+    );
 
-    // Range [09-02, 09-02]: day-3 items AND the day-3 leg drop out.
+    // Falsifiability pin (house law): every fixture above was created in
+    // ascending (day, sort_order) = insertion order, which any orderBy-less
+    // read reproduces. Invert day 2's STORED order via the PUT, then re-read:
+    // the wire order must track (day, sort_order), never insertion/heap order.
+    const reorder = await putDayOrder(trip.id, "2026-09-02", owner.accessToken, {
+      item_ids: [d2b.id, d2a.id],
+    });
+    expect(reorder.status).toBe(200);
+    const reread = ItineraryReadSchema.parse(
+      await (await getItinerary(trip.id, viewer.accessToken)).json(),
+    );
+    expect(reread.items.map((i) => i.id)).toEqual([d2b.id, d2a.id, d3a.id, d3b.id]);
+
+    // Range [09-02, 09-02]: day-3 items, the day-3 leg AND the straddling leg
+    // (to-endpoint out of range) all drop out.
     const ranged = ItineraryReadSchema.parse(
       await (
         await getItinerary(trip.id, viewer.accessToken, "?from=2026-09-02&to=2026-09-02")
       ).json(),
     );
-    expect(ranged.items.map((i) => i.id)).toEqual([d2a.id, d2b.id]);
+    expect(ranged.items.map((i) => i.id)).toEqual([d2b.id, d2a.id]);
     expect(ranged.legs).toHaveLength(1);
     expect(ranged.legs[0]).toMatchObject({
       from_item_id: d2a.id,
@@ -400,6 +420,41 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       duration_seconds: 600,
       distance_meters: 800,
     });
+  });
+
+  it("GET: equal (day, sort_order) ties break by id ascending — the read's explicit ordering, unmaskable by any plan", async () => {
+    // Falsification design (house law): the trip_day_sort index IS the spec
+    // order for distinct keys, so an orderBy-less index scan masks the
+    // inversion pin above. Equal keys have no index order — a btree stores
+    // duplicates in heap-TID order, and a seq scan returns heap order too.
+    // We PATCH the HIGHER-id row FIRST so its rewritten tuple lands earlier
+    // in the heap: every planless order puts it first; only the read's
+    // (day, sort_order, id) orderBy puts it last. Delete the orderBy → red.
+    const { owner, trip } = await seedCollabTrip();
+    const first = await createItemVia(trip.id, owner.accessToken, {
+      kind: "custom",
+      title: "Tie one",
+      day: "2026-09-04",
+    });
+    const second = await createItemVia(trip.id, owner.accessToken, {
+      kind: "custom",
+      title: "Tie two",
+      day: "2026-09-04",
+    });
+    const hi = first.id > second.id ? first : second;
+    const lo = first.id > second.id ? second : first;
+
+    const patchHi = await patchItem(trip.id, hi.id, owner.accessToken, { sort_order: 500_000 });
+    expect(patchHi.status).toBe(200);
+    const patchLo = await patchItem(trip.id, lo.id, owner.accessToken, { sort_order: 500_000 });
+    expect(patchLo.status).toBe(200);
+
+    const read = ItineraryReadSchema.parse(
+      await (
+        await getItinerary(trip.id, owner.accessToken, "?from=2026-09-04&to=2026-09-04")
+      ).json(),
+    );
+    expect(read.items.map((i) => i.id)).toEqual([lo.id, hi.id]);
   });
 
   it("GET: default range is trip dates ∪ item-day extremes — pre/post-trip items covered (§3.4)", async () => {
@@ -486,14 +541,14 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
     });
   });
 
-  it("POST: after_item_id positions at the midpoint; unknown/off-day anchors 400", async () => {
+  it("POST: after_item_id positions at the midpoint; anchor-is-last appends past it; unknown/off-day anchors 400", async () => {
     const { editor, trip } = await seedCollabTrip();
     const a = await createItemVia(trip.id, editor.accessToken, {
       kind: "custom",
       title: "A",
       day: "2026-09-04",
     });
-    await createItemVia(trip.id, editor.accessToken, {
+    const b = await createItemVia(trip.id, editor.accessToken, {
       kind: "custom",
       title: "B",
       day: "2026-09-04",
@@ -506,6 +561,16 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       after_item_id: a.id,
     });
     expect(between.sort_order).toBe(1536); // midpoint of 1024 and 2048
+
+    // Anchor IS the day's last item (no successor): the +1024 append arm of
+    // the anchored path, not a midpoint.
+    const tail = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Tail",
+      day: "2026-09-04",
+      after_item_id: b.id, // b sits last at 2048
+    });
+    expect(tail.sort_order).toBe(3072);
 
     const offDay = await postItem(trip.id, editor.accessToken, {
       kind: "custom",
@@ -635,6 +700,21 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
     dirtyCalls.length = 0;
     const failed = await postItem(trip.id, editor.accessToken, { kind: "custom", day: "x" });
     expect(failed.status).toBe(400);
+    expect(dirtyCalls).toHaveLength(0);
+
+    // IN-TRANSACTION abort never marks either: the zValidator reject above
+    // never reaches the service — an invisible-place 404 create enters the
+    // write transaction and aborts INSIDE it (the dirty-days contract's
+    // "aborted transaction must never mark" arm, exercised for real).
+    const stranger = await seedUserWithToken();
+    const invisible = await seedCustomPlace(stranger.userId);
+    dirtyCalls.length = 0;
+    const abortedInTxn = await postItem(trip.id, editor.accessToken, {
+      kind: "place_visit",
+      place_id: invisible.id,
+      day: "2026-09-02",
+    });
+    expect(abortedInTxn.status).toBe(404);
     expect(dirtyCalls).toHaveLength(0);
   });
 
@@ -816,6 +896,58 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
     const clearedItem = ItineraryItemSchema.parse(await cleared.json());
     expect(clearedItem.start_time).toBeNull();
     expect(clearedItem.notes).toBeNull();
+  });
+
+  it("PATCH: sort_order at the shared cap never poisons the day's append path; over-cap is a 400, never a driver 500", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const item = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Cap rider",
+      day: "2026-09-02",
+    });
+
+    // A cap-value PATCH is legal…
+    const capped = await patchItem(trip.id, item.id, editor.accessToken, {
+      sort_order: SORT_ORDER_ABS_MAX,
+    });
+    expect(capped.status).toBe(200);
+    expect(ItineraryItemSchema.parse(await capped.json()).sort_order).toBe(SORT_ORDER_ABS_MAX);
+
+    // …and the day's append path survives it: the next append assigns
+    // cap + 1024, which still fits int4 (the poisoned-day failure mode this
+    // cap exists to prevent — with an int4-max cap this POST would 500 until
+    // a reorder compacted the day).
+    const appended = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "After the cap",
+      day: "2026-09-02",
+    });
+    expect(appended.sort_order).toBe(SORT_ORDER_ABS_MAX + 1024);
+
+    // int4 max + 1 (schema-valid before the cap): a clean 400, not a PG
+    // 22003 → unmapped 500.
+    const over = await patchItem(trip.id, item.id, editor.accessToken, {
+      sort_order: 2_147_483_648,
+    });
+    expect(over.status).toBe(400);
+    expect(((await over.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("PATCH: an empty body is a 200 no-op — row returned unchanged, zero marks (the else-arm)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const item = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Untouched",
+      day: "2026-09-02",
+    });
+
+    dirtyCalls.length = 0;
+    const res = await patchItem(trip.id, item.id, editor.accessToken, {});
+    expect(res.status).toBe(200);
+    // Byte-equal to the created wire item — updated_at included, proving no
+    // UPDATE ran.
+    expect(ItineraryItemSchema.parse(await res.json())).toEqual(item);
+    expect(dirtyCalls).toHaveLength(0);
   });
 
   it("PATCH: viewer 403 (R-ib-24)", async () => {
@@ -1141,6 +1273,91 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
     });
     expect(legal.status).toBe(200);
     expect((await dbItem(spanning.id))?.endDay).toBe("2026-09-03");
+  });
+
+  it("PUT order: pulling a spanning item to its OWN end_day collapses it single-day — inverted stored times 400 (R-ib-17 time arm); non-inverted times collapse fine", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    // Overnight block: legal as a span (end time on a later wall-date)…
+    const overnight = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Overnight",
+      day: "2026-09-02",
+      end_day: "2026-09-03",
+      start_time: "18:00",
+      end_time: "10:00",
+    });
+
+    // …but dragged to day 09-03 it becomes SINGLE-day (day == end_day) with
+    // end_time < start_time — the state R-ib-17 forbids and the identical
+    // `PATCH {day}` transition already 400s. The two write paths must agree.
+    const inverted = await putDayOrder(trip.id, "2026-09-03", editor.accessToken, {
+      item_ids: [overnight.id],
+    });
+    expect(inverted.status).toBe(400);
+    expect(((await inverted.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    // The transaction aborted whole — the row never moved.
+    expect((await dbItem(overnight.id))?.day).toBe("2026-09-02");
+
+    // Legal variant: a span whose times are NOT inverted collapses fine.
+    const daytime = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Daytime span",
+      day: "2026-09-02",
+      end_day: "2026-09-03",
+      start_time: "08:00",
+      end_time: "10:00",
+    });
+    const legal = await putDayOrder(trip.id, "2026-09-03", editor.accessToken, {
+      item_ids: [daytime.id],
+    });
+    expect(legal.status).toBe(200);
+    const row = await dbItem(daytime.id);
+    expect(row?.day).toBe("2026-09-03");
+    expect(row?.endDay).toBe("2026-09-03");
+  });
+
+  it("PUT order: empty item_ids is a 200 no-op — day untouched, zero marks (every id may be LWW-ignored)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const a = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Stay put",
+      day: "2026-09-02",
+    });
+
+    dirtyCalls.length = 0;
+    const res = await putDayOrder(trip.id, "2026-09-02", editor.accessToken, { item_ids: [] });
+    expect(res.status).toBe(200);
+    const result = DayOrderResultSchema.parse(await res.json());
+    expect(result.items.map((i) => [i.id, i.sort_order])).toEqual([[a.id, 1024]]);
+    expect(dirtyCalls).toHaveLength(0);
+  });
+
+  it("PUT order: submitting the exact current order writes nothing — zero marks (the no-op skip arm)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const a = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "First",
+      day: "2026-09-07",
+    });
+    const b = await createItemVia(trip.id, editor.accessToken, {
+      kind: "custom",
+      title: "Second",
+      day: "2026-09-07",
+    });
+
+    dirtyCalls.length = 0;
+    // Appends assigned exactly 1024/2048 — resubmitting [a, b] recomputes the
+    // same values, so the per-row skip leaves every row unwritten.
+    const res = await putDayOrder(trip.id, "2026-09-07", editor.accessToken, {
+      item_ids: [a.id, b.id],
+    });
+    expect(res.status).toBe(200);
+    const result = DayOrderResultSchema.parse(await res.json());
+    expect(result.items.map((i) => [i.id, i.sort_order])).toEqual([
+      [a.id, 1024],
+      [b.id, 2048],
+    ]);
+    expect(dirtyCalls).toHaveLength(0);
   });
 
   it("PUT order: concurrent PUTs serialize — last write wins whole, no partial interleave (R-ib-15/18)", async () => {
