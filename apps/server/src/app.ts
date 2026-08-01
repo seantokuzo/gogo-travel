@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
+import { createItineraryRouter, type ItineraryRouterDeps } from "./itinerary/routes.js";
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
@@ -72,6 +73,12 @@ export interface CreateAppOptions {
    * trip-membership gate (R-ib-24) — bookings-without-auth is a wiring bug.
    */
   bookings?: BookingsRouterDeps;
+  /**
+   * Itinerary-surface dependencies (T-7.2 items + reorder + composite read).
+   * Same pairing rule: every route is Auth: Required AND sits behind the
+   * trip-membership gate (R-ib-24) — itinerary-without-auth is a wiring bug.
+   */
+  itinerary?: ItineraryRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -86,6 +93,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.bookings && !options.auth) {
     throw new Error("bookings router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.itinerary && !options.auth) {
+    throw new Error("itinerary router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -133,6 +143,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.bookings) {
     app.route(API_BASE, createBookingsRouter(options.bookings));
+  }
+
+  if (options.itinerary) {
+    app.route(API_BASE, createItineraryRouter(options.itinerary));
   }
 
   return app;
