@@ -26,11 +26,13 @@ export type CardProps = CardBaseProps &
   (
     | {
         onPress: () => void;
+        /** Long-press affordance (T-7.4: itinerary drag lift). Pressable only. */
+        onLongPress?: () => void;
         /** Required when pressable (R-ds-20). */
         testID: string;
         accessibilityLabel?: string;
       }
-    | { onPress?: undefined; testID?: string; accessibilityLabel?: undefined }
+    | { onPress?: undefined; onLongPress?: undefined; testID?: string; accessibilityLabel?: undefined }
   );
 
 const useStyles = createStyles((t) => ({
@@ -62,6 +64,7 @@ export function Card({
   style,
   children,
   onPress,
+  onLongPress,
   testID,
   accessibilityLabel,
 }: CardProps) {
@@ -80,6 +83,7 @@ export function Card({
     <Pressable
       testID={testID}
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       style={cardStyle}

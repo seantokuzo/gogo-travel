@@ -63,9 +63,11 @@ describe("trip tab shell (NAV-1: R-nav-10 structure, §2.7 rule-3 tab IDs)", () 
       expect(screen.getByTestId(`tab-bar-${key}`)).toBeOnTheScreen();
     }
     // Trip context reaches navigator-instantiated tabs (the layout provides
-    // it — §2.1; local params would be empty here).
+    // it — §2.1; local params would be empty here). Since T-7.4 the real
+    // itinerary screen renders the guarded trip's NAME in its header — same
+    // context proof, real surface.
     const itinerary = screen.getByTestId("itinerary-screen");
-    expect(within(itinerary).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
+    expect(within(itinerary).getByText("Kyoto")).toBeOnTheScreen();
   });
 });
 
@@ -150,7 +152,8 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
       router.navigate(`/${TEST_TRIP_ID}` as Parameters<typeof router.navigate>[0]);
     });
     const itinerary = await screen.findByTestId("itinerary-screen");
-    expect(within(itinerary).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
+    // T-7.4: the real itinerary screen proves trip context via the trip name.
+    expect(within(itinerary).getByText("Kyoto")).toBeOnTheScreen();
 
     // Tab switches through the design-system TabNav (§2.7 rule-3 IDs) —
     // trip context reaches navigator-instantiated tabs.

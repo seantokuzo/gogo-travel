@@ -280,6 +280,15 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
         }
         case "DELETE /trips/:tripId/invites/:inviteId":
           return Promise.resolve(undefined);
+        // Itinerary tab family (T-7.4) — empty-calendar defaults so route-tree
+        // suites mounting the itinerary tab settle without retry noise; real
+        // universes come in through `overrides` (itinerary-fixtures.ts).
+        case "GET /trips/:tripId/itinerary":
+          return Promise.resolve({ items: [], legs: [] });
+        case "GET /trips/:tripId/bookings":
+          return Promise.resolve({ items: [], nextCursor: null });
+        case "PUT /trips/:tripId/itinerary/days/:day/order":
+          return Promise.resolve({ items: [] });
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:
