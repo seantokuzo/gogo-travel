@@ -88,3 +88,52 @@ describe("createApp wiring guard", () => {
     expect((error as Error).message).toContain("requireAuth");
   });
 });
+
+describe("app-wide bodyLimit (PR #11 R1 defer)", () => {
+  // A scratch echo route ON the createApp instance: `app.use("*")` middleware
+  // registered inside createApp runs for routes added afterwards too, so this
+  // exercises the REAL app-wide cap, not a re-built lookalike.
+  function appWithEcho() {
+    const testApp = createApp();
+    testApp.post("/api/echo", async (c) => {
+      const body = await c.req.json<{ size?: number }>();
+      return c.json({ ok: true, size: body.size ?? null });
+    });
+    return testApp;
+  }
+
+  const post = (testApp: ReturnType<typeof createApp>, body: string) =>
+    testApp.request("/api/echo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+
+  it("passes a normal-size JSON body untouched", async () => {
+    const testApp = appWithEcho();
+    const res = await post(testApp, JSON.stringify({ size: 1 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, size: 1 });
+  });
+
+  it("passes a body just under the cap; 413s one byte over it (shared PAYLOAD_TOO_LARGE envelope)", async () => {
+    const testApp = appWithEcho();
+    // {"pad":"…"} wrapper is 10 bytes; fill to exactly the cap.
+    const wrapBytes = '{"pad":""}'.length;
+    const atCap = `{"pad":"${"x".repeat(256 * 1024 - wrapBytes)}"}`;
+    expect(Buffer.byteLength(atCap, "utf8")).toBe(256 * 1024);
+
+    const under = await post(testApp, atCap);
+    expect(under.status).toBe(200);
+
+    const over = await post(testApp, `${atCap} `);
+    expect(over.status).toBe(413);
+    const envelope = (await over.json()) as {
+      error: { code: string; message: string; requestId?: string };
+    };
+    // The shared ApiError envelope, never Hono's default text body — and a
+    // requestId so an operator can correlate abuse.
+    expect(envelope.error.code).toBe("PAYLOAD_TOO_LARGE");
+    expect(envelope.error.requestId).toBeTruthy();
+  });
+});

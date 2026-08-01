@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
@@ -9,9 +10,10 @@ import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
 import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
 import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
+import { BODY_LIMIT_MAX_BYTES } from "./config.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
 import { createRequireAuth } from "./http/require-auth.js";
-import type { RequestVars } from "./http/errors.js";
+import { apiError, type RequestVars } from "./http/errors.js";
 
 const { version } = createRequire(import.meta.url)("../package.json") as { version: string };
 
@@ -117,6 +119,21 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
       }),
     );
   }
+
+  // App-wide body cap (PR #11 R1 security defer): ONE bodyLimit in front of
+  // every router — including the PUBLIC sign-in routes (prime DoS surface).
+  // Deliberately AFTER the auth guard so an unauthenticated oversized probe
+  // still gets the uniform 401 (authn first); Content-Length is checked at
+  // middleware time and chunked bodies are counted as they stream, so no
+  // handler ever buffers past the cap. Error is the shared envelope's
+  // PAYLOAD_TOO_LARGE (413), never Hono's default text body.
+  app.use(
+    "*",
+    bodyLimit({
+      maxSize: BODY_LIMIT_MAX_BYTES,
+      onError: (c) => apiError(c, "PAYLOAD_TOO_LARGE", "request body too large"),
+    }),
+  );
 
   app.get("/api/health", (c) => c.json({ ok: true, version }));
 
