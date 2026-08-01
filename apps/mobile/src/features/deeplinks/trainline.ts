@@ -32,6 +32,54 @@ export function trainlineLocationSearchUrl(searchTerm: string): string {
 const TRAINLINE_URN_PREFIX = "urn:trainline:";
 
 /**
+ * Lookup abort cap — same rationale as the ApiClient's `REQUEST_TIMEOUT_MS`
+ * (RN's Android OkHttp ships with timeouts DISABLED; a black-holed request
+ * would pin the button on "Finding stations…" forever). A capped failure
+ * settles the query to error → the §2.7 plain-link degrade.
+ */
+export const TRAINLINE_LOOKUP_TIMEOUT_MS = 12_000;
+
+/**
+ * Bail-out cap on the response body BEFORE parsing (UTF-16 code units ≈
+ * bytes for this ASCII-ish payload). This is a third-party endpoint with no
+ * contract: `extractFirstUrn`'s breadth-first scan is O(payload), so a
+ * pathological/hijacked response must fail fast into the degrade path, not
+ * churn the JS thread. Real station lookups are a few KB.
+ */
+export const TRAINLINE_MAX_RESPONSE_CHARS = 512 * 1024;
+
+/**
+ * Compose the caller's signal with the timeout cap — the ApiClient's
+ * hand-rolled pattern (Hermes/RN has no reliable `AbortSignal.timeout`/
+ * `AbortSignal.any` statics). `cleanup()` runs when the request settles;
+ * an EXTERNAL abort also clears the timer inline because a non-settling
+ * `fetchFn` (tests; a stack that swallows aborts) would otherwise leak the
+ * pending timer past the request's lifetime.
+ */
+function composeAbort(external: AbortSignal | undefined): {
+  signal: AbortSignal;
+  cleanup(): void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TRAINLINE_LOOKUP_TIMEOUT_MS);
+  const onExternalAbort = () => {
+    clearTimeout(timer);
+    controller.abort();
+  };
+  if (external !== undefined) {
+    if (external.aborted) onExternalAbort();
+    else external.addEventListener("abort", onExternalAbort);
+  }
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      external?.removeEventListener("abort", onExternalAbort);
+    },
+  };
+}
+
+/**
  * Breadth-first scan for the first string `urn` property (shape-tolerant —
  * module doc). Null = no URN anywhere in the payload ("no match" folds into
  * the same degrade path as a transport failure).
@@ -55,7 +103,8 @@ export function extractFirstUrn(payload: unknown): string | null {
 
 /**
  * One lookup round-trip: term → first URN, or null on no-match. Non-OK
- * responses throw (TanStack settles the query to error; the panel folds
+ * responses, the `TRAINLINE_LOOKUP_TIMEOUT_MS` abort cap, and an oversize
+ * body all throw (TanStack settles the query to error; the panel folds
  * error and null into the same plain-link degrade). `fetch` is injectable
  * for tests; RN provides the global.
  */
@@ -64,15 +113,25 @@ export async function searchTrainlineUrn(
   opts?: { signal?: AbortSignal; fetchFn?: typeof fetch },
 ): Promise<string | null> {
   const fetchFn = opts?.fetchFn ?? fetch;
-  const response = await fetchFn(trainlineLocationSearchUrl(searchTerm), {
-    ...(opts?.signal !== undefined ? { signal: opts.signal } : null),
-    headers: { Accept: "application/json" },
-  });
-  if (!response.ok) {
-    throw new Error(`trainline locations-search responded ${response.status}`);
+  const abort = composeAbort(opts?.signal);
+  try {
+    const response = await fetchFn(trainlineLocationSearchUrl(searchTerm), {
+      signal: abort.signal,
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) {
+      throw new Error(`trainline locations-search responded ${response.status}`);
+    }
+    // Length-check the text BEFORE parsing — module cap doc.
+    const text = await response.text();
+    if (text.length > TRAINLINE_MAX_RESPONSE_CHARS) {
+      throw new Error("trainline locations-search response too large");
+    }
+    const payload: unknown = JSON.parse(text);
+    return extractFirstUrn(payload);
+  } finally {
+    abort.cleanup();
   }
-  const payload: unknown = await response.json();
-  return extractFirstUrn(payload);
 }
 
 /** §2.7 "debounced" — one settle window for station typing. */

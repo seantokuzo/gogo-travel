@@ -191,8 +191,10 @@ export function buildSkyscannerUrl(
 
   const orig = encodeURIComponent(trim(fields.originIata ?? "").toLowerCase());
   const dest = encodeURIComponent(trim(fields.destinationIata ?? "").toLowerCase());
-  let path = `${orig}/${dest}/${toYymmdd(trim(fields.departDate ?? ""))}/`;
-  if (has(fields.returnDate)) path += `${toYymmdd(trim(fields.returnDate))}/`;
+  // Encoded like every other interpolation (digits are encoding-fixed, so the
+  // exact-literal pins are unchanged — this closes the one unencoded seam).
+  let path = `${orig}/${dest}/${encodeURIComponent(toYymmdd(trim(fields.departDate ?? "")))}/`;
+  if (has(fields.returnDate)) path += `${encodeURIComponent(toYymmdd(trim(fields.returnDate)))}/`;
   const query = queryString({
     adultsv2: String(normalizeAdults(adults)),
     cabinclass: mapSkyscannerCabin(fields.cabinClass),
@@ -407,12 +409,19 @@ export function buildExternalUrl(externalUrl: string | undefined): DeeplinkBuild
   return ready(url);
 }
 
-/** Host of an http(s) URL for the "Open {host}" label; null = not http(s). */
+/**
+ * Host of an http(s) URL for the "Open {host}" label; null = not http(s).
+ * An authority carrying userinfo (`https://chase.com.account-verify@evil.io`)
+ * is REJECTED outright — the "Open {host}" label would show the spoof text
+ * while the tap lands on the real host after the `@`. Legit booking links
+ * never carry userinfo, so this folds to the missing/invalid verdict.
+ */
 export function externalUrlHost(externalUrl: string | undefined): string | null {
   if (externalUrl === undefined) return null;
   const match = /^https?:\/\/([^/?#]+)/i.exec(externalUrl.trim());
   const host = match?.[1];
   if (host === undefined || host.length === 0) return null;
+  if (host.includes("@")) return null;
   return host.replace(/^www\./i, "");
 }
 
@@ -478,7 +487,12 @@ export const PARTNERS_BY_CATEGORY: Readonly<Record<BookingCategory, readonly Dee
   other: [{ id: "external", label: "External", usesAdults: false }],
 };
 
-/** True when any partner for the category takes `{adults}` (panel shows the field). */
+/**
+ * True when any partner for the category takes `{adults}`. CONSUMER: the
+ * T-7.6 add-form seam (whether the form surfaces a traveler-count field for
+ * the category). The panel itself does NOT call this — its per-category
+ * subcomponents know statically whether they render the adults edit.
+ */
 export function categoryUsesAdults(category: BookingCategory): boolean {
   return PARTNERS_BY_CATEGORY[category].some((p) => p.usesAdults);
 }

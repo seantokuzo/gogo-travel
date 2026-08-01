@@ -236,6 +236,25 @@ describe("Eventbrite (§2.7 row 12) — US state--city slug or OMIT", () => {
     expect(buildEventbriteUrl("Paris")).toEqual({ status: "omit" });
     expect(buildEventbriteUrl(undefined)).toEqual({ status: "omit" });
   });
+
+  it("bare 'Georgia' is the country unless an explicit US segment says otherwise (R1)", () => {
+    // The state NAME collides with the country — without a US country
+    // segment it must NOT produce a button pointing at ga--tbilisi.
+    expect(buildEventbriteUrl("Tbilisi, Georgia")).toEqual({ status: "omit" });
+    expectReady(
+      buildEventbriteUrl("Atlanta, Georgia, USA"),
+      "https://www.eventbrite.com/d/ga--atlanta/events/",
+    );
+    // The USPS code stays unambiguous.
+    expectReady(buildEventbriteUrl("Atlanta, GA"), "https://www.eventbrite.com/d/ga--atlanta/events/");
+  });
+
+  it("strips combining marks so accented cities slug per-letter, not per-word (R1)", () => {
+    expectReady(
+      buildEventbriteUrl("Doña Ana, NM"),
+      "https://www.eventbrite.com/d/nm--dona-ana/events/",
+    );
+  });
 });
 
 describe("External URL (§2.7 row 13)", () => {
@@ -253,6 +272,15 @@ describe("External URL (§2.7 row 13)", () => {
     expectMissing(buildExternalUrl("   "), ["link URL"]);
     expectMissing(buildExternalUrl("javascript:alert(1)"), ["valid link URL"]);
     expect(externalUrlHost("javascript:alert(1)")).toBeNull();
+  });
+
+  it("rejects userinfo host-spoofs — the label would lie about the tap target (R1)", () => {
+    // "Open chase.com.account-verify" — but the browser lands on evil.io.
+    expectMissing(buildExternalUrl("https://chase.com.account-verify@evil.io/login"), [
+      "valid link URL",
+    ]);
+    expect(externalUrlHost("https://chase.com.account-verify@evil.io/login")).toBeNull();
+    expect(externalUrlHost("https://user:pass@example.org/a")).toBeNull();
   });
 });
 
@@ -278,10 +306,27 @@ describe("shared plumbing", () => {
     expect(withAffiliateParams("https://x.example/a?b=1", { pid: "P001" })).toBe(
       "https://x.example/a?b=1&pid=P001",
     );
-    // Builders thread it through — one pin per family suffices.
+    // Builders thread it through — one pin per family (flight / lodging /
+    // train / car / activity; external takes no affiliate params by design).
     expect(buildKayakFlightsUrl(FLIGHT, { pid: "P001" })).toEqual({
       status: "ready",
       url: "https://www.kayak.com/flights/SFO-NRT/2026-09-10?pid=P001",
+    });
+    expect(buildAirbnbUrl(LODGING, 2, { pid: "P001" })).toEqual({
+      status: "ready",
+      url: "https://www.airbnb.com/s/Tokyo%2C%20Japan/homes?checkin=2026-09-10&checkout=2026-09-14&adults=2&pid=P001",
+    });
+    expect(buildOmioUrl({ pid: "P001" })).toEqual({
+      status: "ready",
+      url: "https://www.omio.com/?pid=P001",
+    });
+    expect(buildTuroUrl(CAR, { pid: "P001" })).toEqual({
+      status: "ready",
+      url: "https://turo.com/us/en/search?location=Los%20Angeles&startDate=09%2F10%2F2026&pid=P001",
+    });
+    expect(buildEventbriteUrl("Austin, TX", { pid: "P001" })).toEqual({
+      status: "ready",
+      url: "https://www.eventbrite.com/d/tx--austin/events/?pid=P001",
     });
   });
 

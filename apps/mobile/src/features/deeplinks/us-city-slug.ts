@@ -78,9 +78,24 @@ const US_COUNTRY_NAMES: ReadonlySet<string> = new Set([
   "united states of america",
 ]);
 
-/** Lowercase kebab slug for the city segment ("San Francisco" → "san-francisco"). */
+/**
+ * State NAMES that are also country names ("Tbilisi, Georgia" is not in the
+ * US). A bare ambiguous name only counts as a US state when an explicit US
+ * country segment follows ("Atlanta, Georgia, USA"); the USPS code ("GA")
+ * stays unambiguous. Conservative by design — an omitted button is honest.
+ */
+const AMBIGUOUS_STATE_NAMES: ReadonlySet<string> = new Set(["georgia"]);
+
+/**
+ * Lowercase kebab slug for the city segment ("San Francisco" →
+ * "san-francisco"). NFD-normalize + strip combining marks first so accented
+ * destinations slug the way Eventbrite does ("Doña Ana" → "dona-ana") instead
+ * of dropping the letter entirely ("d-a-ana").
+ */
 function citySlug(city: string): string | null {
   const slug = city
+    .normalize("NFD")
+    .replaceAll(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replaceAll(/[^a-z0-9]+/g, "-")
     .replaceAll(/^-+|-+$/g, "");
@@ -107,14 +122,18 @@ export function usCityStateSlug(destinationName: string): string | null {
 
   const last = segments[segments.length - 1];
   if (last === undefined) return null;
-  const withoutCountry = US_COUNTRY_NAMES.has(last.toLowerCase())
-    ? segments.slice(0, -1)
-    : segments;
+  const hasUsCountry = US_COUNTRY_NAMES.has(last.toLowerCase());
+  const withoutCountry = hasUsCountry ? segments.slice(0, -1) : segments;
   if (withoutCountry.length < 2) return null;
 
   const stateSegment = withoutCountry[withoutCountry.length - 1];
   const cityIn = withoutCountry[0];
   if (stateSegment === undefined || cityIn === undefined) return null;
+
+  // "Tbilisi, Georgia" is a country destination, not a US state — an
+  // ambiguous state NAME needs the explicit US country segment to count.
+  const normalizedState = stateSegment.toLowerCase().replaceAll(/\s+/g, " ").trim();
+  if (AMBIGUOUS_STATE_NAMES.has(normalizedState) && !hasUsCountry) return null;
 
   const code = stateCode(stateSegment);
   if (code === null) return null;

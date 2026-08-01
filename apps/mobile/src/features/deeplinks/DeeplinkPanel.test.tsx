@@ -11,10 +11,13 @@
  * Members are SEEDED into the test cache (deterministic adults default);
  * the apiClient spy answers the mount refetch with the same rows, so no
  * assertion ever races the query. RNTL v14: every render/fireEvent awaited.
+ * Train tests SETTLE their queries inside act before returning (R1 / B-2
+ * flake class: a debounce-driven lookup that settles after the test escapes
+ * every act window under CI's 2-core contention).
  */
 import { memberEndpoints, type MemberList } from "@gogo/shared";
 import type { QueryClient } from "@tanstack/react-query";
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import * as Linking from "expo-linking";
 
 import { apiClient } from "@/auth";
@@ -151,10 +154,57 @@ describe("lodging — form surface", () => {
     );
     await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-airbnb"));
     await waitFor(() =>
-      expect(screen.getByTestId("itinerary-item-new-deeplink-error")).toBeOnTheScreen(),
+      expect(screen.getByTestId("itinerary-item-new-error-deeplink")).toBeOnTheScreen(),
     );
     // No phantom "Did you book it?" for a hop that never happened.
     expect(readDeeplinkOutRecord()).toBeNull();
+  });
+
+  it("a cleared adults field falls back to the member-count default (R-itin-32 edge)", async () => {
+    await renderWithProviders(
+      <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={LODGING_INPUT} />,
+      { queryClient: makeMembersClient() },
+    );
+    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-adults"), "");
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-airbnb"));
+    await waitFor(() =>
+      expect(openURLMock).toHaveBeenCalledWith(
+        "https://www.airbnb.com/s/Tokyo%2C%20Japan/homes?checkin=2026-09-10&checkout=2026-09-14&adults=3",
+      ),
+    );
+  });
+
+  it("non-numeric adults input falls back to the member-count default (R-itin-32 edge)", async () => {
+    await renderWithProviders(
+      <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={LODGING_INPUT} />,
+      { queryClient: makeMembersClient() },
+    );
+    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-adults"), "abc");
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-airbnb"));
+    await waitFor(() =>
+      expect(openURLMock).toHaveBeenCalledWith(
+        "https://www.airbnb.com/s/Tokyo%2C%20Japan/homes?checkin=2026-09-10&checkout=2026-09-14&adults=3",
+      ),
+    );
+  });
+
+  it("onUrlOpened fires AFTER a successful open with the partner + exact URL (consumer seam)", async () => {
+    const onUrlOpened = jest.fn();
+    await renderWithProviders(
+      <DeeplinkPanel
+        tripId={TEST_TRIP_ID}
+        surface="form"
+        input={LODGING_INPUT}
+        onUrlOpened={onUrlOpened}
+      />,
+      { queryClient: makeMembersClient() },
+    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-airbnb"));
+    await waitFor(() => expect(onUrlOpened).toHaveBeenCalledTimes(1));
+    expect(onUrlOpened).toHaveBeenCalledWith(
+      "airbnb",
+      "https://www.airbnb.com/s/Tokyo%2C%20Japan/homes?checkin=2026-09-10&checkout=2026-09-14&adults=3",
+    );
   });
 });
 
@@ -180,6 +230,53 @@ describe("detail surface (R-itin-25)", () => {
       tripId: TEST_TRIP_ID,
       timestamp: expect.any(Number),
     });
+  });
+
+  it("a failed open on the detail surface uses the booking-detail error id (§2.9)", async () => {
+    openURLMock.mockImplementation(async () => {
+      throw new Error("no handler");
+    });
+    await renderWithProviders(
+      <DeeplinkPanel tripId={TEST_TRIP_ID} surface="detail" input={LODGING_INPUT} />,
+      { queryClient: makeMembersClient() },
+    );
+    await fireEvent.press(screen.getByTestId("booking-detail-button-deeplink-airbnb"));
+    await waitFor(() =>
+      expect(screen.getByTestId("booking-detail-error-deeplink")).toBeOnTheScreen(),
+    );
+  });
+});
+
+describe("car_rental (§2.7 rows 10–11)", () => {
+  it("renders Kayak Cars + Turo and opens the exact §2.7 URLs", async () => {
+    await renderWithProviders(
+      <DeeplinkPanel
+        tripId={TEST_TRIP_ID}
+        surface="form"
+        input={{
+          category: "car_rental",
+          fields: {
+            pickupLocation: "Los Angeles",
+            pickupDate: "2026-09-10",
+            dropoffDate: "2026-09-14",
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("itinerary-item-new-button-search-kayak-cars")).toBeOnTheScreen();
+    expect(screen.getByTestId("itinerary-item-new-button-search-turo")).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-kayak-cars"));
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-turo"));
+    await waitFor(() => expect(openURLMock).toHaveBeenCalledTimes(2));
+    expect(openURLMock).toHaveBeenNthCalledWith(
+      1,
+      "https://www.kayak.com/cars/Los%20Angeles/2026-09-10/2026-09-14",
+    );
+    expect(openURLMock).toHaveBeenNthCalledWith(
+      2,
+      "https://turo.com/us/en/search?location=Los%20Angeles&startDate=09%2F10%2F2026",
+    );
   });
 });
 
@@ -272,26 +369,42 @@ describe("train — Trainline two-step URN flow (§2.7)", () => {
     },
   } as const;
 
-  it("resolves URNs (debounced lookups) and opens the exact results URL; Omio/Amtrak are plain links", async () => {
-    const urnByTerm: Record<string, string> = {
-      "London Euston": "urn:trainline:generic:loc:182gb",
-      "Manchester Piccadilly": "urn:trainline:generic:loc:1745gb",
-    };
+  /** URN-by-term lookup stub (unmapped terms answer the §2.7 no-match shape). */
+  function stubLookup(urnByTerm: Record<string, string>): void {
     globalThis.fetch = jest.fn(async (url: unknown) => {
       const term = decodeURIComponent(String(url).split("searchTerm=")[1] ?? "");
       const urn = urnByTerm[term];
       return {
         ok: true,
         status: 200,
-        json: async () => ({ searchLocations: urn !== undefined ? [{ urn }] : [] }),
+        text: async () =>
+          JSON.stringify({ searchLocations: urn !== undefined ? [{ urn }] : [] }),
       } as unknown as Response;
     }) as unknown as typeof fetch;
+  }
 
+  /**
+   * B1 (B-2 flake class): the debounce timers + lookup settles must all land
+   * INSIDE an act window before the test returns — a notify that fires
+   * during a later suite escapes act only under CI's 2-core contention.
+   */
+  async function settleLookups(client: QueryClient): Promise<void> {
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+  }
+
+  it("resolves URNs (debounced lookups) and opens the exact results URL; Omio/Amtrak are plain links", async () => {
+    stubLookup({
+      "London Euston": "urn:trainline:generic:loc:182gb",
+      "Manchester Piccadilly": "urn:trainline:generic:loc:1745gb",
+    });
+    const client = makeTestQueryClient();
     await renderWithProviders(
       <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={TRAIN_INPUT} />,
+      { queryClient: client },
     );
-    // In-flight lookup: disabled with the pending hint, not an error.
-    expect(screen.getByTestId("itinerary-item-new-button-search-trainline")).toBeDisabled();
+    // NO "disabled at mount" pin here — microtask-speed mock lookups can
+    // settle inside the render act under contention (R1 full-gate flake).
+    // The pending arm is pinned DETERMINISTICALLY in its own test below.
     await waitFor(() =>
       expect(screen.getByTestId("itinerary-item-new-button-search-trainline")).not.toBeDisabled(),
     );
@@ -306,6 +419,7 @@ describe("train — Trainline two-step URN flow (§2.7)", () => {
     );
     expect(openURLMock).toHaveBeenNthCalledWith(2, "https://www.omio.com/");
     expect(openURLMock).toHaveBeenNthCalledWith(3, "https://www.amtrak.com/");
+    await settleLookups(client);
   });
 
   it("degrades to the plain domain when the lookup fails (§2.7 failure arm)", async () => {
@@ -313,18 +427,60 @@ describe("train — Trainline two-step URN flow (§2.7)", () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
 
+    const client = makeTestQueryClient();
     await renderWithProviders(
       <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={TRAIN_INPUT} />,
+      { queryClient: client },
     );
     await waitFor(() =>
       expect(screen.getByTestId("itinerary-item-new-button-search-trainline")).not.toBeDisabled(),
     );
     await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-trainline"));
     await waitFor(() => expect(openURLMock).toHaveBeenCalledWith("https://www.thetrainline.com/"));
+    await settleLookups(client);
+  });
+
+  it("degrades to the plain domain when a station finds NO match (data-null fold, §2.7)", async () => {
+    // Origin maps; the destination term finds nothing → the lookup RAN and
+    // settled null. The panel must fold that into the plain-domain degrade,
+    // not sit on "Finding stations…" forever (R1 blocking arm).
+    stubLookup({ "London Euston": "urn:trainline:generic:loc:182gb" });
+    const client = makeTestQueryClient();
+    await renderWithProviders(
+      <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={TRAIN_INPUT} />,
+      { queryClient: client },
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("itinerary-item-new-button-search-trainline")).not.toBeDisabled(),
+    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-search-trainline"));
+    await waitFor(() => expect(openURLMock).toHaveBeenCalledWith("https://www.thetrainline.com/"));
+    await settleLookups(client);
+  });
+
+  it("an in-flight lookup disables with the pending hint, not an error (deterministic pending arm)", async () => {
+    // A lookup that can never settle pins the pending state without racing
+    // the mock's microtask timing (the R1 full-gate flake).
+    globalThis.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
+    await renderWithProviders(
+      <DeeplinkPanel tripId={TEST_TRIP_ID} surface="form" input={TRAIN_INPUT} />,
+    );
+    expect(screen.getByTestId("itinerary-item-new-button-search-trainline")).toBeDisabled();
+    expect(screen.getByTestId("itinerary-item-new-button-search-trainline-hint")).toHaveTextContent(
+      "Finding stations…",
+    );
+    // Omio/Amtrak stay plain-link ready regardless of the lookup.
+    expect(screen.getByTestId("itinerary-item-new-button-search-omio")).not.toBeDisabled();
+    // Flush the debounce's scheduled work inside act before teardown (B1).
+    await act(async () => {});
   });
 
   it("missing station text/date disables with the hint before any lookup", async () => {
-    globalThis.fetch = jest.fn() as unknown as typeof fetch;
+    // The ORIGIN field is populated, so its debounced lookup still fires —
+    // a mock that resolved `undefined` would TypeError on `response.ok` when
+    // the debounce lands pre-cleanup (R1). Never-resolving keeps the query
+    // pending; unmount cancels it via the composed abort signal.
+    globalThis.fetch = jest.fn(() => new Promise(() => {})) as unknown as typeof fetch;
     await renderWithProviders(
       <DeeplinkPanel
         tripId={TEST_TRIP_ID}
@@ -336,5 +492,7 @@ describe("train — Trainline two-step URN flow (§2.7)", () => {
     expect(screen.getByTestId("itinerary-item-new-button-search-trainline-hint")).toHaveTextContent(
       "Needs destination station, departure time",
     );
+    // Flush the debounce's scheduled work inside act before teardown (B1).
+    await act(async () => {});
   });
 });

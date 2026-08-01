@@ -25,6 +25,9 @@ import {
 import { create, type StateCreator } from "zustand";
 
 import { queryClient } from "@/data/query-client";
+// Direct module import (not the feature barrel) — the barrel pulls the panel,
+// whose data hooks import this file's apiClient: a require cycle.
+import { clearDeeplinkOutRecord } from "@/features/deeplinks/return-prompt-store";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
 
@@ -199,6 +202,10 @@ export const useSessionStore = create<SessionState>()(
       queryClient.clear();
       resetTabMemory();
       clearLastViewedTrip();
+      // Sign-out hygiene (T-7.8 R1): a pending deeplink-return record must
+      // not prompt "Did you book it?" at the NEXT account for the previous
+      // account's trip.
+      clearDeeplinkOutRecord();
     },
   }),
 );

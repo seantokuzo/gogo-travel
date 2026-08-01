@@ -485,7 +485,9 @@ export function DeeplinkPanel({
         <ErrorBanner
           message={openError}
           onDismiss={() => setOpenError(null)}
-          testID={`${surface === "form" ? "itinerary-item-new" : "booking-detail"}-deeplink-error`}
+          // §2.9 grammar: <screen>-<element>[-qualifier] — element "error",
+          // qualifier "-deeplink" (R1 rename from the inverted `…-deeplink-error`).
+          testID={`${surface === "form" ? "itinerary-item-new" : "booking-detail"}-error-deeplink`}
         />
       ) : null}
       {input.category === "flight" ? <FlightPanel {...shared} fields={input.fields} /> : null}

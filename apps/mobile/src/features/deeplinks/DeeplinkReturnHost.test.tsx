@@ -98,6 +98,38 @@ it("a stale (>30 min) record expires silently on foreground", async () => {
   expect(readDeeplinkOutRecord()).toBeNull();
 });
 
+it("a foreground with nothing pending must NOT clobber the presented prompt (R1 guard arm)", async () => {
+  const appState = spyAppState();
+  await renderWithProviders(<DeeplinkReturnHost />);
+  recordDeeplinkOut(makeRecord());
+  await appState.emit("active");
+  expect(screen.getByTestId("booking-return-sheet")).toBeOnTheScreen();
+
+  // The slot is already consumed — a second foreground reads null and must
+  // leave the sheet the user is currently looking at alone.
+  await appState.emit("active");
+  expect(screen.getByTestId("booking-return-sheet")).toBeOnTheScreen();
+});
+
+it("unmount before the mount check fires cancels WITHOUT consuming (R1 guard arm)", async () => {
+  jest.useFakeTimers();
+  try {
+    recordDeeplinkOut(makeRecord());
+    const view = await renderWithProviders(<DeeplinkReturnHost />);
+    // Unmount before the scheduled mount check runs (fake timers hold it).
+    await view.unmount();
+    jest.advanceTimersByTime(60_000);
+    // Cancelled, not consumed — the record survives for the next mount.
+    expect(readDeeplinkOutRecord()).toMatchObject({
+      partner: "airbnb",
+      category: "lodging",
+      tripId: TEST_TRIP_ID,
+    });
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 it("forward/share render disabled until the capture-spec seams are wired", async () => {
   recordDeeplinkOut(makeRecord());
   await renderWithProviders(<DeeplinkReturnHost />);
@@ -142,6 +174,21 @@ it("'add manually' lands the minimal create with source: 'deeplink_return' pinne
 
   // Success closes the landing sheet.
   await waitFor(() => expect(screen.queryByTestId("booking-manual-add-sheet")).toBeNull());
+});
+
+it("cancel on the manual-add sheet closes it WITHOUT landing a create (R1 pin)", async () => {
+  const requestSpy = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+  requestSpy.mockResolvedValue({ id: "unused" } as unknown as Booking);
+  recordDeeplinkOut(makeRecord());
+  await renderWithProviders(<DeeplinkReturnHost />);
+
+  await waitFor(() => expect(screen.getByTestId("booking-return-button-manual")).toBeOnTheScreen());
+  await fireEvent.press(screen.getByTestId("booking-return-button-manual"));
+  expect(screen.getByTestId("booking-manual-add-sheet")).toBeOnTheScreen();
+
+  await fireEvent.press(screen.getByTestId("booking-manual-add-button-cancel"));
+  await waitFor(() => expect(screen.queryByTestId("booking-manual-add-sheet")).toBeNull());
+  expect(requestSpy).not.toHaveBeenCalled();
 });
 
 it("a failed create surfaces the sheet's ErrorBanner via the hook-level seam and stays open", async () => {

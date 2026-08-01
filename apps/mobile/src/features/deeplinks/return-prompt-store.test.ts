@@ -9,11 +9,40 @@
 import {
   clearDeeplinkOutRecord,
   consumePendingReturnPrompt,
+  DEEPLINK_RETURN_KEY,
   readDeeplinkOutRecord,
   recordDeeplinkOut,
   RETURN_PROMPT_WINDOW_MS,
   type DeeplinkOutRecord,
 } from "./return-prompt-store";
+
+/**
+ * The package's jest mock scopes each `createMMKV()` to its own Map (no
+ * shared default instance), so the raw-bytes test below needs a handle on
+ * the STORE MODULE's instance: wrap the factory (keeping the real mock
+ * adapter) and expose the created instances on the mocked module. The list
+ * lives INSIDE the factory — `jest.mock` hoists above this file's consts,
+ * so an outer binding would hit its TDZ when the store module imports mmkv.
+ */
+jest.mock("react-native-mmkv", () => {
+  const actual = jest.requireActual<typeof import("react-native-mmkv")>("react-native-mmkv");
+  const instances: unknown[] = [];
+  return {
+    ...actual,
+    __instances: instances,
+    createMMKV: (...args: Parameters<typeof actual.createMMKV>) => {
+      const instance = actual.createMMKV(...args);
+      instances.push(instance);
+      return instance;
+    },
+  };
+});
+
+function mmkvInstances(): { set(key: string, value: string): void }[] {
+  return (jest.requireMock("react-native-mmkv") as { __instances: unknown[] }).__instances as {
+    set(key: string, value: string): void;
+  }[];
+}
 
 const TRIP_ID = "33333333-cccc-4ccc-8ccc-333333333333";
 
@@ -60,6 +89,16 @@ it("the window boundary itself still prompts; a future-stamped record does not",
 
 it("corrupt or wrong-shape persisted values fold to no pending return", () => {
   recordDeeplinkOut({ category: "not-a-category" } as unknown as DeeplinkOutRecord);
+  expect(readDeeplinkOutRecord()).toBeNull();
+  expect(consumePendingReturnPrompt()).toBeNull();
+});
+
+it("raw non-JSON in the slot folds to no pending return (JSON.parse catch arm, R1)", () => {
+  const storeInstance = mmkvInstances()[0];
+  expect(storeInstance).toBeDefined();
+  // Bypass recordDeeplinkOut (which always stringifies) — this is the
+  // torn-write/foreign-writer shape the catch arm exists for.
+  storeInstance?.set(DEEPLINK_RETURN_KEY, "{not json");
   expect(readDeeplinkOutRecord()).toBeNull();
   expect(consumePendingReturnPrompt()).toBeNull();
 });
