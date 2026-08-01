@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
+import { buildItineraryDeps } from "./itinerary/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
 import { buildTravelLegs } from "./travel-legs/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
@@ -68,6 +69,9 @@ if (authDeps) {
     // Booking service + router (T-7.1); mutations mark the LIVE leg worker
     // (T-7.3) post-commit.
     bookings: buildBookingsDeps(travelLegs.marker),
+    // Itinerary router (T-7.2): item CRUD + day reorder + composite read;
+    // same dormant dirty-day seam.
+    itinerary: buildItineraryDeps(),
     // Refresh-legs endpoint (T-7.3) + the staleness sweep below.
     travelLegs: travelLegs.routerDeps,
   };

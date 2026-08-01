@@ -287,6 +287,21 @@ export const TRAVEL_LEGS_SWEEP_INTERVAL_MS = HOUR_MS;
 export const TRAVEL_LEGS_PROVIDER_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
+// App-wide request-body cap (PR #11 R1 security defer) — createApp
+// ---------------------------------------------------------------------------
+
+/**
+ * Hono `bodyLimit` cap, applied ONCE app-wide before every router: without
+ * it, every POST/PATCH buffers + JSON-parses arbitrarily large bodies before
+ * zod ever runs. 256 KiB is ~50× the largest legitimate payload on any
+ * current surface (a maxed-out flight `details` with 8 segments is single-
+ * digit KiB; avatar bytes go direct-to-storage via presign, never through
+ * JSON) while starving memory-amplification abuse. Exceeding it returns the
+ * shared envelope's `PAYLOAD_TOO_LARGE` (413).
+ */
+export const BODY_LIMIT_MAX_BYTES = 256 * 1024;
+
+// ---------------------------------------------------------------------------
 // Trip role ladder (auth-users spec §2.5 R-authz-3; `requireTripMember`)
 // ---------------------------------------------------------------------------
 

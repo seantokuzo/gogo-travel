@@ -1,6 +1,11 @@
 import { createRequire } from "node:module";
+import { createLocalJWKSet, generateKeyPair } from "jose";
 import { describe, expect, it } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
+import type { AuthRouterDeps } from "./auth/routes.js";
+import type { BookingsRouterDeps } from "./bookings/routes.js";
+import type { DbClient } from "./db/create-user.js";
+import type { ItineraryRouterDeps } from "./itinerary/routes.js";
 import type { PlacesRouterDeps } from "./places/routes.js";
 import type { TravelLegsRouterDeps } from "./travel-legs/routes.js";
 import type { TripsRouterDeps } from "./trips/routes.js";
@@ -89,6 +94,34 @@ describe("createApp wiring guard", () => {
     expect((error as Error).message).toContain("requireAuth");
   });
 
+  it("throws when the bookings router is mounted without auth deps", () => {
+    // Same pairing rule (T-7.1): every bookings route is Auth: Required AND
+    // sits behind the trip-membership gate (R-ib-24).
+    let error: unknown;
+    try {
+      createApp({ bookings: {} as BookingsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the itinerary router is mounted without auth deps", () => {
+    // Same pairing rule (T-7.2): every itinerary route is Auth: Required AND
+    // sits behind the trip-membership gate (R-ib-24).
+    let error: unknown;
+    try {
+      createApp({ itinerary: {} as ItineraryRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
   it("throws when the travel-legs router is mounted without auth deps", () => {
     // Same pairing rule (T-7.3): the refresh-legs route is Auth: Required
     // behind the trip-membership gate (R-ib-24) — never silently unguarded.
@@ -101,5 +134,94 @@ describe("createApp wiring guard", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("auth");
     expect((error as Error).message).toContain("requireAuth");
+  });
+});
+
+describe("app-wide bodyLimit (PR #11 R1 defer)", () => {
+  // A scratch echo route ON the createApp instance: `app.use("*")` middleware
+  // registered inside createApp runs for routes added afterwards too, so this
+  // exercises the REAL app-wide cap, not a re-built lookalike.
+  function appWithEcho() {
+    const testApp = createApp();
+    testApp.post("/api/echo", async (c) => {
+      const body = await c.req.json<{ size?: number }>();
+      return c.json({ ok: true, size: body.size ?? null });
+    });
+    return testApp;
+  }
+
+  const post = (testApp: ReturnType<typeof createApp>, body: string) =>
+    testApp.request("/api/echo", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+
+  it("passes a normal-size JSON body untouched", async () => {
+    const testApp = appWithEcho();
+    const res = await post(testApp, JSON.stringify({ size: 1 }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, size: 1 });
+  });
+
+  it("auth precedes the body cap: an oversized UNAUTHENTICATED body is the uniform 401, never a 413 oracle (R-authz-4)", async () => {
+    // Real auth-mounted app — the guard only reads `accessVerify`; the other
+    // deps are construction-time stubs no request on this path ever touches
+    // (the 401 fires in middleware, before any router or the DB).
+    const pair = await generateKeyPair("ES256");
+    const authDeps: AuthRouterDeps = {
+      db: {} as DbClient,
+      verifier: {
+        appleJwks: createLocalJWKSet({ keys: [] }),
+        googleJwks: createLocalJWKSet({ keys: [] }),
+        appleAudience: "com.gogo.travel",
+        googleAudiences: ["gid.apps.example"],
+      },
+      signer: { privateKey: pair.privateKey, kid: "test-kid" },
+      accessVerify: { publicKey: pair.publicKey },
+      appleExchange: { exchange: () => Promise.reject(new Error("unused in this test")) },
+      appleCredentialsKey: Buffer.alloc(32, 7),
+      logger: { warn: () => undefined },
+    };
+    const authedApp = createApp({ auth: authDeps });
+
+    // Over-cap body, no token, non-allowlisted path. Content-Length is set
+    // EXPLICITLY (undici does not auto-attach it to constructed Requests):
+    // bodyLimit rejects off that header at middleware time, so ONLY the
+    // auth-first ordering in createApp produces the 401 — flipped middleware
+    // would 413 and hand unauthenticated callers a free size oracle.
+    const oversized = `{"pad":"${"x".repeat(256 * 1024)}"}`;
+    const res = await authedApp.request("/api/trips", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(oversized, "utf8")),
+      },
+      body: oversized,
+    });
+    expect(res.status).toBe(401);
+    const envelope = (await res.json()) as { error: { code: string } };
+    expect(envelope.error.code).toBe("UNAUTHENTICATED");
+  });
+
+  it("passes a body just under the cap; 413s one byte over it (shared PAYLOAD_TOO_LARGE envelope)", async () => {
+    const testApp = appWithEcho();
+    // {"pad":"…"} wrapper is 10 bytes; fill to exactly the cap.
+    const wrapBytes = '{"pad":""}'.length;
+    const atCap = `{"pad":"${"x".repeat(256 * 1024 - wrapBytes)}"}`;
+    expect(Buffer.byteLength(atCap, "utf8")).toBe(256 * 1024);
+
+    const under = await post(testApp, atCap);
+    expect(under.status).toBe(200);
+
+    const over = await post(testApp, `${atCap} `);
+    expect(over.status).toBe(413);
+    const envelope = (await over.json()) as {
+      error: { code: string; message: string; requestId?: string };
+    };
+    // The shared ApiError envelope, never Hono's default text body — and a
+    // requestId so an operator can correlate abuse.
+    expect(envelope.error.code).toBe("PAYLOAD_TOO_LARGE");
+    expect(envelope.error.requestId).toBeTruthy();
   });
 });
