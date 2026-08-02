@@ -46,7 +46,8 @@ it("R-nav-20: a member's trip mounts the tab shell with trip context and stamps 
   const request = mockNavApi();
   await renderApp(`/${TEST_TRIP_ID}/itinerary`);
   const itinerary = await screen.findByTestId("itinerary-screen");
-  expect(within(itinerary).getByText(`Trip ${TEST_TRIP_ID}`)).toBeOnTheScreen();
+  // T-7.4: the real itinerary screen proves trip context via the trip name.
+  expect(within(itinerary).getByText("Kyoto")).toBeOnTheScreen();
   // The guard verified membership BEFORE rendering trip data (R-nav-20).
   expect(request).toHaveBeenCalledWith(...GUARD_CALL(TEST_TRIP_ID));
   // Verified success ⇒ viewed: the R-nav-23 stamp landed post-verdict.

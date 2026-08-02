@@ -42,3 +42,17 @@ jest.mock("expo-auth-session/providers/google", () => ({
   __esModule: true,
   useIdTokenAuthRequest: () => [null, null, jest.fn(async () => ({ type: "dismiss" }))],
 }));
+
+/**
+ * Gesture/animation runtime (T-7.4 — the itinerary drag list rides
+ * react-native-reorderable-list over gesture-handler + reanimated): all
+ * three packages ship sanctioned jest environments — RNGH's jestSetup mocks
+ * the native handler modules, react-native-worklets' documented jest mock
+ * replaces its TurboModule (reanimated 4 initializes worklets at import, so
+ * the mock must be registered FIRST), and reanimated's setUpTests installs
+ * its official mock + matchers. Without these the drag list's native
+ * imports fault under jest (same class as the auth stubs above).
+ */
+require("react-native-gesture-handler/jestSetup");
+jest.mock("react-native-worklets", () => require("react-native-worklets/lib/module/mock"));
+require("react-native-reanimated").setUpTests();

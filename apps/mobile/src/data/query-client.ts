@@ -54,6 +54,21 @@ export const queryKeys = {
   tripMembers: (tripId: string) => ["trips", tripId, "members"] as const,
   /** `GET /trips/:tripId/invites` (T-6.8) — §2.6 `['trip', tripId, 'invites']`. */
   tripInvites: (tripId: string) => ["trips", tripId, "invites"] as const,
+  /**
+   * `GET /trips/:tripId/itinerary` (T-7.4) — the R-ib-13 composite read
+   * `{items, legs}`. DETAIL-SUBTREE key (key-cache law): the guard's 404
+   * scrub and `evictTripSubtree` remove by PREFIX over `trip(tripId)`, so
+   * rooting here IS the NAV-4 zero-trip-data posture for itinerary data —
+   * access loss evicts it with the trip. Pinned by the T-7.4 scrub test.
+   */
+  tripItinerary: (tripId: string) => ["trips", tripId, "itinerary"] as const,
+  /**
+   * `GET /trips/:tripId/bookings` (T-7.4) — the calendar's booking
+   * enrichment read (R-itin-8 category/status; R-itin-3 day locks). Same
+   * detail-subtree rationale as `tripItinerary`. Booking MUTATION hooks are
+   * T-7.6/T-7.8's (`data/bookings.ts`) — they must reuse THIS key.
+   */
+  tripBookings: (tripId: string) => ["trips", tripId, "bookings"] as const,
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */
