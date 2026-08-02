@@ -149,8 +149,14 @@ export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) 
    * The gate is LEGIBLE, not silent (`dismissDisabled` renders the close
    * affordance visibly disabled): a swallowed tap with no feedback reads as
    * a frozen app, and every other gated affordance in the DS shows its
-   * state. Bounded by the ApiClient's request timeout + `retry: false`, so
-   * even a black-holed request releases the gate on its own.
+   * state.
+   *
+   * The gate always self-releases (`retry: false` + the ApiClient's abort
+   * cap), but the worst case is NOT one `REQUEST_TIMEOUT_MS`: a 401 sends
+   * the request through the refresh-and-retry path, and each leg gets a
+   * FRESH cap — original + refresh + retry ≈ 3× before `onError` fires. If
+   * that window ever needs to shrink, cap it here rather than in the
+   * ApiClient (whose per-request bound is deliberate).
    */
   const dismiss = (): void => {
     if (schedule.isPending) return;

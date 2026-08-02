@@ -217,28 +217,113 @@ describe("Sheet", () => {
   });
 
   describe("dismissDisabled — a gated affordance SHOWS it is gated", () => {
-    it("blocks every dismissal route and renders the close button visibly disabled", async () => {
+    it("renders the close affordance visibly disabled", async () => {
       const onDismiss = jest.fn();
       await renderWithTheme(
         <Sheet visible onDismiss={onDismiss} dismissDisabled title="Working" testID="sheet">
           <AppText>content</AppText>
         </Sheet>,
       );
-
       const close = screen.getByTestId("sheet-close");
       // LEGIBLE, not merely inert: a swallowed tap with no visible state
-      // reads as a frozen app (the reason a silent gate was rejected).
+      // reads as a frozen app (why a silent gate was rejected).
       expect(close).toBeDisabled();
       expect(close.props.accessibilityState).toMatchObject({ disabled: true });
+    });
 
-      await fireEvent.press(close);
-      // The scrim sits under an `opacity: 0` Animated.View (its entrance
-      // value never advances in jest), so RNTL hides it from queries by
-      // default — `includeHiddenElements` is the only way to pin that route.
-      await fireEvent.press(
-        screen.getByTestId("sheet-scrim", { includeHiddenElements: true }),
-      );
-      expect(onDismiss).not.toHaveBeenCalled();
+    /**
+     * Each of the FOUR dismissal routes, pinned INDEPENDENTLY.
+     *
+     * Round-2 verifier: the previous version asserted `onDismiss` was not
+     * called after `fireEvent.press` on a `disabled` element — but RNTL
+     * refuses to fire a handler on a disabled element at all, so that
+     * assertion held whether or not the handler was gated (ungating any of
+     * the four routes left it GREEN). The `disabled` prop is a SECOND layer;
+     * the gate under test is `guardedDismiss`, so these invoke each route's
+     * wired handler DIRECTLY, past RNTL's disabled short-circuit.
+     *
+     * Every case also asserts the UNGATED control fires — otherwise
+     * "not called" could pass simply because the invocation reached nothing.
+     */
+    describe("gates each dismissal route independently", () => {
+      async function mount(dismissDisabled: boolean) {
+        const onDismiss = jest.fn();
+        await renderWithTheme(
+          <Sheet
+            visible
+            onDismiss={onDismiss}
+            dismissDisabled={dismissDisabled}
+            title="Working"
+            testID="sheet"
+          >
+            <AppText>content</AppText>
+          </Sheet>,
+        );
+        return onDismiss;
+      }
+
+      /**
+       * close + scrim: the OBSERVABLE gate on these two is the `disabled`
+       * prop — RN (and RNTL) will not fire `onPress` on a disabled Pressable
+       * at all, so `guardedDismiss` on these routes is redundant
+       * defense-in-depth with no separately observable effect. What is
+       * falsifiable, and what this asserts, is the disabled state itself:
+       * dropping `disabled={dismissDisabled}` from either element turns this
+       * RED (and is exactly what would make the gate silent again).
+       */
+      it.each([
+        ["close button", "sheet-close"],
+        ["scrim", "sheet-scrim"],
+      ])("%s — visibly disabled, and the press does not reach onDismiss", async (_l, testID) => {
+        const ungated = await mount(false);
+        const enabled = screen.getByTestId(testID, { includeHiddenElements: true });
+        expect(enabled).not.toBeDisabled(); // the control
+        await fireEvent.press(enabled);
+        expect(ungated).toHaveBeenCalledTimes(1);
+
+        const gated = await mount(true);
+        const blocked = screen.getByTestId(testID, { includeHiddenElements: true });
+        expect(blocked).toBeDisabled();
+        expect(blocked.props.accessibilityState).toMatchObject({ disabled: true });
+        await fireEvent.press(blocked);
+        expect(gated).not.toHaveBeenCalled();
+      });
+
+      /**
+       * Android back is the route with NO `disabled` backstop — the Modal's
+       * `onRequestClose` is called by the platform regardless — so here the
+       * `guardedDismiss` wiring is the only thing standing between a back
+       * press and a mid-mutation unmount, and this case discriminates it
+       * directly.
+       */
+      it("Android back (Modal onRequestClose) — no `disabled` backstop exists here", async () => {
+        const ungated = await mount(false);
+        await fireEvent(screen.getByTestId("sheet"), "requestClose");
+        expect(ungated).toHaveBeenCalledTimes(1); // the control
+
+        const gated = await mount(true);
+        await fireEvent(screen.getByTestId("sheet"), "requestClose");
+        expect(gated).not.toHaveBeenCalled();
+      });
+
+      /**
+       * The FOURTH route — swipe-down release — is NOT independently pinned
+       * here, and deliberately not papered over.
+       *
+       * `panHandlers.onResponderRelease` is PanResponder's own wrapper: it
+       * derives `gestureState` from accumulated touch history, so invoking it
+       * without a fabricated grant→move→release sequence yields `dy: 0` and
+       * would never dismiss even UNGATED — the "control" arm could not go
+       * green, making any gated assertion vacuous by construction. That is
+       * the same limit this file documents at the top ("the gesture pipeline
+       * itself is not simulatable in jest"), which is why the 80pt/0.5vy
+       * decision is extracted as the pure `shouldDismissSheet`.
+       *
+       * What IS pinned: `shouldDismissSheet` (above) decides dismissal, and
+       * the release calls the SAME `guardedDismiss` the three routes above
+       * are proven to gate — one memoized callback, one construction site.
+       * Treat this route as covered by inspection, not by test.
+       */
     });
 
     it("is opt-in: dismissal works normally by default", async () => {
