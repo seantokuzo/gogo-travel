@@ -38,6 +38,8 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
 import { useDayOrder, useItinerary, useItineraryBookings } from "@/data";
 import {
+  AddOptionsSheet,
+  addOptionSlug,
   BOOKING_DAY_LOCK_HINT,
   buildDayRows,
   DayJumpStrip,
@@ -94,7 +96,12 @@ export default function ItineraryScreen() {
 
   const [mode, setMode] = useState<ItineraryViewMode>(() => readItineraryViewMode(trip.id));
   const [notice, setNotice] = useState<ReorderNotice>(null);
+  const [addSheetVisible, setAddSheetVisible] = useState(false);
   const listHandle = useRef<ItineraryDayListHandle>(null);
+
+  // R-ib-24 client half: writes are editor/owner — viewers get no add
+  // affordances at all (no guaranteed-403 buttons; drag is already gated).
+  const editor = trip.role !== "viewer";
 
   const dayOrder = useDayOrder(trip.id, {
     // HOOK-level seam (T-6.8/T-6.9 landmine): fires for EVERY settled call.
@@ -119,7 +126,8 @@ export default function ItineraryScreen() {
   };
 
   // `time` (HH:mm) is the §2.5 gap-tap prefill leg — the grid passes it via
-  // the GridSurface seam; the item/new form consuming it is T-7.6's half.
+  // the GridSurface seam; the form's in-modal category step handles the
+  // missing `category` for these prefill paths (T-7.6).
   const openAdd = (day?: string, time?: string) => {
     router.push({
       pathname: "/[tripId]/itinerary/item/new",
@@ -128,6 +136,16 @@ export default function ItineraryScreen() {
         ...(day === undefined ? {} : { day }),
         ...(time === undefined ? {} : { time }),
       },
+    });
+  };
+
+  // R-itin-18: the FAB opens the 10-option add Sheet; a selection opens the
+  // form modal with that type preset.
+  const openAddOption = (option: Parameters<typeof addOptionSlug>[0]) => {
+    setAddSheetVisible(false);
+    router.push({
+      pathname: "/[tripId]/itinerary/item/new",
+      params: { tripId: trip.id, category: addOptionSlug(option) },
     });
   };
 
@@ -202,11 +220,15 @@ export default function ItineraryScreen() {
           icon="calendar-outline"
           title="Nothing planned yet"
           body="Days fill up fast — start with a stay, a flight, or an idea."
-          action={{
-            label: "Add your first plan",
-            onPress: () => openAdd(),
-            testID: "itinerary-empty-add",
-          }}
+          {...(editor
+            ? {
+                action: {
+                  label: "Add your first plan",
+                  onPress: () => setAddSheetVisible(true),
+                  testID: "itinerary-empty-add",
+                },
+              }
+            : {})}
           testID="itinerary-empty"
         />
       </View>
@@ -230,8 +252,10 @@ export default function ItineraryScreen() {
         <DayJumpStrip days={days} onJump={(date) => listHandle.current?.scrollToDay(date)} />
         <ItineraryDayList
           ref={listHandle}
-          rows={rows}
-          dragEnabled={trip.role !== "viewer" && !dayOrder.isPending}
+          // Viewers get no empty-day add rows (write affordance, R-ib-24);
+          // the day header still sections the range.
+          rows={editor ? rows : rows.filter((row) => row.type !== "empty-day")}
+          dragEnabled={editor && !dayOrder.isPending}
           onReorder={handleReorder}
           onOpenEntry={openEntry}
           onAddToDay={(date) => openAdd(date)}
@@ -283,12 +307,21 @@ export default function ItineraryScreen() {
           </View>
         ) : null}
         <View style={s.body}>{body}</View>
-        <Fab
-          icon="add"
-          label="Add to itinerary"
-          onPress={() => openAdd()}
-          testID="itinerary-fab-add"
-        />
+        {editor ? (
+          <>
+            <Fab
+              icon="add"
+              label="Add to itinerary"
+              onPress={() => setAddSheetVisible(true)}
+              testID="itinerary-fab-add"
+            />
+            <AddOptionsSheet
+              visible={addSheetVisible}
+              onDismiss={() => setAddSheetVisible(false)}
+              onSelect={openAddOption}
+            />
+          </>
+        ) : null}
       </View>
     </GestureHandlerRootView>
   );

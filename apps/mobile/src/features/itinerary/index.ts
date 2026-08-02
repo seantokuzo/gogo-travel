@@ -34,6 +34,42 @@ export {
 export type { IdeaCard, IdeasGroup, IdeasRow } from "./ideas/ideas-model";
 export { pickerDateToTime, TimeField, timeToPickerDate } from "./add-edit/TimeField";
 export type { TimeFieldProps } from "./add-edit/TimeField";
+export { AddOptionList } from "./add-edit/AddOptionList";
+export type { AddOptionListProps } from "./add-edit/AddOptionList";
+export { AddOptionsSheet } from "./add-edit/AddOptionsSheet";
+export type { AddOptionsSheetProps } from "./add-edit/AddOptionsSheet";
+export { BookingForm } from "./add-edit/BookingForm";
+export type { BookingFormProps } from "./add-edit/BookingForm";
+export { ItemForm } from "./add-edit/ItemForm";
+export type { ItemFormProps } from "./add-edit/ItemForm";
+export { OptionChips } from "./add-edit/OptionChips";
+export type { OptionChipsProps } from "./add-edit/OptionChips";
+export { PlacePickerField } from "./add-edit/PlacePickerField";
+export type { PlacePickerFieldProps } from "./add-edit/PlacePickerField";
+export {
+  ADD_OPTION_LABELS,
+  ADD_OPTION_ORDER,
+  addOptionSlug,
+  buildDetails,
+  CATEGORY_FIELDS,
+  centsToMoneyText,
+  composeLocalDateTime,
+  CREATE_STATUS_OPTIONS,
+  deeplinkInputFor,
+  emptyFormState,
+  parseMoneyToCents,
+  primaryStartKey,
+  stateFromDetails,
+  statusOptionsFor,
+} from "./add-edit/form-model";
+export type {
+  AddOptionId,
+  BookingFieldConfig,
+  DateTimeValue,
+  DetailsFormState,
+  FieldValue,
+  MoneyParse,
+} from "./add-edit/form-model";
 export { BOOKING_DAY_LOCK_HINT, resolveDrop } from "./reorder";
 export type { DropResolution } from "./reorder";
 export { readItineraryViewMode, storeItineraryViewMode } from "./view-mode";

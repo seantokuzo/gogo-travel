@@ -18,7 +18,7 @@
  * gcTime-0 unobserved entry can be collected mid-assert).
  */
 import type { ItineraryRead } from "@gogo/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
@@ -65,10 +65,21 @@ function wrapperFor(client: QueryClient) {
   };
 }
 
+// Sync notify scheduler (bookings.test.tsx / members.test.tsx pattern):
+// renderHook suites otherwise leak a setTimeout(0) notify batch into a
+// waitFor sleep window under worker contention (B-2 floating-update class —
+// surfaced by the T-7.6 mutation tests in full --maxWorkers=2 runs).
+beforeAll(() => {
+  notifyManager.setScheduler((cb) => cb());
+});
+afterAll(() => {
+  notifyManager.setScheduler((cb) => setTimeout(cb, 0));
+});
+
 afterEach(async () => {
-  // Absorb any tail-of-test TanStack notify batch (setTimeout 0) into an act
-  // scope — a mutation's late notification otherwise fires inside the next
-  // test's window (B-2 floating-update class; contention-only).
+  // Absorb any tail-of-test TanStack notify batch into an act scope — a
+  // mutation's late notification otherwise fires inside the next test's
+  // window (B-2 floating-update class; contention-only).
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });

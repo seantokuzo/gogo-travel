@@ -201,11 +201,13 @@ describe("interactive walkthrough (single mount — NAV-1 wiring end to end)", (
     await waitFor(() => expect(screen.queryByTestId("capture-queue-screen")).toBeNull());
     await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/more`));
 
-    // Itinerary FAB → add-item modal route in the tab-local stack (R-nav-21).
+    // Itinerary FAB → add Sheet (T-7.6, R-itin-18) → picking a type opens
+    // the add-item modal route in the tab-local stack (R-nav-21).
     // (Back landed us on the More tab — switch tabs like a user would.)
     await fireEvent.press(screen.getByTestId("tab-bar-itinerary"));
     await screen.findByTestId("itinerary-screen");
     await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
+    await fireEvent.press(await screen.findByTestId("itinerary-add-option-custom"));
     expect(await screen.findByTestId("itinerary-item-new-screen")).toBeOnTheScreen();
     expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/new`);
   });
