@@ -12,6 +12,8 @@ You're touching review-pipeline plumbing. Reviews run **in-session on Claude Cod
 
 `correctness` · `security` · `tests` · `performance` · `conventions`. Each gets an in-lane / not-lane charter + skepticism instruction (see the reviewer agent). Subagents are **read-only**: they emit findings, the main agent applies fixes. No Edit/Write from a reviewer.
 
+🔴 **Mutation probes are the ONE exception — and they SERIALIZE the tree** (learned PR #17 R2, 2026-08-02). A lane that falsifies a pin by breaking prod code, or that runs the CI gate, is _writing to and reading from_ the checkout. **Never run two such agents against the same worktree concurrently** — one agent's revert clobbers the other's probe, and every test/gate result taken while a foreign mutation is live is garbage (a gate run came back a **false red** exactly this way). Concurrency rules: any number of pure-reading lanes may share a tree; **at most one mutating agent per worktree at a time** — give each additional one `isolation: "worktree"` (then check out the PR branch inside it), or dispatch them serially. Every mutating agent must confirm its probe actually applied (`git diff --stat`) before trusting a result — a `sed` that silently no-ops looks exactly like a passing falsification — and must leave the tree byte-clean. Runtime evidence collected under contention is re-run clean before it counts (Law #7).
+
 ## Lane sentinel — LINE format, NOT JSON
 
 Each specialist ends its findings with exactly one sentinel block. Line format (no `{`/`}`, no quotes) so a sandboxed Bash validator can never choke on it:
