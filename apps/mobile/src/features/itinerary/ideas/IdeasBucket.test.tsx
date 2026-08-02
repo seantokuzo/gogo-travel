@@ -208,6 +208,39 @@ it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
 
+it("scheduling the LAST idea keeps the sheet mounted so a failure is still visible (round-1 blocker)", async () => {
+  // Exactly ONE unscheduled booking — the first-use state. The optimistic
+  // write empties the bucket at mutate time; before the fix that unmounted
+  // the bucket AND its in-flight sheet, so the rollback's error landed on an
+  // unmounted form and the sheet vanished as-if-success.
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaBooking()] },
+    overrides: {
+      "POST /trips/:tripId/bookings/:bookingId/schedule": () => Promise.reject(new Error("409")),
+    },
+  });
+
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
+  await fireEvent(screen.getByTestId("itinerary-ideas-schedule-input-day-picker"), "onChange", {
+    nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
+  });
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+
+  // The failure is SEEN: sheet still mounted, banner rendered.
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
+  // …and the rolled-back card is back in the bucket behind it.
+  expect(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`)).toBeOnTheScreen();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
 it("cancelled bookings hide behind the foot toggle and never offer scheduling (R-itin-12)", async () => {
   const cancelled = makeBooking({
     id: CANCELLED_ID,

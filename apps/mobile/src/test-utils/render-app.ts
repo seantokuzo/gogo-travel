@@ -32,6 +32,9 @@ export async function renderApp(initialUrl: string, opts?: { seedSession?: boole
   return {
     getPathname: () => result.getPathname(),
     getSegments: () => result.getSegments(),
+    // `getPathname()` EXCLUDES query params — a route asserted by pathname
+    // alone leaves its search params (category/source prefills) unpinned.
+    getSearchParams: () => result.getSearchParams(),
     getRouterState: () => result.getRouterState(),
   };
 }

@@ -42,6 +42,13 @@ describe("buildDetails (state → wire)", () => {
       const parsed = BookingDetailsSchema.safeParse(built.details);
       expect(parsed.success).toBe(true);
       expect(parsed.success && parsed.data.category).toBe(category);
+      // KEY-IDENTITY pin (round-1 blocker): `success` alone proves value
+      // FORMATS only — BookingDetailsSchema members are non-strict objects
+      // that STRIP unknown keys (R-shared-10), so a CATEGORY_FIELDS key
+      // typo (`flight_number` → `flight_num`) parsed green while the datum
+      // was silently dropped on the wire. Equality turns any stripped key
+      // into an inequality, pinning all 8 categories' key maps at once.
+      expect(parsed.success && parsed.data).toEqual(built.details);
     }
   });
 
@@ -169,6 +176,23 @@ describe("deeplinkInputFor (§2.7 mapping)", () => {
     train["departs_at"] = { date: "2027-03-02", time: "09:12" };
     expect(deeplinkInputFor("train", train)).toMatchObject({
       fields: { originStation: "Tokyo", outwardDate: "2027-03-02T09:12:00Z" },
+    });
+  });
+
+  it("car_rental maps pickup location + pickup/dropoff DATES in the right slots", () => {
+    const state = emptyFormState("car_rental");
+    state["pickup_location"] = "Kyoto Station";
+    state["pickup_at"] = { date: "2027-03-02", time: "10:00" };
+    state["dropoff_at"] = { date: "2027-03-05", time: "18:00" };
+    // Inverted pickup/dropoff reads would ship Kayak Cars URLs with swapped
+    // dates — pinned per-field, not just by shape.
+    expect(deeplinkInputFor("car_rental", state)).toEqual({
+      category: "car_rental",
+      fields: {
+        pickupLocation: "Kyoto Station",
+        pickupDate: "2027-03-02",
+        dropoffDate: "2027-03-05",
+      },
     });
   });
 

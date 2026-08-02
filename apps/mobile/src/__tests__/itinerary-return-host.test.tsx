@@ -53,6 +53,15 @@ it("a pending return record prompts in the itinerary stack; 'add manually' lands
   // Routed to the REAL form modal — category preset, deeplink-return source.
   await screen.findByTestId("itinerary-item-new-screen");
   expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/new`);
+  // SEARCH PARAMS are the QUEUE-assigned contract of this mount ("category +
+  // source=deeplink_return") and `getPathname()` excludes them — without
+  // this assert, dropping `source` from the layout push leaves every
+  // deeplink-return booking attributed `manual` (R-ib-11) with CI green.
+  expect(result.getSearchParams()).toMatchObject({
+    tripId: TEST_TRIP_ID,
+    category: "lodging",
+    source: "deeplink_return",
+  });
   expect(screen.getByTestId("itinerary-item-new-input-title")).toBeOnTheScreen();
   // The lodging form (recorded category) — its check-in field proves the
   // category preset reached the form, not just the route.

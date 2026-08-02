@@ -31,6 +31,7 @@ import type { ReactNode } from "react";
 
 import { apiClient } from "@/auth";
 import {
+  byBookingListOrder,
   optimisticScheduleItemId,
   useBooking,
   useCancelledBookings,
@@ -267,12 +268,127 @@ it("useUpdateBooking reconciles detail + list row to the post-state and invalida
   });
   await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(postState));
 
+  // Endpoint identity at hook grain (siblings pin theirs): a descriptor swap
+  // to createBooking would otherwise only fail in the screen suite.
+  expect(apiClient.request).toHaveBeenCalledWith(bookingEndpoints.updateBooking, {
+    params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_ID },
+    body: { title: "New title" },
+  });
   expect(client.getQueryData(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID))).toEqual(postState);
   const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
   expect(list?.items[0]?.title).toBe("New title");
   expect("items" in (list?.items[0] ?? {})).toBe(false);
   expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
   expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+});
+
+describe("byBookingListOrder (R-ib-10 list order, mirrored)", () => {
+  const at = (id: string, starts: string | null, updated: string): Booking =>
+    makeWireBooking({ id, starts_at: starts, updated_at: updated });
+
+  it("orders starts_at ASC with NULLS LAST", () => {
+    const timeless = at("b-null", null, "2026-07-01T00:00:00.000Z");
+    const early = at("b-early", "2027-03-01T09:00:00.000Z", "2026-07-01T00:00:00.000Z");
+    const late = at("b-late", "2027-03-05T09:00:00.000Z", "2026-07-01T00:00:00.000Z");
+    expect([timeless, late, early].sort(byBookingListOrder).map((b) => b.id)).toEqual([
+      "b-early",
+      "b-late",
+      "b-null",
+    ]);
+  });
+
+  it("breaks starts_at ties by updated_at DESC (freshest first), then id", () => {
+    const start = "2027-03-01T09:00:00.000Z";
+    const stale = at("b-stale", start, "2026-07-01T00:00:00.000Z");
+    const fresh = at("b-fresh", start, "2026-07-09T00:00:00.000Z");
+    expect([stale, fresh].sort(byBookingListOrder).map((b) => b.id)).toEqual([
+      "b-fresh",
+      "b-stale",
+    ]);
+    // Fully tied → deterministic id order (no unstable shuffling).
+    const tiedA = at("b-a", start, "2026-07-01T00:00:00.000Z");
+    const tiedB = at("b-b", start, "2026-07-01T00:00:00.000Z");
+    expect([tiedB, tiedA].sort(byBookingListOrder).map((b) => b.id)).toEqual(["b-a", "b-b"]);
+  });
+
+  it("compares INSTANTS, not strings: mixed offsets and precisions order chronologically", () => {
+    // The wire scalar is `z.iso.datetime({ offset: true })` — all three are
+    // schema-legal spellings; lexicographic compare would order them
+    // "+09:00" < "Z" (offset) and ".000Z" < "Z" (precision), i.e. wrong.
+    const tokyo = at("b-tokyo", "2027-03-01T18:00:00+09:00", "2026-07-01T00:00:00.000Z"); // 09:00Z
+    const utc = at("b-utc", "2027-03-01T10:00:00Z", "2026-07-01T00:00:00.000Z");
+    expect([utc, tokyo].sort(byBookingListOrder).map((b) => b.id)).toEqual(["b-tokyo", "b-utc"]);
+
+    // Same instant, two precisions → a pure updated_at tiebreak, not a
+    // spelling comparison.
+    const precise = at("b-precise", "2027-03-01T10:00:00.000Z", "2026-07-09T00:00:00.000Z");
+    const coarse = at("b-coarse", "2027-03-01T10:00:00Z", "2026-07-01T00:00:00.000Z");
+    expect([coarse, precise].sort(byBookingListOrder).map((b) => b.id)).toEqual([
+      "b-precise",
+      "b-coarse",
+    ]);
+  });
+});
+
+it("schedule reconcile INSERTS a booking missing from the list (create→schedule strand, round-1 blocker)", async () => {
+  const client = makeTestQueryClient();
+  // The exact post-create state: create's root invalidation refetch was
+  // aborted by schedule's own cancelQueries, so the new row never reached
+  // the list cache. A map-replace-only reconcile leaves it missing forever
+  // (day list renders the enrichment-gap fallback with a FALSE day lock).
+  const existing = makeWireBooking({
+    id: "b-existing",
+    starts_at: "2027-03-01T09:00:00.000Z",
+  });
+  seedBookingList(client, [existing]);
+  seedItinerary(client, []);
+
+  const created = makeWireBooking({ id: BOOKING_ID, status: "idea", starts_at: null });
+  const postState: BookingWithItems = { ...created, status: "planned", items: [] };
+  spyRequest().mockResolvedValue(postState);
+
+  const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY } });
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  const row = list?.items.find((item) => item.id === BOOKING_ID);
+  expect(row).toBeDefined();
+  expect(row?.status).toBe("planned");
+  // Timeless ⇒ NULLS LAST: inserted AFTER the scheduled row, and the
+  // pre-existing row keeps its place (insert never reshuffles).
+  expect(list?.items.map((item) => item.id)).toEqual(["b-existing", BOOKING_ID]);
+});
+
+it("update reconcile REPLACES in place — server order is preserved byte-exactly", async () => {
+  const client = makeTestQueryClient();
+  // Deliberately seeded in an order the client comparator would NOT produce
+  // (timeless first): a re-sorting reconcile would reshuffle these rows.
+  const timeless = makeWireBooking({ id: "b-timeless", starts_at: null, title: "Idea" });
+  const scheduled = makeWireBooking({ id: BOOKING_ID, starts_at: "2027-03-01T09:00:00.000Z" });
+  seedBookingList(client, [timeless, scheduled]);
+  seedItinerary(client, []);
+  const postState: BookingWithItems = {
+    ...makeWireBooking({ id: BOOKING_ID, starts_at: "2027-03-01T09:00:00.000Z", title: "Renamed" }),
+    items: [],
+  };
+  spyRequest().mockResolvedValue(postState);
+
+  const { result } = await renderHook(() => useUpdateBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { title: "Renamed" } });
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items.map((item) => item.id)).toEqual(["b-timeless", BOOKING_ID]);
+  expect(list?.items[1]?.title).toBe("Renamed");
 });
 
 it("useScheduleBooking is optimistic (R-itin-11): placeholder + badge advance, then server post-state swap", async () => {
@@ -336,6 +452,33 @@ it("useScheduleBooking is optimistic (R-itin-11): placeholder + badge advance, t
   ).toBeUndefined();
   expect(settled?.items.find((item) => item.id === SERVER_ITEM_ID)).toEqual(serverItem);
   expect(client.getQueryData(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID))).toEqual(postState);
+});
+
+it("the optimistic badge advance is idea-ONLY: a timeless booked card keeps its status mid-flight (R-ib-8)", async () => {
+  const client = makeTestQueryClient();
+  // "Needs a day" card whose parent is already `booked` — R-ib-8 advances
+  // only `idea`; an unconditional "planned" write would visibly DOWNGRADE
+  // its badge until the server post-state landed.
+  const booked = makeWireBooking({ id: BOOKING_ID, status: "booked", starts_at: null });
+  seedBookingList(client, [booked]);
+  seedItinerary(client, []);
+  // Held (not never-resolving — a dangling mutation trips jest's worker
+  // teardown): asserted MID-FLIGHT, then settled before the test ends.
+  let resolve!: (value: BookingWithItems) => void;
+  spyRequest().mockImplementation(() => new Promise((r) => (resolve = r)));
+
+  const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY } });
+  });
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items[0]?.status).toBe("booked");
+
+  await act(async () => resolve({ ...booked, items: [] }));
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
 });
 
 it("useScheduleBooking failure restores BOTH snapshots and invalidates (stale-premise recovery)", async () => {
