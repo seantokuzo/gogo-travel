@@ -320,13 +320,27 @@ describe("byBookingListOrder (R-ib-10 list order, mirrored)", () => {
     expect([utc, tokyo].sort(byBookingListOrder).map((b) => b.id)).toEqual(["b-tokyo", "b-utc"]);
 
     // Same instant, two precisions → a pure updated_at tiebreak, not a
-    // spelling comparison.
-    const precise = at("b-precise", "2027-03-01T10:00:00.000Z", "2026-07-09T00:00:00.000Z");
-    const coarse = at("b-coarse", "2027-03-01T10:00:00Z", "2026-07-01T00:00:00.000Z");
-    expect([coarse, precise].sort(byBookingListOrder).map((b) => b.id)).toEqual([
-      "b-precise",
+    // spelling comparison. The `updated_at` values are deliberately set so
+    // ONLY instant comparison satisfies this (round-2): the FRESHER row is
+    // the coarse spelling, so instant compare answers ["b-coarse","b-precise"]
+    // while string compare (`.` 0x2E < `Z` 0x5A ⇒ precise sorts first on
+    // starts_at, and the updated_at tiebreak never runs) answers the reverse.
+    const precise = at("b-precise", "2027-03-01T10:00:00.000Z", "2026-07-01T00:00:00.000Z");
+    const coarse = at("b-coarse", "2027-03-01T10:00:00Z", "2026-07-09T00:00:00.000Z");
+    expect([precise, coarse].sort(byBookingListOrder).map((b) => b.id)).toEqual([
       "b-coarse",
+      "b-precise",
     ]);
+  });
+
+  it("folds an UNPARSEABLE instant to unknown (trailing), never NaN-ordered", () => {
+    // The fold exists because a NaN comparison would silently corrupt the
+    // total order (every comparison false ⇒ arbitrary output). Corrupt input
+    // is treated like a timeless row: it trails.
+    const junk = at("b-junk", "not-a-date", "2026-07-01T00:00:00.000Z");
+    const real = at("b-real", "2027-03-01T09:00:00.000Z", "2026-07-01T00:00:00.000Z");
+    expect([junk, real].sort(byBookingListOrder).map((b) => b.id)).toEqual(["b-real", "b-junk"]);
+    expect([real, junk].sort(byBookingListOrder).map((b) => b.id)).toEqual(["b-real", "b-junk"]);
   });
 });
 
@@ -362,6 +376,89 @@ it("schedule reconcile INSERTS a booking missing from the list (create→schedul
   // Timeless ⇒ NULLS LAST: inserted AFTER the scheduled row, and the
   // pre-existing row keeps its place (insert never reshuffles).
   expect(list?.items.map((item) => item.id)).toEqual(["b-existing", BOOKING_ID]);
+});
+
+it("the insert lands at its SORTED position, not appended (round-2: always-append survived the suite)", async () => {
+  const client = makeTestQueryClient();
+  // Two scheduled rows straddling the inserted one — the mid-list branch
+  // (`at !== -1`). The previous insert pin only covered the append case
+  // (its post-state was timeless, so NULLS-LAST put it at the end anyway),
+  // which let `splice(items.length, …)` survive the whole 763-test suite.
+  const early = makeWireBooking({ id: "b-early", starts_at: "2027-03-01T09:00:00.000Z" });
+  const late = makeWireBooking({ id: "b-late", starts_at: "2027-03-05T09:00:00.000Z" });
+  seedBookingList(client, [early, late]);
+  seedItinerary(client, []);
+
+  const middle = makeWireBooking({
+    id: BOOKING_ID,
+    status: "planned",
+    starts_at: "2027-03-03T09:00:00.000Z",
+  });
+  spyRequest().mockResolvedValue({ ...middle, items: [] } as BookingWithItems);
+
+  const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY } });
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items.map((item) => item.id)).toEqual(["b-early", BOOKING_ID, "b-late"]);
+});
+
+it("a CANCELLED booking is never inserted into the default list (R-ib-10 predicate, round-2)", async () => {
+  const client = makeTestQueryClient();
+  // R-ib-10: the default list is "all except cancelled". Editing a cancelled
+  // booking (deep-link reachable now, T-7.9-reachable next) must not splice
+  // it in — the Ideas bucket would render it as a live card with a
+  // guaranteed-403 "Add to day" (cancelled bookings have zero items).
+  const existing = makeWireBooking({ id: "b-existing", starts_at: "2027-03-01T09:00:00.000Z" });
+  seedBookingList(client, [existing]);
+  seedItinerary(client, []);
+  const postState: BookingWithItems = {
+    ...makeWireBooking({ id: BOOKING_ID, status: "cancelled", title: "Cancelled" }),
+    items: [],
+  };
+  spyRequest().mockResolvedValue(postState);
+
+  const { result } = await renderHook(() => useUpdateBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { title: "Cancelled" } });
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items.map((item) => item.id)).toEqual(["b-existing"]);
+});
+
+it("a listed booking that BECOMES cancelled is REMOVED from the default list (round-2)", async () => {
+  const client = makeTestQueryClient();
+  // The other direction of the same invariant: map-replace would have left
+  // a cancelled row sitting in the non-cancelled list.
+  const other = makeWireBooking({ id: "b-other", starts_at: "2027-03-01T09:00:00.000Z" });
+  const doomed = makeWireBooking({ id: BOOKING_ID, status: "planned", starts_at: null });
+  seedBookingList(client, [other, doomed]);
+  seedItinerary(client, []);
+  const postState: BookingWithItems = {
+    ...makeWireBooking({ id: BOOKING_ID, status: "cancelled", starts_at: null }),
+    items: [],
+  };
+  spyRequest().mockResolvedValue(postState);
+
+  const { result } = await renderHook(() => useUpdateBooking(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ bookingId: BOOKING_ID, input: { status: "cancelled" } });
+  });
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items.map((item) => item.id)).toEqual(["b-other"]);
 });
 
 it("update reconcile REPLACES in place — server order is preserved byte-exactly", async () => {

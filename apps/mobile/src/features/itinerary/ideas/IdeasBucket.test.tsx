@@ -77,7 +77,18 @@ async function renderBucket(opts?: {
   return { request, view };
 }
 
+/** Deferred schedule requests still in flight — drained by afterEach. */
+const heldRequests: ((error: Error) => void)[] = [];
+
 afterEach(async () => {
+  // Settle anything a failing test left in flight BEFORE the act drain, so a
+  // red test can never leave jest hanging on a pending mutation.
+  const outstanding = heldRequests.splice(0, heldRequests.length);
+  if (outstanding.length > 0) {
+    await act(async () => {
+      for (const reject of outstanding) reject(new Error("test teardown"));
+    });
+  }
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
@@ -180,12 +191,32 @@ it("'Add to day' schedules through the wire (R-itin-11): body parses as Schedule
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
 
-it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the hook's)", async () => {
+/**
+ * Drive the bucket to a schedule request that is GENUINELY IN FLIGHT.
+ *
+ * Round-2 blocker: both failure tests previously used
+ * `() => Promise.reject(...)`, an ALREADY-SETTLED promise — the optimistic
+ * write and the rollback then flush in ONE notify batch, so the intermediate
+ * "bucket emptied while the schedule is in flight" state never commits and
+ * the guard under test is never consulted (proven: reverting the guard left
+ * the suite 8/8 green). A deferred promise makes the mid-flight render real,
+ * which is the only state the pre-fix code fails.
+ */
+async function scheduleWithHeldRequest(): Promise<(error: Error) => void> {
+  let rejectRequest!: (error: Error) => void;
+  // Exactly ONE unscheduled booking — the first-use state whose optimistic
+  // write empties the bucket.
   await renderBucket({
     api: { bookings: [...defaultBookings(), ideaBooking()] },
     overrides: {
       "POST /trips/:tripId/bookings/:bookingId/schedule": () =>
-        Promise.reject(new Error("409")),
+        new Promise<never>((_resolve, reject) => {
+          rejectRequest = reject;
+          // Settled by afterEach if a test fails before rejecting — an
+          // in-flight mutation otherwise keeps jest alive past the run
+          // ("Jest did not exit…"), turning one red test into a hung worker.
+          heldRequests.push(reject);
+        }),
     },
   });
 
@@ -197,6 +228,25 @@ it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the
     nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
   });
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  // `onMutate` awaits two cancelQueries before writing, so the optimistic
+  // state lands a microtask AFTER the press settles. Wait for it: the card
+  // leaving the bucket IS the optimistic write, and every caller below
+  // asserts from that mid-flight state.
+  await waitFor(() =>
+    expect(screen.queryByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`)).toBeNull(),
+  );
+  return (error: Error) => rejectRequest(error);
+}
+
+it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the hook's)", async () => {
+  const rejectRequest = await scheduleWithHeldRequest();
+
+  // MID-FLIGHT: the optimistic write has already emptied the bucket, and the
+  // sheet must survive it — this is the assert the visibility hold makes
+  // true and the pre-fix condition fails.
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
+
+  await act(async () => rejectRequest(new Error("409")));
 
   await waitFor(() =>
     expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
@@ -209,27 +259,19 @@ it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the
 });
 
 it("scheduling the LAST idea keeps the sheet mounted so a failure is still visible (round-1 blocker)", async () => {
-  // Exactly ONE unscheduled booking — the first-use state. The optimistic
-  // write empties the bucket at mutate time; before the fix that unmounted
-  // the bucket AND its in-flight sheet, so the rollback's error landed on an
-  // unmounted form and the sheet vanished as-if-success.
-  await renderBucket({
-    api: { bookings: [...defaultBookings(), ideaBooking()] },
-    overrides: {
-      "POST /trips/:tripId/bookings/:bookingId/schedule": () => Promise.reject(new Error("409")),
-    },
-  });
+  const rejectRequest = await scheduleWithHeldRequest();
 
-  await screen.findByTestId("itinerary-ideas");
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
-  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
-  await fireEvent(screen.getByTestId("itinerary-ideas-schedule-input-day-picker"), "onChange", {
-    nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
-  });
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  // MID-FLIGHT, the round-1 blocker's exact state (the helper already waited
+  // for the card to leave the bucket): the only unscheduled booking is gone,
+  // yet bucket + sheet stay mounted so the failure has somewhere to land.
+  // Pre-fix, `unscheduled.length === 0` returned null here and took the
+  // in-flight sheet with it.
+  expect(screen.getByTestId("itinerary-ideas")).toBeOnTheScreen();
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
 
-  // The failure is SEEN: sheet still mounted, banner rendered.
+  await act(async () => rejectRequest(new Error("409")));
+
+  // The failure is SEEN: banner rendered on the SAME (never unmounted) form.
   await waitFor(() =>
     expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
   );
@@ -237,6 +279,32 @@ it("scheduling the LAST idea keeps the sheet mounted so a failure is still visib
   // …and the rolled-back card is back in the bucket behind it.
   expect(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`)).toBeOnTheScreen();
 
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+it("the sheet chrome is pending-gated: dismissing mid-mutation cannot drop the hold (round-2)", async () => {
+  const rejectRequest = await scheduleWithHeldRequest();
+
+  // The natural "get out of my way" gesture while the spinner is up. Ungated,
+  // this cleared `scheduleTarget`, released the bucket's hold on a bucket the
+  // optimistic write had just emptied, and unmounted the sheet mid-flight —
+  // the round-1 blocker through the user-dismissal door.
+  //
+  // Driven through the close button, not the scrim: the scrim sits under an
+  // `opacity: 0` Animated.View (its entrance animation doesn't advance the
+  // JS value in jest), so RNTL treats it as hidden from accessibility and
+  // excludes it from queries. Both affordances — plus swipe-release and
+  // Android back — call the SAME gated `onDismiss`, so this covers the gate.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
+
+  await act(async () => rejectRequest(new Error("409")));
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+
+  // Settled ⇒ the chrome works again.
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });

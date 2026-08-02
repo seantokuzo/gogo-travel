@@ -242,6 +242,46 @@ it("day-only prefill: timeless create THEN schedule (§2.4 routing, R-ib-8)", as
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
 });
 
+it("the chain input is day-only even when a TIME prefill is present (round-2: the previous pin had no ?time=)", async () => {
+  // Round-2: the day-only pin above renders WITHOUT `?time=`, so `prefillTime`
+  // is undefined there and the removed `start_time` spread was a no-op — the
+  // pin passed pre-fix too. Here the time prefill IS present, so a
+  // `...(prefillTime ? {start_time: prefillTime} : {})` in the chain input
+  // would ride onto the wire.
+  //
+  // The branch is reached via SERVER TRUTH: the client chains on
+  // `created.starts_at === null`, so a response reporting the booking as
+  // timeless is exactly the state the code keys on — pinning the contract
+  // ("whatever the prefills were, the chain schedules day-only") rather than
+  // a UI path.
+  const scheduled: unknown[] = [];
+  const idea = makeBooking({
+    id: BOOKING_IDEA_ID,
+    category: "activity",
+    status: "idea",
+    starts_at: null,
+  });
+  await renderScreen(
+    { category: "activity", day: TRIP_DAY_2, time: "14:00" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": () => Promise.resolve(idea),
+        "POST /trips/:tripId/bookings/:bookingId/schedule": (input) => {
+          scheduled.push(input);
+          return Promise.resolve({ ...idea, status: "planned", items: [] });
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(scheduled).toHaveLength(1));
+  const body = ScheduleBookingInputSchema.parse((scheduled[0] as { body: unknown }).body);
+  expect(body).toEqual({ day: TRIP_DAY_2 });
+  expect(body.start_time).toBeUndefined();
+});
+
 it("gap-tap prefill (day+time): primary start preset, auto-scheduled — NO schedule call (R-itin-14/I-2)", async () => {
   const created: unknown[] = [];
   const scheduled: unknown[] = [];
