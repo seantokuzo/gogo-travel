@@ -111,13 +111,39 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   judge merge/high. Judge NOTE for Sean: size-escalation banner NOT
   precedent-waived (diff 41% tests = majority source) — `/code-review
 ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
-  [IT-5,IT-7] STILL IN FLIGHT** (Ideas + add/edit, owns the screen,
-  `item/new.tsx`, `data/*`, barrel, screen tests, `DeeplinkReturnHost`
-  mount). **Key-homing RULED (orchestrator, 2026-08-01):** promote
-  module-local `bookingKeys` → `queryKeys` (query-client.ts is the ONE key
-  home) — T-7.6 executes. T-7.5 + T-7.9 (W5/W6) remain after. T-7.7
-  interpretations (15, incl. MIN_BLOCK_HEIGHT floor + new grid testIDs) →
+  ✅ MERGED c587a6b (PR #17) 2026-08-02** [IT-5 Ideas bucket + IT-7 add/edit
+  flows (10 types, place picker, gap-tap day+time prefill consumed) +
+  `DeeplinkReturnHost` MOUNTED; **key-homing ruling EXECUTED** —
+  `bookingKeys` deleted, `queryKeys` is the one key home. Mobile 699→776
+  (92 suites). 2 rounds + 4 fix legs + 3 independent verifications; judge
+  merge/high (it re-ran the whole gate itself rather than grading reports).
+  27 interpretations → QUEUE spec-pass row]. **W4 DONE — W5 (T-7.5 travel
+  chips + conflict) and W6 (T-7.9 detail + offline) remain.** T-7.7's 15
+  interpretations (incl. MIN_BLOCK_HEIGHT floor + grid testIDs) also in the
   QUEUE spec-pass row.
+- **T-7.6/T-7.7 landmines (NEW — 3 VACUOUS-PIN FLAVORS, all codified in
+  `.claude/rules/mobile.md`; a green suite proved nothing three times in one
+  PR):** (1) a pin that rejects an ALREADY-SETTLED promise never observes the
+  in-flight state — optimistic write + rollback flush in one notify batch;
+  (2) `BookingDetailsSchema` (and any non-strict zod object) STRIPS unknown
+  keys, so a misspelled detail key round-trips green — assert
+  `parsed.data == built.details`; (3) RNTL won't fire a handler on a
+  `disabled` element, so "press it, assert nothing happened" passes with the
+  guard removed. **Rule: every negative assertion needs an ungated control
+  arm proving it could have failed.** Also: the DS Sheet scrim is unqueryable
+  in RNTL (`opacity:0` Animated.View, entrance value never advances) — drive
+  the close button, or `includeHiddenElements: true`.
+- **DS Sheet gained `dismissDisabled`** (T-7.6, strictly additive, default
+  off): gates all four dismissal routes (close/scrim/swipe/Android-back)
+  behind one memoized `guardedDismiss` AND renders the close affordance
+  visibly disabled. Use it for any sheet wrapping an uninterruptible
+  operation — and pair it with a caller-side `isPending` early-return, since
+  the swipe route is wired but **not test-pinned** (documented gap: no
+  non-vacuous pin is constructible — PanResponder needs real touch history).
+- **Client cache invariant (T-7.6):** the cached default bookings list must
+  always satisfy the server's R-ib-10 predicate — `reconcileBookingRow`
+  inserts only non-cancelled rows and REMOVES rows that become cancelled.
+  T-7.9 wires R-itin-26 cancel; do not regress this to a map-replace.
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
