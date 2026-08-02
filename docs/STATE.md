@@ -100,6 +100,19 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
   (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
   T-7.4/7.5 UI (absent legs = "no data" by design).
+- **W4 DISPATCHED 2026-08-01 (in-flight):** T-7.7 [IT-6] calendar grid ∥ T-7.6
+  [IT-5,IT-7] Ideas + add/edit — parallel isolated worktrees off main @
+  `202ed49` (GridSurface seam prep, zero-behavior). **Boundary by
+  construction:** T-7.7 owns `features/itinerary/GridSurface.tsx` (props +
+  root testID `itinerary-grid-surface` FROZEN — dormant-surface precedent) +
+  new `grid/*` + the **DS Sheet exit-window guard RIDER** (QUEUE P1) in
+  `components/Sheet.tsx`; T-7.6 owns the screen
+  `app/[tripId]/itinerary/index.tsx`, `item/new.tsx`, `data/*` extensions,
+  the feature barrel, screen tests, and the `DeeplinkReturnHost` mount.
+  **Key-homing RULED (orchestrator, 2026-08-01):** promote module-local
+  `bookingKeys` → `queryKeys` (query-client.ts is the ONE key home;
+  bookings.ts's own comment blesses it) — T-7.6 executes. Review pipeline
+  runs per PR as each lands; T-7.5 + T-7.9 (W5/W6) remain after.
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
