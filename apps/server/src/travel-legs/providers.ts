@@ -105,10 +105,11 @@ export const MAX_ROUTE_DURATION_SECONDS = 14 * 24 * 60 * 60;
 export const MAX_ROUTE_DISTANCE_METERS = 50_000_000;
 
 /**
- * Response bodies are read as text and byte-capped BEFORE any JSON parse —
- * a hostile/broken provider cannot make the worker buffer-and-parse an
- * unbounded payload. 2 MB is ~three orders of magnitude above a real
- * Directions/MOTIS answer for a single pair.
+ * Response bodies are byte-capped AFTER `text()` buffers them and BEFORE any
+ * JSON parse — the cap bounds what the worker will PARSE, not what fetch
+ * buffers (an oversized body is still read into memory once, then rejected).
+ * 2 MB is ~three orders of magnitude above a real Directions/MOTIS answer
+ * for a single pair.
  */
 export const MAX_PROVIDER_BODY_BYTES = 2 * 1024 * 1024;
 

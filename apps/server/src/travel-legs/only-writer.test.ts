@@ -27,6 +27,14 @@ const WRITE_PATTERN = /\.(?:insert|update|delete)\(\s*(?:schema\.)?travelLegs\s*
  */
 const RAW_SQL_PATTERN = /sql`[^`]*travel_legs/;
 
+/**
+ * Third evasion channel: the Drizzle INTERPOLATED-identifier form —
+ * `sql`DELETE FROM ${schema.travelLegs}`` — names the table object, not the
+ * snake_case string, so RAW_SQL_PATTERN never sees it. Any `travelLegs`
+ * inside a sql-template interpolation trips this one.
+ */
+const RAW_SQL_INTERP_PATTERN = /sql`[^`]*\$\{[^}`]*travelLegs\b/;
+
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -72,11 +80,34 @@ describe("travel_legs only-writer invariant (R-ib-22)", () => {
     expect(RAW_SQL_PATTERN.test("// the travel_legs table is derived data")).toBe(false);
   });
 
+  it("interpolated-identifier pattern catches the Drizzle table-object form (positive control)", () => {
+    expect(
+      RAW_SQL_INTERP_PATTERN.test("await db.execute(sql`DELETE FROM ${schema.travelLegs}`)"),
+    ).toBe(true);
+    expect(RAW_SQL_INTERP_PATTERN.test("sql`UPDATE ${travelLegs} SET provider = 'x'`")).toBe(true);
+    expect(
+      RAW_SQL_INTERP_PATTERN.test(
+        "sql`INSERT INTO\n  ${schema.travelLegs} (trip_id) VALUES (${id})`",
+      ),
+    ).toBe(true);
+    // A later interpolation in the same template is still caught.
+    expect(
+      RAW_SQL_INTERP_PATTERN.test("sql`WHERE id = ${id} AND EXISTS (SELECT 1 FROM ${travelLegs})`"),
+    ).toBe(true);
+    // Builder writes, prose, and OTHER tables' interpolations do NOT trip it.
+    expect(RAW_SQL_INTERP_PATTERN.test("tx.insert(schema.travelLegs).values(x)")).toBe(false);
+    expect(RAW_SQL_INTERP_PATTERN.test("// travelLegs is written by recompute only")).toBe(false);
+    expect(RAW_SQL_INTERP_PATTERN.test("sql`${schema.bookings.startsAt} ASC NULLS LAST`")).toBe(
+      false,
+    );
+  });
+
   it("NO production module outside recompute.ts/schema touches travel_legs via raw sql", () => {
     const offenders = sources.filter((file) => {
       if (file.endsWith(join("travel-legs", "recompute.ts"))) return false;
       if (file.includes(join("db", "schema"))) return false;
-      return RAW_SQL_PATTERN.test(readFileSync(file, "utf8"));
+      const source = readFileSync(file, "utf8");
+      return RAW_SQL_PATTERN.test(source) || RAW_SQL_INTERP_PATTERN.test(source);
     });
     expect(offenders).toEqual([]);
   });

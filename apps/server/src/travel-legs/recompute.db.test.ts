@@ -904,6 +904,43 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     expect(new Set(marked2.map((m) => m.tripId)).has(activeTrip.id)).toBe(false);
   });
 
+  it("sweep override arms: 'active' override sweeps a past-dated trip; a non-active override blocks a date-window-active one", async () => {
+    const now = new Date();
+    const shift = (days: number) => shiftFrom(now, days);
+    const stale = new Date(now.getTime() - 25 * HOUR_MS); // past the 24 h TTL
+
+    // (a) Dates long past, but the owner pinned `active` (R-trips-7 override
+    // wins): the SQL pre-filter's DEDICATED `status_override = 'active'` arm
+    // is the ONLY path that surfaces this trip as a candidate — neuter that
+    // arm and this fixture goes red.
+    const pinnedActive = await seedTripWithLeg({ start: shift(-20), end: shift(-10) }, stale);
+    await db
+      .update(schema.trips)
+      .set({ statusOverride: "active" })
+      .where(eq(schema.trips.id, pinnedActive.id));
+
+    // (b) Date-window active (start < today <= end) but ARCHIVED (`past`
+    // override): the override wins the effective-status seam, and
+    // `startDate < today` keeps it off the starting-soon arm — the
+    // `isNull(status_override)` guard on the date-window arm plus the
+    // authoritative JS filter must keep it out of the sweep.
+    const archived = await seedTripWithLeg({ start: shift(-2), end: shift(5) }, stale);
+    await db
+      .update(schema.trips)
+      .set({ statusOverride: "past" })
+      .where(eq(schema.trips.id, archived.id));
+
+    const marked: DirtyDayMark[] = [];
+    await sweepStaleLegs({
+      db,
+      marker: { markDaysDirty: (marks) => void marked.push(...marks) },
+      now: () => now,
+    });
+    const markedTrips = new Set(marked.map((m) => m.tripId));
+    expect(markedTrips.has(pinnedActive.id)).toBe(true);
+    expect(markedTrips.has(archived.id)).toBe(false);
+  });
+
   it("sweep horizon boundary: start EXACTLY at +horizonDays is swept; one day past is not", async () => {
     const now = new Date();
     const shift = (days: number) => shiftFrom(now, days);

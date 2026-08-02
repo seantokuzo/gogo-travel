@@ -70,8 +70,8 @@ if (authDeps) {
     // (T-7.3) post-commit.
     bookings: buildBookingsDeps(travelLegs.marker),
     // Itinerary router (T-7.2): item CRUD + day reorder + composite read;
-    // same dormant dirty-day seam.
-    itinerary: buildItineraryDeps(),
+    // mutations mark the same LIVE leg worker (T-7.3) post-commit.
+    itinerary: buildItineraryDeps(travelLegs.marker),
     // Refresh-legs endpoint (T-7.3) + the staleness sweep below.
     travelLegs: travelLegs.routerDeps,
   };

@@ -142,12 +142,17 @@ describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () 
     await container?.stop();
   });
 
-  /** An app with this suite's travel-legs deps (and optional bookings marker). */
-  function buildApp(travelLegs: TravelLegsRouterDeps, bookingsMarker?: DirtyDayMarker) {
+  /** An app with this suite's travel-legs deps (and optional mutation markers). */
+  function buildApp(
+    travelLegs: TravelLegsRouterDeps,
+    bookingsMarker?: DirtyDayMarker,
+    itineraryMarker?: DirtyDayMarker,
+  ) {
     return createApp({
       auth: authDeps,
       trips: { db },
       bookings: { db, dirtyDays: bookingsMarker ?? createDirtyDayMarker() },
+      itinerary: { db, dirtyDays: itineraryMarker ?? createDirtyDayMarker() },
       travelLegs,
     });
   }
@@ -405,5 +410,38 @@ describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () 
     expect((await refresh(app, trip.id, owner.accessToken)).status).toBe(202);
     // And the wedge never grew into the request path: still exactly one call.
     expect(recomputeCalls).toBe(1);
+  });
+
+  it("WIRING ASSERTION: itinerary item mutations reach the LIVE worker's marker (T-7.2 × T-7.3)", async () => {
+    // The prod handoff (index.ts → `buildItineraryDeps(travelLegs.marker)`)
+    // is pinned statically in marker-wiring.test.ts; THIS pins the behavior
+    // that handoff buys: an item create's post-commit marks land in the live
+    // worker and the debounce window drains into a real recompute for
+    // exactly that trip/day — never the silent dormant no-op.
+    const fake = fakeScheduler();
+    const batches: LegBatch[] = [];
+    const worker = createTravelLegWorker({
+      recompute: (batch) => {
+        batches.push(batch);
+        return Promise.resolve();
+      },
+      scheduler: fake.scheduler,
+    });
+    const marker = createDirtyDayMarker(worker);
+    const app = buildApp({ db, dirtyDays: marker }, marker, marker);
+    const owner = await seedUserWithToken();
+    const trip = await createTripVia(app, owner.accessToken);
+
+    const res = await request(app, `/api/trips/${trip.id}/itinerary/items`, owner.accessToken, {
+      body: JSON.stringify({ kind: "custom", title: "Ramen crawl", day: "2026-09-02" }),
+    });
+    expect(res.status).toBe(201);
+
+    // Marks sit in the debounce bucket until the window fires (§3.5 step 1)…
+    expect(batches).toEqual([]);
+    fake.fireAll();
+    await worker.idle();
+    // …then the LIVE worker recomputes the marked trip/day.
+    expect(batches).toEqual([{ tripId: trip.id, days: ["2026-09-02"] }]);
   });
 });
