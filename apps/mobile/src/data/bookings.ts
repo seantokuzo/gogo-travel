@@ -6,19 +6,22 @@
  * T-7.6 (add/edit flows) and T-7.9 (booking detail) EXTEND this module —
  * update/delete/schedule hooks land there, on these same keys.
  *
- * KEY-CACHE LAW (orchestrator-pinned): booking keys join the
- * `["trips", tripId, …]` DETAIL subtree — the `[tripId]` guard's 404-scrub
- * evicts by that prefix, and the collab foreground sweep already refreshes
- * it. NOTHING here may ever touch `["trip-list"]`. Keys live here (not in
- * query-client.ts) to keep this wave conflict-free with T-7.4's parallel
- * key additions; promoting them into `queryKeys` post-merge is fine.
+ * KEY-CACHE LAW: booking keys live in `queryKeys` (query-client.ts — the ONE
+ * home for cache keys; module-local `bookingKeys` promoted there by the
+ * T-7.6 key-homing ruling, 2026-08-01) under the `["trips", tripId, …]`
+ * DETAIL subtree — the `[tripId]` guard's 404-scrub evicts by that prefix,
+ * and the collab foreground sweep already refreshes it. NOTHING here may
+ * ever touch `["trip-list"]`.
  *
- * Mutation policy (trips §2.6 pattern): create is NOT optimistic — the row
- * is server-generated identity (+ server-derived instants/auto-items), the
- * invite-create precedent; callers show a spinner. Side effects ride the
- * hook-level `onMutationError`/`onMutationSuccess` seam ONLY (T-6.8/T-6.9
- * landmine: TanStack v5 drops per-call callbacks for superseded calls on a
- * shared mutation instance — never hang per-call callbacks on these hooks).
+ * Mutation policy (trips §2.6 pattern): create/update are NOT optimistic —
+ * the row is server-generated identity (+ server-derived instants/auto-items
+ * and §3.2 transition side effects), the invite-create precedent; callers
+ * show a spinner. `useScheduleBooking` IS optimistic — R-itin-11 says the
+ * bucket card moves "optimistically" — with full snapshot rollback. Side
+ * effects ride the hook-level `onMutationError`/`onMutationSuccess` seam
+ * ONLY (T-6.8/T-6.9 landmine: TanStack v5 drops per-call callbacks for
+ * superseded calls on a shared mutation instance — never hang per-call
+ * callbacks on these hooks).
  */
 import {
   useMutation,
@@ -31,18 +34,7 @@ import { bookingEndpoints, type Booking, type BookingCreate, type Paginated } fr
 
 import { apiClient } from "@/auth";
 
-/**
- * One home for booking cache keys (module doc: detail-subtree by law).
- * `list` is the unfiltered default view (R-ib-10: all except `cancelled`);
- * filtered variants (status/category/unscheduled) get their own trailing
- * args when T-7.6 needs them — extending, never replacing, this prefix.
- */
-export const bookingKeys = {
-  /** Prefix for every booking key of a trip — the invalidation target. */
-  root: (tripId: string) => ["trips", tripId, "bookings"] as const,
-  list: (tripId: string) => ["trips", tripId, "bookings"] as const,
-  detail: (tripId: string, bookingId: string) => ["trips", tripId, "bookings", bookingId] as const,
-} as const;
+import { queryKeys } from "./query-client";
 
 /**
  * Hook-level mutation side-effect seam (members.ts precedent — module doc
@@ -67,7 +59,7 @@ export function useTripBookings(
   options?: { enabled?: boolean },
 ): UseQueryResult<Paginated<Booking>, Error> {
   return useQuery({
-    queryKey: bookingKeys.list(tripId),
+    queryKey: queryKeys.tripBookings(tripId),
     queryFn: ({ signal }) =>
       apiClient.request(
         bookingEndpoints.listBookings,
@@ -98,7 +90,7 @@ export function useCreateBooking(
       // Seam first (fires for EVERY settled create — superseded-call law),
       // then the cache work.
       options?.onMutationSuccess?.(booking);
-      void qc.invalidateQueries({ queryKey: bookingKeys.root(tripId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
     },
     onError: (err) => {
       options?.onMutationError?.(err);

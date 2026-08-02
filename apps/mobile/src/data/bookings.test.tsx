@@ -16,7 +16,8 @@ import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
 import { apiClient } from "@/auth";
-import { bookingKeys, useCreateBooking, useTripBookings } from "@/data/bookings";
+import { useCreateBooking, useTripBookings } from "@/data/bookings";
+import { queryKeys } from "@/data/query-client";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient } from "@/test-utils/render";
 
@@ -45,14 +46,22 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-it("booking keys join the trip-detail subtree (KEY-CACHE LAW)", () => {
-  expect(bookingKeys.root(TEST_TRIP_ID)).toEqual(["trips", TEST_TRIP_ID, "bookings"]);
-  expect(bookingKeys.list(TEST_TRIP_ID)).toEqual(["trips", TEST_TRIP_ID, "bookings"]);
-  expect(bookingKeys.detail(TEST_TRIP_ID, "b-1")).toEqual([
+it("booking keys join the trip-detail subtree (KEY-CACHE LAW; promoted into queryKeys per the T-7.6 key-homing ruling)", () => {
+  expect(queryKeys.tripBookingsRoot(TEST_TRIP_ID)).toEqual(["trips", TEST_TRIP_ID, "bookings"]);
+  expect(queryKeys.tripBookings(TEST_TRIP_ID)).toEqual(["trips", TEST_TRIP_ID, "bookings"]);
+  expect(queryKeys.tripBooking(TEST_TRIP_ID, "b-1")).toEqual([
     "trips",
     TEST_TRIP_ID,
     "bookings",
     "b-1",
+  ]);
+  // Filtered variants EXTEND the list prefix with trailing args (never
+  // replace it) — invalidating the root reaches them by prefix.
+  expect(queryKeys.tripBookingsCancelled(TEST_TRIP_ID)).toEqual([
+    "trips",
+    TEST_TRIP_ID,
+    "bookings",
+    "cancelled",
   ]);
 });
 
@@ -71,16 +80,16 @@ it("useTripBookings requests the list descriptor (signal forwarded) and caches u
     { params: { tripId: TEST_TRIP_ID }, query: { limit: 100 } },
     expect.objectContaining({ signal: expect.anything() }),
   );
-  expect(client.getQueryData(bookingKeys.list(TEST_TRIP_ID))).toEqual(page);
+  expect(client.getQueryData(queryKeys.tripBookings(TEST_TRIP_ID))).toEqual(page);
 });
 
 it("useCreateBooking: hook-level onMutationSuccess fires for BOTH in-flight creates; success invalidates the booking prefix", async () => {
   const client = makeTestQueryClient();
   // Seed a list AND a cached detail — the prefix invalidation must reach both.
-  client.setQueryDefaults(bookingKeys.list(TEST_TRIP_ID), { gcTime: Infinity });
-  client.setQueryData(bookingKeys.list(TEST_TRIP_ID), { items: [], nextCursor: null });
-  client.setQueryDefaults(bookingKeys.detail(TEST_TRIP_ID, "b-0"), { gcTime: Infinity });
-  client.setQueryData(bookingKeys.detail(TEST_TRIP_ID, "b-0"), makeBooking("b-0"));
+  client.setQueryDefaults(queryKeys.tripBookings(TEST_TRIP_ID), { gcTime: Infinity });
+  client.setQueryData(queryKeys.tripBookings(TEST_TRIP_ID), { items: [], nextCursor: null });
+  client.setQueryDefaults(queryKeys.tripBooking(TEST_TRIP_ID, "b-0"), { gcTime: Infinity });
+  client.setQueryData(queryKeys.tripBooking(TEST_TRIP_ID, "b-0"), makeBooking("b-0"));
 
   const resolvers: ((booking: Booking) => void)[] = [];
   spyRequest().mockImplementation(() => new Promise((resolve) => resolvers.push(resolve)));
@@ -104,14 +113,14 @@ it("useCreateBooking: hook-level onMutationSuccess fires for BOTH in-flight crea
   expect(onMutationSuccess).toHaveBeenNthCalledWith(1, makeBooking("b-1"));
   expect(onMutationSuccess).toHaveBeenNthCalledWith(2, makeBooking("b-2"));
 
-  expect(client.getQueryState(bookingKeys.list(TEST_TRIP_ID))?.isInvalidated).toBe(true);
-  expect(client.getQueryState(bookingKeys.detail(TEST_TRIP_ID, "b-0"))?.isInvalidated).toBe(true);
+  expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  expect(client.getQueryState(queryKeys.tripBooking(TEST_TRIP_ID, "b-0"))?.isInvalidated).toBe(true);
 });
 
 it("useCreateBooking error rides the hook-level onMutationError and leaves the cache alone", async () => {
   const client = makeTestQueryClient();
-  client.setQueryDefaults(bookingKeys.list(TEST_TRIP_ID), { gcTime: Infinity });
-  client.setQueryData(bookingKeys.list(TEST_TRIP_ID), { items: [], nextCursor: null });
+  client.setQueryDefaults(queryKeys.tripBookings(TEST_TRIP_ID), { gcTime: Infinity });
+  client.setQueryData(queryKeys.tripBookings(TEST_TRIP_ID), { items: [], nextCursor: null });
   const failure = new Error("500");
   spyRequest().mockRejectedValue(failure);
   const onMutationError = jest.fn();
@@ -123,5 +132,5 @@ it("useCreateBooking error rides the hook-level onMutationError and leaves the c
     result.current.mutate({ category: "other", title: "Nope" });
   });
   await waitFor(() => expect(onMutationError).toHaveBeenCalledWith(failure));
-  expect(client.getQueryState(bookingKeys.list(TEST_TRIP_ID))?.isInvalidated).toBe(false);
+  expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(false);
 });
