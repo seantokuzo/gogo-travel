@@ -157,6 +157,22 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
   // Measured sheet height — written in onLayout, read in effects/gestures.
   const sheetHeightRef = useRef(0);
 
+  // Exit-window guard (QUEUE P1, ELEVATED — bit T-6.9, PR #14 R2+R3): the
+  // exit animation's completion callback lands on a ~duration.base real
+  // timer. If the consumer unmounted the Sheet mid-exit, that callback must
+  // not setState on the unmounted component.
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    // Re-arm on every effect run: StrictMode/Fast-Refresh re-runs effects
+    // with refs PRESERVED — without this reset the cleanup's `true` would
+    // latch on a still-mounted component and the next exit would never
+    // complete (round-1 correctness finding).
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
   useEffect(() => {
     const { duration, spring } = theme.motion;
     if (visible) {
@@ -209,9 +225,10 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
           }),
         ];
     Animated.parallel(exit).start(({ finished }) => {
-      if (finished) {
+      if (finished && !unmountedRef.current) {
         // Park values for the next entrance, then unmount (async callback —
-        // not a sync-in-effect set).
+        // not a sync-in-effect set). Skipped entirely once the component is
+        // gone — no setState-after-unmount escapes onto later suites.
         translate.setValue(offscreen);
         scrimOpacity.setValue(0);
         setExiting(false);
@@ -238,7 +255,15 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
 
   return (
     <Modal visible={mounted} transparent animationType="none" onRequestClose={onDismiss}>
-      <View style={StyleSheet.absoluteFill}>
+      {/* Exit-window guard (QUEUE P1): the sheet stays MOUNTED through its
+          ~duration.base exit animation but must not stay HIT-TESTABLE — a
+          tap on the scrim/close/content during the exit re-fired handlers
+          (two-in-flight class, T-6.9 R2). */}
+      <View
+        style={StyleSheet.absoluteFill}
+        pointerEvents={visible ? "auto" : "none"}
+        testID={`${testID}-container`}
+      >
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: scrimOpacity }]}>
           <Pressable
             style={s.scrim}

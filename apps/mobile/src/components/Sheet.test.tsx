@@ -4,13 +4,20 @@
  * itself is not simulatable in jest; the 80pt/0.5vy math is a pure function).
  * Content mounts only while visible.
  */
-import { fireEvent, screen } from "@testing-library/react-native";
+import { ThemeProvider } from "@gogo/tokens/react";
+import { act, fireEvent, screen } from "@testing-library/react-native";
+import type { ReactElement } from "react";
 import { Dimensions } from "react-native";
 
 import { AppText, Sheet } from "@/components";
 import { renderWithTheme } from "@/test-utils/render";
 
 import { DISMISS_DRAG_PT, DISMISS_VELOCITY, shouldDismissSheet } from "./Sheet";
+
+/** Same wrapper renderWithTheme applies — rerenders must re-wrap manually. */
+function themed(ui: ReactElement) {
+  return <ThemeProvider defaultAppearancePref="light">{ui}</ThemeProvider>;
+}
 
 describe("Sheet", () => {
   it("renders nothing while not visible", async () => {
@@ -94,6 +101,98 @@ describe("Sheet", () => {
     // inside the modal reaches Modal's onRequestClose.
     await fireEvent(screen.getByTestId("sheet"), "requestClose");
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  describe("exit-window guard (QUEUE P1 — hit-testable/setState exit tax)", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("keeps touches enabled while visible", async () => {
+      await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      expect(
+        screen.getByTestId("sheet-container", { includeHiddenElements: true }).props
+          .pointerEvents,
+      ).toBe("auto");
+    });
+
+    it("is NOT hit-testable through the exit animation", async () => {
+      const onDismiss = jest.fn();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={onDismiss} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={onDismiss} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+
+      // Exit window open: still mounted, but the touch boundary is closed.
+      const container = screen.getByTestId("sheet-container", { includeHiddenElements: true });
+      expect(container.props.pointerEvents).toBe("none");
+      await fireEvent.press(screen.getByTestId("sheet-scrim", { includeHiddenElements: true }));
+      await fireEvent.press(screen.getByTestId("sheet-close", { includeHiddenElements: true }));
+      expect(onDismiss).not.toHaveBeenCalled();
+    });
+
+    it("closes the exit window on its own timer and unmounts", async () => {
+      jest.useFakeTimers();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={() => undefined} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      expect(screen.getByTestId("sheet", { includeHiddenElements: true })).toBeTruthy();
+
+      // duration.base exit (~200ms) + headroom — consumer drains at 250ms
+      // stay harmless no-ops against this window.
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(screen.queryByTestId("sheet", { includeHiddenElements: true })).toBeNull();
+    });
+
+    it("guards the completion setState when unmounted mid-exit", async () => {
+      // REAL timers, and the drain deliberately happens OUTSIDE act: this is
+      // the exact escape shape (the exit timer lands after the consumer tore
+      // the sheet down — the act-warning class that cost T-6.9/PR #14 review
+      // rounds). Unguarded, React logs "An update to Sheet ... not wrapped
+      // in act" here; the errorSpy makes that a deterministic red.
+      const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={() => undefined} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      // Consumer tears the sheet down before the ~200ms exit timer lands.
+      await view.unmount();
+      // Drain WITHOUT act on purpose — proving nothing escapes un-act'd.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
   });
 
   describe("swipe-down release decision (R-ds-19 threshold math)", () => {
