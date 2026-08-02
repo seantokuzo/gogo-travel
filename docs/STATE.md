@@ -100,6 +100,24 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
   (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
   T-7.4/7.5 UI (absent legs = "no data" by design).
+- **W4 (dispatched 2026-08-01, parallel isolated worktrees off `202ed49` —
+  the zero-behavior GridSurface seam-prep commit): T-7.7 ✅ MERGED 7a48caf
+  (PR #16) 2026-08-02** [IT-6 calendar grid: hour axis, virtualized day
+  pager + pinned lockstep header, overlap split, all-day chips +
+  spanning-lodging lane, gap-tap prefill; +46 mobile tests, 86 suites/699
+  total; 1 round: 4 lanes ship + tests fix-then-ship (1 blocking — grid
+  pixel geometry unfalsifiable, mutation-proven — + 6 advisory, all fixed
+  or deferred same round), independent verifier re-ran all falsifications,
+  judge merge/high. Judge NOTE for Sean: size-escalation banner NOT
+  precedent-waived (diff 41% tests = majority source) — `/code-review
+ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
+  [IT-5,IT-7] STILL IN FLIGHT** (Ideas + add/edit, owns the screen,
+  `item/new.tsx`, `data/*`, barrel, screen tests, `DeeplinkReturnHost`
+  mount). **Key-homing RULED (orchestrator, 2026-08-01):** promote
+  module-local `bookingKeys` → `queryKeys` (query-client.ts is the ONE key
+  home) — T-7.6 executes. T-7.5 + T-7.9 (W5/W6) remain after. T-7.7
+  interpretations (15, incl. MIN_BLOCK_HEIGHT floor + new grid testIDs) →
+  QUEUE spec-pass row.
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
@@ -121,12 +139,15 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   - Place-FK 23503 → canonical 404 mapping is constraint-precise
     (`isPlaceFkViolation` handles both driver field shapes); copy that
     pattern for any new FK-race mapping.
-- **T-7.8 landmine (NEW — DS Sheet exit-window is now a per-PR TAX):** the DS
-  Sheet stays hit-testable AND fires `setState` through its ~200ms exit
-  animation — bit T-6.9, then PR #14 R2 AND R3. Until the DS-level guard lands
-  (QUEUE P1, ELEVATED), every mobile PR with a sheet pays it: **drain the
-  sheet's exit timer in tests** + **pending-gate every affordance**. Ref
-  `Sheet.tsx:155`/`:217`.
+- **T-7.8 landmine → RESOLVED at DS level (PR #16 rider, 2026-08-02):** the
+  Sheet exit-window tax (bit T-6.9, PR #14 R2+R3) is LIFTED —
+  `pointerEvents:"none"` while exiting + unmount-latch guard (re-armed in
+  the effect body, StrictMode-proof) landed in `components/Sheet.tsx`.
+  Existing consumer exit-drains are now harmless no-ops; new sheet
+  consumers need NO special posture. Residual (documented, pinned by the
+  reworked members test): same-frame multi-touch can still land two
+  presses before the closing commit — the hook-level v5 mutation seam is
+  what handles that overlap, so that seam rule still binds.
 
 ### P-6 — Trips, collaboration & places spine (CODE-COMPLETE 2026-07-31 → archived; PHASE QA PENDING)
 

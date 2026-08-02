@@ -1,29 +1,49 @@
 /**
- * Calendar-grid surface (IT-6, §2.5–§2.6) — the W4 FROZEN SEAM.
+ * Calendar-grid surface (T-7.7 / IT-6, §2.5–§2.6, R-itin-13..17 +
+ * R-itin-31 grid half) — fills the W4 FROZEN SEAM. The exported props and
+ * the root `itinerary-grid-surface` testID are the frozen contract with the
+ * screen (T-7.6 owns `app/[tripId]/itinerary/index.tsx`); everything below
+ * the root View is T-7.7 internals under `./grid/`.
  *
- * T-7.7 fills THIS file (plus new modules under `./grid/`) with the real
- * hour-axis grid; until then it renders the T-7.4 placeholder unchanged.
- * The props below are the frozen contract with the screen — T-7.6 owns
- * `app/[tripId]/itinerary/index.tsx` this wave, so the grid task never
- * touches the screen (dormant-surface precedent: T-6.3 emitter, T-7.1
- * dirty-day seam).
+ * Composition (Google-Calendar-style split panes):
+ * - PINNED header strip (§2.5 "all-day lane on top", R-itin-16): day label +
+ *   spanning-lodging lane segments + all-day chips per column. Rendered by a
+ *   second, non-scrollable horizontal FlatList kept in lockstep with the
+ *   pager via `scrollToOffset` (no state on scroll — no re-render storm).
+ * - Body: ONE shared vertical scroller (the §2.5 shared hour axis) holding
+ *   the hour gutter beside a horizontally-paged, VIRTUALIZED FlatList of day
+ *   columns (one full day per page + neighbor peek — `snapToInterval`).
  *
- * Frozen contract (extend internals, never the boundary):
- * - Root View keeps `testID="itinerary-grid-surface"` — the screen test
- *   pins it; grid internals get their own §2.9 ids.
- * - `onAddAt(day, time?)` → §2.5 gap-tap prefill. The screen routes it to
- *   `item/new` with `day` + rounded `HH:mm`; the form CONSUMING `time` is
- *   T-7.6's half.
- * - `onOpenBooking` / `onOpenItem` → identical routing to the day list
- *   (R-itin-27); spanning-lodging lanes carry the bookingId.
- * - Viewer gating (R-ib-24): render NO add affordance when
- *   `trip.role === "viewer"` — gap-tap is a write affordance.
+ * R-itin-17: hour height derives from the measured viewport so the
+ * 08:00–20:00 band exactly fills it (clamped); the initial vertical offset
+ * lands on 08:00, and `initialScrollIndex` lands on today's column when
+ * today is a column, else the first day.
+ *
+ * Viewer gating (R-ib-24): gap-tap is a write affordance — viewers get an
+ * inert gap layer (no Pressables, no slot testIDs). Blocks/chips/lanes stay
+ * pressable for every role (they route to detail — reads).
  */
 import type { Booking, ItineraryItem, TripWithRole } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { StyleSheet, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FlatList, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
+import type { NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 
-import { AppText } from "@/components";
+import { localTodayISO } from "@/navigation/trip-defaults";
+
+import {
+  COLUMN_FRACTION,
+  DEFAULT_HOUR_HEIGHT,
+  FIRST_VISIBLE_HOUR,
+  GUTTER_WIDTH,
+  MAX_HOUR_HEIGHT,
+  MIN_HOUR_HEIGHT,
+  VISIBLE_HOURS,
+} from "./grid/constants";
+import { GridDayColumn } from "./grid/GridDayColumn";
+import { GridHeaderCell, headerStripHeight } from "./grid/GridHeaderCell";
+import { HourGutter } from "./grid/HourGutter";
+import { buildGridDays, initialDayIndex, type GridDay } from "./grid/model";
 
 export interface GridSurfaceProps {
   trip: TripWithRole;
@@ -41,20 +61,150 @@ export interface GridSurfaceProps {
 const useStyles = createStyles((t) =>
   StyleSheet.create({
     shell: { flex: 1 },
-    placeholder: { flex: 1, alignItems: "center", justifyContent: "center", gap: t.space[2] },
+    headerRow: {
+      flexDirection: "row",
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: t.color.border.default,
+      backgroundColor: t.color.bg.surface,
+    },
+    gutterSpacer: { width: GUTTER_WIDTH },
+    body: { flex: 1 },
+    bodyRow: { flexDirection: "row" },
   }),
 );
 
-export function GridSurface(_props: GridSurfaceProps) {
+function clampHourHeight(viewportHeight: number): number {
+  if (viewportHeight <= 0) return DEFAULT_HOUR_HEIGHT;
+  const fit = viewportHeight / VISIBLE_HOURS;
+  return Math.min(MAX_HOUR_HEIGHT, Math.max(MIN_HOUR_HEIGHT, fit));
+}
+
+export function GridSurface({
+  trip,
+  items,
+  bookingsById,
+  onAddAt,
+  onOpenBooking,
+  onOpenItem,
+}: GridSurfaceProps) {
   const s = useStyles();
+  const { width: windowWidth } = useWindowDimensions();
+
+  const model = useMemo(() => buildGridDays(trip, items, bookingsById), [
+    trip,
+    items,
+    bookingsById,
+  ]);
+  const { days, laneCount, maxAllDayCount } = model;
+  const showChipRow = maxAllDayCount > 0;
+  const canAdd = trip.role !== "viewer";
+
+  const columnWidth = Math.max(1, Math.round((windowWidth - GUTTER_WIDTH) * COLUMN_FRACTION));
+  const initialIndex = useMemo(() => {
+    if (days.length === 0) return 0;
+    return Math.min(
+      initialDayIndex(days.map((day) => day.date), localTodayISO()),
+      days.length - 1,
+    );
+  }, [days]);
+
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const hourHeight = clampHourHeight(viewportHeight);
+
+  const headerRef = useRef<FlatList<GridDay>>(null);
+  const verticalRef = useRef<ScrollView>(null);
+  const landedRef = useRef(false);
+
+  // R-itin-17: scroll the shared axis to 08:00 once the viewport (and thus
+  // the real hour height) is known.
+  useEffect(() => {
+    if (viewportHeight <= 0 || landedRef.current) return;
+    landedRef.current = true;
+    verticalRef.current?.scrollTo({ y: FIRST_VISIBLE_HOUR * hourHeight, animated: false });
+  }, [viewportHeight, hourHeight]);
+
+  const getItemLayout = (_data: unknown, index: number) => ({
+    length: columnWidth,
+    offset: columnWidth * index,
+    index,
+  });
+
+  const syncHeader = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    headerRef.current?.scrollToOffset({
+      offset: event.nativeEvent.contentOffset.x,
+      animated: false,
+    });
+  };
+
   return (
     <View style={s.shell} testID="itinerary-grid-surface">
-      <View style={s.placeholder} testID="itinerary-grid-placeholder">
-        <AppText role="subheading">Calendar grid</AppText>
-        <AppText role="caption" color="secondary">
-          The hour-by-hour view is on its way.
-        </AppText>
+      <View style={[s.headerRow, { height: headerStripHeight(laneCount, showChipRow) }]}>
+        <View style={s.gutterSpacer} />
+        <FlatList
+          ref={headerRef}
+          testID="itinerary-grid-allday-lane"
+          data={days}
+          horizontal
+          scrollEnabled={false}
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(day) => day.date}
+          getItemLayout={getItemLayout}
+          initialScrollIndex={initialIndex}
+          renderItem={({ item: day }) => (
+            <GridHeaderCell
+              day={day}
+              width={columnWidth}
+              laneCount={laneCount}
+              showChipRow={showChipRow}
+              onOpenBooking={onOpenBooking}
+              onOpenItem={onOpenItem}
+            />
+          )}
+        />
       </View>
+      <ScrollView
+        ref={verticalRef}
+        style={s.body}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+        showsVerticalScrollIndicator={false}
+        testID="itinerary-grid-scroll"
+      >
+        <View style={s.bodyRow}>
+          <HourGutter hourHeight={hourHeight} />
+          <FlatList
+            testID="itinerary-grid-pager"
+            data={days}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(day) => day.date}
+            getItemLayout={getItemLayout}
+            initialScrollIndex={initialIndex}
+            snapToInterval={columnWidth}
+            decelerationRate="fast"
+            disableIntervalMomentum
+            nestedScrollEnabled
+            // Round-1 perf: a day column is heavy (24 slot Pressables +
+            // blocks) — shrink first-paint and retention windows; snap
+            // paging is unaffected.
+            windowSize={5}
+            initialNumToRender={3}
+            maxToRenderPerBatch={3}
+            onScroll={syncHeader}
+            scrollEventThrottle={16}
+            renderItem={({ item: day }) => (
+              <GridDayColumn
+                day={day}
+                width={columnWidth}
+                hourHeight={hourHeight}
+                canAdd={canAdd}
+                onAddAt={onAddAt}
+                onOpenBooking={onOpenBooking}
+                onOpenItem={onOpenItem}
+              />
+            )}
+          />
+        </View>
+      </ScrollView>
     </View>
   );
 }
