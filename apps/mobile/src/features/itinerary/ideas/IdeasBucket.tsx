@@ -98,8 +98,17 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
   // R-itin-10: hidden when empty — and hidden until the reads that decide
   // "empty" have settled (no flash-in). A failed cancelled read degrades to
   // "no cancelled" (its only cost is the toggle).
+  //
+  // `scheduleTarget === null` is load-bearing (round-1 blocker): scheduling
+  // the LAST idea empties `unscheduled` at OPTIMISTIC-write time, which
+  // unmounted the bucket AND the in-flight ScheduleSheet with it — a
+  // subsequent failure then rolled the card back while its `setError` landed
+  // on an unmounted form, so the sheet vanished as-if-success and the card
+  // silently reappeared. Staying mounted for the duration of a presented
+  // schedule keeps the sheet's documented rollback-visible posture true.
   const settled = itineraryQuery.data !== undefined && bookingsQuery.data !== undefined;
-  if (!settled || (unscheduled.length === 0 && cancelled.length === 0)) return null;
+  const empty = unscheduled.length === 0 && cancelled.length === 0 && scheduleTarget === null;
+  if (!settled || empty) return null;
 
   const editor = trip.role !== "viewer";
 

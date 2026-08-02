@@ -203,7 +203,10 @@ export function ItemForm({
             label="Start time"
             value={startTime}
             onSelect={touch(setStartTime)}
-            onClear={() => setStartTime("")}
+            // Through `touch`: a clear-ONLY edit must arm the §2.6 dirty
+            // guard too, or removing a time and swipe-dismissing loses the
+            // change with no discard confirm.
+            onClear={() => touch(setStartTime)("")}
             testID="itinerary-item-new-input-start-time"
           />
         </View>
@@ -212,7 +215,7 @@ export function ItemForm({
             label="End time"
             value={endTime}
             onSelect={touch(setEndTime)}
-            onClear={() => setEndTime("")}
+            onClear={() => touch(setEndTime)("")}
             error={fieldErrors["end-time"] || undefined}
             testID="itinerary-item-new-input-end-time"
           />

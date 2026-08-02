@@ -53,7 +53,12 @@ const useStyles = createStyles((t) =>
 
 /** Route param → option id (kebab slug or raw enum); unknown → picker step. */
 function parseOption(raw: string | undefined): AddOptionId | null {
-  if (raw === undefined) return null;
+  // expo-router hands back a string[] when a query key is REPEATED, and the
+  // `useLocalSearchParams<…>()` generic is an unchecked assertion — a
+  // crafted/mangled `?category=x&category=x` deep link would otherwise throw
+  // out of the useState initializer (red-screen on link open). Non-string
+  // degrades to the in-form picker step, like any unknown value.
+  if (typeof raw !== "string") return null;
   const value = raw.replaceAll("-", "_");
   if (value === "place_visit" || value === "custom") return value;
   const parsed = BookingCategorySchema.safeParse(value);
@@ -79,6 +84,14 @@ export default function ItineraryItemNewScreen() {
   const [confirmVisible, setConfirmVisible] = useState(false);
   const bypassGuardRef = useRef(false);
   const pendingDismissRef = useRef<(() => void) | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Prefill params validated against the shared scalars — a malformed deep
   // link degrades to "no prefill", never a malformed wire write.
@@ -116,11 +129,20 @@ export default function ItineraryItemNewScreen() {
   };
 
   const onSaved = (): void => {
+    // Mounted guard: hook-level mutation seams live on the Mutation, not the
+    // component, so a slow save that settles AFTER the user discard-dismissed
+    // this modal would still run — and `close()` would then pop whatever
+    // screen the user had moved on to (or `replace` would yank them back to
+    // the itinerary). A settled write on an unmounted form is a no-op here;
+    // its cache reconciliation already happened in the hook.
+    if (!mountedRef.current) return;
     bypassGuardRef.current = true;
     close();
   };
 
   const onDirty = (): void => setDirty(true);
+  /** A write landed while the form stays up (partial-success) — see BookingForm. */
+  const onWriteLanded = (): void => setDirty(false);
 
   const viewer = trip.role === "viewer";
 
@@ -147,6 +169,7 @@ export default function ItineraryItemNewScreen() {
           category={bookingQuery.data.category}
           booking={bookingQuery.data}
           onDirty={onDirty}
+          onWriteLanded={onWriteLanded}
           onSaved={onSaved}
         />
       );
@@ -226,6 +249,7 @@ export default function ItineraryItemNewScreen() {
         prefillTime={prefillTime}
         deeplinkReturn={deeplinkReturn}
         onDirty={onDirty}
+        onWriteLanded={onWriteLanded}
         onSaved={onSaved}
       />
     );

@@ -71,6 +71,13 @@ export interface BookingFormProps {
   /** R-itin-22 / R-ib-11: the return prompt's "add manually" landing. */
   deeplinkReturn?: boolean;
   onDirty(): void;
+  /**
+   * A write LANDED but the flow stays on screen (the create-succeeded /
+   * schedule-failed partial state) — the host clears its dirty guard so the
+   * discard dialog can't claim "nothing will be saved" about a booking that
+   * now exists.
+   */
+  onWriteLanded(): void;
   onSaved(): void;
 }
 
@@ -87,7 +94,6 @@ const useStyles = createStyles((t) =>
     row: { flexDirection: "row", gap: t.space[3] },
     rowItem: { flex: 1 },
     section: { gap: t.space[3] },
-    sectionLabel: { marginBottom: -t.space[2] },
   }),
 );
 
@@ -103,6 +109,7 @@ export function BookingForm({
   prefillTime,
   deeplinkReturn,
   onDirty,
+  onWriteLanded,
   onSaved,
 }: BookingFormProps) {
   const s = useStyles();
@@ -142,7 +149,13 @@ export function BookingForm({
 
   const schedule = useScheduleBooking(trip.id, {
     onMutationSuccess: () => onSaved(),
-    onMutationError: () => setSavedToIdeas(true),
+    onMutationError: () => {
+      // The booking EXISTS (create succeeded, only the day assignment
+      // failed) — retire the dirty guard so the discard dialog stops
+      // claiming nothing was saved.
+      setSavedToIdeas(true);
+      onWriteLanded();
+    },
   });
 
   const create = useCreateBooking(trip.id, {
@@ -150,14 +163,14 @@ export function BookingForm({
       // §2.4 save routing: a day-picked TIMELESS booking goes on to the
       // schedule endpoint; everything else is done (timed creates were
       // auto-scheduled server-side, I-2).
+      //
+      // Day only, never `prefillTime`: this arm is reachable ONLY when the
+      // user cleared the seeded primary start, so passing the tapped time
+      // would resurrect the exact value they just deleted — and schedule it
+      // with no visible field explaining where it came from. Day-only
+      // matches the empty-day-row fallback.
       if (created.starts_at === null && prefillDay !== undefined) {
-        schedule.mutate({
-          bookingId: created.id,
-          input: {
-            day: prefillDay,
-            ...(prefillTime !== undefined ? { start_time: prefillTime } : {}),
-          },
-        });
+        schedule.mutate({ bookingId: created.id, input: { day: prefillDay } });
         return;
       }
       onSaved();

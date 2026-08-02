@@ -25,7 +25,9 @@ const useStyles = createStyles((t) =>
     container: { gap: t.space[1] },
     row: { flexDirection: "row", flexWrap: "wrap", gap: t.space[2] },
     chip: {
-      minHeight: 32,
+      // Full touch target (R-ds-9) — a 32pt chip is below the platform
+      // minimum every neighboring field honors.
+      minHeight: t.touchTarget,
       justifyContent: "center",
       paddingHorizontal: t.space[3],
       borderRadius: t.radius.full,

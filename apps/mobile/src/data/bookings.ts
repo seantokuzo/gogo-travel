@@ -160,13 +160,71 @@ export function useCancelledBookings(
   });
 }
 
-/** Replace one row of the cached default booking list (post-state reconcile). */
-function replaceBookingRow(qc: QueryClient, tripId: string, booking: Booking): void {
-  qc.setQueryData<Paginated<Booking>>(queryKeys.tripBookings(tripId), (old) =>
-    old === undefined
-      ? old
-      : { ...old, items: old.items.map((row) => (row.id === booking.id ? booking : row)) },
-  );
+/**
+ * The R-ib-10 list order, mirrored client-side: `starts_at ASC NULLS LAST,
+ * updated_at DESC` (id-tiebroken for determinism).
+ *
+ * Instants are compared as PARSED time values, never lexicographically: the
+ * wire scalar is `z.iso.datetime({ offset: true })` (scalars.ts), so an
+ * offset-bearing (`…+09:00`) or differently-precise (`…:00Z` vs
+ * `…:00.000Z`) serialization is schema-legal — string compare would order
+ * those by their spelling, not their instant, and would even call two
+ * spellings of the SAME instant unequal. Unparseable ⇒ treated as unknown
+ * (trailing), the shared `toUtcInstant` corruption-fold posture.
+ */
+export function byBookingListOrder(a: Booking, b: Booking): number {
+  const startA = instantOrNull(a.starts_at);
+  const startB = instantOrNull(b.starts_at);
+  if (startA !== startB) {
+    // NULLS LAST — a timeless idea trails every scheduled booking.
+    if (startA === null) return 1;
+    if (startB === null) return -1;
+    return startA - startB;
+  }
+  const updatedA = instantOrNull(a.updated_at) ?? 0;
+  const updatedB = instantOrNull(b.updated_at) ?? 0;
+  // updated_at DESC — freshest first.
+  if (updatedA !== updatedB) return updatedB - updatedA;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+function instantOrNull(iso: string | null): number | null {
+  if (iso === null) return null;
+  const ms = Date.parse(iso);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/**
+ * UPSERT one row of the cached default booking list (post-state reconcile,
+ * R-ib-18).
+ *
+ * Insert-if-missing is load-bearing (round-1 blocker): the create→schedule
+ * chain fires schedule BEFORE create's root invalidation refetch settles,
+ * and schedule's own `cancelQueries` aborts that refetch — a
+ * map-replace-only reconcile stranded the freshly created booking out of
+ * the list cache, so the day list rendered the enrichment-gap fallback
+ * ("Booking", no badge) with a FALSE day lock. Upserting repairs it without
+ * re-entering the invalidate/cancel race (the module's zero-refetch design).
+ *
+ * Present rows are replaced IN PLACE — the server's returned order is
+ * preserved byte-exactly, identical to the pre-fix behavior; only the
+ * absent case consults `byBookingListOrder`, and it SPLICES rather than
+ * re-sorting, so a client/server ordering disagreement can never reshuffle
+ * rows the server already placed.
+ */
+function upsertBookingRow(qc: QueryClient, tripId: string, booking: Booking): void {
+  qc.setQueryData<Paginated<Booking>>(queryKeys.tripBookings(tripId), (old) => {
+    if (old === undefined) return old;
+    const index = old.items.findIndex((row) => row.id === booking.id);
+    const items = old.items.slice();
+    if (index !== -1) {
+      items[index] = booking;
+      return { ...old, items };
+    }
+    const at = items.findIndex((row) => byBookingListOrder(booking, row) < 0);
+    items.splice(at === -1 ? items.length : at, 0, booking);
+    return { ...old, items };
+  });
 }
 
 /** `BookingWithItems` → the bare `Booking` row (list caches hold rows, not composites). */
@@ -203,7 +261,7 @@ export function useUpdateBooking(
     onSuccess: (result) => {
       options?.onMutationSuccess?.(result);
       qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
-      replaceBookingRow(qc, tripId, toBookingRow(result));
+      upsertBookingRow(qc, tripId, toBookingRow(result));
       void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
       void qc.invalidateQueries({ queryKey: queryKeys.tripItinerary(tripId) });
     },
@@ -315,7 +373,7 @@ export function useScheduleBooking(
         };
         return result.items.reduce(upsertItineraryItem, withoutPlaceholder);
       });
-      replaceBookingRow(qc, tripId, toBookingRow(result));
+      upsertBookingRow(qc, tripId, toBookingRow(result));
       qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
     },
     onError: (err, _vars, ctx) => {
