@@ -686,12 +686,16 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     await settleList();
   });
 
-  it("EXIT-WINDOW two-in-flight creates: both share sheets open via the seam (round-2 — per-call would drop the first)", async () => {
-    // The CTA pending gate does NOT cover the Sheet's role items, and Sheet
-    // stays mounted AND pressable through its ~200ms exit animation — so a
-    // second role-item tap inside the exit window fires a second create
-    // while the first is in flight (prod-real). v5 drops the superseded
-    // call's per-call callbacks; only the hook-level seam opens BOTH sheets.
+  it("SAME-FRAME two-in-flight creates: both share sheets open via the seam (round-2 — per-call would drop the first)", async () => {
+    // Born as the T-6.9 R2 EXIT-WINDOW counter-test: a second role-item tap
+    // during the Sheet's ~200ms exit fired a second create. The T-7.7 DS
+    // rider closed that vector (taps are inert while the sheet exits), but
+    // the OVERLAP CLASS it pinned is still prod-real: two touches landing in
+    // the SAME FRAME both dispatch before React commits the sheet-closing
+    // state — the pointerEvents guard only exists after that commit. Model
+    // it by dispatching both presses inside ONE act scope (no commit between
+    // them — the multi-touch shape). v5 drops the superseded call's per-call
+    // callbacks; only the hook-level seam opens BOTH sheets.
     const shareSpy = jest
       .spyOn(Share, "share")
       .mockResolvedValue({ action: "sharedAction" } as never);
@@ -705,10 +709,15 @@ describe("invites (R-tripui-16, §3.2 revoke gating)", () => {
     });
 
     await fireEvent.press(await screen.findByTestId("members-button-invite"));
-    // Create #1, then create #2 INSIDE the exit window — no settleSheetExit
-    // between the presses (the sheet is still hit-testable while sliding out).
-    await fireEvent.press(await screen.findByTestId("members-button-invite-editor"));
-    await fireEvent.press(screen.getByTestId("members-button-invite-viewer"));
+    // Create #1 AND create #2 in one act scope: nested act defers the flush
+    // to the outermost scope, so the sheet-closing commit lands only after
+    // BOTH presses dispatched — the same-frame double-tap, exactly.
+    const editorItem = await screen.findByTestId("members-button-invite-editor");
+    const viewerItem = screen.getByTestId("members-button-invite-viewer");
+    await act(async () => {
+      await fireEvent.press(editorItem);
+      await fireEvent.press(viewerItem);
+    });
     await settleSheetExit();
     expect(resolvers).toHaveLength(2);
 
