@@ -96,8 +96,16 @@ it("corrupt or wrong-shape persisted values fold to no pending return", () => {
 it("raw non-JSON in the slot folds to no pending return (JSON.parse catch arm, R1)", () => {
   const storeInstance = mmkvInstances()[0];
   expect(storeInstance).toBeDefined();
-  // Bypass recordDeeplinkOut (which always stringifies) — this is the
-  // torn-write/foreign-writer shape the catch arm exists for.
+  // Self-validate the handle FIRST — `[0]` is only the store module's
+  // instance if no other createMMKV caller registered ahead of it. A valid
+  // record written raw through it must read back; without this the poison arm
+  // could pass vacuously (poking an unrelated instance while the real slot
+  // stays empty → null for the wrong reason).
+  const valid = makeRecord(1_000);
+  storeInstance?.set(DEEPLINK_RETURN_KEY, JSON.stringify(valid));
+  expect(readDeeplinkOutRecord()).toEqual(valid);
+  // Now the torn-write/foreign-writer shape the catch arm exists for — bypass
+  // recordDeeplinkOut (which always stringifies).
   storeInstance?.set(DEEPLINK_RETURN_KEY, "{not json");
   expect(readDeeplinkOutRecord()).toBeNull();
   expect(consumePendingReturnPrompt()).toBeNull();

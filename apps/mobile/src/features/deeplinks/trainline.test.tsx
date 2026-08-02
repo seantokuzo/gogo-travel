@@ -185,4 +185,61 @@ describe("useTrainlineStationUrn — the §2.7 debounce is real (R1 falsifiabili
       client.clear();
     }
   });
+
+  it("each change RESETS the window — trailing-edge, not a fixed delay from the first change", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    const client = makeTestQueryClient();
+    try {
+      globalThis.fetch = jest.fn(async () =>
+        fakeResponse(200, { searchLocations: [{ urn: "urn:trainline:generic:loc:182gb" }] }),
+      ) as unknown as typeof fetch;
+      const wrapper = ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+
+      const { rerender, unmount } = await renderHook(
+        ({ text }: { text: string }) => useTrainlineStationUrn(text),
+        { initialProps: { text: "London" }, wrapper },
+      );
+      // Mount seeds the initial lookup.
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+      // First change, then advance PART of the window (mid-flight)…
+      await rerender({ text: "London E" });
+      await act(async () => {
+        jest.advanceTimersByTime(TRAINLINE_DEBOUNCE_MS / 2);
+      });
+      // …a SECOND change before the window elapsed must RESET the timer.
+      await rerender({ text: "London Euston" });
+
+      // 299ms after the second change — already past a window measured from
+      // the FIRST change (150 + 299 > 300): a fixed-delay-from-first debounce
+      // would have fired the "London E" lookup by now. Trailing-edge has not.
+      await act(async () => {
+        jest.advanceTimersByTime(TRAINLINE_DEBOUNCE_MS - 1);
+      });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+      // Crossing the window measured from the SECOND change: exactly one
+      // lookup, and for the settled term (never the abandoned "London E").
+      await act(async () => {
+        jest.advanceTimersByTime(1);
+      });
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+      expect(globalThis.fetch).toHaveBeenLastCalledWith(
+        trainlineLocationSearchUrl("London Euston"),
+        expect.anything(),
+      );
+
+      await act(async () => {
+        jest.advanceTimersByTime(0);
+      });
+      await unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+      jest.useRealTimers();
+      client.clear();
+    }
+  });
 });

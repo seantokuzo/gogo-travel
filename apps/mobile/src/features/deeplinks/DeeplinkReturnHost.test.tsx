@@ -174,6 +174,10 @@ it("'add manually' lands the minimal create with source: 'deeplink_return' pinne
 
   // Success closes the landing sheet.
   await waitFor(() => expect(screen.queryByTestId("booking-manual-add-sheet")).toBeNull());
+
+  // Drain the return sheet's ~200ms exit so setExiting(false) resolves in an
+  // act window, not the test-end→cleanup gap (Sheet exit-window landmine).
+  await waitFor(() => expect(screen.queryByTestId("booking-return-sheet")).toBeNull());
 });
 
 it("cancel on the manual-add sheet closes it WITHOUT landing a create (R1 pin)", async () => {
@@ -189,6 +193,10 @@ it("cancel on the manual-add sheet closes it WITHOUT landing a create (R1 pin)",
   await fireEvent.press(screen.getByTestId("booking-manual-add-button-cancel"));
   await waitFor(() => expect(screen.queryByTestId("booking-manual-add-sheet")).toBeNull());
   expect(requestSpy).not.toHaveBeenCalled();
+
+  // Drain the return sheet's ~200ms exit so setExiting(false) resolves in an
+  // act window, not the test-end→cleanup gap (Sheet exit-window landmine).
+  await waitFor(() => expect(screen.queryByTestId("booking-return-sheet")).toBeNull());
 });
 
 it("a failed create surfaces the sheet's ErrorBanner via the hook-level seam and stays open", async () => {
@@ -204,6 +212,11 @@ it("a failed create surfaces the sheet's ErrorBanner via the hook-level seam and
 
   await waitFor(() => expect(screen.getByTestId("booking-manual-add-error")).toBeOnTheScreen());
   expect(screen.getByTestId("booking-manual-add-sheet")).toBeOnTheScreen();
+
+  // The return sheet exited when "add manually" was pressed; drain its ~200ms
+  // exit so setExiting(false) resolves in an act window, not the cleanup gap
+  // (Sheet exit-window landmine). The manual-add sheet legitimately stays open.
+  await waitFor(() => expect(screen.queryByTestId("booking-return-sheet")).toBeNull());
 });
 
 it("onAddManually override routes out instead of the built-in sheet, ONCE per presented record", async () => {
@@ -222,4 +235,8 @@ it("onAddManually override routes out instead of the built-in sheet, ONCE per pr
   expect(onAddManually).toHaveBeenCalledTimes(1);
   expect(onAddManually).toHaveBeenCalledWith(record);
   expect(screen.queryByTestId("booking-manual-add-sheet")).toBeNull();
+
+  // Drain the return sheet's ~200ms exit so setExiting(false) resolves in an
+  // act window, not the test-end→cleanup gap (Sheet exit-window landmine).
+  await waitFor(() => expect(screen.queryByTestId("booking-return-sheet")).toBeNull());
 });
