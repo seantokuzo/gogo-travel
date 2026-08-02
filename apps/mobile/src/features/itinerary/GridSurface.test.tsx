@@ -12,6 +12,7 @@
  */
 import type { TripWithRole } from "@gogo/shared";
 import { fireEvent, screen } from "@testing-library/react-native";
+import { FlatList, ScrollView } from "react-native";
 
 import { localTodayISO } from "@/navigation/trip-defaults";
 import {
@@ -32,6 +33,7 @@ import { renderWithTheme } from "@/test-utils/render";
 import { addDays, makeTrip } from "@/test-utils/trip-fixtures";
 
 import { GridSurface } from "./GridSurface";
+import { MIN_BLOCK_HEIGHT } from "./grid/constants";
 
 const trip: TripWithRole = makeTrip({
   id: "trip-1",
@@ -88,6 +90,59 @@ describe("GridSurface", () => {
     await fireEvent.press(block);
     expect(handlers.onOpenBooking).toHaveBeenCalledWith(BOOKING_FLIGHT_ID);
     expect(handlers.onOpenItem).not.toHaveBeenCalled();
+  });
+
+  it("positions blocks by wall minutes — top/height derive from start/end (R-itin-13)", async () => {
+    await renderGrid();
+    // ITEM_A 10:00–12:30 at DEFAULT_HOUR_HEIGHT 60 (1pt/min pre-layout):
+    // top = 600, height = 150. Round-1 blocking pin — a `top = 0` mutation
+    // previously left the whole suite green.
+    expect(screen.getByTestId(`itinerary-grid-item-${ITEM_A_ID}`)).toHaveStyle({
+      top: 600,
+      height: 150,
+    });
+  });
+
+  it("floors tiny blocks at MIN_BLOCK_HEIGHT so they stay readable/tappable", async () => {
+    const tiny = makeItineraryItem({
+      id: "tiny-1",
+      title: "Espresso",
+      start_time: "09:00",
+      end_time: "09:05",
+    });
+    await renderGrid({ items: [tiny] });
+    // True span is 5pt at 1pt/min — the render floor takes over; top stays exact.
+    expect(screen.getByTestId("itinerary-grid-item-tiny-1")).toHaveStyle({
+      top: 540,
+      height: MIN_BLOCK_HEIGHT,
+    });
+  });
+
+  it("fits the 08:00–20:00 band to the measured viewport and lands at 08:00 (R-itin-17)", async () => {
+    const scrollSpy = jest.spyOn(ScrollView.prototype, "scrollTo");
+    await renderGrid();
+    await fireEvent(screen.getByTestId("itinerary-grid-scroll"), "layout", {
+      nativeEvent: { layout: { x: 0, y: 0, width: 375, height: 528 } },
+    });
+    // 528pt viewport / 12 visible hours = 44pt rows (the MIN clamp edge);
+    // the landing effect scrolls the shared axis to 08:00 exactly once.
+    expect(scrollSpy).toHaveBeenCalledWith({ y: 8 * 44, animated: false });
+    // Block geometry re-derives from the fitted hour height (44/60 pt/min).
+    expect(screen.getByTestId(`itinerary-grid-item-${ITEM_A_ID}`)).toHaveStyle({
+      top: 600 * (44 / 60),
+      height: 150 * (44 / 60),
+    });
+    scrollSpy.mockRestore();
+  });
+
+  it("keeps the pinned header strip in lockstep with the day pager", async () => {
+    const offsetSpy = jest.spyOn(FlatList.prototype, "scrollToOffset");
+    await renderGrid();
+    await fireEvent.scroll(screen.getByTestId("itinerary-grid-pager"), {
+      nativeEvent: { contentOffset: { x: 123, y: 0 } },
+    });
+    expect(offsetSpy).toHaveBeenCalledWith({ offset: 123, animated: false });
+    offsetSpy.mockRestore();
   });
 
   it("routes non-booking blocks to item detail (R-itin-27)", async () => {
