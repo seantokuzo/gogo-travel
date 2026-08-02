@@ -36,6 +36,8 @@ import {
   type DayOrderResult,
   type ISODate,
   type ItineraryItem,
+  type ItineraryItemCreate,
+  type ItineraryItemUpdate,
   type ItineraryRead,
   type Paginated,
 } from "@gogo/shared";
@@ -110,8 +112,12 @@ export interface DayOrderVars {
 /** R-ib-15 sort_order assignment the server uses: `1024 × position` (1-based). */
 const SORT_GAP = 1024;
 
-/** `(day, sort_order, id)` — the R-ib-13 read order, id-tiebroken like the server. */
-function byCalendarOrder(a: ItineraryItem, b: ItineraryItem): number {
+/**
+ * `(day, sort_order, id)` — the R-ib-13 read order, id-tiebroken like the
+ * server. Exported for the sibling booking layer (T-7.6): the optimistic
+ * schedule flow re-sorts the composite read with the SAME comparator.
+ */
+export function byCalendarOrder(a: ItineraryItem, b: ItineraryItem): number {
   if (a.day !== b.day) return a.day < b.day ? -1 : 1;
   if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
@@ -197,6 +203,88 @@ export function useDayOrder(
         old === undefined ? old : reconcileDayOrder(old, day, result.items),
       );
       options?.onMutationSuccess?.(result);
+    },
+  });
+}
+
+/**
+ * Insert/replace one item in the composite read and restore calendar order —
+ * the R-ib-18 reconcile arm shared by item create (insert) and item update
+ * (replace; the row may have changed day). Legs untouched (recompute is
+ * async server-side, R-ib-19 — it lands via later reads).
+ */
+export function upsertItineraryItem(read: ItineraryRead, item: ItineraryItem): ItineraryRead {
+  const items = read.items
+    .filter((existing) => existing.id !== item.id)
+    .concat(item)
+    .sort(byCalendarOrder);
+  return { ...read, items };
+}
+
+/**
+ * `POST /trips/:tripId/itinerary/items` (R-ib-14/15/17) — create a
+ * `place_visit`/`custom` item from the T-7.6 add flow. NOT optimistic
+ * (module-doc policy: server-generated identity + server-assigned gapped
+ * sort_order); the returned post-state is upserted into the composite read
+ * so the calendar reconciles without a refetch (R-ib-18).
+ */
+export function useCreateItineraryItem(
+  tripId: string,
+  options?: ItineraryMutationOptions<ItineraryItem>,
+): UseMutationResult<ItineraryItem, Error, ItineraryItemCreate> {
+  const qc = useQueryClient();
+  const key = queryKeys.tripItinerary(tripId);
+  return useMutation({
+    mutationFn: (input: ItineraryItemCreate) =>
+      apiClient.request(itineraryEndpoints.createItineraryItem, {
+        params: { tripId },
+        body: input,
+      }),
+    onSuccess: (item) => {
+      // Seam first (fires for EVERY settled call — superseded-call law).
+      options?.onMutationSuccess?.(item);
+      qc.setQueryData<ItineraryRead>(key, (old) =>
+        old === undefined ? old : upsertItineraryItem(old, item),
+      );
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
+export interface ItemUpdateVars {
+  itemId: string;
+  input: ItineraryItemUpdate;
+}
+
+/**
+ * `PATCH /trips/:tripId/itinerary/items/:itemId` (R-ib-16/17/18) — edit a
+ * `place_visit`/`custom` item from the T-7.6 edit flow. NOT optimistic
+ * (form save shows a spinner; LWW means the server's post-state is the
+ * truth to reconcile to — R-ib-18, no improvised conflict handling beyond
+ * it). Post-state replaces the cached row wherever its day landed.
+ */
+export function useUpdateItineraryItem(
+  tripId: string,
+  options?: ItineraryMutationOptions<ItineraryItem>,
+): UseMutationResult<ItineraryItem, Error, ItemUpdateVars> {
+  const qc = useQueryClient();
+  const key = queryKeys.tripItinerary(tripId);
+  return useMutation({
+    mutationFn: ({ itemId, input }: ItemUpdateVars) =>
+      apiClient.request(itineraryEndpoints.updateItineraryItem, {
+        params: { tripId, itemId },
+        body: input,
+      }),
+    onSuccess: (item) => {
+      options?.onMutationSuccess?.(item);
+      qc.setQueryData<ItineraryRead>(key, (old) =>
+        old === undefined ? old : upsertItineraryItem(old, item),
+      );
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
     },
   });
 }

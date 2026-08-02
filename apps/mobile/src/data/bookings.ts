@@ -27,13 +27,25 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query";
-import { bookingEndpoints, type Booking, type BookingCreate, type Paginated } from "@gogo/shared";
+import {
+  bookingEndpoints,
+  type Booking,
+  type BookingCreate,
+  type BookingUpdate,
+  type BookingWithItems,
+  type ItineraryItem,
+  type ItineraryRead,
+  type Paginated,
+  type ScheduleBookingInput,
+} from "@gogo/shared";
 
 import { apiClient } from "@/auth";
 
+import { byCalendarOrder, upsertItineraryItem } from "./itinerary";
 import { queryKeys } from "./query-client";
 
 /**
@@ -73,10 +85,10 @@ export function useTripBookings(
 /**
  * `POST /trips/:tripId/bookings` (§3.4) — server derives instants and
  * auto-items (I-2), so no optimistic row (module doc). Success invalidates
- * the whole booking prefix for the trip (list + any cached details); the
- * timeless deeplink-return create spawns no itinerary items, so itinerary
- * keys (T-7.4's) are untouched here — timed-create invalidation fan-out is
- * T-7.6's contract when the full add flow lands.
+ * the whole booking prefix for the trip (list + any cached details), and —
+ * the T-7.6 fan-out — the composite itinerary read too when the create
+ * could have spawned auto-items (I-2: `status ∈ {planned, booked}` ∧ times
+ * known); a timeless or `idea` create leaves itinerary keys untouched.
  */
 export function useCreateBooking(
   tripId: string,
@@ -91,8 +103,230 @@ export function useCreateBooking(
       // then the cache work.
       options?.onMutationSuccess?.(booking);
       void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+      if (booking.status !== "idea" && booking.starts_at !== null) {
+        void qc.invalidateQueries({ queryKey: queryKeys.tripItinerary(tripId) });
+      }
     },
     onError: (err) => {
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
+/**
+ * `GET /trips/:tripId/bookings/:bookingId` — booking detail + calendar
+ * presence (`BookingWithItems`). The `?bookingId=` edit-mode prefill read
+ * (T-7.6); T-7.9's detail screen reuses this hook and key.
+ */
+export function useBooking(
+  tripId: string,
+  bookingId: string,
+  options?: { enabled?: boolean },
+): UseQueryResult<BookingWithItems, Error> {
+  return useQuery({
+    queryKey: queryKeys.tripBooking(tripId, bookingId),
+    queryFn: ({ signal }) =>
+      apiClient.request(
+        bookingEndpoints.getBooking,
+        { params: { tripId, bookingId } },
+        { signal },
+      ),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/**
+ * `GET /trips/:tripId/bookings?status=cancelled` — the Ideas bucket's
+ * "Show cancelled" list (R-itin-12: hidden by default, their only surface).
+ * Cancelled is excluded from the default list (R-ib-10), so it is its own
+ * trailing-arg key; the root-prefix invalidation reaches it.
+ */
+export function useCancelledBookings(
+  tripId: string,
+  options?: { enabled?: boolean },
+): UseQueryResult<Paginated<Booking>, Error> {
+  return useQuery({
+    queryKey: queryKeys.tripBookingsCancelled(tripId),
+    queryFn: ({ signal }) =>
+      apiClient.request(
+        bookingEndpoints.listBookings,
+        {
+          params: { tripId },
+          query: { status: "cancelled", limit: BOOKINGS_PAGE_LIMIT },
+        },
+        { signal },
+      ),
+    enabled: options?.enabled ?? true,
+  });
+}
+
+/** Replace one row of the cached default booking list (post-state reconcile). */
+function replaceBookingRow(qc: QueryClient, tripId: string, booking: Booking): void {
+  qc.setQueryData<Paginated<Booking>>(queryKeys.tripBookings(tripId), (old) =>
+    old === undefined
+      ? old
+      : { ...old, items: old.items.map((row) => (row.id === booking.id ? booking : row)) },
+  );
+}
+
+/** `BookingWithItems` → the bare `Booking` row (list caches hold rows, not composites). */
+function toBookingRow(result: BookingWithItems): Booking {
+  const { items: _items, ...booking } = result;
+  return booking;
+}
+
+export interface BookingUpdateVars {
+  bookingId: string;
+  input: BookingUpdate;
+}
+
+/**
+ * `PATCH /trips/:tripId/bookings/:bookingId` (§3.4) — NOT optimistic
+ * (module doc: §3.2 transition side effects + item resync are
+ * server-derived; concurrency is collab-v1 LWW, R-ib-18 — reconcile to the
+ * returned post-state, nothing more). Success writes the `BookingWithItems`
+ * post-state into the detail key, reconciles the default list row, and
+ * invalidates the booking root (filtered lists — a cancel transition moves
+ * rows between them) + the composite itinerary read (item side effects).
+ */
+export function useUpdateBooking(
+  tripId: string,
+  options?: BookingMutationOptions<BookingWithItems>,
+): UseMutationResult<BookingWithItems, Error, BookingUpdateVars> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ bookingId, input }: BookingUpdateVars) =>
+      apiClient.request(bookingEndpoints.updateBooking, {
+        params: { tripId, bookingId },
+        body: input,
+      }),
+    onSuccess: (result) => {
+      options?.onMutationSuccess?.(result);
+      qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
+      replaceBookingRow(qc, tripId, toBookingRow(result));
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.tripItinerary(tripId) });
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
+export interface ScheduleBookingVars {
+  bookingId: string;
+  input: ScheduleBookingInput;
+}
+
+/** Optimistic-schedule placeholder id — replaced by the server row on success. */
+export function optimisticScheduleItemId(bookingId: string): string {
+  return `optimistic-schedule-${bookingId}`;
+}
+
+interface ScheduleContext {
+  previousItinerary: ItineraryRead | undefined;
+  previousBookings: Paginated<Booking> | undefined;
+}
+
+/**
+ * `POST /trips/:tripId/bookings/:bookingId/schedule` (R-ib-8) — the Ideas
+ * bucket's "Add to day". OPTIMISTIC per R-itin-11 ("optimistically moving
+ * the card into its day section with the status badge advancing
+ * idea → planned"): a placeholder `booking`-kind item is appended to the
+ * target day and the cached booking row advances `idea → planned`; success
+ * swaps in the server post-state (R-ib-18 — real item id/sort_order,
+ * authoritative status), failure restores both snapshots AND invalidates
+ * (a 400/409 means the optimistic premise was stale — booking gained times
+ * or was scheduled elsewhere).
+ */
+export function useScheduleBooking(
+  tripId: string,
+  options?: BookingMutationOptions<BookingWithItems>,
+): UseMutationResult<BookingWithItems, Error, ScheduleBookingVars, ScheduleContext> {
+  const qc = useQueryClient();
+  const itineraryKey = queryKeys.tripItinerary(tripId);
+  const listKey = queryKeys.tripBookings(tripId);
+  return useMutation({
+    mutationFn: ({ bookingId, input }: ScheduleBookingVars) =>
+      apiClient.request(bookingEndpoints.scheduleBooking, {
+        params: { tripId, bookingId },
+        body: input,
+      }),
+    onMutate: async ({ bookingId, input }) => {
+      await qc.cancelQueries({ queryKey: itineraryKey });
+      await qc.cancelQueries({ queryKey: listKey });
+      const previousItinerary = qc.getQueryData<ItineraryRead>(itineraryKey);
+      const previousBookings = qc.getQueryData<Paginated<Booking>>(listKey);
+
+      // Badge advance (R-ib-8: `idea → planned` when it was `idea`).
+      qc.setQueryData<Paginated<Booking>>(listKey, (old) =>
+        old === undefined
+          ? old
+          : {
+              ...old,
+              items: old.items.map((row) =>
+                row.id === bookingId && row.status === "idea"
+                  ? { ...row, status: "planned" }
+                  : row,
+              ),
+            },
+      );
+
+      // Placeholder item appended to the target day (server default:
+      // append — R-ib-15's +1024 gap over the day's current tail).
+      qc.setQueryData<ItineraryRead>(itineraryKey, (old) => {
+        if (old === undefined) return old;
+        const dayTail = old.items
+          .filter((item) => item.day === input.day)
+          .reduce((max, item) => Math.max(max, item.sort_order), 0);
+        const booking = previousBookings?.items.find((row) => row.id === bookingId);
+        const placeholder: ItineraryItem = {
+          id: optimisticScheduleItemId(bookingId),
+          trip_id: tripId,
+          kind: "booking",
+          booking_id: bookingId,
+          place_id: booking?.place_id ?? null,
+          title: null,
+          notes: null,
+          day: input.day,
+          end_day: null,
+          start_time: input.start_time ?? null,
+          end_time: input.end_time ?? null,
+          sort_order: dayTail + 1024,
+          created_by: booking?.created_by ?? "",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        return { ...old, items: [...old.items, placeholder].sort(byCalendarOrder) };
+      });
+
+      return { previousItinerary, previousBookings };
+    },
+    onSuccess: (result, { bookingId }) => {
+      options?.onMutationSuccess?.(result);
+      // Swap the placeholder for the server post-state (R-ib-18): drop the
+      // optimistic row, upsert every returned item, reconcile the booking
+      // row + detail cache.
+      qc.setQueryData<ItineraryRead>(itineraryKey, (old) => {
+        if (old === undefined) return old;
+        const withoutPlaceholder = {
+          ...old,
+          items: old.items.filter((item) => item.id !== optimisticScheduleItemId(bookingId)),
+        };
+        return result.items.reduce(upsertItineraryItem, withoutPlaceholder);
+      });
+      replaceBookingRow(qc, tripId, toBookingRow(result));
+      qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previousItinerary !== undefined) {
+        qc.setQueryData(itineraryKey, ctx.previousItinerary);
+      }
+      if (ctx?.previousBookings !== undefined) {
+        qc.setQueryData(listKey, ctx.previousBookings);
+      }
+      void qc.invalidateQueries({ queryKey: itineraryKey });
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
       options?.onMutationError?.(err);
     },
   });
