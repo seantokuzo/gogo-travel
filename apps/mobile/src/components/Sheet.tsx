@@ -41,6 +41,16 @@ export interface SheetProps {
   /** v1: first point wins — `'content'` (default) or fixed pt height. */
   snapPoints?: ("content" | number)[];
   children?: ReactNode;
+  /**
+   * Blocks EVERY dismissal route (close button, scrim, swipe, Android back)
+   * while a sheet-owned operation must not be interrupted — and, unlike a
+   * caller-side no-op handler, renders the close affordance VISIBLY disabled
+   * so the gate is legible instead of silent (the DS `Button` loading→disabled
+   * posture: a gated affordance always shows it is gated).
+   *
+   * Callers own the bound: a gate with no ceiling reads as a frozen app.
+   */
+  dismissDisabled?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -126,11 +136,20 @@ const useStyles = createStyles((t) =>
       borderRadius: t.radius.full,
       backgroundColor: t.color.bg.inset,
     },
+    closeButtonDisabled: { backgroundColor: t.color.interactive.disabledBg },
     body: { paddingHorizontal: t.space[4] },
   }),
 );
 
-export function Sheet({ visible, onDismiss, title, snapPoints, children, testID }: SheetProps) {
+export function Sheet({
+  visible,
+  onDismiss,
+  title,
+  snapPoints,
+  children,
+  dismissDisabled = false,
+  testID,
+}: SheetProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
@@ -242,9 +261,20 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
   // identity or the (static) spring tokens change. A mid-gesture handler-
   // identity change would reset gesture state — vanishingly rare, since sheet
   // content doesn't re-render its parent mid-drag.
+  // `dismissDisabled` gates the SAME handler every route uses, so swipe,
+  // scrim, close and Android back are blocked by one rule.
+  const guardedDismiss = useMemo(
+    () => (dismissDisabled ? () => undefined : onDismiss),
+    [dismissDisabled, onDismiss],
+  );
   const panResponder = useMemo(
-    () => createSheetPanResponder({ dragY, onDismiss, spring: theme.motion.spring.sheet }),
-    [dragY, onDismiss, theme.motion.spring.sheet],
+    () =>
+      createSheetPanResponder({
+        dragY,
+        onDismiss: guardedDismiss,
+        spring: theme.motion.spring.sheet,
+      }),
+    [dragY, guardedDismiss, theme.motion.spring.sheet],
   );
 
   const firstSnap = snapPoints?.[0] ?? "content";
@@ -254,7 +284,7 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
       : { maxHeight: Math.round(windowHeight * 0.85) };
 
   return (
-    <Modal visible={mounted} transparent animationType="none" onRequestClose={onDismiss}>
+    <Modal visible={mounted} transparent animationType="none" onRequestClose={guardedDismiss}>
       {/* Exit-window guard (QUEUE P1): the sheet stays MOUNTED through its
           ~duration.base exit animation but must not stay HIT-TESTABLE — a
           tap on the scrim/close/content during the exit re-fired handlers
@@ -267,7 +297,8 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
         <Animated.View style={[StyleSheet.absoluteFill, { opacity: scrimOpacity }]}>
           <Pressable
             style={s.scrim}
-            onPress={onDismiss}
+            onPress={guardedDismiss}
+            disabled={dismissDisabled}
             testID={`${testID}-scrim`}
             accessibilityLabel="Dismiss sheet"
           />
@@ -305,14 +336,24 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
                 <View style={s.headerTitle} />
               )}
               <Pressable
-                onPress={onDismiss}
+                onPress={guardedDismiss}
+                disabled={dismissDisabled}
                 testID={`${testID}-close`}
                 accessibilityRole="button"
                 accessibilityLabel="Close"
+                accessibilityState={{ disabled: dismissDisabled }}
                 hitSlop={theme.hitSlop.sm}
-                style={s.closeButton}
+                style={[s.closeButton, dismissDisabled && s.closeButtonDisabled]}
               >
-                <Icon name="close" size={18} color={theme.color.text.secondary} />
+                <Icon
+                  name="close"
+                  size={18}
+                  color={
+                    dismissDisabled
+                      ? theme.color.interactive.disabledText
+                      : theme.color.text.secondary
+                  }
+                />
               </Pressable>
             </View>
           </View>

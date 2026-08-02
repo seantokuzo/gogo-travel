@@ -47,6 +47,18 @@ const mockBack = jest.fn();
 const mockReplace = jest.fn();
 let mockParams: Record<string, string> = {};
 
+/**
+ * `beforeRemove` listeners registered by the screen. Capturing them (rather
+ * than swallowing them, as this mock originally did) is what makes the §2.6
+ * dirty-guard / discard-confirm machinery reachable from a test at all.
+ */
+let mockBeforeRemoveListeners: ((event: BeforeRemoveEvent) => void)[] = [];
+
+interface BeforeRemoveEvent {
+  preventDefault(): void;
+  data: { action: unknown };
+}
+
 jest.mock("expo-router", () => ({
   useRouter: () => ({
     push: mockPush,
@@ -55,8 +67,32 @@ jest.mock("expo-router", () => ({
     canGoBack: () => true,
   }),
   useLocalSearchParams: () => mockParams,
-  useNavigation: () => ({ addListener: () => () => undefined, dispatch: jest.fn() }),
+  useNavigation: () => ({
+    addListener: (event: string, listener: (e: BeforeRemoveEvent) => void) => {
+      if (event === "beforeRemove") mockBeforeRemoveListeners.push(listener);
+      return () => {
+        mockBeforeRemoveListeners = mockBeforeRemoveListeners.filter((l) => l !== listener);
+      };
+    },
+    dispatch: jest.fn(),
+  }),
 }));
+
+/** Fire the navigator event every dismissal route funnels through (nav §2.6). */
+async function attemptDismiss(): Promise<{ prevented: boolean }> {
+  let prevented = false;
+  await act(async () => {
+    for (const listener of mockBeforeRemoveListeners) {
+      listener({
+        preventDefault: () => {
+          prevented = true;
+        },
+        data: { action: { type: "POP" } },
+      });
+    }
+  });
+  return { prevented };
+}
 
 const PLACE = {
   id: "99999999-9999-4999-8999-999999999999",
@@ -107,6 +143,7 @@ afterEach(async () => {
   mockBack.mockReset();
   mockReplace.mockReset();
   mockParams = {};
+  mockBeforeRemoveListeners = [];
 });
 
 it("no ?category= → the 10-option step; picking flight mounts its form + partner buttons", async () => {
@@ -455,6 +492,63 @@ it("booking-kind items never edit here (R-itin-27)", async () => {
   await renderScreen({ itemId: "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1" });
   await screen.findByTestId("itinerary-item-new-uneditable");
   expect(screen.queryByTestId("itinerary-item-new-button-save")).toBeNull();
+});
+
+describe("discard guard copy (nav §2.6; round-2 N2)", () => {
+  it("a clean form dismisses freely; a dirty one intercepts with the plain copy", async () => {
+    await renderScreen({ category: "activity" });
+
+    // Clean → no interception at all.
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen");
+    expect((await attemptDismiss()).prevented).toBe(true);
+    expect(screen.getByText("Discard this entry?")).toBeOnTheScreen();
+    expect(screen.getByText("Nothing you've entered will be saved.")).toBeOnTheScreen();
+  });
+
+  it("after a partial success the copy tells the truth: the booking is already in Ideas", async () => {
+    // create succeeds, the schedule leg fails — the booking EXISTS. Claiming
+    // "nothing will be saved" here reads as "your entry is gone" and invites
+    // a duplicate re-create.
+    const idea = makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "activity",
+      status: "idea",
+      starts_at: null,
+    });
+    await renderScreen(
+      { category: "activity", day: TRIP_DAY_2 },
+      {
+        overrides: {
+          "POST /trips/:tripId/bookings": () => Promise.resolve(idea),
+          "POST /trips/:tripId/bookings/:bookingId/schedule": () =>
+            Promise.reject(new Error("409")),
+        },
+      },
+    );
+
+    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen");
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+    await waitFor(() =>
+      expect(screen.getByTestId("itinerary-item-new-saved-to-ideas")).toBeOnTheScreen(),
+    );
+
+    // The write retired the guard, so a dismissal right now passes through.
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    // …but any later edit re-arms it (verifier N3: `dirty` correctly
+    // re-arms — no data loss), and THEN the dialog must not lie.
+    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen ryokan");
+    expect((await attemptDismiss()).prevented).toBe(true);
+    expect(screen.getByText("Discard these changes?")).toBeOnTheScreen();
+    expect(
+      screen.getByText(
+        "Your booking is already saved in Ideas — only the edits you've made since then will be lost.",
+      ),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText("Nothing you've entered will be saved.")).toBeNull();
+  });
 });
 
 it("viewers get the read-only notice — no form, no save (R-ib-24)", async () => {

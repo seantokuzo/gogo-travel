@@ -215,4 +215,43 @@ describe("Sheet", () => {
       expect(shouldDismissSheet({ dy: 0, vy: DISMISS_VELOCITY + 0.01 })).toBe(true);
     });
   });
+
+  describe("dismissDisabled — a gated affordance SHOWS it is gated", () => {
+    it("blocks every dismissal route and renders the close button visibly disabled", async () => {
+      const onDismiss = jest.fn();
+      await renderWithTheme(
+        <Sheet visible onDismiss={onDismiss} dismissDisabled title="Working" testID="sheet">
+          <AppText>content</AppText>
+        </Sheet>,
+      );
+
+      const close = screen.getByTestId("sheet-close");
+      // LEGIBLE, not merely inert: a swallowed tap with no visible state
+      // reads as a frozen app (the reason a silent gate was rejected).
+      expect(close).toBeDisabled();
+      expect(close.props.accessibilityState).toMatchObject({ disabled: true });
+
+      await fireEvent.press(close);
+      // The scrim sits under an `opacity: 0` Animated.View (its entrance
+      // value never advances in jest), so RNTL hides it from queries by
+      // default — `includeHiddenElements` is the only way to pin that route.
+      await fireEvent.press(
+        screen.getByTestId("sheet-scrim", { includeHiddenElements: true }),
+      );
+      expect(onDismiss).not.toHaveBeenCalled();
+    });
+
+    it("is opt-in: dismissal works normally by default", async () => {
+      const onDismiss = jest.fn();
+      await renderWithTheme(
+        <Sheet visible onDismiss={onDismiss} title="Idle" testID="sheet">
+          <AppText>content</AppText>
+        </Sheet>,
+      );
+      const close = screen.getByTestId("sheet-close");
+      expect(close).not.toBeDisabled();
+      await fireEvent.press(close);
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+  });
 });

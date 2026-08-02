@@ -145,6 +145,12 @@ export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) 
    * `setError` landed on an unmounted tree: the sheet read as success and
    * the rolled-back card silently reappeared. That is the round-1 blocker
    * through the user-dismissal door; the confirm button was already gated.
+   *
+   * The gate is LEGIBLE, not silent (`dismissDisabled` renders the close
+   * affordance visibly disabled): a swallowed tap with no feedback reads as
+   * a frozen app, and every other gated affordance in the DS shows its
+   * state. Bounded by the ApiClient's request timeout + `retry: false`, so
+   * even a black-holed request releases the gate on its own.
    */
   const dismiss = (): void => {
     if (schedule.isPending) return;
@@ -156,6 +162,7 @@ export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) 
     <Sheet
       visible={booking !== null}
       onDismiss={dismiss}
+      dismissDisabled={schedule.isPending}
       {...(booking !== null ? { title: `Add "${booking.title}" to a day` } : null)}
       testID="itinerary-ideas-schedule-sheet"
     >

@@ -296,7 +296,13 @@ it("the sheet chrome is pending-gated: dismissing mid-mutation cannot drop the h
   // JS value in jest), so RNTL treats it as hidden from accessibility and
   // excludes it from queries. Both affordances — plus swipe-release and
   // Android back — call the SAME gated `onDismiss`, so this covers the gate.
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  const close = screen.getByTestId("itinerary-ideas-schedule-sheet-close");
+  // The gate is LEGIBLE, not silent: a swallowed tap with no visible state
+  // reads as a frozen app for the whole request window.
+  expect(close).toBeDisabled();
+  expect(close.props.accessibilityState).toMatchObject({ disabled: true });
+
+  await fireEvent.press(close);
   expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
 
   await act(async () => rejectRequest(new Error("409")));
@@ -304,7 +310,8 @@ it("the sheet chrome is pending-gated: dismissing mid-mutation cannot drop the h
     expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
   );
 
-  // Settled ⇒ the chrome works again.
+  // Settled ⇒ the gate releases and the chrome works again.
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet-close")).not.toBeDisabled();
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
