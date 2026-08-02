@@ -83,15 +83,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   the live worker]. **T-7.1 bookings + T-7.2 itinerary + T-7.3 travel-legs all
   merged.** W5 **T-7.8 ✅ MERGED 70569fe (PR #14) 2026-07-31** — deeplink-out
   builders + return-prompt loop, 3 rounds, judge merge/high (full narrative:
-  QUEUE row). W3 **T-7.4 [IT-1/IT-2] day list IN REVIEW (PR #15)** — round 1:
-  4/5 lanes ship, correctness pending. Remaining P-7 **client** tasks: T-7.5
-  (travel-time chips + conflict — needs T-7.4's legs seam), T-7.6 (Ideas bucket
-  - add/edit flows — needs T-7.4 shell + owns the `DeeplinkReturnHost` mount),
-    T-7.7 (calendar grid — replaces T-7.4's grid placeholder), T-7.9
-    (booking/item detail + offline degrade). All consume T-7.1's frozen seams.
-    **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
-    (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
-    T-7.4/7.5 UI (absent legs = "no data" by design).
+  QUEUE row). W3 **T-7.4 [IT-1/IT-2] ✅ MERGED (PR #15) 2026-08-01** — day
+  list + drag reorder; `react-native-reorderable-list` JS-only dep (NO
+  dev-client rebuild — datetimepicker landmine avoided). CLEAN round-1
+  all-5-lanes-ship (0 blocking, 8 advisory), judge merge/high; mobile 517→568.
+  **W3 DONE.** The T-7.4 itinerary hooks/screen live at
+  `apps/mobile/src/data/itinerary.ts`, `apps/mobile/src/app/[tripId]/itinerary/`,
+  and `apps/mobile/src/features/itinerary/` — successor tasks EXTEND these (T-7.5
+  adds a `leg` DayListRow variant at the marked seam; T-7.7 replaces
+  `itinerary-grid-placeholder`; T-7.6 mounts DeeplinkReturnHost + reuses the
+  bookings keys). Remaining P-7 **client** tasks: T-7.5 [IT-3,IT-4] (travel-time
+  chips + conflict — needs T-7.4's legs seam), T-7.6 [IT-5,IT-7] (Ideas bucket +
+  add/edit flows — needs T-7.4 shell + owns the `DeeplinkReturnHost` mount),
+  T-7.7 [IT-6] (calendar grid — replaces T-7.4's grid placeholder), T-7.9
+  [IT-9,IT-10] (booking/item detail + offline degrade). All consume T-7.1's frozen seams.
+  **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
+  (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
+  T-7.4/7.5 UI (absent legs = "no data" by design).
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
