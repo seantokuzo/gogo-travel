@@ -75,10 +75,12 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   Viewer role is read-only here, server-enforced (R-ib-24) — reuse the F-038
   byte-identity IDOR harness. LWW semantics (R-ib-18) are the offline-sync
   spec's foundation — don't improvise beyond them.
-- **Status:** W1 **T-7.1 ✅ MERGED b67ba9c (PR #11) 2026-07-31** — 3 review
-  rounds, judge merge/high (full narrative: QUEUE row). W2 dispatched
-  2026-07-31: T-7.2 ∥ T-7.3 in worktrees off b67ba9c (T-7.2 carries the
-  bodyLimit rider). Both consume T-7.1's frozen seams.
+- **Status:** W1 **T-7.1 ✅ MERGED b67ba9c (PR #11)**. W2 **T-7.2 ✅ MERGED
+  f529373 (PR #12)** (bodyLimit rider) ∥ **T-7.3 [IB-3] travel-legs IN
+  REVIEW**. W5 **T-7.8 ✅ MERGED 70569fe (PR #14) 2026-07-31** — deeplink-out
+  builders + return-prompt loop, 3 rounds, judge merge/high (full narrative:
+  QUEUE row). W3 **T-7.4 [IT-1/IT-2] day list IN REVIEW (PR #15)**. All
+  consume T-7.1's frozen seams.
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
@@ -100,6 +102,12 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   - Place-FK 23503 → canonical 404 mapping is constraint-precise
     (`isPlaceFkViolation` handles both driver field shapes); copy that
     pattern for any new FK-race mapping.
+- **T-7.8 landmine (NEW — DS Sheet exit-window is now a per-PR TAX):** the DS
+  Sheet stays hit-testable AND fires `setState` through its ~200ms exit
+  animation — bit T-6.9, then PR #14 R2 AND R3. Until the DS-level guard lands
+  (QUEUE P1, ELEVATED), every mobile PR with a sheet pays it: **drain the
+  sheet's exit timer in tests** + **pending-gate every affordance**. Ref
+  `Sheet.tsx:155`/`:217`.
 
 ### P-6 — Trips, collaboration & places spine (CODE-COMPLETE 2026-07-31 → archived; PHASE QA PENDING)
 
