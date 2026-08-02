@@ -5,6 +5,8 @@
  */
 export { DayJumpStrip } from "./DayJumpStrip";
 export type { DayJumpStripProps } from "./DayJumpStrip";
+export { GridSurface } from "./GridSurface";
+export type { GridSurfaceProps } from "./GridSurface";
 export { ItineraryDayList } from "./ItineraryDayList";
 export type { ItineraryDayListHandle, ItineraryDayListProps } from "./ItineraryDayList";
 export {

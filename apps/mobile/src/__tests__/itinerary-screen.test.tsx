@@ -172,13 +172,13 @@ describe("view toggle (R-itin-9)", () => {
     const first = await renderItinerary();
     const toggle = await screen.findByTestId("itinerary-view-toggle");
     await fireEvent.press(toggle);
-    expect(await screen.findByTestId("itinerary-grid-placeholder")).toBeTruthy();
+    expect(await screen.findByTestId("itinerary-grid-surface")).toBeTruthy();
     expect(screen.queryByTestId(`itinerary-day-header-${TRIP_START}`)).toBeNull();
     await first.view.unmount();
 
     // Same trip, fresh mount (fresh query client): grid restored from MMKV.
     await renderItinerary();
-    expect(await screen.findByTestId("itinerary-grid-placeholder")).toBeTruthy();
+    expect(await screen.findByTestId("itinerary-grid-surface")).toBeTruthy();
 
     // Toggling back persists list mode again.
     await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
@@ -189,19 +189,19 @@ describe("view toggle (R-itin-9)", () => {
     // Flip TEST_TRIP_ID to grid…
     const first = await renderItinerary();
     await fireEvent.press(await screen.findByTestId("itinerary-view-toggle"));
-    await screen.findByTestId("itinerary-grid-placeholder");
+    await screen.findByTestId("itinerary-grid-surface");
     await first.view.unmount();
 
     // …another trip is unaffected: opens in the list default.
     const other = tripFixture({ id: TRIP_C_ID });
     const second = await renderItinerary({ trip: other });
     expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
-    expect(screen.queryByTestId("itinerary-grid-placeholder")).toBeNull();
+    expect(screen.queryByTestId("itinerary-grid-surface")).toBeNull();
     await second.view.unmount();
 
     // Restore list mode for TEST_TRIP_ID (file-order hygiene).
     await renderItinerary();
-    await screen.findByTestId("itinerary-grid-placeholder");
+    await screen.findByTestId("itinerary-grid-surface");
     await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
   });

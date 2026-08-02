@@ -19,9 +19,10 @@
  * Drag is pending-gated while a PUT is in flight and disabled for viewers
  * (writes are editor/owner, R-ib-24 — no guaranteed-403 affordance).
  *
- * View toggle (R-itin-9): list ↔ grid, persisted per trip (MMKV). Grid is
- * the T-7.7 shell — the toggle + persistence are real, the surface is a
- * placeholder behind it.
+ * View toggle (R-itin-9): list ↔ grid, persisted per trip (MMKV). Grid
+ * renders through the FROZEN GridSurface seam (features/itinerary) — T-7.7
+ * fills its internals; this screen never changes for it (W4 boundary:
+ * T-7.6 owns this file, T-7.7 owns GridSurface + grid/*).
  *
  * The whole screen sits in a `GestureHandlerRootView` — drag gestures
  * (react-native-reorderable-list) only work inside one, and the app root
@@ -34,12 +35,13 @@ import { useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
-import { AppText, EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
+import { EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
 import { useDayOrder, useItinerary, useItineraryBookings } from "@/data";
 import {
   BOOKING_DAY_LOCK_HINT,
   buildDayRows,
   DayJumpStrip,
+  GridSurface,
   ItineraryDayList,
   readItineraryViewMode,
   resolveDrop,
@@ -60,7 +62,6 @@ const useStyles = createStyles((t) =>
     skeleton: { paddingHorizontal: t.space[4], gap: t.space[3], paddingTop: t.space[4] },
     skeletonSection: { gap: t.space[2] },
     state: { flex: 1, justifyContent: "center" },
-    gridShell: { flex: 1, alignItems: "center", justifyContent: "center", gap: t.space[2] },
   }),
 );
 
@@ -100,12 +101,15 @@ export default function ItineraryScreen() {
     onMutationError: () => setNotice("reorder-failed"),
   });
 
-  const rows = useMemo(() => {
-    const items = itineraryQuery.data?.items ?? [];
+  const bookingsById = useMemo(() => {
     const bookings = bookingsQuery.data?.items ?? [];
-    const bookingsById = new Map<string, Booking>(bookings.map((b) => [b.id, b]));
-    return buildDayRows(trip, items, bookingsById);
-  }, [bookingsQuery.data, itineraryQuery.data, trip]);
+    return new Map<string, Booking>(bookings.map((b) => [b.id, b]));
+  }, [bookingsQuery.data]);
+
+  const rows = useMemo(
+    () => buildDayRows(trip, itineraryQuery.data?.items ?? [], bookingsById),
+    [bookingsById, itineraryQuery.data, trip],
+  );
 
   const toggleMode = () => {
     const next: ItineraryViewMode = mode === "list" ? "grid" : "list";
@@ -113,10 +117,30 @@ export default function ItineraryScreen() {
     storeItineraryViewMode(trip.id, next);
   };
 
-  const openAdd = (day?: string) => {
+  // `time` (HH:mm) is the §2.5 gap-tap prefill leg — the grid passes it via
+  // the GridSurface seam; the item/new form consuming it is T-7.6's half.
+  const openAdd = (day?: string, time?: string) => {
     router.push({
       pathname: "/[tripId]/itinerary/item/new",
-      params: day === undefined ? { tripId: trip.id } : { tripId: trip.id, day },
+      params: {
+        tripId: trip.id,
+        ...(day === undefined ? {} : { day }),
+        ...(time === undefined ? {} : { time }),
+      },
+    });
+  };
+
+  const openBooking = (bookingId: string) => {
+    router.push({
+      pathname: "/[tripId]/itinerary/booking/[bookingId]",
+      params: { tripId: trip.id, bookingId },
+    });
+  };
+
+  const openItem = (itemId: string) => {
+    router.push({
+      pathname: "/[tripId]/itinerary/item/[itemId]",
+      params: { tripId: trip.id, itemId },
     });
   };
 
@@ -124,16 +148,10 @@ export default function ItineraryScreen() {
     // Booking-kind rows route to booking-detail (R-itin-27); both synthesized
     // check-in/check-out rows carry the same bookingId (R-itin-31).
     if (entry.bookingId !== null) {
-      router.push({
-        pathname: "/[tripId]/itinerary/booking/[bookingId]",
-        params: { tripId: trip.id, bookingId: entry.bookingId },
-      });
+      openBooking(entry.bookingId);
       return;
     }
-    router.push({
-      pathname: "/[tripId]/itinerary/item/[itemId]",
-      params: { tripId: trip.id, itemId: entry.itemId },
-    });
+    openItem(entry.itemId);
   };
 
   const handleReorder = ({ from, to }: { from: number; to: number }) => {
@@ -161,10 +179,7 @@ export default function ItineraryScreen() {
   const unscheduledExist = (bookingsQuery.data?.items.length ?? 0) > 0;
   const showEmpty = settled && items.length === 0 && !unscheduledExist;
 
-  const days = useMemo(
-    () => rows.flatMap((row) => (row.type === "day" ? [row.date] : [])),
-    [rows],
-  );
+  const days = useMemo(() => rows.flatMap((row) => (row.type === "day" ? [row.date] : [])), [rows]);
 
   let body;
   if (!settled) {
@@ -196,15 +211,17 @@ export default function ItineraryScreen() {
       </View>
     );
   } else if (mode === "grid") {
-    // T-7.7 replaces this shell with the calendar grid (R-itin-13..17); the
-    // toggle + per-trip persistence around it are final.
+    // T-7.7 fills GridSurface's internals (R-itin-13..17); its props are the
+    // frozen W4 seam — this call site does not change for the real grid.
     body = (
-      <View style={s.gridShell} testID="itinerary-grid-placeholder">
-        <AppText role="subheading">Calendar grid</AppText>
-        <AppText role="caption" color="secondary">
-          The hour-by-hour view is on its way.
-        </AppText>
-      </View>
+      <GridSurface
+        trip={trip}
+        items={items}
+        bookingsById={bookingsById}
+        onAddAt={openAdd}
+        onOpenBooking={openBooking}
+        onOpenItem={openItem}
+      />
     );
   } else {
     body = (
