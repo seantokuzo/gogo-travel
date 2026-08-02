@@ -13,6 +13,10 @@ import {
 } from "@gogo/shared";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import {
+  readDeeplinkOutRecord,
+  recordDeeplinkOut,
+} from "@/features/deeplinks/return-prompt-store";
 import { readLastViewedTrip, stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 
@@ -283,15 +287,22 @@ describe("session store — sign-out calls /auth/logout (best-effort, spec §3.6
 });
 
 describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.6 R1)", () => {
-  it("sign-out on the REAL useSessionStore clears tab memory AND the last-viewed stamp", async () => {
+  it("sign-out on the REAL useSessionStore clears tab memory, the last-viewed stamp AND the deeplink-return slot", async () => {
     // Round-1 finding: the slice tests inject a jest.fn onSignedOut, so the
     // PRODUCTION wiring (queryClient.clear + resetTabMemory +
-    // clearLastViewedTrip) could silently revert while every test stayed
-    // green. This pins the real singleton's reset.
+    // clearLastViewedTrip + clearDeeplinkOutRecord) could silently revert
+    // while every test stayed green. This pins the real singleton's reset.
     rememberTab("trip-x", "map");
     stampLastViewedTrip("trip-x");
+    recordDeeplinkOut({
+      partner: "airbnb",
+      category: "lodging",
+      tripId: "trip-x",
+      timestamp: Date.now(),
+    });
     expect(recallTab("trip-x")).toBe("map");
     expect(readLastViewedTrip()?.tripId).toBe("trip-x");
+    expect(readDeeplinkOutRecord()).not.toBeNull();
 
     // No access token → the best-effort /auth/logout is skipped (that branch
     // is slice-tested above); this test is about the onSignedOut wiring.
@@ -300,6 +311,9 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
 
     expect(recallTab("trip-x")).toBeUndefined();
     expect(readLastViewedTrip()).toBeNull();
+    // T-7.8 R1 sign-out hygiene: no "Did you book it?" prompt can cross
+    // accounts for the previous account's trip.
+    expect(readDeeplinkOutRecord()).toBeNull();
     expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
   });
 });
