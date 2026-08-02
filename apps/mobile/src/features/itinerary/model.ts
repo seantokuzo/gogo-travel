@@ -81,8 +81,11 @@ export function formatDayChip(iso: ISODate): string {
 // Entry projection
 // ---------------------------------------------------------------------------
 
-/** Leading glyph per §2.2: category icon (booking) or place/custom glyph. */
-const CATEGORY_ICONS: Record<BookingCategory, IconName> = {
+/**
+ * Leading glyph per §2.2: category icon (booking) or place/custom glyph.
+ * Exported (T-7.6): the Ideas bucket's cards carry the same category icons.
+ */
+export const CATEGORY_ICONS: Record<BookingCategory, IconName> = {
   lodging: "bed-outline",
   flight: "airplane-outline",
   train: "train-outline",

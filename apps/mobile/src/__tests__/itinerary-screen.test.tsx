@@ -21,6 +21,7 @@ import { ApiRequestError } from "@/auth";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID, TRIP_C_ID } from "@/test-utils/ids";
 import {
+  BOOKING_IDEA_ID,
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
@@ -204,6 +205,33 @@ describe("view toggle (R-itin-9)", () => {
     await screen.findByTestId("itinerary-grid-surface");
     await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+  });
+});
+
+describe("ideas bucket seam (T-7.6 / IT-5, R-itin-10)", () => {
+  it("renders the bucket above the day list when unscheduled bookings exist", async () => {
+    const idea = {
+      ...defaultBookings()[0]!,
+      id: BOOKING_IDEA_ID,
+      status: "idea" as const,
+      starts_at: null,
+      title: "Bucket idea",
+    };
+    await renderItinerary({ api: { bookings: [...defaultBookings(), idea] } });
+    await screen.findByTestId("itinerary-ideas");
+    // Bucket card press routes to booking-detail through the screen's opener.
+    await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+    await fireEvent.press(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/booking/[bookingId]",
+      params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_IDEA_ID },
+    });
+  });
+
+  it("hidden when every booking is scheduled and nothing is cancelled", async () => {
+    await renderItinerary();
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    expect(screen.queryByTestId("itinerary-ideas")).toBeNull();
   });
 });
 

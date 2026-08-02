@@ -42,6 +42,7 @@ import {
   buildDayRows,
   DayJumpStrip,
   GridSurface,
+  IdeasBucket,
   ItineraryDayList,
   readItineraryViewMode,
   resolveDrop,
@@ -254,8 +255,10 @@ export default function ItineraryScreen() {
             },
           ]}
         />
-        {/* IDEAS BUCKET SEAM (T-7.6): §2.3 section renders here, pinned above
-            the day list, hidden when empty (R-itin-10). */}
+        {/* IDEAS BUCKET (T-7.6 / IT-5): §2.3 section pinned above the day
+            list, hidden when empty (R-itin-10). Mounted in BOTH view modes —
+            unscheduled bookings have no other surface (grid included). */}
+        <IdeasBucket trip={trip} onOpenBooking={openBooking} />
         {notice !== null ? (
           <View style={s.banner}>
             <ErrorBanner
