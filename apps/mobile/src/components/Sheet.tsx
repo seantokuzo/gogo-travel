@@ -162,12 +162,16 @@ export function Sheet({ visible, onDismiss, title, snapPoints, children, testID 
   // timer. If the consumer unmounted the Sheet mid-exit, that callback must
   // not setState on the unmounted component.
   const unmountedRef = useRef(false);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Re-arm on every effect run: StrictMode/Fast-Refresh re-runs effects
+    // with refs PRESERVED — without this reset the cleanup's `true` would
+    // latch on a still-mounted component and the next exit would never
+    // complete (round-1 correctness finding).
+    unmountedRef.current = false;
+    return () => {
       unmountedRef.current = true;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     const { duration, spring } = theme.motion;

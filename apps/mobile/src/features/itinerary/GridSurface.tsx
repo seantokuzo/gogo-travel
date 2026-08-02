@@ -183,6 +183,12 @@ export function GridSurface({
             decelerationRate="fast"
             disableIntervalMomentum
             nestedScrollEnabled
+            // Round-1 perf: a day column is heavy (24 slot Pressables +
+            // blocks) — shrink first-paint and retention windows; snap
+            // paging is unaffected.
+            windowSize={5}
+            initialNumToRender={3}
+            maxToRenderPerBatch={3}
             onScroll={syncHeader}
             scrollEventThrottle={16}
             renderItem={({ item: day }) => (
