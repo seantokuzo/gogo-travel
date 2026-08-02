@@ -75,12 +75,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   Viewer role is read-only here, server-enforced (R-ib-24) — reuse the F-038
   byte-identity IDOR harness. LWW semantics (R-ib-18) are the offline-sync
   spec's foundation — don't improvise beyond them.
-- **Status:** W1 **T-7.1 ✅ MERGED b67ba9c (PR #11)**. W2 **T-7.2 ✅ MERGED
-  f529373 (PR #12)** (bodyLimit rider) ∥ **T-7.3 [IB-3] travel-legs IN
-  REVIEW**. W5 **T-7.8 ✅ MERGED 70569fe (PR #14) 2026-07-31** — deeplink-out
+- **Status:** **P-7 SERVER SURFACE COMPLETE** — W1 **T-7.1 ✅ MERGED b67ba9c
+  (PR #11)** · W2 **T-7.2 ✅ MERGED f529373 (PR #12)** (bodyLimit rider) ∥
+  **T-7.3 ✅ MERGED c440396 (PR #13) 2026-08-01** [IB-3 travel-leg job +
+  refresh, 3 rounds, judge merge/high — the live dirty-day `travelLegs.marker`
+  is now wired into BOTH bookings AND itinerary deps, so item mutations reach
+  the live worker]. **T-7.1 bookings + T-7.2 itinerary + T-7.3 travel-legs all
+  merged.** W5 **T-7.8 ✅ MERGED 70569fe (PR #14) 2026-07-31** — deeplink-out
   builders + return-prompt loop, 3 rounds, judge merge/high (full narrative:
-  QUEUE row). W3 **T-7.4 [IT-1/IT-2] day list IN REVIEW (PR #15)**. All
-  consume T-7.1's frozen seams.
+  QUEUE row). W3 **T-7.4 [IT-1/IT-2] day list IN REVIEW (PR #15)** — round 1:
+  4/5 lanes ship, correctness pending. Remaining P-7 **client** tasks: T-7.5
+  (travel-time chips + conflict — needs T-7.4's legs seam), T-7.6 (Ideas bucket
+  - add/edit flows — needs T-7.4 shell + owns the `DeeplinkReturnHost` mount),
+    T-7.7 (calendar grid — replaces T-7.4's grid placeholder), T-7.9
+    (booking/item detail + offline degrade). All consume T-7.1's frozen seams.
+    **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
+    (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
+    T-7.4/7.5 UI (absent legs = "no data" by design).
 - **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
   - **Caps must cover EVERY schema class, not just obvious strings** — zod
     `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
