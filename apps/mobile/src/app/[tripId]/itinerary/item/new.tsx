@@ -81,6 +81,8 @@ export default function ItineraryItemNewScreen() {
 
   const [option, setOption] = useState<AddOptionId | null>(() => parseOption(params.category));
   const [dirty, setDirty] = useState(false);
+  /** A write already landed this session (partial-success) — drives the discard copy. */
+  const [writeLanded, setWriteLanded] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const bypassGuardRef = useRef(false);
   const pendingDismissRef = useRef<(() => void) | null>(null);
@@ -142,7 +144,10 @@ export default function ItineraryItemNewScreen() {
 
   const onDirty = (): void => setDirty(true);
   /** A write landed while the form stays up (partial-success) — see BookingForm. */
-  const onWriteLanded = (): void => setDirty(false);
+  const onWriteLanded = (): void => {
+    setDirty(false);
+    setWriteLanded(true);
+  };
 
   const viewer = trip.role === "viewer";
 
@@ -277,8 +282,17 @@ export default function ItineraryItemNewScreen() {
 
       <ConfirmDialog
         visible={confirmVisible}
-        title="Discard this entry?"
-        body="Nothing you've entered will be saved."
+        title={writeLanded ? "Discard these changes?" : "Discard this entry?"}
+        // After a partial success the booking EXISTS (create landed, only the
+        // day assignment failed) — claiming "nothing will be saved" there
+        // reads as "your entry is gone" and invites a duplicate re-create.
+        // `dirty` correctly re-arms on any later edit, so this dialog is
+        // reachable in that state and its copy has to stay true.
+        body={
+          writeLanded
+            ? "Your booking is already saved in Ideas — only the edits you've made since then will be lost."
+            : "Nothing you've entered will be saved."
+        }
         confirmLabel="Discard"
         destructive
         onConfirm={() => {

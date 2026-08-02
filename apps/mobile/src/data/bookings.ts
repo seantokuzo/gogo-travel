@@ -195,32 +195,50 @@ function instantOrNull(iso: string | null): number | null {
 }
 
 /**
- * UPSERT one row of the cached default booking list (post-state reconcile,
- * R-ib-18).
+ * Reconcile one row into the cached DEFAULT booking list (post-state,
+ * R-ib-18) — upsert or REMOVE, whichever keeps the cache truthful.
  *
- * Insert-if-missing is load-bearing (round-1 blocker): the create→schedule
- * chain fires schedule BEFORE create's root invalidation refetch settles,
- * and schedule's own `cancelQueries` aborts that refetch — a
- * map-replace-only reconcile stranded the freshly created booking out of
- * the list cache, so the day list rendered the enrichment-gap fallback
- * ("Booking", no badge) with a FALSE day lock. Upserting repairs it without
- * re-entering the invalidate/cancel race (the module's zero-refetch design).
+ * INVARIANT: the cached default list always satisfies the server's own list
+ * predicate — R-ib-10, "all except `cancelled`" (`useTripBookings` sends no
+ * status filter). Every arm below exists to preserve it:
  *
- * Present rows are replaced IN PLACE — the server's returned order is
- * preserved byte-exactly, identical to the pre-fix behavior; only the
- * absent case consults `byBookingListOrder`, and it SPLICES rather than
- * re-sorting, so a client/server ordering disagreement can never reshuffle
- * rows the server already placed.
+ *  - present + still listable ⇒ replace IN PLACE. The server's returned
+ *    order is preserved byte-exactly (identical to the pre-round-1
+ *    behavior), so a client/server ordering disagreement can never reshuffle
+ *    rows the server already placed.
+ *  - ABSENT + listable ⇒ SPLICE at the `byBookingListOrder` position. Load
+ *    bearing (round-1 blocker): the create→schedule chain fires schedule
+ *    BEFORE create's root invalidation refetch settles, and schedule's own
+ *    `cancelQueries` aborts that refetch — a map-replace-only reconcile
+ *    stranded the freshly created booking out of the list, so the day list
+ *    rendered the enrichment-gap fallback ("Booking", no badge) with a FALSE
+ *    day lock. Splicing repairs it without re-entering the invalidate/cancel
+ *    race (the module's zero-refetch design).
+ *  - CANCELLED ⇒ never inserted, and REMOVED if present. Round-2: without
+ *    this, a PATCH could put a cancelled booking into the non-cancelled list
+ *    (insert arm) or leave one there after a cancel transition (replace
+ *    arm) — either way the Ideas bucket renders it as a live card with a
+ *    guaranteed-403 "Add to day" (cancelled bookings have zero items,
+ *    R-ib-7, so `unscheduledBookings` picks them up) until the trailing
+ *    invalidation lands, or indefinitely if that refetch fails offline.
+ *
+ * Narrowing the insert arm back to the schedule call site was the other
+ * option; it was rejected because it does NOT enforce the invariant — the
+ * replace arm would still write `cancelled` into a listed row once T-7.9
+ * wires R-itin-26's cancel action.
  */
-function upsertBookingRow(qc: QueryClient, tripId: string, booking: Booking): void {
+function reconcileBookingRow(qc: QueryClient, tripId: string, booking: Booking): void {
   qc.setQueryData<Paginated<Booking>>(queryKeys.tripBookings(tripId), (old) => {
     if (old === undefined) return old;
     const index = old.items.findIndex((row) => row.id === booking.id);
+    const listable = booking.status !== "cancelled";
     const items = old.items.slice();
     if (index !== -1) {
-      items[index] = booking;
+      if (listable) items[index] = booking;
+      else items.splice(index, 1);
       return { ...old, items };
     }
+    if (!listable) return old;
     const at = items.findIndex((row) => byBookingListOrder(booking, row) < 0);
     items.splice(at === -1 ? items.length : at, 0, booking);
     return { ...old, items };
@@ -261,7 +279,7 @@ export function useUpdateBooking(
     onSuccess: (result) => {
       options?.onMutationSuccess?.(result);
       qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
-      upsertBookingRow(qc, tripId, toBookingRow(result));
+      reconcileBookingRow(qc, tripId, toBookingRow(result));
       void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
       void qc.invalidateQueries({ queryKey: queryKeys.tripItinerary(tripId) });
     },
@@ -373,7 +391,7 @@ export function useScheduleBooking(
         };
         return result.items.reduce(upsertItineraryItem, withoutPlaceholder);
       });
-      upsertBookingRow(qc, tripId, toBookingRow(result));
+      reconcileBookingRow(qc, tripId, toBookingRow(result));
       qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
     },
     onError: (err, _vars, ctx) => {

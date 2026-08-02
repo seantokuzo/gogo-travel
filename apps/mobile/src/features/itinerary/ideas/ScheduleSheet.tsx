@@ -42,33 +42,28 @@ const useStyles = createStyles((t) =>
 );
 
 interface ScheduleFormProps {
-  tripId: string;
-  booking: Booking;
-  onClose(): void;
+  pending: boolean;
+  error: string | null;
+  onDismissError(): void;
+  onConfirm(input: ScheduleBookingInput): void;
 }
 
 /**
- * Inner form, remounted per presented booking (`key` on the call site) so
- * day/time state never leaks across cards.
+ * Inner FIELDS, remounted per presented booking (`key` on the call site) so
+ * day/time state never leaks across cards. The mutation itself lives on the
+ * sheet (see `ScheduleSheet`) — the form must not own state the sheet needs
+ * in order to gate its own dismissal.
  */
-function ScheduleForm({ tripId, booking, onClose }: ScheduleFormProps) {
+function ScheduleForm({ pending, error, onDismissError, onConfirm }: ScheduleFormProps) {
   const s = useStyles();
   const [day, setDay] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
   const [endTime, setEndTime] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-
-  const schedule = useScheduleBooking(tripId, {
-    // Hook-level seam (superseded-call landmine): fires for EVERY settled
-    // call. Rollback is the hook's; this is the visible half.
-    onMutationSuccess: () => onClose(),
-    onMutationError: () => setError("Couldn't add it to the day — the bucket is unchanged."),
-  });
 
   const timesInverted = startTime !== "" && endTime !== "" && endTime < startTime;
 
   const confirm = (): void => {
-    if (schedule.isPending || day === "") return;
+    if (pending || day === "") return;
     const candidate: ScheduleBookingInput = {
       day,
       ...(startTime === "" ? {} : { start_time: startTime }),
@@ -78,8 +73,7 @@ function ScheduleForm({ tripId, booking, onClose }: ScheduleFormProps) {
     // stays the single source of truth for the end ≥ start rule.
     const parsed = ScheduleBookingInputSchema.safeParse(candidate);
     if (!parsed.success) return;
-    setError(null);
-    schedule.mutate({ bookingId: booking.id, input: parsed.data });
+    onConfirm(parsed.data);
   };
 
   return (
@@ -87,7 +81,7 @@ function ScheduleForm({ tripId, booking, onClose }: ScheduleFormProps) {
       {error !== null ? (
         <ErrorBanner
           message={error}
-          onDismiss={() => setError(null)}
+          onDismiss={onDismissError}
           testID="itinerary-ideas-schedule-error"
         />
       ) : null}
@@ -121,7 +115,7 @@ function ScheduleForm({ tripId, booking, onClose }: ScheduleFormProps) {
       <Button
         title="Add to day"
         onPress={confirm}
-        loading={schedule.isPending}
+        loading={pending}
         disabled={day === "" || timesInverted}
         testID="itinerary-ideas-schedule-button-confirm"
       />
@@ -130,10 +124,38 @@ function ScheduleForm({ tripId, booking, onClose }: ScheduleFormProps) {
 }
 
 export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) {
+  const [error, setError] = useState<string | null>(null);
+
+  const schedule = useScheduleBooking(tripId, {
+    // Hook-level seam (superseded-call landmine): fires for EVERY settled
+    // call. Rollback is the hook's; this is the visible half.
+    onMutationSuccess: () => {
+      setError(null);
+      onClose();
+    },
+    onMutationError: () => setError("Couldn't add it to the day — the bucket is unchanged."),
+  });
+
+  /**
+   * Pending-gated chrome (round-2): the DS Sheet's scrim tap, swipe-release,
+   * close button and Android back all land here. Un-gated, a dismissal
+   * DURING the mutation released the bucket's visibility hold at exactly the
+   * moment the optimistic write had emptied `unscheduled` — on a one-idea
+   * trip the bucket and this sheet unmounted mid-flight, so the failure's
+   * `setError` landed on an unmounted tree: the sheet read as success and
+   * the rolled-back card silently reappeared. That is the round-1 blocker
+   * through the user-dismissal door; the confirm button was already gated.
+   */
+  const dismiss = (): void => {
+    if (schedule.isPending) return;
+    setError(null);
+    onClose();
+  };
+
   return (
     <Sheet
       visible={booking !== null}
-      onDismiss={onClose}
+      onDismiss={dismiss}
       {...(booking !== null ? { title: `Add "${booking.title}" to a day` } : null)}
       testID="itinerary-ideas-schedule-sheet"
     >
@@ -141,9 +163,13 @@ export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) 
         <ScheduleForm
           // Remount per booking so field state starts clean (host pattern).
           key={booking.id}
-          tripId={tripId}
-          booking={booking}
-          onClose={onClose}
+          pending={schedule.isPending}
+          error={error}
+          onDismissError={() => setError(null)}
+          onConfirm={(input) => {
+            setError(null);
+            schedule.mutate({ bookingId: booking.id, input });
+          }}
         />
       ) : null}
     </Sheet>
