@@ -63,12 +63,32 @@ export const queryKeys = {
    */
   tripItinerary: (tripId: string) => ["trips", tripId, "itinerary"] as const,
   /**
-   * `GET /trips/:tripId/bookings` (T-7.4) — the calendar's booking
-   * enrichment read (R-itin-8 category/status; R-itin-3 day locks). Same
-   * detail-subtree rationale as `tripItinerary`. Booking MUTATION hooks are
-   * T-7.6/T-7.8's (`data/bookings.ts`) — they must reuse THIS key.
+   * Booking keys (T-7.6 key-homing ruling, 2026-08-01: the module-local
+   * `bookingKeys` of data/bookings.ts promoted HERE — query-client.ts is the
+   * ONE home for cache keys). All live under the `["trips", tripId, …]`
+   * DETAIL subtree (key-cache law): the guard's 404-scrub and
+   * `evictTripSubtree` remove by PREFIX over `trip(tripId)`.
+   *
+   * `tripBookingsRoot` is the INVALIDATION target (every booking key of a
+   * trip); `tripBookings` is the unfiltered default list (R-ib-10: all
+   * except `cancelled`). Identical today, kept as distinct accessors so a
+   * future list-key change can't silently widen or narrow invalidation.
+   * Filtered list variants EXTEND the prefix with trailing args (below) —
+   * never replace it.
    */
+  tripBookingsRoot: (tripId: string) => ["trips", tripId, "bookings"] as const,
+  /** `GET /trips/:tripId/bookings` — the unfiltered default list (T-7.4 enrichment + T-7.6 Ideas). */
   tripBookings: (tripId: string) => ["trips", tripId, "bookings"] as const,
+  /**
+   * `GET /trips/:tripId/bookings?status=cancelled` (T-7.6 / R-itin-12) — the
+   * Ideas bucket's "Show cancelled" list. Trailing-arg variant of the list
+   * prefix; `"cancelled"` can never collide with a `tripBooking` detail key
+   * (booking ids are UUIDs).
+   */
+  tripBookingsCancelled: (tripId: string) => ["trips", tripId, "bookings", "cancelled"] as const,
+  /** `GET /trips/:tripId/bookings/:bookingId` — booking detail (`BookingWithItems`). */
+  tripBooking: (tripId: string, bookingId: string) =>
+    ["trips", tripId, "bookings", bookingId] as const,
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */

@@ -14,13 +14,14 @@
  * skeleton/empty/error states (R-itin-28), §2.9 testIDs (R-itin-30).
  */
 import type { TripListItem } from "@gogo/shared";
-import { act, fireEvent, screen } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
 import { ApiRequestError } from "@/auth";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID, TRIP_C_ID } from "@/test-utils/ids";
 import {
+  BOOKING_IDEA_ID,
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
@@ -207,6 +208,58 @@ describe("view toggle (R-itin-9)", () => {
   });
 });
 
+describe("ideas bucket seam (T-7.6 / IT-5, R-itin-10)", () => {
+  it("renders the bucket above the day list when unscheduled bookings exist", async () => {
+    const idea = {
+      ...defaultBookings()[0]!,
+      id: BOOKING_IDEA_ID,
+      status: "idea" as const,
+      starts_at: null,
+      title: "Bucket idea",
+    };
+    await renderItinerary({ api: { bookings: [...defaultBookings(), idea] } });
+    await screen.findByTestId("itinerary-ideas");
+    // Bucket card press routes to booking-detail through the screen's opener.
+    await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+    await fireEvent.press(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/booking/[bookingId]",
+      params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_IDEA_ID },
+    });
+  });
+
+  it("hidden when every booking is scheduled and nothing is cancelled", async () => {
+    await renderItinerary();
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    expect(screen.queryByTestId("itinerary-ideas")).toBeNull();
+  });
+});
+
+describe("add entry points (T-7.6 / IT-7, R-itin-18) + viewer gating (R-ib-24)", () => {
+  it("the FAB opens the 10-option add sheet; a selection routes with the category preset", async () => {
+    await renderItinerary();
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
+    expect(screen.getByTestId("itinerary-add-sheet")).toBeOnTheScreen();
+    await fireEvent.press(screen.getByTestId("itinerary-add-option-car-rental"));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/item/new",
+      params: { tripId: TEST_TRIP_ID, category: "car-rental" },
+    });
+    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
+    await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
+  });
+
+  it("viewers get NO write affordances: no FAB, no empty-day add rows", async () => {
+    await renderItinerary({ trip: tripFixture({ role: "viewer" }) });
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    expect(screen.queryByTestId("itinerary-fab-add")).toBeNull();
+    // Day 2 is empty in the default universe — editors get its add row.
+    expect(screen.queryByTestId(`itinerary-day-add-${TRIP_DAY_2}`)).toBeNull();
+    expect(screen.getByTestId(`itinerary-day-header-${TRIP_DAY_2}`)).toBeOnTheScreen();
+  });
+});
+
 describe("states (R-itin-28)", () => {
   it("skeleton day sections while the reads are in flight", async () => {
     await renderItinerary({
@@ -218,14 +271,17 @@ describe("states (R-itin-28)", () => {
     expect(screen.queryByTestId(`itinerary-day-header-${TRIP_START}`)).toBeNull();
   });
 
-  it("zero items AND zero unscheduled bookings → EmptyState with the add CTA", async () => {
+  it("zero items AND zero unscheduled bookings → EmptyState; its CTA opens the add sheet (R-itin-18)", async () => {
     await renderItinerary({ api: { items: [], bookings: [] } });
     await screen.findByTestId("itinerary-empty");
     await fireEvent.press(screen.getByTestId("itinerary-empty-add"));
+    await fireEvent.press(screen.getByTestId("itinerary-add-option-lodging"));
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/[tripId]/itinerary/item/new",
-      params: { tripId: TEST_TRIP_ID },
+      params: { tripId: TEST_TRIP_ID, category: "lodging" },
     });
+    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
+    await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
   });
 
   it("zero items but unscheduled bookings exist → day sections, not EmptyState", async () => {

@@ -56,9 +56,27 @@ export {
 export type { TripMutationOptions, TripSettingsEdits } from "./trip-settings";
 export {
   applyDayOrder,
+  byCalendarOrder,
   reconcileDayOrder,
+  upsertItineraryItem,
+  useCreateItineraryItem,
   useDayOrder,
   useItinerary,
   useItineraryBookings,
+  useUpdateItineraryItem,
 } from "./itinerary";
-export type { DayOrderVars, ItineraryMutationOptions } from "./itinerary";
+export type { DayOrderVars, ItemUpdateVars, ItineraryMutationOptions } from "./itinerary";
+export {
+  optimisticScheduleItemId,
+  useBooking,
+  useCancelledBookings,
+  useCreateBooking,
+  useScheduleBooking,
+  useTripBookings,
+  useUpdateBooking,
+} from "./bookings";
+export type {
+  BookingMutationOptions,
+  BookingUpdateVars,
+  ScheduleBookingVars,
+} from "./bookings";

@@ -129,6 +129,8 @@ export interface ItineraryApiOptions {
   items?: ItineraryItem[];
   legs?: TravelLeg[];
   bookings?: Booking[];
+  /** `status=cancelled` list (T-7.6 Ideas bucket, R-itin-12). Default: none. */
+  cancelled?: Booking[];
   /** Replaces the reorder responder (failure/divergent-post-state seams). */
   putDayOrder?: (input: Record<string, unknown>) => Promise<unknown>;
 }
@@ -148,8 +150,15 @@ export function itineraryApiOverrides(
   return {
     "GET /trips/:tripId/itinerary": () =>
       Promise.resolve({ items, legs: opts.legs ?? [] }),
-    "GET /trips/:tripId/bookings": () =>
-      Promise.resolve({ items: bookings, nextCursor: null }),
+    "GET /trips/:tripId/bookings": (input) => {
+      // Query-aware (T-7.6): the cancelled list rides the same route with
+      // `status=cancelled` (R-ib-10 excludes cancelled from the default).
+      const query = input.query as { status?: string } | undefined;
+      if (query?.status === "cancelled") {
+        return Promise.resolve({ items: opts.cancelled ?? [], nextCursor: null });
+      }
+      return Promise.resolve({ items: bookings, nextCursor: null });
+    },
     "PUT /trips/:tripId/itinerary/days/:day/order":
       opts.putDayOrder ??
       ((input) => {

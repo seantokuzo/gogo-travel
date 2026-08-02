@@ -28,9 +28,21 @@ interface ScreenProps {
   options?: { presentation?: string };
 }
 
+type StackElement = ReactElement<{ initialRouteName?: string; children?: ReactNode }>;
+
 function declaredConfig(layout: () => ReactElement) {
-  const el = layout() as ReactElement<{ initialRouteName?: string; children?: ReactNode }>;
-  expect(el.type).toBe(Stack);
+  const root = layout() as StackElement;
+  // T-7.6: a layout may return a Fragment wrapping its Stack plus non-route
+  // chrome (the itinerary stack mounts DeeplinkReturnHost beside its Stack).
+  // The audited config is the Stack's — exactly one must exist.
+  const candidates =
+    root.type === Stack
+      ? [root]
+      : (Children.toArray(
+          (root.props as { children?: ReactNode }).children,
+        ).filter((child) => isValidElement(child) && child.type === Stack) as StackElement[]);
+  expect(candidates).toHaveLength(1);
+  const el = candidates[0] as StackElement;
   const screens = Children.toArray(el.props.children).filter(
     isValidElement,
   ) as ReactElement<ScreenProps>[];

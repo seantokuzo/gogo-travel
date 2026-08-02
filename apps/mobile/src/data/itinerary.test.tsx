@@ -18,14 +18,21 @@
  * gcTime-0 unobserved entry can be collected mid-assert).
  */
 import type { ItineraryRead } from "@gogo/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
 import { apiClient, ApiRequestError } from "@/auth";
 
 import { evictTripSubtree } from "./collab";
-import { applyDayOrder, reconcileDayOrder, useDayOrder } from "./itinerary";
+import {
+  applyDayOrder,
+  reconcileDayOrder,
+  upsertItineraryItem,
+  useCreateItineraryItem,
+  useDayOrder,
+  useUpdateItineraryItem,
+} from "./itinerary";
 import { queryKeys } from "./query-client";
 
 import {
@@ -58,10 +65,21 @@ function wrapperFor(client: QueryClient) {
   };
 }
 
+// Sync notify scheduler (bookings.test.tsx / members.test.tsx pattern):
+// renderHook suites otherwise leak a setTimeout(0) notify batch into a
+// waitFor sleep window under worker contention (B-2 floating-update class —
+// surfaced by the T-7.6 mutation tests in full --maxWorkers=2 runs).
+beforeAll(() => {
+  notifyManager.setScheduler((cb) => cb());
+});
+afterAll(() => {
+  notifyManager.setScheduler((cb) => setTimeout(cb, 0));
+});
+
 afterEach(async () => {
-  // Absorb any tail-of-test TanStack notify batch (setTimeout 0) into an act
-  // scope — a mutation's late notification otherwise fires inside the next
-  // test's window (B-2 floating-update class; contention-only).
+  // Absorb any tail-of-test TanStack notify batch into an act scope — a
+  // mutation's late notification otherwise fires inside the next test's
+  // window (B-2 floating-update class; contention-only).
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
@@ -232,5 +250,116 @@ describe("key-cache law: detail-subtree eviction (NAV-4 pin)", () => {
     // Another trip's subtree and the disjoint list root are untouched.
     expect(client.getQueryData(queryKeys.tripItinerary(TRIP_B_ID))).toBeDefined();
     expect(client.getQueryData(queryKeys.tripsList)).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-7.6 / IT-7: item create + update hooks
+// ---------------------------------------------------------------------------
+
+const NEW_ITEM_ID = "ddddddd1-dddd-4ddd-8ddd-ddddddddddd1";
+
+describe("upsertItineraryItem (R-ib-18 reconcile arm)", () => {
+  it("inserts a new row in calendar order and replaces an existing row that changed day", () => {
+    const read = seededRead();
+    const created = makeItineraryItem({
+      id: NEW_ITEM_ID,
+      day: TRIP_DAY_2,
+      sort_order: 1024,
+      title: "New block",
+    });
+    const inserted = upsertItineraryItem(read, created);
+    expect(inserted.items).toHaveLength(read.items.length + 1);
+    const days = inserted.items.map((item) => item.day);
+    expect([...days].sort()).toEqual(days); // calendar order restored
+
+    // Replace: the same id moved to another day exists exactly once, re-sorted.
+    const moved = { ...created, day: TRIP_START, sort_order: 9999 };
+    const replaced = upsertItineraryItem(inserted, moved);
+    const rows = replaced.items.filter((item) => item.id === NEW_ITEM_ID);
+    expect(rows).toEqual([moved]);
+  });
+});
+
+describe("useCreateItineraryItem / useUpdateItineraryItem", () => {
+  it("create posts the wire body, seams success, and upserts the server row (no refetch)", async () => {
+    const client = makeClient();
+    client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), seededRead());
+    const serverRow = makeItineraryItem({
+      id: NEW_ITEM_ID,
+      day: TRIP_DAY_2,
+      sort_order: 1024,
+      title: "Ramen crawl",
+    });
+    const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+    request.mockResolvedValue(serverRow);
+    const onMutationSuccess = jest.fn();
+
+    const { result } = await renderHook(
+      () => useCreateItineraryItem(TEST_TRIP_ID, { onMutationSuccess }),
+      { wrapper: wrapperFor(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ kind: "custom", title: "Ramen crawl", day: TRIP_DAY_2 });
+    });
+    await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(serverRow));
+
+    const [, input] = request.mock.calls[0] as [unknown, { body: unknown; params: unknown }];
+    expect(input.params).toEqual({ tripId: TEST_TRIP_ID });
+    expect(input.body).toEqual({ kind: "custom", title: "Ramen crawl", day: TRIP_DAY_2 });
+    const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+    expect(read?.items.find((item) => item.id === NEW_ITEM_ID)).toEqual(serverRow);
+    expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(false);
+  });
+
+  it("update patches by id and replaces the cached row with the post-state (LWW, R-ib-18)", async () => {
+    const client = makeClient();
+    client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), seededRead());
+    const postState = makeItineraryItem({
+      id: ITEM_B_ID,
+      title: "Walk Shibuya at night",
+      day: TRIP_DAY_2, // day moved — the row must land under its new day
+      sort_order: 4096,
+    });
+    const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+    request.mockResolvedValue(postState);
+
+    const { result } = await renderHook(() => useUpdateItineraryItem(TEST_TRIP_ID), {
+      wrapper: wrapperFor(client),
+    });
+    await act(async () => {
+      result.current.mutate({
+        itemId: ITEM_B_ID,
+        input: { title: "Walk Shibuya at night", day: TRIP_DAY_2 },
+      });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const [, input] = request.mock.calls[0] as [unknown, { params: unknown }];
+    expect(input.params).toEqual({ tripId: TEST_TRIP_ID, itemId: ITEM_B_ID });
+    const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+    const rows = read?.items.filter((item) => item.id === ITEM_B_ID);
+    expect(rows).toEqual([postState]);
+  });
+
+  it("create failure rides the hook-level onMutationError and leaves the cache alone", async () => {
+    const client = makeClient();
+    const seeded = seededRead();
+    client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), seeded);
+    const failure = new ApiRequestError(400, "VALIDATION_FAILED", "bad");
+    (jest.spyOn(apiClient, "request") as unknown as jest.Mock).mockRejectedValue(failure);
+    const onMutationError = jest.fn();
+
+    const { result } = await renderHook(
+      () => useCreateItineraryItem(TEST_TRIP_ID, { onMutationError }),
+      { wrapper: wrapperFor(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ kind: "custom", title: "Nope", day: TRIP_START });
+    });
+    await waitFor(() => expect(onMutationError).toHaveBeenCalledWith(failure));
+    expect(client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items).toEqual(
+      seeded.items,
+    );
   });
 });
