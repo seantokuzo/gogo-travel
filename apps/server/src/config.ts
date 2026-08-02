@@ -141,6 +141,15 @@ export const RATE_LIMITS = {
    * hourly budget below.
    */
   placesSearch: { limit: 120, windowMs: MINUTE_MS },
+  /**
+   * `POST /trips/:tripId/itinerary/refresh-legs` — per TRIP (§3.4: "rate-
+   * limited per trip; window is config"; T-7.3). Keyed on the gate-proven
+   * tripId, not the caller: refresh fans out provider quota per trip, so the
+   * budget is the trip's however many members pull. 6/min ≫ human
+   * pull-to-refresh, ≪ enqueue-spam utility — and the worker's debounce
+   * coalesces whatever gets through into one recompute per window anyway.
+   */
+  refreshLegs: { limit: 6, windowMs: MINUTE_MS },
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
 
 // ---------------------------------------------------------------------------
@@ -248,6 +257,34 @@ export const PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS = HOUR_MS;
  * bound (trips convention).
  */
 export const BOOKINGS_PAGE_SIZE_DEFAULT = 50;
+
+// ---------------------------------------------------------------------------
+// Travel-leg computation job (itinerary-bookings spec §3.5, R-ib-19..23) —
+// T-7.3 / IB-3. The MODE set is shared config (`@gogo/shared/config/
+// travel-legs`, R-ib-21); these are the SERVER-side job knobs.
+// ---------------------------------------------------------------------------
+
+/** Dirty-day debounce window (§3.5 step 1: "single-digit seconds" — a drag
+ * session costs one recompute, not one per drop). Fixed from a trip's FIRST
+ * mark; never extended (bounded settlement). */
+export const TRAVEL_LEGS_DEBOUNCE_MS = 3_000;
+
+/** Leg staleness TTL (R-ib-23: "config; default 24 h") — one rule for the
+ * diff path AND the sweep: a row past TTL is never reused. */
+export const TRAVEL_LEGS_TTL_MS = 24 * HOUR_MS;
+
+/** Refresh-job trip horizon (R-ib-23: trips `active` or starting within 7
+ * days). */
+export const TRAVEL_LEGS_REFRESH_HORIZON_DAYS = 7;
+
+/** Staleness-sweep cadence (in-process interval; §3.5 step 7 — day-of
+ * traffic-aware cadence is the today bundle's, out of scope here). */
+export const TRAVEL_LEGS_SWEEP_INTERVAL_MS = HOUR_MS;
+
+/** Per provider call bound — both the adapters' AbortSignal AND the
+ * recompute's deterministic race (a hanging provider can never wedge the
+ * serial drain; T-6.3 bounded-settlement lesson). */
+export const TRAVEL_LEGS_PROVIDER_TIMEOUT_MS = 10_000;
 
 // ---------------------------------------------------------------------------
 // App-wide request-body cap (PR #11 R1 security defer) — createApp
