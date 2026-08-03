@@ -37,6 +37,33 @@ import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
+/**
+ * `VirtualizedList` batches its cell-render updates behind
+ * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
+ * cannot reach it, so the drain window has to outlast the period.
+ */
+const VIRTUALIZED_LIST_BATCH_MS = 60;
+
+/**
+ * Drain every pending batch inside ONE act window.
+ *
+ * The plan list is a real `VirtualizedList`, and it schedules its own
+ * cell-render updates on a timer independently of TanStack's notify batches.
+ * A single drain absorbs one of the two; the other lands at the next `await`
+ * in the test body — an un-acted `VirtualizedList` update that only appears
+ * under worker contention (the B-2 class). Successive cycles INSIDE one act
+ * window absorb whatever each previous cycle scheduled.
+ */
+const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (const delay of SETTLE_DELAYS) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  });
+}
+
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-linking", () => ({ openURL: jest.fn(async () => true) }));
 jest.mock("expo-router", () => ({
@@ -62,16 +89,12 @@ async function renderItinerary(opts?: { api?: ItineraryApiOptions; role?: "owner
     { queryClient: makeTestQueryClient() },
   );
   // Settle BOTH queries' notify batches inside one act window (B-2 posture).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   return { trip, view };
 }
 
 afterEach(async () => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
   openURLMock.mockClear();
   openURLMock.mockImplementation(async () => true);

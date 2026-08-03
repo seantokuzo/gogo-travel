@@ -29,6 +29,33 @@ import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
+/**
+ * `VirtualizedList` batches its cell-render updates behind
+ * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
+ * cannot reach it, so the drain window has to outlast the period.
+ */
+const VIRTUALIZED_LIST_BATCH_MS = 60;
+
+/**
+ * Drain every pending batch inside ONE act window.
+ *
+ * The plan list is a real `VirtualizedList`, and it schedules its own
+ * cell-render updates on a timer independently of TanStack's notify batches.
+ * A single drain absorbs one of the two; the other lands at the next `await`
+ * in the test body — an un-acted `VirtualizedList` update that only appears
+ * under worker contention (the B-2 class). Successive cycles INSIDE one act
+ * window absorb whatever each previous cycle scheduled.
+ */
+const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (const delay of SETTLE_DELAYS) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  });
+}
+
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
@@ -89,16 +116,12 @@ async function renderItinerary(opts?: { api?: ItineraryApiOptions; role?: "owner
     </TripProvider>,
     { queryClient: makeTestQueryClient() },
   );
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   return { trip, view };
 }
 
 afterEach(async () => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
 });
 
@@ -145,12 +168,14 @@ describe("overlap chips (R-itin-7)", () => {
     expect(screen.getAllByText("Overlap")).toHaveLength(2);
 
     await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
+    await settle();
     await screen.findByTestId("itinerary-grid-surface");
     // The grid draws the same two blocks side-by-side, each badged.
     expect(screen.getAllByText("Overlap")).toHaveLength(2);
 
     // Restore list mode — the toggle persists per trip in MMKV.
     await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
+    await settle();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
   });
 });
@@ -204,9 +229,7 @@ describe("sort by time (R-itin-7)", () => {
     });
 
     await fireEvent.press(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`));
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settle();
 
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toEqual({
@@ -234,6 +257,7 @@ describe("sort by time (R-itin-7)", () => {
       },
     });
     await fireEvent.press(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`));
+    await settle();
 
     expect(await screen.findByTestId("itinerary-reorder-error")).toBeOnTheScreen();
     await waitFor(() => {
@@ -288,14 +312,15 @@ describe("sort by time (R-itin-7)", () => {
     expect(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeOnTheScreen();
 
     await fireEvent.press(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`));
+    await settle();
     await waitFor(() =>
       expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeNull(),
     );
 
     await act(async () => {
       resolvePut?.({ items: [] });
-      await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    await settle();
     // Settled: day 3 is still out of order, so its affordance comes back.
     await waitFor(() =>
       expect(screen.getByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeOnTheScreen(),

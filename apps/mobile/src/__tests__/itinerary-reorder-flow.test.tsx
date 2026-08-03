@@ -38,6 +38,31 @@ import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
+/**
+ * `VirtualizedList` batches its cell-render updates behind
+ * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
+ * cannot reach it, so the drain window has to outlast the period.
+ */
+const VIRTUALIZED_LIST_BATCH_MS = 60;
+
+/**
+ * Drain every pending batch inside ONE act window (T-7.5): TanStack's notify
+ * batches and the real `VirtualizedList`'s own cell-render timer schedule
+ * independently, so a single cycle can leave the other pending. It then lands
+ * at the next `await` in a test body — an un-acted update that only shows up
+ * in whole-suite runs under worker contention (the B-2 class). Successive
+ * cycles INSIDE one act window absorb whatever each previous cycle scheduled.
+ */
+const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (const delay of SETTLE_DELAYS) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  });
+}
+
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
 jest.mock("expo-router", () => ({
@@ -81,6 +106,10 @@ async function releaseDrag(from: number, to: number) {
   await act(async () => {
     mockListHarness.onReorder?.({ from, to });
   });
+  // The release fires the optimistic write, whose notify batch is scheduled
+  // for a LATER tick — drain it here rather than leaving it to land at some
+  // `await` further down (T-7.5: it surfaced as a cross-suite act warning).
+  await settle();
 }
 
 /** Card ids in current tree order — the VISIBLE order under pin. */
@@ -110,9 +139,7 @@ async function renderItinerary(opts?: {
   );
   // Settle both queries' notify batches inside act (B-2 posture — see
   // itinerary-screen.test.tsx renderItinerary).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
   return { request, trip };
 }
@@ -133,9 +160,7 @@ const DAY1_DEFAULT_ORDER = [
 ];
 
 afterEach(async () => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
   mockedHaptic.mockReset();
   mockListHarness.onReorder = null;
@@ -248,6 +273,7 @@ describe("gates", () => {
     await act(async () => {
       resolvePut?.({ items: [] });
     });
+    await settle();
     await waitFor(() => expect(mockListHarness.dragEnabled).toBe(true));
   });
 

@@ -37,6 +37,31 @@ import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
+/**
+ * `VirtualizedList` batches its cell-render updates behind
+ * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
+ * cannot reach it, so the drain window has to outlast the period.
+ */
+const VIRTUALIZED_LIST_BATCH_MS = 60;
+
+/**
+ * Drain every pending batch inside ONE act window (T-7.5): TanStack's notify
+ * batches and the real `VirtualizedList`'s own cell-render timer schedule
+ * independently, so a single cycle can leave the other pending. It then lands
+ * at the next `await` in a test body — an un-acted update that only shows up
+ * in whole-suite runs under worker contention (the B-2 class). Successive
+ * cycles INSIDE one act window absorb whatever each previous cycle scheduled.
+ */
+const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
+
+async function settle(): Promise<void> {
+  await act(async () => {
+    for (const delay of SETTLE_DELAYS) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  });
+}
+
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
 const mockPush = jest.fn();
@@ -74,9 +99,7 @@ async function renderItinerary(opts?: {
   // with two mounted queries, the second's notification otherwise lands
   // during a later findBy poll sleep — an un-acted update under contention
   // (B-2 class; surfaced in full-suite runs only).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   return { request, trip, view };
 }
 
@@ -85,9 +108,7 @@ afterEach(async () => {
   // act scope BEFORE the next test starts — a notification scheduled by this
   // test's last settled op otherwise fires inside the next test's window
   // (the B-2 floating-update class; surfaced only in full-file runs).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
   mockPush.mockReset();
 });
@@ -306,9 +327,7 @@ describe("states (R-itin-28)", () => {
     await fireEvent.press(screen.getByTestId("itinerary-error-retry"));
     // Absorb the refetch's notify batch inside act (same B-2 posture as the
     // post-mount flush in renderItinerary).
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settle();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     expect(screen.queryByTestId("itinerary-error")).toBeNull();
   });
