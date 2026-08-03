@@ -197,10 +197,14 @@ describe("list ≡ grid (R-itin-7 ⇔ R-itin-15 — the spec's cross-surface tes
     expect(listSet).toEqual([ITEM_A_ID, ITEM_B_ID, ID_D].sort());
   });
 
-  it("cross-midnight items agree too (both clip at midnight)", () => {
+  it("cross-midnight items agree too — both clip the tail at MIDNIGHT", () => {
+    // The 21:00 start matters: a naive "default block" tail would end at
+    // 22:00 and MISS the 22:30 item, so this fixture actually distinguishes
+    // clip-at-midnight from any fixed-length fallback. (A 23:00 start does
+    // not — 23:00 + 60 min IS midnight, and the mutation reads as a no-op.)
     const items = [
-      timed(ITEM_A_ID, "23:00", "06:00", { day: TRIP_START, end_day: TRIP_DAY_2, sort_order: 1024 }),
-      timed(ITEM_B_ID, "23:30", "23:45", { day: TRIP_START, sort_order: 2048 }),
+      timed(ITEM_A_ID, "21:00", "06:00", { day: TRIP_START, end_day: TRIP_DAY_2, sort_order: 1024 }),
+      timed(ITEM_B_ID, "22:30", "23:45", { day: TRIP_START, sort_order: 2048 }),
     ];
     const bookings = bookingsById();
     const listSet = [...analyzeDayConflicts(items, bookings).overlappingItemIds].sort();

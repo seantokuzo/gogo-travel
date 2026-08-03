@@ -246,34 +246,60 @@ describe("sort by time (R-itin-7)", () => {
     expect(screen.getByTestId(`itinerary-sort-by-time-${TRIP_START}`)).toBeOnTheScreen();
   });
 
-  it("is pending-gated: the affordance is gone while the PUT is genuinely in flight", async () => {
+  it("is pending-gated: sorting ONE day retires EVERY day's affordance in flight", async () => {
+    // The day being sorted is a bad probe for the gate — the optimistic write
+    // puts it in order immediately, so its affordance would vanish with the
+    // gate ripped out. A SECOND unsorted day is the falsifiable one: nothing
+    // about the optimistic update touches day 3, so its affordance can only
+    // disappear because a PUT is in flight. (Mutation-probed: dropping
+    // `!dayOrder.isPending` from `onSortDay` turns this red.)
+    const items = [
+      ...unsortedOverlappingDay(),
+      makeItineraryItem({
+        id: ITEM_C_ID,
+        day: TRIP_END,
+        title: "Late",
+        start_time: "18:00",
+        sort_order: 1024,
+      }),
+      makeItineraryItem({
+        id: "aaaaaaa9-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
+        day: TRIP_END,
+        title: "Early",
+        start_time: "08:00",
+        sort_order: 2048,
+      }),
+    ];
+
     let resolvePut: ((value: unknown) => void) | undefined;
     await renderItinerary({
       api: {
-        items: unsortedOverlappingDay(),
+        items,
         bookings: [],
-        // A DEFERRED promise — a pre-settled one would let the optimistic
-        // write and its reconcile flush in one notify batch, so the in-flight
-        // state would never commit and this pin would pass ungated.
+        // A DEFERRED promise — a pre-settled one lets the optimistic write and
+        // its reconcile flush in ONE notify batch, so the in-flight state
+        // never commits and the pin passes ungated.
         putDayOrder: () =>
           new Promise((resolve) => {
             resolvePut = resolve;
           }),
       },
     });
+    expect(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeOnTheScreen();
 
     await fireEvent.press(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`));
     await waitFor(() =>
-      expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_START}`)).toBeNull(),
+      expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeNull(),
     );
 
     await act(async () => {
       resolvePut?.({ items: [] });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    // Settling with an empty post-state leaves the optimistic order in place,
-    // which IS sorted — so the affordance stays retired for the right reason.
-    expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_START}`)).toBeNull();
+    // Settled: day 3 is still out of order, so its affordance comes back.
+    await waitFor(() =>
+      expect(screen.getByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeOnTheScreen(),
+    );
   });
 
   it("viewers never get the affordance — it issues a write (R-ib-24)", async () => {
