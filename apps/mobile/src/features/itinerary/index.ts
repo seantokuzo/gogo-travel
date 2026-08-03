@@ -19,7 +19,36 @@ export {
   projectItem,
   statusBadgeTone,
 } from "./model";
-export type { DayEntry, DayListRow } from "./model";
+export type { BuildDayRowsOptions, DayEntry, DayListRow, DayRowConflicts } from "./model";
+export {
+  analyzeDayConflicts,
+  findPlacementConflicts,
+  sortDayByTime,
+  startMinutesOf,
+  timedSpanOf,
+} from "./conflicts";
+export type {
+  ConflictHit,
+  DayConflicts,
+  PlacementCandidate,
+  PlacementConflictContext,
+} from "./conflicts";
+export { LegChip } from "./legs/LegChip";
+export type { LegChipProps } from "./legs/LegChip";
+export { LegModeSheet } from "./legs/LegModeSheet";
+export type { LegModeSheetProps } from "./legs/LegModeSheet";
+export {
+  formatLegDistance,
+  formatLegDuration,
+  indexLegsByPair,
+  legPairKey,
+  pickDefaultMode,
+  TRAVEL_MODE_ICONS,
+  TRAVEL_MODE_LABELS,
+  TRAVEL_MODE_ORDER,
+  WALKING_PREFERRED_MAX_SECONDS,
+} from "./legs/legs-model";
+export type { DayLeg, LegOption } from "./legs/legs-model";
 export { IdeasBucket } from "./ideas/IdeasBucket";
 export type { IdeasBucketProps } from "./ideas/IdeasBucket";
 export { ScheduleSheet } from "./ideas/ScheduleSheet";
@@ -40,6 +69,10 @@ export { AddOptionsSheet } from "./add-edit/AddOptionsSheet";
 export type { AddOptionsSheetProps } from "./add-edit/AddOptionsSheet";
 export { BookingForm } from "./add-edit/BookingForm";
 export type { BookingFormProps } from "./add-edit/BookingForm";
+export { ConflictNotice, conflictMessage } from "./add-edit/ConflictNotice";
+export type { ConflictNoticeProps } from "./add-edit/ConflictNotice";
+export { useFormConflicts } from "./add-edit/useFormConflicts";
+export type { FormConflictExclusions } from "./add-edit/useFormConflicts";
 export { ItemForm } from "./add-edit/ItemForm";
 export type { ItemFormProps } from "./add-edit/ItemForm";
 export { OptionChips } from "./add-edit/OptionChips";

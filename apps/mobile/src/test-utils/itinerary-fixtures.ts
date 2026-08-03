@@ -8,7 +8,7 @@
  * calendar math over wire dates, so deterministic labels beat today-relative
  * fixtures here.
  */
-import type { Booking, ISODate, ItineraryItem, TravelLeg } from "@gogo/shared";
+import type { Booking, ISODate, ItineraryItem, TravelLeg, TravelMode } from "@gogo/shared";
 
 import { TEST_TRIP_ID } from "./ids";
 import { TEST_USER } from "./session-fixtures";
@@ -123,6 +123,46 @@ export function defaultBookings(): Booking[] {
       ends_at: "2027-03-03T02:00:00.000Z",
     }),
   ];
+}
+
+/**
+ * Wire-faithful `travel_legs` row (T-7.5). Legs are DERIVED data keyed
+ * `(from_item_id, to_item_id, mode)` (R-ib-22) — the id is irrelevant to the
+ * client, which indexes by the pair, so it is derived from the pair + mode
+ * to keep fixtures collision-free without hand-numbering UUIDs.
+ */
+export function makeTravelLeg(
+  fromItemId: string,
+  toItemId: string,
+  mode: TravelMode,
+  overrides: Partial<TravelLeg> = {},
+): TravelLeg {
+  const modeDigit = { walking: 1, driving: 2, cycling: 3, transit: 4 }[mode];
+  return {
+    id: `ccccccc${modeDigit}-cccc-4ccc-8ccc-${fromItemId.slice(-12)}`,
+    trip_id: TEST_TRIP_ID,
+    from_item_id: fromItemId,
+    to_item_id: toItemId,
+    mode,
+    duration_seconds: 600,
+    distance_meters: 1200,
+    provider: mode === "transit" ? "transitous" : "mapbox",
+    computed_at: "2026-07-01T00:00:00.000Z",
+    created_at: "2026-07-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/**
+ * The DEFAULT leg universe — deliberately TRANSIT-ONLY, because that is the
+ * live state of the system: the Mapbox token is parked, so the worker's
+ * driving/walking/cycling calls never happen and only keyless Transitous
+ * results land (R-ib-21's silent degradation). `ITEM_B` is unlocated
+ * (`place_id: null`), so R-ib-20's chain connects ACROSS it: the one leg on
+ * day 1 is flight → lodging.
+ */
+export function defaultTravelLegs(): TravelLeg[] {
+  return [makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "transit", { duration_seconds: 1080 })];
 }
 
 export interface ItineraryApiOptions {

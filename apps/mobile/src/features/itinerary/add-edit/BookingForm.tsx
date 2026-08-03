@@ -14,6 +14,12 @@
  * is never silent: the booking exists in Ideas, the form says so and
  * offers Done (no re-create risk — save is retired once created).
  *
+ * R-itin-20 (T-7.5): the details' primary times run through the SHARED
+ * `deriveAutoItems` — the exact placement the server will create (R-ib-5) —
+ * and any overlap with existing items surfaces as a NON-BLOCKING inline
+ * notice. Deriving rather than re-deriving keeps the notice honest: what the
+ * form warns about is what the calendar will show.
+ *
  * Edit (`?bookingId=`): whole-value details replacement (BookingUpdate);
  * `status` rides only when CHANGED (the §3.2 matrix has no self-loops);
  * `cancelled` is terminal — the form shows a static badge (cancel/delete
@@ -24,6 +30,7 @@ import {
   BookingCreateSchema,
   BookingUpdateSchema,
   CurrencyCodeSchema,
+  deriveAutoItems,
   type BookingCategory,
   type BookingCreate,
   type BookingStatus,
@@ -55,9 +62,11 @@ import {
   type DateTimeValue,
   type DetailsFormState,
 } from "./form-model";
+import { ConflictNotice } from "./ConflictNotice";
 import { OptionChips } from "./OptionChips";
 import { PlacePickerField } from "./PlacePickerField";
 import { TimeField } from "./TimeField";
+import { useFormConflicts } from "./useFormConflicts";
 
 export interface BookingFormProps {
   trip: TripWithRole;
@@ -185,6 +194,29 @@ export function BookingForm({
 
   const pending = create.isPending || schedule.isPending || update.isPending;
 
+  /**
+   * R-itin-20: the placement(s) this booking WILL produce (R-ib-5 / §3.3
+   * derivation, shared with the server). A half-filled datetime yields no
+   * details and therefore no placement — the notice only ever describes a
+   * placement the save would really make. A spanning lodging is excluded
+   * exactly as it is on the calendar: it renders in the all-day lane, not as
+   * a block, so it collides with nothing (conflicts.ts module doc).
+   */
+  const livePlacements = (() => {
+    const built = buildDetails(category, details);
+    if (built.details === null) return [];
+    return deriveAutoItems(built.details).map((placement) => ({
+      ...placement,
+      spanning:
+        category === "lodging" &&
+        placement.end_day !== null &&
+        placement.end_day > placement.day,
+    }));
+  })();
+  const conflicts = useFormConflicts(trip.id, livePlacements, {
+    bookingId: booking?.id ?? null,
+  });
+
   const touch = <T,>(setter: (value: T) => void) => {
     return (value: T): void => {
       onDirty();
@@ -287,6 +319,9 @@ export function BookingForm({
           testID="itinerary-item-new-saved-to-ideas"
         />
       ) : null}
+
+      {/* R-itin-20: inline, non-blocking — save is never gated on it. */}
+      <ConflictNotice conflicts={conflicts} />
 
       <Input
         label="Name"

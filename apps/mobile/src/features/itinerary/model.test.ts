@@ -10,16 +10,43 @@ import {
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
+  defaultTravelLegs,
+  ITEM_A_ID,
+  ITEM_B_ID,
+  ITEM_C_ID,
   ITEM_LODGING_ID,
   makeItineraryItem,
+  makeTravelLeg,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
 } from "@/test-utils/itinerary-fixtures";
 
-import { buildDayRows, buildDaySet, formatDayHeader, projectItem, statusBadgeTone } from "./model";
+import { analyzeDayConflicts } from "./conflicts";
+import {
+  buildDayRows,
+  buildDaySet,
+  formatDayHeader,
+  projectItem,
+  statusBadgeTone,
+  type DayListRow,
+} from "./model";
 
 const TRIP = { start_date: TRIP_START, end_date: TRIP_END };
+
+/** Flat row → a comparable label (exhaustive over the row union). */
+function rowLabel(row: DayListRow): string {
+  switch (row.type) {
+    case "day":
+      return `day:${row.date}`;
+    case "empty-day":
+      return `empty:${row.date}`;
+    case "leg":
+      return `leg:${row.leg.fromItemId}->${row.leg.toItemId}`;
+    case "entry":
+      return `entry:${row.entry.rowKey}`;
+  }
+}
 
 function bookingsById(bookings: Booking[] = defaultBookings()): Map<string, Booking> {
   return new Map(bookings.map((b) => [b.id, b]));
@@ -141,13 +168,7 @@ describe("buildDayRows (§2.2 flat model)", () => {
   it("emits header/entry/empty-day rows in calendar order", () => {
     const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById());
     expect(
-      rows.map((row) =>
-        row.type === "day"
-          ? `day:${row.date}`
-          : row.type === "empty-day"
-            ? `empty:${row.date}`
-            : `entry:${row.entry.rowKey}`,
-      ),
+      rows.map(rowLabel),
     ).toEqual([
       `day:${TRIP_START}`,
       "entry:aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
@@ -182,5 +203,156 @@ describe("buildDayRows (§2.2 flat model)", () => {
     const after = rows.slice(day3 + 1);
     expect(after[0]?.type).toBe("entry");
     expect(after[0]?.type === "entry" && after[0].entry.checkpoint).toBe("check-out");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-7.5 / IT-3 — travel-time chip rows (R-itin-4/5/6)
+// ---------------------------------------------------------------------------
+
+describe("buildDayRows — leg rows (R-itin-4/6)", () => {
+  it("NO legs ⇒ no leg rows at all — R-itin-6's 'no chip' arm", () => {
+    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById());
+    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
+    // CONTROL: the identical items WITH the default legs emit one — so the
+    // assertion above is about the absent legs, not about the fixture being
+    // incapable of producing a chip.
+    const withLegs = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
+      legs: defaultTravelLegs(),
+    });
+    expect(withLegs.filter((row) => row.type === "leg")).toHaveLength(1);
+  });
+
+  it("a partial leg set emits chips only for the pairs it covers", () => {
+    const items = [
+      makeItineraryItem({ id: ITEM_A_ID, start_time: "09:00", sort_order: 1024 }),
+      makeItineraryItem({ id: ITEM_B_ID, start_time: "11:00", sort_order: 2048 }),
+      makeItineraryItem({ id: ITEM_C_ID, start_time: "13:00", sort_order: 3072 }),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_B_ID, ITEM_C_ID, "transit")],
+    });
+    expect(rows.map(rowLabel)).toEqual([
+      `day:${TRIP_START}`,
+      `entry:${ITEM_A_ID}`,
+      `entry:${ITEM_B_ID}`,
+      `leg:${ITEM_B_ID}->${ITEM_C_ID}`,
+      `entry:${ITEM_C_ID}`,
+      `day:${TRIP_DAY_2}`,
+      `empty:${TRIP_DAY_2}`,
+      `day:${TRIP_END}`,
+      `empty:${TRIP_END}`,
+    ]);
+  });
+
+  it("the chip follows its FROM row even when an unlocated item sits between (R-ib-20)", () => {
+    const items = [
+      makeItineraryItem({ id: ITEM_A_ID, start_time: "09:00", sort_order: 1024 }),
+      // Unlocated middle item — transparent to the leg chain.
+      makeItineraryItem({ id: ITEM_B_ID, start_time: "10:00", sort_order: 2048 }),
+      makeItineraryItem({ id: ITEM_C_ID, start_time: "11:00", sort_order: 3072 }),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
+    });
+    const day1 = rows.slice(0, 5).map(rowLabel);
+    expect(day1).toEqual([
+      `day:${TRIP_START}`,
+      `entry:${ITEM_A_ID}`,
+      `leg:${ITEM_A_ID}->${ITEM_C_ID}`,
+      `entry:${ITEM_B_ID}`,
+      `entry:${ITEM_C_ID}`,
+    ]);
+  });
+
+  it("the chip carries both titles, the mode set, and the R-itin-5 default", () => {
+    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
+      legs: [
+        makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "walking", { duration_seconds: 300 }),
+        makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "transit", { duration_seconds: 1080 }),
+      ],
+    });
+    const leg = rows.flatMap((row) => (row.type === "leg" ? [row.leg] : []))[0];
+    expect(leg?.fromTitle).toBe("UA 837 SFO→NRT");
+    expect(leg?.toTitle).toBe("Park Hyatt Tokyo");
+    expect(leg?.options.map((option) => option.mode)).toEqual(["walking", "transit"]);
+    expect(leg?.defaultMode).toBe("walking");
+  });
+
+  it("a synthesized check-out row is never a leg endpoint (legs live on `item.day`)", () => {
+    // A leg keyed on the lodging item resolves on its CHECK-IN day only.
+    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
+      legs: [makeTravelLeg(ITEM_LODGING_ID, ITEM_C_ID, "walking")],
+    });
+    // ITEM_C is on day 3, the lodging's HOME day is day 1 — no pair on either.
+    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
+    // CONTROL: pair the lodging with a day-1 item and the chip appears.
+    const withDay1Pair = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "walking")],
+    });
+    expect(withDay1Pair.filter((row) => row.type === "leg")).toHaveLength(1);
+  });
+
+  it("booking endpoints prefer `details.address` over the title for the maps query", () => {
+    const bookings = defaultBookings().map((booking) =>
+      booking.id === BOOKING_LODGING_ID
+        ? {
+            ...booking,
+            details: { category: "lodging" as const, address: "3-7-1-2 Nishi-Shinjuku" },
+          }
+        : booking,
+    );
+    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(bookings), {
+      legs: defaultTravelLegs(),
+    });
+    const leg = rows.flatMap((row) => (row.type === "leg" ? [row.leg] : []))[0];
+    expect(leg?.toQuery).toBe("3-7-1-2 Nishi-Shinjuku");
+    // The flight booking has no address — its title is the query.
+    expect(leg?.fromQuery).toBe("UA 837 SFO→NRT");
+  });
+
+  it("an unnamed place_visit yields a null query (no place-name source yet)", () => {
+    const items = [
+      makeItineraryItem({ id: ITEM_A_ID, start_time: "09:00", sort_order: 1024 }),
+      makeItineraryItem({
+        id: ITEM_C_ID,
+        kind: "place_visit",
+        place_id: "44444444-4444-4444-8444-444444444444",
+        title: null,
+        start_time: "11:00",
+        sort_order: 2048,
+      }),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
+    });
+    const leg = rows.flatMap((row) => (row.type === "leg" ? [row.leg] : []))[0];
+    expect(leg?.fromQuery).toBe("Custom block");
+    expect(leg?.toQuery).toBeNull();
+  });
+});
+
+describe("buildDayRows — conflict flags (R-itin-7)", () => {
+  it("marks the overlapping entry rows and the unsorted day header", () => {
+    const items = [
+      makeItineraryItem({ id: ITEM_A_ID, start_time: "14:00", end_time: "16:00", sort_order: 1024 }),
+      makeItineraryItem({ id: ITEM_B_ID, start_time: "09:00", end_time: "15:00", sort_order: 2048 }),
+    ];
+    const conflicts = analyzeDayConflicts(items, bookingsById());
+    const rows = buildDayRows(TRIP, items, bookingsById(), { conflicts });
+    const day1 = rows.find((row) => row.type === "day" && row.date === TRIP_START);
+    expect(day1?.type === "day" && day1.unsorted).toBe(true);
+    const entries = rows.flatMap((row) => (row.type === "entry" ? [row] : []));
+    expect(entries.map((row) => row.overlapping)).toEqual([true, true]);
+  });
+
+  it("CONTROL: without the conflicts option nothing is flagged", () => {
+    const items = [
+      makeItineraryItem({ id: ITEM_A_ID, start_time: "14:00", end_time: "16:00", sort_order: 1024 }),
+      makeItineraryItem({ id: ITEM_B_ID, start_time: "09:00", end_time: "15:00", sort_order: 2048 }),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById());
+    expect(rows.some((row) => row.type === "day" && row.unsorted)).toBe(false);
+    expect(rows.some((row) => row.type === "entry" && row.overlapping)).toBe(false);
   });
 });

@@ -10,22 +10,33 @@
  * `Date` would shift the day west of UTC. The only `Date` use is
  * `Date.UTC → getUTCDay` for the weekday name, which is calendar math.
  *
- * TRAVEL-TIME SEAM (T-7.5): legs from the composite read are NOT consumed
- * here yet. The chip row slots BETWEEN consecutive located entries of a day —
- * T-7.5 extends `DayListRow` with a `leg` variant emitted in `buildDayRows`'
- * per-day loop (keyed `(from_item_id, to_item_id)` per §2.2) and renders it
- * in `ItineraryDayList`. Nothing else needs to move.
+ * TRAVEL-TIME SEAM (T-7.5 — FILLED): legs from the composite read arrive
+ * through `buildDayRows`' options and emit the `leg` DayListRow variant,
+ * keyed `(from_item_id, to_item_id)` per §2.2. Conflict state (R-itin-7)
+ * rides the same options object as pure DATA (`conflicts.ts` computes it) —
+ * importing that module here would cycle through `grid/model`, which already
+ * imports this one.
  */
 import type {
   Booking,
   BookingCategory,
+  BookingDetails,
   BookingStatus,
   ISODate,
   ItineraryItem,
   ItineraryItemKind,
+  TravelLeg,
 } from "@gogo/shared";
 
 import type { IconName } from "@/components";
+
+import {
+  indexLegsByPair,
+  legPairKey,
+  pickDefaultMode,
+  type DayLeg,
+  type LegOption,
+} from "./legs/legs-model";
 
 // ---------------------------------------------------------------------------
 // Date helpers (tz-free)
@@ -245,10 +256,110 @@ export function projectItem(
 // ---------------------------------------------------------------------------
 
 export type DayListRow =
-  | { type: "day"; key: string; date: ISODate; count: number }
-  | { type: "entry"; key: string; entry: DayEntry }
+  | {
+      type: "day";
+      key: string;
+      date: ISODate;
+      count: number;
+      /** R-itin-7: this day's row order disagrees with its start times. */
+      unsorted: boolean;
+    }
+  | {
+      type: "entry";
+      key: string;
+      entry: DayEntry;
+      /** R-itin-7: this item's timed span directly overlaps another's. */
+      overlapping: boolean;
+    }
+  /** R-itin-4: travel-time chip between two located entries of a day. */
+  | { type: "leg"; key: string; leg: DayLeg }
   /** R-itin-1: an empty day renders a slim "Add to this day" row, never a blank section. */
   | { type: "empty-day"; key: string; date: ISODate };
+
+/**
+ * The R-itin-7 analysis `buildDayRows` consumes. Structural on purpose —
+ * `conflicts.ts` produces it; this module never imports that module (module
+ * doc: the cycle through `grid/model`).
+ */
+export interface DayRowConflicts {
+  overlappingItemIds: ReadonlySet<string>;
+  unsortedDays: ReadonlySet<ISODate>;
+}
+
+export interface BuildDayRowsOptions {
+  /** Composite-read legs (R-ib-13). Absent/partial ⇒ fewer chips, never an error (R-itin-6). */
+  legs?: readonly TravelLeg[];
+  /** R-itin-7 state; omitted ⇒ no overlap chips and no sort affordances. */
+  conflicts?: DayRowConflicts;
+}
+
+const NO_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Best free-text label for a maps query (R-itin-4 directions handoff).
+ * A booking's `details.address` beats its title when present — "1-2-3
+ * Nishi-Shinjuku" resolves where "Park Hyatt Tokyo" may not. An unnamed
+ * `place_visit` yields null: the composite read carries no place names yet
+ * (T-7.4's documented gap), and "Place visit" is not a location.
+ */
+function detailsAddress(details: BookingDetails | undefined): string | null {
+  if (details === undefined) return null;
+  const address = (details as unknown as Record<string, unknown>)["address"];
+  return typeof address === "string" && address.trim() !== "" ? address.trim() : null;
+}
+
+function locationQueryOf(
+  item: ItineraryItem,
+  bookingsById: ReadonlyMap<string, Booking>,
+): string | null {
+  if (item.kind === "booking") {
+    const booking = item.booking_id !== null ? bookingsById.get(item.booking_id) : undefined;
+    return detailsAddress(booking?.details) ?? booking?.title ?? null;
+  }
+  return item.title;
+}
+
+/**
+ * The first leg starting at `own[position]`, scanning forward.
+ *
+ * The scan (rather than a strict next-neighbour lookup) is R-ib-20's
+ * "unlocated items are transparent — the chain connects across them": with
+ * an unlocated item between two located ones the server stores the leg for
+ * the OUTER pair. INTERPRETATION (spec-uncovered): that chip is emitted
+ * directly after its FROM row, not after the unlocated row that visually
+ * separates them — the leg's anchor is the item you are leaving, and putting
+ * it lower would read as travel time out of the unlocated item, which is the
+ * one thing it is not. Both endpoint titles ride the accessibility label so
+ * the pairing is never ambiguous to a screen reader.
+ */
+function findLegFrom(
+  own: readonly DayEntry[],
+  position: number,
+  legIndex: ReadonlyMap<string, LegOption[]>,
+  queries: ReadonlyMap<string, string | null>,
+): DayLeg | null {
+  const from = own[position];
+  if (from === undefined) return null;
+  for (let j = position + 1; j < own.length; j += 1) {
+    const to = own[j];
+    if (to === undefined) continue;
+    const options = legIndex.get(legPairKey(from.itemId, to.itemId));
+    if (options === undefined) continue;
+    const defaultMode = pickDefaultMode(options);
+    if (defaultMode === null) continue;
+    return {
+      fromItemId: from.itemId,
+      toItemId: to.itemId,
+      fromTitle: from.title,
+      toTitle: to.title,
+      options,
+      defaultMode,
+      fromQuery: queries.get(from.itemId) ?? null,
+      toQuery: queries.get(to.itemId) ?? null,
+    };
+  }
+  return null;
+}
 
 /**
  * The section date set (R-itin-1): every day of the trip's date range
@@ -271,12 +382,19 @@ export function buildDaySet(
  * The flat list model. Per day: header row, then that day's entries —
  * synthesized check-out rows FIRST (no sort_order on their render day;
  * check-out-is-morning heuristic, deterministic), then the day's own items
- * by `(sort_order, id)`. Days with no entries emit the empty-day add row.
+ * by `(sort_order, id)`, with a travel-time chip after any entry that starts
+ * a computed leg. Days with no entries emit the empty-day add row.
+ *
+ * Leg endpoints are the day's OWN items only (`homeDay === date`): the
+ * server maintains legs within `item.day` (R-ib-20), so a synthesized
+ * check-out row — which renders on `end_day` and belongs to another day's
+ * order — is never a leg endpoint.
  */
 export function buildDayRows(
   trip: { start_date: ISODate; end_date: ISODate },
   items: readonly ItineraryItem[],
   bookingsById: ReadonlyMap<string, Booking>,
+  options?: BuildDayRowsOptions,
 ): DayListRow[] {
   const byDay = new Map<ISODate, DayEntry[]>();
   for (const item of items) {
@@ -287,6 +405,13 @@ export function buildDayRows(
     }
   }
 
+  const legIndex = indexLegsByPair(options?.legs ?? []);
+  const queries = new Map<string, string | null>(
+    items.map((item) => [item.id, locationQueryOf(item, bookingsById)]),
+  );
+  const overlappingItemIds = options?.conflicts?.overlappingItemIds ?? NO_IDS;
+  const unsortedDays = options?.conflicts?.unsortedDays ?? NO_IDS;
+
   const rows: DayListRow[] = [];
   for (const date of buildDaySet(trip, byDay.keys())) {
     const entries = (byDay.get(date) ?? []).sort((a, b) => {
@@ -296,11 +421,35 @@ export function buildDayRows(
       if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.rowKey < b.rowKey ? -1 : a.rowKey > b.rowKey ? 1 : 0;
     });
-    rows.push({ type: "day", key: `day-${date}`, date, count: entries.length });
+    rows.push({
+      type: "day",
+      key: `day-${date}`,
+      date,
+      count: entries.length,
+      unsorted: unsortedDays.has(date),
+    });
     if (entries.length === 0) {
       rows.push({ type: "empty-day", key: `empty-${date}`, date });
-    } else {
-      for (const entry of entries) rows.push({ type: "entry", key: entry.rowKey, entry });
+      continue;
+    }
+
+    const own = entries.filter((entry) => entry.homeDay === date);
+    const ownPosition = new Map(own.map((entry, index) => [entry.rowKey, index]));
+    for (const entry of entries) {
+      rows.push({
+        type: "entry",
+        key: entry.rowKey,
+        entry,
+        overlapping: overlappingItemIds.has(entry.itemId),
+      });
+      const position = ownPosition.get(entry.rowKey);
+      if (position === undefined) continue;
+      const leg = findLegFrom(own, position, legIndex, queries);
+      // Absent leg ⇒ nothing rendered (R-itin-6's "no chip" arm — never a
+      // spinner, never an inline error, never a retry prompt).
+      if (leg !== null) {
+        rows.push({ type: "leg", key: `leg-${leg.fromItemId}-${leg.toItemId}`, leg });
+      }
     }
   }
   return rows;

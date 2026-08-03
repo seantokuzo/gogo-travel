@@ -24,11 +24,19 @@
  * fills its internals; this screen never changes for it (W4 boundary:
  * T-7.6 owns this file, T-7.7 owns GridSurface + grid/*).
  *
+ * Travel legs + conflicts (T-7.5 / IT-3+IT-4): the composite read's `legs`
+ * flow into `buildDayRows`, which emits the chip rows; a chip tap presents
+ * ONE screen-level `LegModeSheet` (R-itin-4). `analyzeDayConflicts` supplies
+ * the R-itin-7 overlap set and the "Sort day by time" affordance, whose PUT
+ * reuses the SAME `useDayOrder` mutation as drag — one optimistic path, one
+ * rollback, one banner. Absent legs render nothing at all (R-itin-6), which
+ * is the normal state while the Mapbox token is parked.
+ *
  * The whole screen sits in a `GestureHandlerRootView` — drag gestures
  * (react-native-reorderable-list) only work inside one, and the app root
  * doesn't mount it.
  */
-import type { Booking } from "@gogo/shared";
+import type { Booking, ISODate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useRouter } from "expo-router";
 import { useMemo, useRef, useState } from "react";
@@ -40,16 +48,19 @@ import { useDayOrder, useItinerary, useItineraryBookings } from "@/data";
 import {
   AddOptionsSheet,
   addOptionSlug,
+  analyzeDayConflicts,
   BOOKING_DAY_LOCK_HINT,
   buildDayRows,
   DayJumpStrip,
   GridSurface,
   IdeasBucket,
   ItineraryDayList,
+  LegModeSheet,
   readItineraryViewMode,
   resolveDrop,
   storeItineraryViewMode,
   type DayEntry,
+  type DayLeg,
   type ItineraryDayListHandle,
   type ItineraryViewMode,
 } from "@/features/itinerary";
@@ -97,6 +108,17 @@ export default function ItineraryScreen() {
   const [mode, setMode] = useState<ItineraryViewMode>(() => readItineraryViewMode(trip.id));
   const [notice, setNotice] = useState<ReorderNotice>(null);
   const [addSheetVisible, setAddSheetVisible] = useState(false);
+  /** R-itin-4: the pair whose mode Sheet is presented (null ⇒ closed). */
+  const [openLeg, setOpenLeg] = useState<DayLeg | null>(null);
+  /**
+   * The mode Sheet mounts on FIRST use and then stays mounted (so its exit
+   * animation still plays on dismiss). Mounting it eagerly would run the DS
+   * Sheet's reduce-motion probe — an async `AccessibilityInfo` read that
+   * setStates when it settles — on every itinerary render, including grid
+   * mode and viewers, who can never open it. That late setState is exactly
+   * the un-acted-update class the mobile act gate exists to catch.
+   */
+  const [legSheetMounted, setLegSheetMounted] = useState(false);
   const listHandle = useRef<ItineraryDayListHandle>(null);
 
   // R-ib-24 client half: writes are editor/owner — viewers get no add
@@ -114,9 +136,18 @@ export default function ItineraryScreen() {
     return new Map<string, Booking>(bookings.map((b) => [b.id, b]));
   }, [bookingsQuery.data]);
 
+  const conflicts = useMemo(
+    () => analyzeDayConflicts(itineraryQuery.data?.items ?? [], bookingsById),
+    [bookingsById, itineraryQuery.data],
+  );
+
   const rows = useMemo(
-    () => buildDayRows(trip, itineraryQuery.data?.items ?? [], bookingsById),
-    [bookingsById, itineraryQuery.data, trip],
+    () =>
+      buildDayRows(trip, itineraryQuery.data?.items ?? [], bookingsById, {
+        legs: itineraryQuery.data?.legs ?? [],
+        conflicts,
+      }),
+    [bookingsById, conflicts, itineraryQuery.data, trip],
   );
 
   const toggleMode = () => {
@@ -185,6 +216,23 @@ export default function ItineraryScreen() {
     if (resolution.kind === "noop") return;
     setNotice(null);
     dayOrder.mutate({ day: resolution.day, itemIds: resolution.itemIds });
+  };
+
+  /**
+   * R-itin-7 "Sort day by time" — one tap, one day-order PUT through the
+   * SAME optimistic mutation drag uses (so rollback + ErrorBanner are
+   * already correct). Re-entrance is gated on `isPending` as well as by the
+   * affordance being hidden while pending: a second tap landing inside the
+   * same frame would otherwise queue a second PUT whose per-call callbacks
+   * v5 would drop (the superseded-call landmine).
+   */
+  const handleSortDay = (date: ISODate) => {
+    if (dayOrder.isPending) return;
+    const itemIds = conflicts.sortedDayOrders.get(date);
+    if (itemIds === undefined || itemIds.length === 0) return;
+    triggerHaptic("dragDrop");
+    setNotice(null);
+    dayOrder.mutate({ day: date, itemIds });
   };
 
   const settled = itineraryQuery.data !== undefined && bookingsQuery.data !== undefined;
@@ -259,6 +307,14 @@ export default function ItineraryScreen() {
           onReorder={handleReorder}
           onOpenEntry={openEntry}
           onAddToDay={(date) => openAdd(date)}
+          onOpenLeg={(leg) => {
+            setLegSheetMounted(true);
+            setOpenLeg(leg);
+          }}
+          // R-ib-24: sorting issues a day-order PUT — viewers never see the
+          // affordance, and it hides while a PUT is already in flight (the
+          // same pending gate `dragEnabled` applies to drag).
+          onSortDay={editor && !dayOrder.isPending ? handleSortDay : undefined}
         />
       </>
     );
@@ -307,6 +363,16 @@ export default function ItineraryScreen() {
           </View>
         ) : null}
         <View style={s.body}>{body}</View>
+        {/* R-itin-4 mode Sheet — ONE instance for the whole list; a chip tap
+            sets the presented pair. Read-only surface (no write, no viewer
+            gate). Lazily mounted — see `legSheetMounted`. */}
+        {legSheetMounted ? (
+          <LegModeSheet
+            leg={openLeg}
+            destinationName={trip.destination_name}
+            onDismiss={() => setOpenLeg(null)}
+          />
+        ) : null}
         {editor ? (
           <>
             <Fab
