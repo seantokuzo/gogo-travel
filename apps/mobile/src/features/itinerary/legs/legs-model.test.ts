@@ -39,21 +39,21 @@ describe("indexLegsByPair (§2.2 pair keying)", () => {
       makeTravelLeg(ITEM_B_ID, ITEM_C_ID, "cycling"),
     ];
     const index = indexLegsByPair(legs);
-    expect([...index.keys()]).toHaveLength(2);
-    expect(index.get(legPairKey(ITEM_A_ID, ITEM_B_ID))?.map((o) => o.mode)).toEqual([
+    expect([...index.byPair.keys()]).toHaveLength(2);
+    expect(index.byPair.get(legPairKey(ITEM_A_ID, ITEM_B_ID))?.map((o) => o.mode)).toEqual([
       "walking",
       "driving",
       "transit",
     ]);
-    expect(index.get(legPairKey(ITEM_B_ID, ITEM_C_ID))?.map((o) => o.mode)).toEqual(["cycling"]);
+    expect(index.byPair.get(legPairKey(ITEM_B_ID, ITEM_C_ID))?.map((o: LegOption) => o.mode)).toEqual(["cycling"]);
   });
 
   it("is DIRECTIONAL — the reverse pair is a different key (R-ib-20)", () => {
     const index = indexLegsByPair([makeTravelLeg(ITEM_A_ID, ITEM_B_ID, "walking")]);
-    expect(index.has(legPairKey(ITEM_A_ID, ITEM_B_ID))).toBe(true);
+    expect(index.byPair.has(legPairKey(ITEM_A_ID, ITEM_B_ID))).toBe(true);
     // CONTROL: the same items, reversed, must NOT resolve — this is what
     // makes a reorder drop its now-wrong chip instead of showing it backwards.
-    expect(index.has(legPairKey(ITEM_B_ID, ITEM_A_ID))).toBe(false);
+    expect(index.byPair.has(legPairKey(ITEM_B_ID, ITEM_A_ID))).toBe(false);
   });
 
   it("carries duration/distance/provider through verbatim", () => {
@@ -64,7 +64,7 @@ describe("indexLegsByPair (§2.2 pair keying)", () => {
         provider: "transitous",
       }),
     ]);
-    expect(index.get(legPairKey(ITEM_A_ID, ITEM_B_ID))?.[0]).toEqual({
+    expect(index.byPair.get(legPairKey(ITEM_A_ID, ITEM_B_ID))?.[0]).toEqual({
       mode: "transit",
       durationSeconds: 1234,
       distanceMeters: 5678,
@@ -77,13 +77,13 @@ describe("indexLegsByPair (§2.2 pair keying)", () => {
       makeTravelLeg(ITEM_A_ID, ITEM_B_ID, "walking", { duration_seconds: 100 }),
       makeTravelLeg(ITEM_A_ID, ITEM_B_ID, "walking", { duration_seconds: 999 }),
     ]);
-    const options = index.get(legPairKey(ITEM_A_ID, ITEM_B_ID));
+    const options = index.byPair.get(legPairKey(ITEM_A_ID, ITEM_B_ID));
     expect(options).toHaveLength(1);
     expect(options?.[0]?.durationSeconds).toBe(100);
   });
 
   it("no legs → an empty index (R-itin-6: the absent case is data, not an error)", () => {
-    expect(indexLegsByPair([]).size).toBe(0);
+    expect(indexLegsByPair([]).byPair.size).toBe(0);
   });
 });
 

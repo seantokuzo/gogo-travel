@@ -37,6 +37,10 @@ const useStyles = createStyles((t) =>
       paddingVertical: t.space[1],
       paddingHorizontal: t.space[3],
       marginBottom: t.space[2],
+      // R-ds-9: 28pt + hitSlop.sm = 44pt. Padding alone gives 26pt (42pt with
+      // slop) — every DS control clears 44 deliberately.
+      minHeight: 28,
+      justifyContent: "center",
     },
   }),
 );

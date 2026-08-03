@@ -88,14 +88,30 @@ export function legPairKey(fromItemId: string, toItemId: string): string {
   return `${fromItemId}\u0000${toItemId}`;
 }
 
+/** Pair index plus the set of item ids any leg starts from (see `fromIds`). */
+export interface LegIndex {
+  byPair: ReadonlyMap<string, LegOption[]>;
+  /**
+   * Every `from_item_id` present in the leg set. Lets a caller answer "can
+   * anything start here?" in O(1) before walking a day — which matters
+   * because the WORST case for that walk is the SHIPPED configuration: with
+   * the Mapbox token parked most pairs have no legs, so a per-entry forward
+   * scan probes to the end of its day every time. Built here because this
+   * function already walks every leg exactly once.
+   */
+  fromIds: ReadonlySet<string>;
+}
+
 /**
  * Legs → `pairKey → options`, each pair's options in `TRAVEL_MODE_ORDER`.
  * Duplicate `(from, to, mode)` rows can't exist server-side (R-ib-22); a
  * duplicate arriving anyway keeps the FIRST occurrence (deterministic).
  */
-export function indexLegsByPair(legs: readonly TravelLeg[]): Map<string, LegOption[]> {
+export function indexLegsByPair(legs: readonly TravelLeg[]): LegIndex {
   const byPair = new Map<string, Map<TravelMode, LegOption>>();
+  const fromIds = new Set<string>();
   for (const leg of legs) {
+    fromIds.add(leg.from_item_id);
     const key = legPairKey(leg.from_item_id, leg.to_item_id);
     let modes = byPair.get(key);
     if (modes === undefined) {
@@ -119,7 +135,7 @@ export function indexLegsByPair(legs: readonly TravelLeg[]): Map<string, LegOpti
     });
     if (options.length > 0) out.set(key, options);
   }
-  return out;
+  return { byPair: out, fromIds };
 }
 
 /**

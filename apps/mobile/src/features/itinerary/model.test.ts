@@ -34,6 +34,20 @@ import {
 
 const TRIP = { start_date: TRIP_START, end_date: TRIP_END };
 
+const PLACE_ID = "44444444-4444-4444-8444-444444444444";
+
+/** A LOCATED day-1 item — `place_id` set, so R-ib-20 sees it in the chain. */
+function located(id: string, startTime: string, sortOrder: number) {
+  return makeItineraryItem({
+    id,
+    kind: "place_visit",
+    place_id: PLACE_ID,
+    title: null,
+    start_time: startTime,
+    sort_order: sortOrder,
+  });
+}
+
 /** Flat row → a comparable label (exhaustive over the row union). */
 function rowLabel(row: DayListRow): string {
   switch (row.type) {
@@ -245,24 +259,74 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
     ]);
   });
 
-  it("the chip follows its FROM row even when an unlocated item sits between (R-ib-20)", () => {
+  it("the chip follows its FROM row even when an UNLOCATED item sits between (R-ib-20)", () => {
     const items = [
-      makeItineraryItem({ id: ITEM_A_ID, start_time: "09:00", sort_order: 1024 }),
-      // Unlocated middle item — transparent to the leg chain.
+      located(ITEM_A_ID, "09:00", 1024),
+      // Unlocated middle item (no place_id) — transparent to the leg chain.
       makeItineraryItem({ id: ITEM_B_ID, start_time: "10:00", sort_order: 2048 }),
-      makeItineraryItem({ id: ITEM_C_ID, start_time: "11:00", sort_order: 3072 }),
+      located(ITEM_C_ID, "11:00", 3072),
     ];
     const rows = buildDayRows(TRIP, items, bookingsById(), {
       legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
     });
-    const day1 = rows.slice(0, 5).map(rowLabel);
-    expect(day1).toEqual([
+    expect(rows.slice(0, 5).map(rowLabel)).toEqual([
       `day:${TRIP_START}`,
       `entry:${ITEM_A_ID}`,
       `leg:${ITEM_A_ID}->${ITEM_C_ID}`,
       `entry:${ITEM_B_ID}`,
       `entry:${ITEM_C_ID}`,
     ]);
+  });
+
+  it("CONTROL: a LOCATED item between them stops the scan — transparency is for unlocated only", () => {
+    // Same three items, same single (A,C) leg — but the middle one now has a
+    // place. The server would never store (A,C) for this chain; it is a stale
+    // pair, and rendering it would draw "A → 10 min" directly above B.
+    const items = [
+      located(ITEM_A_ID, "09:00", 1024),
+      located(ITEM_B_ID, "10:00", 2048),
+      located(ITEM_C_ID, "11:00", 3072),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
+    });
+    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
+  });
+
+  it("a stale leg surviving a same-day reorder degrades to ABSENT, never to a wrong hop", () => {
+    // Legs (A,B) and (B,C) as the server computed them for order [A,B,C].
+    const legs = [
+      makeTravelLeg(ITEM_A_ID, ITEM_B_ID, "walking"),
+      makeTravelLeg(ITEM_B_ID, ITEM_C_ID, "walking"),
+    ];
+    // CONTROL: in the original order both chips render.
+    const before = buildDayRows(
+      TRIP,
+      [
+        located(ITEM_A_ID, "09:00", 1024),
+        located(ITEM_B_ID, "10:00", 2048),
+        located(ITEM_C_ID, "11:00", 3072),
+      ],
+      bookingsById(),
+      { legs },
+    );
+    expect(before.filter((row) => row.type === "leg")).toHaveLength(2);
+
+    // B dragged above A. `reconcileDayOrder` deliberately leaves legs alone
+    // and a successful reorder does not invalidate, so the client still holds
+    // BOTH stale legs. Scanning past A from B would hit (B,C) and draw a chip
+    // between B and A — a hop that was never computed.
+    const after = buildDayRows(
+      TRIP,
+      [
+        located(ITEM_B_ID, "10:00", 1024),
+        located(ITEM_A_ID, "09:00", 2048),
+        located(ITEM_C_ID, "11:00", 3072),
+      ],
+      bookingsById(),
+      { legs },
+    );
+    expect(after.filter((row) => row.type === "leg")).toHaveLength(0);
   });
 
   it("the chip carries both titles, the mode set, and the R-itin-5 default", () => {
@@ -279,18 +343,40 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
     expect(leg?.defaultMode).toBe("walking");
   });
 
-  it("a synthesized check-out row is never a leg endpoint (legs live on `item.day`)", () => {
-    // A leg keyed on the lodging item resolves on its CHECK-IN day only.
+  it("a check-out row IS a leg endpoint — the server chains spanning items on end_day too", () => {
+    // `travel-legs/adjacency.ts` `itemChainDays` puts a spanning lodging in
+    // BOTH its check-in and check-out days' chains, so hotel → first-stop on
+    // check-out morning is a leg the worker really computes. Dropping it lost
+    // the most useful chip of that day.
     const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
       legs: [makeTravelLeg(ITEM_LODGING_ID, ITEM_C_ID, "walking")],
     });
-    // ITEM_C is on day 3, the lodging's HOME day is day 1 — no pair on either.
-    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
-    // CONTROL: pair the lodging with a day-1 item and the chip appears.
+    const legRows = rows.filter((row) => row.type === "leg");
+    expect(legRows).toHaveLength(1);
+    // …and it renders on the CHECK-OUT day (day 3), between the two rows.
+    const day3 = rows.slice(rows.findIndex((row) => row.type === "day" && row.date === TRIP_END));
+    expect(day3.map(rowLabel)).toEqual([
+      `day:${TRIP_END}`,
+      `entry:${ITEM_LODGING_ID}-check-out`,
+      `leg:${ITEM_LODGING_ID}->${ITEM_C_ID}`,
+      `entry:${ITEM_C_ID}`,
+    ]);
+    // CONTROL: the same item pairs on its CHECK-IN day too, independently.
     const withDay1Pair = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
       legs: [makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "walking")],
     });
     expect(withDay1Pair.filter((row) => row.type === "leg")).toHaveLength(1);
+  });
+
+  it("leg row keys are day-scoped so a co-chained pair can't collide", () => {
+    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
+      legs: [
+        makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "walking"),
+        makeTravelLeg(ITEM_LODGING_ID, ITEM_C_ID, "walking"),
+      ],
+    });
+    const keys = rows.map((row) => row.key);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it("booking endpoints prefer `details.address` over the title for the maps query", () => {

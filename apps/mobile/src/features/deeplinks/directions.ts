@@ -26,6 +26,17 @@
  * the "Did you book it?" prompt can fire on return. A nav handoff books
  * nothing; recording it would prompt the user to log a booking they never
  * made. Directions taps are therefore not recorded.
+ *
+ * FLAGGED FOR THE §2.7 SPEC-SYNC BATCH (T-7.5): §2.7 is the canonical,
+ * research-cited enumeration of every URL this app opens externally, and it
+ * has no Google-Maps-directions row — nor does `.specs/research/`, whose
+ * maps material covers Mapbox/Transitous LEG COMPUTATION, not an outbound
+ * maps URL. Shipping this format while citing §2.7's "only research-verified
+ * formats ship" rule to withhold the Apple variant applies that rule
+ * asymmetrically, so both halves go to Sean's spec pass: add the §2.7 row +
+ * its research citation, and decide the Apple variant there. Until that
+ * lands, the next implementer extending this file has no spec row to extend
+ * and no citation to check against.
  */
 import type { TravelMode } from "@gogo/shared";
 

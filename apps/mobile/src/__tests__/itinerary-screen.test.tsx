@@ -14,7 +14,7 @@
  * skeleton/empty/error states (R-itin-28), §2.9 testIDs (R-itin-30).
  */
 import type { TripListItem } from "@gogo/shared";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
 import { ApiRequestError } from "@/auth";
@@ -34,33 +34,9 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
-
-/**
- * `VirtualizedList` batches its cell-render updates behind
- * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
- * cannot reach it, so the drain window has to outlast the period.
- */
-const VIRTUALIZED_LIST_BATCH_MS = 60;
-
-/**
- * Drain every pending batch inside ONE act window (T-7.5): TanStack's notify
- * batches and the real `VirtualizedList`'s own cell-render timer schedule
- * independently, so a single cycle can leave the other pending. It then lands
- * at the next `await` in a test body — an un-acted update that only shows up
- * in whole-suite runs under worker contention (the B-2 class). Successive
- * cycles INSIDE one act window absorb whatever each previous cycle scheduled.
- */
-const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
-
-async function settle(): Promise<void> {
-  await act(async () => {
-    for (const delay of SETTLE_DELAYS) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  });
-}
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 

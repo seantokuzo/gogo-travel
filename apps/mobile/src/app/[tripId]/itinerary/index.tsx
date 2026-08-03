@@ -110,15 +110,6 @@ export default function ItineraryScreen() {
   const [addSheetVisible, setAddSheetVisible] = useState(false);
   /** R-itin-4: the pair whose mode Sheet is presented (null ⇒ closed). */
   const [openLeg, setOpenLeg] = useState<DayLeg | null>(null);
-  /**
-   * The mode Sheet mounts on FIRST use and then stays mounted (so its exit
-   * animation still plays on dismiss). Mounting it eagerly would run the DS
-   * Sheet's reduce-motion probe — an async `AccessibilityInfo` read that
-   * setStates when it settles — on every itinerary render, including grid
-   * mode and viewers, who can never open it. That late setState is exactly
-   * the un-acted-update class the mobile act gate exists to catch.
-   */
-  const [legSheetMounted, setLegSheetMounted] = useState(false);
   const listHandle = useRef<ItineraryDayListHandle>(null);
 
   // R-ib-24 client half: writes are editor/owner — viewers get no add
@@ -230,7 +221,11 @@ export default function ItineraryScreen() {
     if (dayOrder.isPending) return;
     const itemIds = conflicts.sortedDayOrders.get(date);
     if (itemIds === undefined || itemIds.length === 0) return;
-    triggerHaptic("dragDrop");
+    // `actionLight`, not `dragDrop`: R-itin-2 assigns the drag haptics to the
+    // drag GESTURE (tokens §2.8), and this is a button tap. Both map to
+    // `impactLight`, so the feel is unchanged — only the vocabulary is now
+    // the right one, rather than drift by accident.
+    triggerHaptic("actionLight");
     setNotice(null);
     dayOrder.mutate({ day: date, itemIds });
   };
@@ -307,10 +302,7 @@ export default function ItineraryScreen() {
           onReorder={handleReorder}
           onOpenEntry={openEntry}
           onAddToDay={(date) => openAdd(date)}
-          onOpenLeg={(leg) => {
-            setLegSheetMounted(true);
-            setOpenLeg(leg);
-          }}
+          onOpenLeg={setOpenLeg}
           // R-ib-24: sorting issues a day-order PUT — viewers never see the
           // affordance, and it hides while a PUT is already in flight (the
           // same pending gate `dragEnabled` applies to drag).
@@ -365,14 +357,24 @@ export default function ItineraryScreen() {
         <View style={s.body}>{body}</View>
         {/* R-itin-4 mode Sheet — ONE instance for the whole list; a chip tap
             sets the presented pair. Read-only surface (no write, no viewer
-            gate). Lazily mounted — see `legSheetMounted`. */}
-        {legSheetMounted ? (
-          <LegModeSheet
-            leg={openLeg}
-            destinationName={trip.destination_name}
-            onDismiss={() => setOpenLeg(null)}
-          />
-        ) : null}
+            gate).
+
+            Mounted eagerly, like every other Sheet on this screen. A lazy,
+            tap-gated mount was tried and REVERTED (PR #18 round 1): the DS
+            Sheet's reduce-motion probe lives in `useEffect(…, [])`, so it
+            runs once per MOUNT, not per render as the original comment
+            claimed — and deferring the mount to the tap that also sets
+            `visible` puts both in one commit, so a Reduce Motion user gets
+            the spring slide-up and then a teleport when the async probe
+            resolves. That is a real R-ds-11 regression for the exact cohort
+            that asked for less motion, traded against a per-mount cost that
+            was misread as per-render. The act-hygiene fix is in the test
+            suites' `settle()` drains, not here. */}
+        <LegModeSheet
+          leg={openLeg}
+          destinationName={trip.destination_name}
+          onDismiss={() => setOpenLeg(null)}
+        />
         {editor ? (
           <>
             <Fab

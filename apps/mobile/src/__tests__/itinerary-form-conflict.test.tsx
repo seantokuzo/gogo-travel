@@ -12,13 +12,14 @@
  * screen at a time that DOES overlap, so a notice that never renders at all
  * cannot pass this suite.
  */
-import { act, fireEvent, screen } from "@testing-library/react-native";
+import { fireEvent, screen } from "@testing-library/react-native";
 
 import ItineraryItemNewScreen from "@/app/[tripId]/itinerary/item/new";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
   BOOKING_FLIGHT_ID,
+  BOOKING_LODGING_ID,
   ITEM_A_ID,
   ITEM_B_ID,
   itineraryApiOverrides,
@@ -30,31 +31,11 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
 let mockParams: Record<string, string> = {};
-
-/**
- * Drain every pending TanStack notify batch inside ONE act window.
- *
- * This form mounts THREE query observers over two keys (the host's
- * `useItinerary` plus the conflict hook's pair; booking edits add
- * `useBooking`), and those fetches settle on independent `setTimeout(0)`
- * batches. A single drain leaves the later batch pending, and the next
- * `await` in the test body — a `findBy*` that resolves on its first
- * synchronous check opens no act window of its own — is where it lands: an
- * un-acted `ItemForm` update that only appears under worker contention
- * (the B-2 class). Successive cycles INSIDE one act window absorb whatever
- * each previous cycle scheduled.
- */
-async function settle(cycles = 3): Promise<void> {
-  await act(async () => {
-    for (let i = 0; i < cycles; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-  });
-}
 
 jest.mock("expo-router", () => ({
   useRouter: () => ({
@@ -271,14 +252,120 @@ describe("booking form (R-itin-20)", () => {
     expect(await screen.findByTestId("itinerary-item-new-conflict")).toHaveTextContent(/Museum/);
   });
 
-  it("a spanning lodging is ambient — check-in warns about nothing", async () => {
+  it("a SAME-DAY lodging derives a normal block and DOES warn", async () => {
+    // Renamed from "a spanning lodging is ambient — check-in warns about
+    // nothing", which asserted the notice IS shown and so proved the exact
+    // opposite of its title. A lodging with only a check-in is not spanning.
     await renderForm(
       { category: "lodging", day: TRIP_START, time: "11:00" },
       { items: existingMorningItem(), bookings: [] },
     );
     await screen.findByTestId("itinerary-item-new-input-property-name");
-    // A lodging with only a check-in derives a same-day placement, which DOES
-    // collide — the ambient rule only applies once it spans days.
     expect(screen.queryByTestId("itinerary-item-new-conflict")).toBeOnTheScreen();
+  });
+
+  it("a genuinely SPANNING lodging is ambient and warns about nothing", async () => {
+    // The `spanning` flag BookingForm derives is what routes a booking around
+    // the overlap check. Nothing else in the suite renders a form whose
+    // candidate carries `spanning: true`, so the producer was unpinned:
+    // dropping its `category === "lodging"` clause, or loosening `>` to `>=`,
+    // left every suite green while silently killing the notice for same-day
+    // lodgings and for every multi-day booking.
+    const spanningStay = makeBooking({
+      id: BOOKING_LODGING_ID,
+      category: "lodging",
+      status: "planned",
+      title: "Park Hyatt",
+      details: {
+        category: "lodging",
+        check_in: `${TRIP_START}T11:00:00Z`,
+        check_out: `${TRIP_END}T10:00:00Z`,
+      },
+      starts_at: `${TRIP_START}T11:00:00.000Z`,
+      ends_at: `${TRIP_END}T10:00:00.000Z`,
+    });
+    const bookingRead = {
+      "GET /trips/:tripId/bookings/:bookingId": () =>
+        Promise.resolve({ ...spanningStay, items: [] }),
+    };
+    // An existing 10:00-12:30 item sits right across the 11:00 check-in.
+    await renderForm(
+      { bookingId: BOOKING_LODGING_ID },
+      { items: existingMorningItem(), bookings: [spanningStay] },
+      bookingRead,
+    );
+    await screen.findByTestId("itinerary-item-new-input-property-name");
+    expect(screen.queryByTestId("itinerary-item-new-conflict")).toBeNull();
+  });
+
+  it("CONTROL for the above: the same stay checking out the SAME day does warn", async () => {
+    // Byte-for-byte the previous fixture with `check_out` moved onto the
+    // check-in date — the ONLY difference is `end_day > day`. If the notice
+    // still stays silent here, the ambient rule is over-firing.
+    const sameDayStay = makeBooking({
+      id: BOOKING_LODGING_ID,
+      category: "lodging",
+      status: "planned",
+      title: "Park Hyatt",
+      details: {
+        category: "lodging",
+        check_in: `${TRIP_START}T11:00:00Z`,
+        check_out: `${TRIP_START}T18:00:00Z`,
+      },
+      starts_at: `${TRIP_START}T11:00:00.000Z`,
+      ends_at: `${TRIP_START}T18:00:00.000Z`,
+    });
+    await renderForm(
+      { bookingId: BOOKING_LODGING_ID },
+      { items: existingMorningItem(), bookings: [sameDayStay] },
+      {
+        "GET /trips/:tripId/bookings/:bookingId": () =>
+          Promise.resolve({ ...sameDayStay, items: [] }),
+      },
+    );
+    expect(await screen.findByTestId("itinerary-item-new-conflict")).toHaveTextContent(/Museum/);
+  });
+
+  it("a cross-midnight NON-lodging booking is not ambient — an overnight flight still warns", async () => {
+    // The `category === "lodging"` half of the producer. Only a booking whose
+    // DERIVED placement carries `end_day > day` can reach that clause, and
+    // `deriveAutoItems` only sets `end_day` for lodging and for the
+    // cross-midnight `default` arm — a car rental derives two point
+    // placements with `end_day: null` and so cannot exercise it at all.
+    // An overnight flight can: drop the lodging clause and it is classified
+    // ambient, silently losing the notice.
+    const redEye = makeBooking({
+      id: BOOKING_LODGING_ID,
+      category: "flight",
+      status: "planned",
+      title: "NH 106",
+      details: {
+        category: "flight",
+        departs_at: `${TRIP_START}T22:00:00Z`,
+        arrives_at: `${TRIP_DAY_2}T06:00:00Z`,
+      },
+      starts_at: `${TRIP_START}T22:00:00.000Z`,
+      ends_at: `${TRIP_DAY_2}T06:00:00.000Z`,
+    });
+    const lateItem = [
+      makeItineraryItem({
+        id: ITEM_A_ID,
+        title: "Airport transfer",
+        start_time: "21:30",
+        end_time: "23:00",
+        sort_order: 1024,
+      }),
+    ];
+    await renderForm(
+      { bookingId: BOOKING_LODGING_ID },
+      { items: lateItem, bookings: [redEye] },
+      {
+        "GET /trips/:tripId/bookings/:bookingId": () =>
+          Promise.resolve({ ...redEye, items: [] }),
+      },
+    );
+    expect(await screen.findByTestId("itinerary-item-new-conflict")).toHaveTextContent(
+      /Airport transfer/,
+    );
   });
 });

@@ -102,7 +102,12 @@ export function ItemForm({
       : [
           {
             day,
-            end_day: null,
+            // Carried from the edited row, not hardcoded null: the form has no
+            // end-day field, so an EXISTING spanning item would otherwise be
+            // described as same-day and its real [start, midnight] clip would
+            // shrink to a zero-length span, under-reporting the overlap the
+            // save actually produces.
+            end_day: item?.end_day ?? null,
             start_time: startTime,
             end_time: endTime === "" ? null : endTime,
             // `place_visit`/`custom` items are never the spanning-lodging

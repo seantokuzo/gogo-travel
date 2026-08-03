@@ -35,7 +35,7 @@ import {
   legPairKey,
   pickDefaultMode,
   type DayLeg,
-  type LegOption,
+  type LegIndex,
 } from "./legs/legs-model";
 
 // ---------------------------------------------------------------------------
@@ -320,43 +320,83 @@ function locationQueryOf(
 }
 
 /**
- * The first leg starting at `own[position]`, scanning forward.
+ * R-ib-20 location resolution, mirroring the server's precedence exactly
+ * (`apps/server/src/travel-legs/adjacency.ts` module doc): `booking`-kind →
+ * parent `bookings.place_id`; else the item's own `place_id`; no place ⇒
+ * UNLOCATED. An unknown parent booking (enrichment gap) reads as unlocated,
+ * which is the safe direction: it can only suppress a chip, never invent one.
+ */
+function isLocated(item: ItineraryItem, bookingsById: ReadonlyMap<string, Booking>): boolean {
+  if (item.kind === "booking") {
+    const booking = item.booking_id !== null ? bookingsById.get(item.booking_id) : undefined;
+    return booking?.place_id != null;
+  }
+  return item.place_id !== null;
+}
+
+/**
+ * The leg from `own[position]` to the NEXT LOCATED entry of the day, or null.
  *
- * The scan (rather than a strict next-neighbour lookup) is R-ib-20's
- * "unlocated items are transparent — the chain connects across them": with
- * an unlocated item between two located ones the server stores the leg for
- * the OUTER pair. INTERPRETATION (spec-uncovered): that chip is emitted
- * directly after its FROM row, not after the unlocated row that visually
- * separates them — the leg's anchor is the item you are leaving, and putting
- * it lower would read as travel time out of the unlocated item, which is the
- * one thing it is not. Both endpoint titles ride the accessibility label so
- * the pairing is never ambiguous to a screen reader.
+ * The forward scan is R-ib-20's "unlocated items are transparent — the chain
+ * connects across them": with an unlocated item between two located ones the
+ * server stores the leg for the OUTER pair. But transparency applies ONLY to
+ * unlocated entries, so the scan must STOP at the first located one. It
+ * previously returned the first forward match of any kind, which rendered a
+ * stale leg as if it were the next hop:
+ *
+ *   day with located A,B,C and server legs (A,B),(B,C); drag B above A. The
+ *   reorder is optimistic and deliberately leaves `read.legs` untouched, so
+ *   the client still holds both. Scanning past A from B hits (B,C) and draws
+ *   a chip directly between B and A — reading as "B → A, 18 min" for a hop
+ *   nobody ever computed. It survives the full 5-minute staleTime, because
+ *   nothing invalidates the itinerary on a successful reorder.
+ *
+ * Stopping at the first located entry makes that case degrade to ABSENT,
+ * which is what R-itin-6 asks for and what interpretation 16 always claimed.
+ *
+ * INTERPRETATION (spec-uncovered, unchanged): the chip is emitted directly
+ * after its FROM row, not after the unlocated row that visually separates a
+ * transparent pair — the leg's anchor is the item you are leaving, and
+ * putting it lower would read as travel time out of the unlocated item, which
+ * is the one thing it is not. Both endpoint titles ride the accessibility
+ * label so the pairing is never ambiguous to a screen reader.
  */
 function findLegFrom(
   own: readonly DayEntry[],
   position: number,
-  legIndex: ReadonlyMap<string, LegOption[]>,
+  index: LegIndex,
   queries: ReadonlyMap<string, string | null>,
+  located: ReadonlySet<string>,
 ): DayLeg | null {
   const from = own[position];
   if (from === undefined) return null;
+  // O(1) early-out: nothing starts here, so the walk below cannot find
+  // anything. The no-legs day — today's shipped configuration — is exactly
+  // the case that would otherwise scan to the end of the day per entry.
+  if (!index.fromIds.has(from.itemId)) return null;
+
   for (let j = position + 1; j < own.length; j += 1) {
     const to = own[j];
     if (to === undefined) continue;
-    const options = legIndex.get(legPairKey(from.itemId, to.itemId));
-    if (options === undefined) continue;
-    const defaultMode = pickDefaultMode(options);
-    if (defaultMode === null) continue;
-    return {
-      fromItemId: from.itemId,
-      toItemId: to.itemId,
-      fromTitle: from.title,
-      toTitle: to.title,
-      options,
-      defaultMode,
-      fromQuery: queries.get(from.itemId) ?? null,
-      toQuery: queries.get(to.itemId) ?? null,
-    };
+    const options = index.byPair.get(legPairKey(from.itemId, to.itemId));
+    if (options !== undefined) {
+      const defaultMode = pickDefaultMode(options);
+      if (defaultMode !== null) {
+        return {
+          fromItemId: from.itemId,
+          toItemId: to.itemId,
+          fromTitle: from.title,
+          toTitle: to.title,
+          options,
+          defaultMode,
+          fromQuery: queries.get(from.itemId) ?? null,
+          toQuery: queries.get(to.itemId) ?? null,
+        };
+      }
+    }
+    // Located and no leg ⇒ this IS the next hop and it has no computed
+    // travel time. Absent, not "keep looking" (see the doc's stale-leg case).
+    if (located.has(to.itemId)) return null;
   }
   return null;
 }
@@ -385,10 +425,19 @@ export function buildDaySet(
  * by `(sort_order, id)`, with a travel-time chip after any entry that starts
  * a computed leg. Days with no entries emit the empty-day add row.
  *
- * Leg endpoints are the day's OWN items only (`homeDay === date`): the
- * server maintains legs within `item.day` (R-ib-20), so a synthesized
- * check-out row — which renders on `end_day` and belongs to another day's
- * order — is never a leg endpoint.
+ * EVERY entry rendered on a day is a leg-endpoint candidate, including a
+ * spanning lodging's synthesized check-out row. That mirrors the server:
+ * `travel-legs/adjacency.ts` `itemChainDays` puts a spanning item in the
+ * chains of BOTH `day` and `end_day` ("a lodging row sits in both the
+ * check-in and check-out days' chains"), so the hotel → first-stop leg of a
+ * check-out morning is a leg the worker really computes and stores. Filtering
+ * those rows out dropped it silently.
+ *
+ * The client's row order and the server's chain order can still disagree on a
+ * check-out day — rows put check-out first, the chain sorts everything by
+ * `(sort_order, id)`. That costs at most a chip and can never invent one: the
+ * pair key is DIRECTIONAL, so a pair the server ordered the other way simply
+ * misses and degrades to absent (R-itin-6).
  */
 export function buildDayRows(
   trip: { start_date: ISODate; end_date: ISODate },
@@ -408,6 +457,9 @@ export function buildDayRows(
   const legIndex = indexLegsByPair(options?.legs ?? []);
   const queries = new Map<string, string | null>(
     items.map((item) => [item.id, locationQueryOf(item, bookingsById)]),
+  );
+  const located = new Set<string>(
+    items.flatMap((item) => (isLocated(item, bookingsById) ? [item.id] : [])),
   );
   const overlappingItemIds = options?.conflicts?.overlappingItemIds ?? NO_IDS;
   const unsortedDays = options?.conflicts?.unsortedDays ?? NO_IDS;
@@ -433,24 +485,23 @@ export function buildDayRows(
       continue;
     }
 
-    const own = entries.filter((entry) => entry.homeDay === date);
-    const ownPosition = new Map(own.map((entry, index) => [entry.rowKey, index]));
-    for (const entry of entries) {
+    entries.forEach((entry, position) => {
       rows.push({
         type: "entry",
         key: entry.rowKey,
         entry,
         overlapping: overlappingItemIds.has(entry.itemId),
       });
-      const position = ownPosition.get(entry.rowKey);
-      if (position === undefined) continue;
-      const leg = findLegFrom(own, position, legIndex, queries);
+      const leg = findLegFrom(entries, position, legIndex, queries, located);
       // Absent leg ⇒ nothing rendered (R-itin-6's "no chip" arm — never a
       // spinner, never an inline error, never a retry prompt).
       if (leg !== null) {
-        rows.push({ type: "leg", key: `leg-${leg.fromItemId}-${leg.toItemId}`, leg });
+        // Day-scoped key: a pair can be co-chained on two days (two spanning
+        // lodgings share both their check-in and check-out days), and a
+        // duplicate key in the virtualized list is a real render fault.
+        rows.push({ type: "leg", key: `leg-${date}-${leg.fromItemId}-${leg.toItemId}`, leg });
       }
-    }
+    });
   }
   return rows;
 }

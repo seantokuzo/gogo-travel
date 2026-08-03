@@ -26,35 +26,9 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
-
-/**
- * `VirtualizedList` batches its cell-render updates behind
- * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
- * cannot reach it, so the drain window has to outlast the period.
- */
-const VIRTUALIZED_LIST_BATCH_MS = 60;
-
-/**
- * Drain every pending batch inside ONE act window.
- *
- * The plan list is a real `VirtualizedList`, and it schedules its own
- * cell-render updates on a timer independently of TanStack's notify batches.
- * A single drain absorbs one of the two; the other lands at the next `await`
- * in the test body — an un-acted `VirtualizedList` update that only appears
- * under worker contention (the B-2 class). Successive cycles INSIDE one act
- * window absorb whatever each previous cycle scheduled.
- */
-const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
-
-async function settle(): Promise<void> {
-  await act(async () => {
-    for (const delay of SETTLE_DELAYS) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  });
-}
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-router", () => ({
@@ -328,13 +302,19 @@ describe("sort by time (R-itin-7)", () => {
   });
 
   it("viewers never get the affordance — it issues a write (R-ib-24)", async () => {
-    await renderItinerary({
+    const first = await renderItinerary({
       api: { items: unsortedOverlappingDay(), bookings: [] },
       role: "viewer",
     });
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_START}`)).toBeNull();
-    // CONTROL: the same universe as an editor DOES offer it.
+
+    // CONTROL: the same universe as an editor DOES offer it. Tear the viewer
+    // tree down FIRST — two mounted screens with live query observers leave
+    // the loser's tail batch to land in whichever suite the worker picks up
+    // next (the B-2 class the sibling suite's `remount()` exists for).
+    await first.view.unmount();
+    await settle();
     await renderItinerary({ api: { items: unsortedOverlappingDay(), bookings: [] } });
     expect(await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`)).toBeOnTheScreen();
   });

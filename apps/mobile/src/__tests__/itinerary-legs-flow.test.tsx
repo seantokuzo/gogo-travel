@@ -12,14 +12,14 @@
  * the chip, so "nothing rendered" can never pass because the fixture was
  * incapable of rendering anything.
  */
-import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 import * as Linking from "expo-linking";
 
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
+import { consumePendingReturnPrompt, readDeeplinkOutRecord } from "@/features/deeplinks";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
-  BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
   defaultTravelLegs,
@@ -34,35 +34,9 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
-
-/**
- * `VirtualizedList` batches its cell-render updates behind
- * `updateCellsBatchingPeriod` (50 ms by default) — a `setTimeout(0)` drain
- * cannot reach it, so the drain window has to outlast the period.
- */
-const VIRTUALIZED_LIST_BATCH_MS = 60;
-
-/**
- * Drain every pending batch inside ONE act window.
- *
- * The plan list is a real `VirtualizedList`, and it schedules its own
- * cell-render updates on a timer independently of TanStack's notify batches.
- * A single drain absorbs one of the two; the other lands at the next `await`
- * in the test body — an un-acted `VirtualizedList` update that only appears
- * under worker contention (the B-2 class). Successive cycles INSIDE one act
- * window absorb whatever each previous cycle scheduled.
- */
-const SETTLE_DELAYS = [0, 0, VIRTUALIZED_LIST_BATCH_MS, 0] as const;
-
-async function settle(): Promise<void> {
-  await act(async () => {
-    for (const delay of SETTLE_DELAYS) {
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  });
-}
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-linking", () => ({ openURL: jest.fn(async () => true) }));
@@ -230,15 +204,36 @@ describe("directions handoff (R-itin-4)", () => {
     await fireEvent.press(await screen.findByTestId(`itinerary-leg-${ITEM_A_ID}`));
 
     const directions = screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions`);
-    expect(directions).toBeDisabled();
+    // Assert the GUARD'S EFFECT first. `toBeDisabled()` is checked too, but it
+    // must not be the assertion that fails first: RNTL won't fire a handler on
+    // a disabled element, so a `press`-then-expect-nothing pin holds whether or
+    // not the inner guard exists (`.claude/rules/mobile.md`). Ordering it this
+    // way means deleting EITHER the disabled prop or the inner
+    // `status === "ready"` check turns this red.
+    await fireEvent.press(directions);
+    expect(openURLMock).not.toHaveBeenCalled();
     expect(
       screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions-hint`),
     ).toHaveTextContent("Needs a name or address for the destination");
-    // The GUARD's effect, not the disabled attribute (RNTL won't fire a
-    // handler on a disabled element, so pressing it proves nothing): no URL
-    // was ever constructed for this pair.
-    await fireEvent.press(directions);
-    expect(openURLMock).not.toHaveBeenCalled();
+    expect(directions).toBeDisabled();
+
+    await fireEvent.press(screen.getByTestId("itinerary-leg-sheet-close"));
+    await waitFor(() => expect(screen.queryByTestId("itinerary-leg-sheet")).toBeNull());
+  });
+
+  it("a Directions tap does NOT arm the return prompt (R-itin-22 is for PARTNERS)", async () => {
+    // A nav handoff books nothing, so recording it would prompt "Did you book
+    // it?" for a trip to Google Maps. Nothing else pins this: `LegModeSheet`
+    // calls `Linking.openURL` directly rather than through `PartnerButton`,
+    // and a later "unify the outbound handoff" refactor would silently start
+    // arming it.
+    await renderItinerary({ api: { legs: defaultTravelLegs() } });
+    await fireEvent.press(await screen.findByTestId(`itinerary-leg-${ITEM_A_ID}`));
+    await fireEvent.press(screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions`));
+    await waitFor(() => expect(openURLMock).toHaveBeenCalledTimes(1));
+
+    expect(readDeeplinkOutRecord()).toBeNull();
+    expect(consumePendingReturnPrompt()).toBeNull();
 
     await fireEvent.press(screen.getByTestId("itinerary-leg-sheet-close"));
     await waitFor(() => expect(screen.queryByTestId("itinerary-leg-sheet")).toBeNull());
@@ -307,7 +302,6 @@ describe("leg data hygiene", () => {
     // Unknown parent → generic label, and Directions degrades to disabled
     // rather than querying "Booking".
     expect(screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions`)).toBeDisabled();
-    expect(BOOKING_LODGING_ID).toBeTruthy();
 
     await fireEvent.press(screen.getByTestId("itinerary-leg-sheet-close"));
     await waitFor(() => expect(screen.queryByTestId("itinerary-leg-sheet")).toBeNull());

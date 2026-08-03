@@ -48,7 +48,16 @@ const useStyles = createStyles((t) =>
       paddingBottom: t.space[2],
     },
     dayHeaderTrailing: { flexDirection: "row", alignItems: "center", gap: t.space[3] },
-    sortAction: { flexDirection: "row", alignItems: "center", gap: t.space[1] },
+    // R-ds-9: 28pt + hitSlop.sm (8/8) = 44pt, the ErrorBanner-control pattern.
+    // Without the minHeight this row is ~18pt and lands at 34pt with slop —
+    // and it sits directly beside the day-header tap band, so a mis-hit fires
+    // a DIFFERENT affordance (scroll-to-day) rather than doing nothing.
+    sortAction: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: t.space[1],
+      minHeight: 28,
+    },
     emptyDay: {
       flexDirection: "row",
       alignItems: "center",
@@ -191,14 +200,18 @@ export function ItineraryDayList({
       switch (row.type) {
         case "day":
           return (
-            <View style={s.dayHeader}>
-              <Pressable
-                onPress={() => scrollToDay(row.date)}
-                testID={`itinerary-day-header-${row.date}`}
-                accessibilityRole="header"
-              >
-                <AppText role="subheading">{formatDayHeader(row.date)}</AppText>
-              </Pressable>
+            // The Pressable stays the OUTER element, as T-7.4 shipped it: it
+            // owns `dayHeader`'s padding, so the whole band — not just the
+            // title glyphs — scrolls to the day (§2.2). Nesting the sort
+            // Pressable inside is fine; RN resolves a press to the innermost
+            // responder, so the two never fight.
+            <Pressable
+              onPress={() => scrollToDay(row.date)}
+              testID={`itinerary-day-header-${row.date}`}
+              accessibilityRole="header"
+              style={s.dayHeader}
+            >
+              <AppText role="subheading">{formatDayHeader(row.date)}</AppText>
               <View style={s.dayHeaderTrailing}>
                 {/* R-itin-7: offered only when the day's row order disagrees
                     with its start times — never an auto-resort. */}
@@ -221,7 +234,7 @@ export function ItineraryDayList({
                   {row.count === 0 ? "" : row.count === 1 ? "1 item" : `${row.count} items`}
                 </AppText>
               </View>
-            </View>
+            </Pressable>
           );
         case "leg":
           return <LegChip leg={row.leg} onPress={onOpenLeg} />;
