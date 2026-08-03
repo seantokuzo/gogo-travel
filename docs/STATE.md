@@ -121,6 +121,17 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   chips + conflict) and W6 (T-7.9 detail + offline) remain.** T-7.7's 15
   interpretations (incl. MIN_BLOCK_HEIGHT floor + grid testIDs) also in the
   QUEUE spec-pass row.
+- **W5 DISPATCHED 2026-08-02 (in-flight):** T-7.5 [IT-3, IT-4] travel-time
+  chips + conflict surfacing — SERIAL (sole agent, isolated worktree off
+  `d5140b1`). Owns the whole itinerary surface this wave: the `leg`
+  DayListRow variant at T-7.4's marked seam in `model.ts`, mode sheet,
+  directions handoff, absent-leg states (R-itin-4..6) + list overlap chips,
+  sort-by-time, and the R-itin-20 FORM conflict notice in T-7.6's add-edit
+  forms (R-itin-7). Grid overlap half already shipped in T-7.7 — not rebuilt.
+  **Absent legs are the NORMAL path** while Mapbox is parked (transit-only
+  via Transitous) — "no data", never an error. T-7.9 [IT-9, IT-10] closes
+  P-7 after; run it serially too (both want the screen file) unless a seam
+  is frozen first, per the W4 precedent.
 - **T-7.6/T-7.7 landmines (NEW — 3 VACUOUS-PIN FLAVORS, all codified in
   `.claude/rules/mobile.md`; a green suite proved nothing three times in one
   PR):** (1) a pin that rejects an ALREADY-SETTLED promise never observes the
