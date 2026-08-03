@@ -8,8 +8,12 @@
  * renders real data. It is deliberately NOT a `Card` — §2.2 makes the chip
  * connective tissue between cards, not another item.
  *
- * testID §2.9: `itinerary-leg-{fromItemId}` (leg ids are rebuilt on every
- * recompute — the from-item id is the stable key).
+ * testID: `legChipTestID` (day-scoped). §2.9 writes
+ * `itinerary-leg-{fromItemId}`, which stopped being unique once check-out
+ * rows became leg endpoints — a spanning lodging is a FROM on both its
+ * check-in and check-out days, so two chips would carry one id, `getByTestId`
+ * would throw, and an E2E tap would be ambiguous between two chips opening
+ * DIFFERENT Sheets. Flagged for the §2.9 sync batch.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -18,6 +22,7 @@ import { AppText, Icon } from "@/components";
 
 import {
   formatLegDuration,
+  legChipTestID,
   TRAVEL_MODE_ICONS,
   TRAVEL_MODE_LABELS,
   type DayLeg,
@@ -66,7 +71,7 @@ export function LegChip({ leg, onPress }: LegChipProps) {
         hitSlop={theme.hitSlop.sm}
         accessibilityRole="button"
         accessibilityLabel={`${TRAVEL_MODE_LABELS[leg.defaultMode]} ${duration} from ${leg.fromTitle} to ${leg.toTitle}. Show travel options.`}
-        testID={`itinerary-leg-${leg.fromItemId}`}
+        testID={legChipTestID(leg)}
       >
         <Icon
           name={TRAVEL_MODE_ICONS[leg.defaultMode]}

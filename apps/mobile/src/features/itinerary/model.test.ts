@@ -7,10 +7,12 @@
 import type { Booking } from "@gogo/shared";
 
 import {
+  BOOKING_FLIGHT_ID,
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
   defaultTravelLegs,
+  makeBooking,
   ITEM_A_ID,
   ITEM_B_ID,
   ITEM_C_ID,
@@ -23,6 +25,7 @@ import {
 } from "@/test-utils/itinerary-fixtures";
 
 import { analyzeDayConflicts } from "./conflicts";
+import { legChipTestID } from "./legs/legs-model";
 import {
   buildDayRows,
   buildDaySet,
@@ -329,6 +332,81 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
     expect(after.filter((row) => row.type === "leg")).toHaveLength(0);
   });
 
+  it("an UNKNOWN parent booking fails safe to LOCATED — it stops the scan", () => {
+    // The enrichment gap is reachable: `useItineraryBookings` is a SEPARATE
+    // query from `useItinerary`, capped at 100 rows, so a just-added booking
+    // can be in `items` while `bookingsById` still lacks its parent.
+    //
+    // Locatedness is only ever used to STOP the scan, so reading the unknown
+    // row as UNLOCATED would make the scan skip it and match the stale (A,C)
+    // pair — drawing a chip directly above the item that was just inserted
+    // between them. That is round 1's blocking bug wearing a different hat.
+    const items = [
+      located(ITEM_A_ID, "09:00", 1024),
+      makeItineraryItem({
+        id: ITEM_B_ID,
+        kind: "booking",
+        booking_id: "bbbbbbb8-bbbb-4bbb-8bbb-bbbbbbbbbbb8", // not in bookingsById
+        title: null,
+        start_time: "10:00",
+        sort_order: 2048,
+      }),
+      located(ITEM_C_ID, "11:00", 3072),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
+    });
+    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
+
+    // CONTROL: the same shape with a KNOWN, genuinely place-less parent is a
+    // real R-ib-20 unlocated item — transparent, so the chip DOES render.
+    const knownUnlocated = [
+      located(ITEM_A_ID, "09:00", 1024),
+      makeItineraryItem({
+        id: ITEM_B_ID,
+        kind: "booking",
+        booking_id: BOOKING_FLIGHT_ID,
+        title: null,
+        start_time: "10:00",
+        sort_order: 2048,
+      }),
+      located(ITEM_C_ID, "11:00", 3072),
+    ];
+    const withKnown = buildDayRows(TRIP, knownUnlocated, bookingsById(), {
+      legs: [makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "walking")],
+    });
+    expect(withKnown.filter((row) => row.type === "leg")).toHaveLength(1);
+  });
+
+  it("a SAME-PLACE pair renders no chip — there is no travel to time (R-itin-6)", () => {
+    // The server writes these on purpose: two consecutive located items
+    // resolving to one `place_id` are marked `samePlace` and upserted for
+    // EVERY mode with 0s/0m and `provider: "same_place"`, no provider call.
+    // Rendering that as "Walk 1 min" over a Sheet reading "0 m · same_place"
+    // is a chip that contradicts itself.
+    const samePlace = (mode: Parameters<typeof makeTravelLeg>[2]) =>
+      makeTravelLeg(ITEM_A_ID, ITEM_C_ID, mode, {
+        duration_seconds: 0,
+        distance_meters: 0,
+        provider: "same_place",
+      });
+    const items = [
+      located(ITEM_A_ID, "09:00", 1024),
+      located(ITEM_C_ID, "11:00", 2048),
+    ];
+    const rows = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [samePlace("walking"), samePlace("driving"), samePlace("cycling"), samePlace("transit")],
+    });
+    expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
+
+    // CONTROL: one real mode and the chip is back — the suppression is about
+    // zero-travel data, not about the fixture being unable to emit a chip.
+    const withRealMode = buildDayRows(TRIP, items, bookingsById(), {
+      legs: [samePlace("walking"), makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "transit", { duration_seconds: 600 })],
+    });
+    expect(withRealMode.filter((row) => row.type === "leg")).toHaveLength(1);
+  });
+
   it("the chip carries both titles, the mode set, and the R-itin-5 default", () => {
     const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
       legs: [
@@ -368,15 +446,78 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
     expect(withDay1Pair.filter((row) => row.type === "leg")).toHaveLength(1);
   });
 
-  it("leg row keys are day-scoped so a co-chained pair can't collide", () => {
-    const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById(), {
-      legs: [
-        makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "walking"),
-        makeTravelLeg(ITEM_LODGING_ID, ITEM_C_ID, "walking"),
-      ],
+  /**
+   * The REAL co-chain collision: two lodgings spanning the SAME two days.
+   * Both chain into D1 and D3, so the single stored `(L1,L2)` leg row is
+   * adjacent on both — one leg, two rendered chips. The previous version of
+   * this pin used two DIFFERENT pairs, whose keys stay distinct with the day
+   * scoping stripped, so it could not fail.
+   */
+  function twoSpanningLodgings() {
+    const l2 = "aaaaaab1-aaaa-4aaa-8aaa-aaaaaaaaaab1";
+    const booking2 = "bbbbbbb9-bbbb-4bbb-8bbb-bbbbbbbbbbb9";
+    const items = [
+      makeItineraryItem({
+        id: ITEM_LODGING_ID,
+        kind: "booking",
+        booking_id: BOOKING_LODGING_ID,
+        title: null,
+        day: TRIP_START,
+        end_day: TRIP_END,
+        start_time: "15:00",
+        end_time: "11:00",
+        sort_order: 1024,
+      }),
+      makeItineraryItem({
+        id: l2,
+        kind: "booking",
+        booking_id: booking2,
+        title: null,
+        day: TRIP_START,
+        end_day: TRIP_END,
+        start_time: "16:00",
+        end_time: "10:00",
+        sort_order: 2048,
+      }),
+    ];
+    const bookings = [
+      ...defaultBookings(),
+      makeBooking({
+        id: booking2,
+        category: "lodging",
+        status: "planned",
+        title: "Second stay",
+        details: { category: "lodging" },
+        place_id: "55555555-5555-4555-8555-555555555555",
+      }),
+    ];
+    return { items, bookings, l2 };
+  }
+
+  it("a co-chained pair renders on BOTH days with DISTINCT row keys", () => {
+    const { items, bookings, l2 } = twoSpanningLodgings();
+    const rows = buildDayRows(TRIP, items, bookingsById(bookings), {
+      legs: [makeTravelLeg(ITEM_LODGING_ID, l2, "walking")],
     });
+    const legRows = rows.flatMap((row) => (row.type === "leg" ? [row] : []));
+    // ONE stored leg, TWO chips — that is the collision's precondition.
+    expect(legRows).toHaveLength(2);
+    expect(legRows.map((row) => row.leg.renderDay)).toEqual([TRIP_START, TRIP_END]);
+    // Same pair on both, so `${from}-${to}` alone would be identical.
+    expect(new Set(legRows.map((row) => `${row.leg.fromItemId}-${row.leg.toItemId}`)).size).toBe(1);
+    // …and yet every key in the whole list is unique.
     const keys = rows.map((row) => row.key);
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("the same collision applies to the chip testID (§2.9 day-scoping)", () => {
+    const { items, bookings, l2 } = twoSpanningLodgings();
+    const rows = buildDayRows(TRIP, items, bookingsById(bookings), {
+      legs: [makeTravelLeg(ITEM_LODGING_ID, l2, "walking")],
+    });
+    const ids = rows.flatMap((row) => (row.type === "leg" ? [legChipTestID(row.leg)] : []));
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it("booking endpoints prefer `details.address` over the title for the maps query", () => {

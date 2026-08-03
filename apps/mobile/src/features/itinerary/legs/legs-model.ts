@@ -16,7 +16,7 @@
  * degrades past R-itin-5's walking→driving ladder instead of dead-ending on
  * it (see its doc for the interpretation).
  */
-import type { TravelLeg, TravelMode } from "@gogo/shared";
+import type { ISODate, TravelLeg, TravelMode } from "@gogo/shared";
 
 import type { IconName } from "@/components";
 
@@ -56,6 +56,14 @@ export interface LegOption {
 
 /** A rendered travel-time chip: one pair, every mode computed for it. */
 export interface DayLeg {
+  /**
+   * The day this chip renders on. A pair can be co-chained on TWO days — the
+   * server stores one row per `(from, to, mode)` however many days it is
+   * adjacent on (`recompute.ts`), and a spanning lodging chains into both its
+   * check-in and check-out days. So neither the React key nor the testID is
+   * unique on `fromItemId` alone; both are day-scoped.
+   */
+  renderDay: ISODate;
   fromItemId: string;
   toItemId: string;
   fromTitle: string;
@@ -71,6 +79,22 @@ export interface DayLeg {
    */
   fromQuery: string | null;
   toQuery: string | null;
+}
+
+/**
+ * §2.9 chip testID, day-scoped (see `DayLeg.renderDay`). ONE home so the
+ * value `LegChip` renders and the value a test queries cannot drift apart.
+ *
+ * Flagged for the §2.9 sync batch: the inventory says
+ * `itinerary-leg-{fromItemId}`, which stopped being unique once check-out
+ * rows became leg endpoints — a spanning lodging is a FROM on two days, and
+ * two chips carrying one testID make `getByTestId` throw and an E2E tap
+ * ambiguous between two chips that open DIFFERENT Sheets. The mode-Sheet ids
+ * below it (`…-mode-{mode}`, `…-directions`) stay exactly as §2.9 writes
+ * them: only one Sheet is mounted at a time, so they cannot collide.
+ */
+export function legChipTestID(leg: Pick<DayLeg, "renderDay" | "fromItemId">): string {
+  return `itinerary-leg-${leg.renderDay}-${leg.fromItemId}`;
 }
 
 /**
@@ -167,15 +191,43 @@ export function pickDefaultMode(options: readonly LegOption[]): TravelMode | nul
 }
 
 /**
+ * True when a pair has no travel at all: every computed mode is zero seconds
+ * AND zero metres.
+ *
+ * The server writes exactly this on purpose — two consecutive located items
+ * resolving to the SAME `place_id` are marked `samePlace` and upserted for
+ * every mode with `duration 0, distance 0, provider "same_place"`, no
+ * provider call. `duration_seconds` is `z.int().nonnegative()`, so 0 is a
+ * first-class wire value, not a defensive hypothetical.
+ *
+ * INTERPRETATION (spec-uncovered): such a pair renders NO CHIP. R-itin-6's
+ * "no chip" arm is about a pair with nothing to say, and "these two items are
+ * at the same address" is that case — there is no travel to time. The
+ * alternative renders "Walk 1 min" (or "0 min") between two items at one
+ * address, over a Sheet whose four rows each read "0 m · same_place": a chip
+ * that contradicts itself.
+ */
+export function isNoTravelLeg(options: readonly LegOption[]): boolean {
+  return (
+    options.length > 0 &&
+    options.every((option) => option.durationSeconds === 0 && option.distanceMeters === 0)
+  );
+}
+
+/**
  * Chip/Sheet duration copy: "18 min", "1 h 5 min", "2 h".
  *
  * INTERPRETATION (spec-uncovered): §2.2 shows only the `"18 min"` shape.
- * Seconds round to the nearest minute and a sub-minute leg floors to
- * "1 min" — "0 min" reads as broken data, and a leg that exists took some
- * time. Hours split off above 60 minutes so a cross-city drive doesn't read
- * as "95 min".
+ * Seconds round to the nearest minute; a sub-minute-but-nonzero leg floors to
+ * "1 min" because a leg that took SOME time should not read as none. An
+ * exactly-zero leg reads "0 min" — it is the server's deliberate same-place
+ * value, and reporting it as a minute of walking is a lie about the data.
+ * (In practice `isNoTravelLeg` suppresses that chip before it renders; the
+ * honest value is here for the Sheet and for a mixed pair.) Hours split off
+ * above 60 minutes so a cross-city drive doesn't read as "95 min".
  */
 export function formatLegDuration(seconds: number): string {
+  if (seconds === 0) return "0 min";
   const minutes = Math.max(1, Math.round(seconds / 60));
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);

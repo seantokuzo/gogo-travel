@@ -166,6 +166,27 @@ describe("sort by time (R-itin-7)", () => {
     expect(screen.queryByTestId(`itinerary-sort-by-time-${TRIP_END}`)).toBeNull();
   });
 
+  it("the sort button stays an INDIVIDUALLY reachable a11y element (R-ds-12)", async () => {
+    await renderItinerary({ api: { items: unsortedOverlappingDay(), bookings: [] } });
+    await screen.findByTestId(`itinerary-sort-by-time-${TRIP_START}`);
+
+    // The day-header Pressable must NOT be an a11y element itself. RN 0.86
+    // Pressable defaults accessible:true, and on iOS an accessible view
+    // flattens its whole subtree into ONE VoiceOver element — the nested sort
+    // button would be announced inside the header's label but have no gesture
+    // that reaches it, so R-itin-7's affordance would promise a write it can
+    // never perform. RNTL does not simulate that flattening (every press-based
+    // assertion in this file passes either way), so the non-element status is
+    // asserted through the host prop — exactly the ConfirmDialog template.
+    // This line fails if the accessible={false} is dropped.
+    expect(screen.getByTestId(`itinerary-day-header-${TRIP_START}`).props.accessible).toBe(false);
+
+    // …and the sort control is still its own button element.
+    const sort = screen.getByTestId(`itinerary-sort-by-time-${TRIP_START}`);
+    expect(sort.props.accessible).not.toBe(false);
+    expect(sort.props.accessibilityRole).toBe("button");
+  });
+
   it("CONTROL: an already-sorted day offers nothing anywhere", async () => {
     await renderItinerary({ api: { items: tidyDay(), bookings: [] } });
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);

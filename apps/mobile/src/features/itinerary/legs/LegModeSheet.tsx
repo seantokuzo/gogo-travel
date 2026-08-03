@@ -27,7 +27,7 @@ import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { AppText, Badge, Button, ErrorBanner, Icon, Sheet } from "@/components";
-import { buildDirectionsUrl } from "@/features/deeplinks";
+import { buildDirectionsUrl, directionsUrlFor } from "@/features/deeplinks";
 
 import {
   formatLegDistance,
@@ -76,6 +76,8 @@ export function LegModeSheet({ leg, destinationName, onDismiss }: LegModeSheetPr
           mode: leg.defaultMode,
           ...(destinationName !== undefined ? { context: destinationName } : null),
         });
+
+  const directionsUrl = directions === null ? null : directionsUrlFor(directions);
 
   const openDirections = (url: string): void => {
     // Same handoff posture as the §2.7 partner buttons: open externally,
@@ -129,12 +131,19 @@ export function LegModeSheet({ leg, destinationName, onDismiss }: LegModeSheetPr
           </View>
 
           <View style={s.directions}>
+            {/* ONE decision, `directionsUrlFor`, drives both the disabled
+                state and the press. It lives in `directions.ts` and is
+                unit-tested against every verdict shape, because the press
+                path cannot pin it from here: RNTL won't dispatch onto a
+                disabled element, so an in-component guard is un-pinnable
+                through the UI by construction (T-7.6 precedent for
+                documented un-pinnable guards). */}
             <Button
               title="Directions"
               variant="secondary"
-              disabled={directions.status !== "ready"}
+              disabled={directionsUrl === null}
               onPress={() => {
-                if (directions.status === "ready") openDirections(directions.url);
+                if (directionsUrl !== null) openDirections(directionsUrl);
               }}
               testID={`itinerary-leg-${leg.fromItemId}-directions`}
             />

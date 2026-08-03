@@ -200,18 +200,33 @@ export function ItineraryDayList({
       switch (row.type) {
         case "day":
           return (
-            // The Pressable stays the OUTER element, as T-7.4 shipped it: it
-            // owns `dayHeader`'s padding, so the whole band — not just the
-            // title glyphs — scrolls to the day (§2.2). Nesting the sort
-            // Pressable inside is fine; RN resolves a press to the innermost
-            // responder, so the two never fight.
+            // The Pressable stays the OUTER element, as T-7.4 shipped it, so
+            // the whole band — not just the title glyphs — scrolls to the day
+            // (§2.2). Touch-wise that is fine: RN resolves a press to the
+            // innermost responder, so the nested sort button never fights it.
+            //
+            // `accessible={false}` is LOAD-BEARING (R-ds-12). RN 0.86's
+            // Pressable defaults `accessible: true`, and on iOS an accessible
+            // view flattens its whole subtree into ONE element: VoiceOver
+            // would announce "Mon, Sep 1 Sort by time 3 items" as a single
+            // header whose double-tap scrolls the day, leaving the sort WRITE
+            // with no gesture that reaches it. `ConfirmDialog.tsx` resolved
+            // the identical nesting the same way. RNTL does not model iOS
+            // flattening, so the suite cannot see this — hence the dedicated
+            // pin, on ConfirmDialog's template.
+            //
+            // The header ROLE moves onto the title text, which is where every
+            // other header in this codebase puts it (Section, PageHeader,
+            // Sheet, ConfirmDialog) — so the rotor still finds the day.
             <Pressable
               onPress={() => scrollToDay(row.date)}
               testID={`itinerary-day-header-${row.date}`}
-              accessibilityRole="header"
+              accessible={false}
               style={s.dayHeader}
             >
-              <AppText role="subheading">{formatDayHeader(row.date)}</AppText>
+              <AppText role="subheading" accessibilityRole="header">
+                {formatDayHeader(row.date)}
+              </AppText>
               <View style={s.dayHeaderTrailing}>
                 {/* R-itin-7: offered only when the day's row order disagrees
                     with its start times — never an auto-resort. */}

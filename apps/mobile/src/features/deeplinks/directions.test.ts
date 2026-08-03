@@ -3,7 +3,7 @@
  * the same posture as the §2.7 partner-builder suite: a URL that "looks
  * right" is not a pin, so every case asserts the whole constructed string.
  */
-import { buildDirectionsUrl, DIRECTIONS_TRAVEL_MODE } from "./directions";
+import { buildDirectionsUrl, DIRECTIONS_TRAVEL_MODE, directionsUrlFor } from "./directions";
 
 const BASE = "https://www.google.com/maps/dir/?api=1";
 
@@ -99,5 +99,37 @@ describe("buildDirectionsUrl (R-itin-4)", () => {
       status: "ready",
       url: `${BASE}&origin=A&destination=B&travelmode=walking`,
     });
+  });
+});
+
+describe("directionsUrlFor — the guard the UI cannot pin (R-itin-4)", () => {
+  // The Sheet gates the Directions button on this same verdict, and RNTL will
+  // not dispatch a press onto a disabled element — so "press it and assert
+  // openURL wasn't called" holds with the component's check deleted. PR #18
+  // round 2 proved that empirically (full suite green through the mutation).
+  // The decision therefore lives here, where a test can actually fail.
+  it("returns the URL only for a ready build", () => {
+    expect(directionsUrlFor({ status: "ready", url: "https://example.test/x" })).toBe(
+      "https://example.test/x",
+    );
+  });
+
+  it("returns null for missing — the endpoint has no usable label", () => {
+    expect(directionsUrlFor({ status: "missing", missing: ["a start"] })).toBeNull();
+  });
+
+  it("returns null for omit", () => {
+    expect(directionsUrlFor({ status: "omit" })).toBeNull();
+  });
+
+  it("agrees with what the builder produced, end to end", () => {
+    const ready = buildDirectionsUrl({ origin: "A", destination: "B", mode: "walking" });
+    expect(directionsUrlFor(ready)).toBe(
+      `${BASE}&origin=A&destination=B&travelmode=walking`,
+    );
+    // The unnamed-place_visit shape: no URL is constructed at all, so there is
+    // nothing a mis-wired press could open (Interpretation 11).
+    const unnamed = buildDirectionsUrl({ origin: "A", destination: null, mode: "walking" });
+    expect(directionsUrlFor(unnamed)).toBeNull();
   });
 });

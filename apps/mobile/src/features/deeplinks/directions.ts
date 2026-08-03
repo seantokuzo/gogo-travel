@@ -53,6 +53,22 @@ export const DIRECTIONS_TRAVEL_MODE: Readonly<Record<TravelMode, string>> = {
   transit: "transit",
 };
 
+/**
+ * The URL a Directions affordance should open for a build verdict, or null
+ * when there is nothing to open.
+ *
+ * Extracted so the DECISION is unit-falsifiable. In the Sheet the same
+ * verdict also drives `disabled`, and RNTL will not dispatch a press on a
+ * disabled element — so a "press it and assert nothing happened" pin holds
+ * whether or not the component's inner check exists (`.claude/rules/mobile.md`,
+ * and PR #18 round 2 proved it: deleting that check left the full 882-test
+ * suite green). Moving the decision here gives it a test that CAN fail:
+ * `directions.test.ts` drives every verdict shape directly.
+ */
+export function directionsUrlFor(build: DeeplinkBuild): string | null {
+  return build.status === "ready" ? build.url : null;
+}
+
 export interface DirectionsInput {
   /** Free-text origin ("Park Hyatt Tokyo"); null when the endpoint has no label. */
   origin: string | null;

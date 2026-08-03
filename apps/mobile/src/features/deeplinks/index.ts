@@ -12,6 +12,7 @@
 export {
   buildDirectionsUrl,
   DIRECTIONS_TRAVEL_MODE,
+  directionsUrlFor,
   GOOGLE_MAPS_DIRECTIONS_BASE,
 } from "./directions";
 export type { DirectionsInput } from "./directions";

@@ -41,6 +41,8 @@ export {
   formatLegDistance,
   formatLegDuration,
   indexLegsByPair,
+  isNoTravelLeg,
+  legChipTestID,
   legPairKey,
   pickDefaultMode,
   TRAVEL_MODE_ICONS,

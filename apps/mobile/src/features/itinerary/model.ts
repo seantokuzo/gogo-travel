@@ -32,6 +32,7 @@ import type { IconName } from "@/components";
 
 import {
   indexLegsByPair,
+  isNoTravelLeg,
   legPairKey,
   pickDefaultMode,
   type DayLeg,
@@ -323,13 +324,31 @@ function locationQueryOf(
  * R-ib-20 location resolution, mirroring the server's precedence exactly
  * (`apps/server/src/travel-legs/adjacency.ts` module doc): `booking`-kind →
  * parent `bookings.place_id`; else the item's own `place_id`; no place ⇒
- * UNLOCATED. An unknown parent booking (enrichment gap) reads as unlocated,
- * which is the safe direction: it can only suppress a chip, never invent one.
+ * UNLOCATED.
+ *
+ * WHICH WAY IS SAFE: locatedness is used ONLY to STOP the forward scan, so
+ * reading an entry as *unlocated* makes the scan keep going and can surface
+ * MORE chips — never fewer. (An earlier version of this comment claimed the
+ * opposite and used it to justify the enrichment-gap behaviour. It was
+ * backwards.) So an UNKNOWN parent booking fails safe to LOCATED: it stops
+ * the scan, which degrades to absent — what R-itin-6 asks for — instead of
+ * skipping over a real item and drawing a chip against the wrong neighbour.
+ * `entryBase` already fails an unknown parent safe the same way (`dayLocked`).
+ *
+ * This is reachable, not theoretical: `useItineraryBookings` is a SEPARATE
+ * query from `useItinerary`, capped at 100 rows, so between adding a booking
+ * and that query landing, `bookingsById` can be missing the new parent while
+ * the list keeps rendering.
+ *
+ * A known parent with a null `place_id` is genuinely unlocated and stays
+ * transparent — that is the R-ib-20 case, not a gap.
  */
 function isLocated(item: ItineraryItem, bookingsById: ReadonlyMap<string, Booking>): boolean {
   if (item.kind === "booking") {
-    const booking = item.booking_id !== null ? bookingsById.get(item.booking_id) : undefined;
-    return booking?.place_id != null;
+    if (item.booking_id === null) return false;
+    const booking = bookingsById.get(item.booking_id);
+    if (booking === undefined) return true;
+    return booking.place_id !== null;
   }
   return item.place_id !== null;
 }
@@ -367,6 +386,7 @@ function findLegFrom(
   index: LegIndex,
   queries: ReadonlyMap<string, string | null>,
   located: ReadonlySet<string>,
+  renderDay: ISODate,
 ): DayLeg | null {
   const from = own[position];
   if (from === undefined) return null;
@@ -379,10 +399,14 @@ function findLegFrom(
     const to = own[j];
     if (to === undefined) continue;
     const options = index.byPair.get(legPairKey(from.itemId, to.itemId));
-    if (options !== undefined) {
+    // A same-place pair (all modes 0s/0m) has no travel to report — no chip,
+    // and no scanning past it either: it IS the next hop, it just has nothing
+    // to say (`isNoTravelLeg`).
+    if (options !== undefined && !isNoTravelLeg(options)) {
       const defaultMode = pickDefaultMode(options);
       if (defaultMode !== null) {
         return {
+          renderDay,
           fromItemId: from.itemId,
           toItemId: to.itemId,
           fromTitle: from.title,
@@ -492,14 +516,19 @@ export function buildDayRows(
         entry,
         overlapping: overlappingItemIds.has(entry.itemId),
       });
-      const leg = findLegFrom(entries, position, legIndex, queries, located);
+      const leg = findLegFrom(entries, position, legIndex, queries, located, date);
       // Absent leg ⇒ nothing rendered (R-itin-6's "no chip" arm — never a
       // spinner, never an inline error, never a retry prompt).
       if (leg !== null) {
         // Day-scoped key: a pair can be co-chained on two days (two spanning
         // lodgings share both their check-in and check-out days), and a
-        // duplicate key in the virtualized list is a real render fault.
-        rows.push({ type: "leg", key: `leg-${date}-${leg.fromItemId}-${leg.toItemId}`, leg });
+        // duplicate key in the virtualized list is a real render fault. The
+        // chip's testID is day-scoped for the same reason — `legChipTestID`.
+        rows.push({
+          type: "leg",
+          key: `leg-${leg.renderDay}-${leg.fromItemId}-${leg.toItemId}`,
+          leg,
+        });
       }
     });
   }

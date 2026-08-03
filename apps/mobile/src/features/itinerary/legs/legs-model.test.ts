@@ -19,6 +19,7 @@ import {
   formatLegDistance,
   formatLegDuration,
   indexLegsByPair,
+  isNoTravelLeg,
   legPairKey,
   pickDefaultMode,
   TRAVEL_MODE_ORDER,
@@ -123,6 +124,34 @@ describe("pickDefaultMode (R-itin-5)", () => {
     expect(pickDefaultMode([option("walking", 3600), option("transit", 900)])).toBe("transit");
   });
 
+  it("R-itin-5 itself: a long walk with driving present picks DRIVING, not cycling", () => {
+    // The spec case, and the one that arrives the day the Mapbox token is
+    // unparked. Without this, promoting `cycling` above the `driving`
+    // early-return breaks R-itin-5 and every one of the 882 tests stays green
+    // (round 2, probe P2) — no fixture anywhere paired cycling with another
+    // mode.
+    expect(
+      pickDefaultMode([option("walking", 1200), option("driving", 480), option("cycling", 900)]),
+    ).toBe("driving");
+  });
+
+  it("with driving absent, cycling beats a long walk", () => {
+    expect(pickDefaultMode([option("cycling", 600), option("walking", 2400)])).toBe("cycling");
+  });
+
+  it("with driving absent, transit outranks cycling", () => {
+    expect(pickDefaultMode([option("transit", 2700), option("cycling", 600)])).toBe("transit");
+  });
+
+  it("the tail order is exactly transit → cycling → long-walking", () => {
+    // Pins the ORDER, not just membership: any permutation of the tail
+    // changes at least one of these.
+    const all = [option("walking", 3600), option("cycling", 1800), option("transit", 2700)];
+    expect(pickDefaultMode(all)).toBe("transit");
+    expect(pickDefaultMode([option("walking", 3600), option("cycling", 1800)])).toBe("cycling");
+    expect(pickDefaultMode([option("walking", 3600)])).toBe("walking");
+  });
+
   it("no options → null (the caller emits no chip)", () => {
     expect(pickDefaultMode([])).toBeNull();
   });
@@ -135,8 +164,13 @@ describe("pickDefaultMode (R-itin-5)", () => {
 });
 
 describe("formatLegDuration / formatLegDistance", () => {
-  it("rounds to whole minutes and never renders 0 min", () => {
-    expect(formatLegDuration(0)).toBe("1 min");
+  it("rounds to whole minutes; only an exactly-zero leg reads 0 min", () => {
+    // 0 is the server's deliberate same-place value (`provider: "same_place"`,
+    // every mode 0s/0m), not missing data — reporting it as a minute of
+    // walking misdescribes the wire. A sub-minute NONZERO leg still floors to
+    // "1 min": it took some time.
+    expect(formatLegDuration(0)).toBe("0 min");
+    expect(formatLegDuration(1)).toBe("1 min");
     expect(formatLegDuration(29)).toBe("1 min");
     expect(formatLegDuration(1080)).toBe("18 min");
     expect(formatLegDuration(1109)).toBe("18 min");
@@ -156,5 +190,34 @@ describe("formatLegDuration / formatLegDistance", () => {
     expect(formatLegDistance(999)).toBe("999 m");
     expect(formatLegDistance(1000)).toBe("1.0 km");
     expect(formatLegDistance(3450)).toBe("3.5 km");
+  });
+});
+
+describe("isNoTravelLeg — the server's same-place legs (R-itin-6)", () => {
+  const zero = (mode: LegOption["mode"]): LegOption => ({
+    mode,
+    durationSeconds: 0,
+    distanceMeters: 0,
+    provider: "same_place",
+  });
+
+  it("all-zero across every mode is 'no travel'", () => {
+    expect(isNoTravelLeg([zero("walking"), zero("driving"), zero("cycling"), zero("transit")])).toBe(
+      true,
+    );
+  });
+
+  it("CONTROL: one real mode makes it a genuine leg", () => {
+    expect(isNoTravelLeg([zero("walking"), option("transit", 900)])).toBe(false);
+  });
+
+  it("zero duration but real distance is still a leg (not a same-place row)", () => {
+    expect(
+      isNoTravelLeg([{ mode: "walking", durationSeconds: 0, distanceMeters: 40, provider: "mapbox" }]),
+    ).toBe(false);
+  });
+
+  it("an empty option list is not 'no travel' — it is no leg at all", () => {
+    expect(isNoTravelLeg([])).toBe(false);
   });
 });

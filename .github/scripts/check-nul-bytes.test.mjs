@@ -10,7 +10,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findNulBytes, isSourceFile, SOURCE_EXTENSIONS } from "./check-nul-bytes.mjs";
+import {
+  findNulBytes,
+  isSourceFile,
+  main,
+  SOURCE_EXTENSIONS,
+  trackedFiles,
+} from "./check-nul-bytes.mjs";
 
 const NUL = 0x00;
 
@@ -50,10 +56,25 @@ test("skips legitimately-binary tracked assets", () => {
   assert.deepEqual(findNulBytes(Object.keys(files), readerFor(files)), []);
 });
 
-test("isSourceFile: every text format the repo tracks is in scope", () => {
-  for (const ext of ["ts", "tsx", "mjs", "js", "json", "md", "yml", "yaml", "sh", "sql", "svg"]) {
+test("isSourceFile: EVERY tracked file that is not a known binary asset is in scope", () => {
+  // Derived from the repo, not from a hardcoded list. The previous version of
+  // this test asserted the same claim against a list it wrote itself, and so
+  // missed that `.env.example` — the one tracked file whose entire purpose is
+  // being read by a human — was being skipped. An allowlist only stays honest
+  // if something checks it against reality.
+  const skipped = trackedFiles().filter((f) => !isSourceFile(f));
+  const unexpected = skipped.filter((f) => !/\.(png|parquet)$/i.test(f));
+  assert.deepEqual(unexpected, [], `unscanned tracked text files: ${unexpected.join(", ")}`);
+  // …and the binary assets really are being skipped, so the filter above is
+  // not vacuously empty.
+  assert.ok(skipped.length > 0, "expected the repo to track some binary assets");
+});
+
+test("isSourceFile: the formats round 2 found missing are now in scope", () => {
+  for (const ext of ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "json", "md", "yml", "toml"]) {
     assert.equal(isSourceFile(`x.${ext}`), true, ext);
   }
+  assert.equal(isSourceFile(".env.example"), true);
   // Extensionless dotfiles are plain text and ARE scanned.
   assert.equal(isSourceFile(".gitignore"), true);
   assert.equal(isSourceFile("path/to/.prettierignore"), true);
@@ -62,6 +83,39 @@ test("isSourceFile: every text format the repo tracks is in scope", () => {
   assert.equal(isSourceFile("a/b/data.parquet"), false);
   // Case-insensitive on the extension.
   assert.equal(isSourceFile("README.MD"), true);
+});
+
+test("main(): EXIT CONTRACT — 1 when a source file carries a NUL", () => {
+  // The only thing CI consumes. Flipping this `return 1` to `return 0` left
+  // the rest of this suite green while the guard exited 0 on a binary tree.
+  const files = { "src/bad.ts": Buffer.from([0x61, NUL]) };
+  assert.equal(main({ files: Object.keys(files), read: readerFor(files) }), 1);
+});
+
+test("main(): EXIT CONTRACT — 0 on a clean tree", () => {
+  const files = { "src/ok.ts": Buffer.from("export const k = 1;\n") };
+  assert.equal(main({ files: Object.keys(files), read: readerFor(files) }), 0);
+});
+
+test("main(): a binary asset carrying a NUL does not fail the build", () => {
+  const files = { "assets/icon.png": Buffer.from([0x89, NUL]) };
+  assert.equal(main({ files: Object.keys(files), read: readerFor(files) }), 0);
+});
+
+test("trackedFiles(): enumerates the real repo, NUL-delimited", () => {
+  const files = trackedFiles();
+  assert.ok(files.length > 100, `expected a populated repo, got ${files.length}`);
+  // `-z` output must not leave empty entries or embedded newlines behind.
+  assert.equal(
+    files.filter((f) => f === "" || f.includes("\n")).length,
+    0,
+  );
+  assert.ok(files.includes("package.json"));
+  assert.ok(files.includes(".github/scripts/check-nul-bytes.mjs"));
+});
+
+test("main() over the REAL tree is clean — the guard guards itself", () => {
+  assert.equal(main(), 0);
 });
 
 test("the allowlist is an allowlist — an unknown binary format is out of scope", () => {

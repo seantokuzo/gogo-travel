@@ -35,19 +35,29 @@ import { readFileSync } from "node:fs";
 export const SOURCE_EXTENSIONS = new Set([
   "ts",
   "tsx",
+  "mts",
+  "cts",
   "js",
+  "jsx",
   "mjs",
   "cjs",
   "json",
+  "jsonc",
   "md",
+  "mdx",
   "yml",
   "yaml",
+  "toml",
   "sh",
   "sql",
   "svg",
   "css",
   "html",
   "txt",
+  "snap",
+  // `.env.example` — the one tracked file whose whole purpose is being read
+  // by a human setting the project up, and the blind spot round 2 found.
+  "example",
 ]);
 
 /** True when `file` is one of the text formats this guard is responsible for. */
@@ -88,8 +98,18 @@ export function trackedFiles() {
     .filter((f) => f.length > 0);
 }
 
-export function main() {
-  const hits = findNulBytes(trackedFiles());
+/**
+ * Returns the process exit code: 0 clean, 1 when any tracked source file
+ * carries a raw NUL.
+ *
+ * `files`/`read` are injectable ONLY so the exit contract itself is testable.
+ * That contract is the entire thing CI consumes, and it was uncovered: round 2
+ * flipped this `return 1` to `return 0` and the guard's own suite stayed green
+ * while `node check-nul-bytes.mjs` printed the error and exited 0 — a green
+ * `guard` job with a binary source file in the tree.
+ */
+export function main({ files, read } = {}) {
+  const hits = findNulBytes(files ?? trackedFiles(), ...(read === undefined ? [] : [read]));
   if (hits.length === 0) {
     // `warn` not `log` — the root eslint config allows warn/error only.
     console.warn("OK — no raw NUL bytes in tracked source files.");
