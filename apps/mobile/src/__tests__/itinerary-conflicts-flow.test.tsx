@@ -33,6 +33,8 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  // T-7.9: the screen reads `?day=` for the booking-detail return jump.
+  useLocalSearchParams: () => ({}),
 }));
 
 /** Day 1: two overlapping items listed OUT of time order (14:00 before 09:00). */

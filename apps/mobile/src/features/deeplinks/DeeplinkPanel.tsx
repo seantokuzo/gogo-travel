@@ -103,6 +103,14 @@ export interface DeeplinkPanelProps {
   input: DeeplinkSearchInput;
   /** `trips.destination_name` — the §2.7 lodging-location fallback + Eventbrite slug source. */
   destinationName?: string;
+  /**
+   * R-itin-29 (T-7.9): the trip's reads are failing at the transport layer.
+   * Every partner button goes visibly disabled with an offline hint — a
+   * partner hop needs the network as much as the API does, and an enabled
+   * button that hands the user a browser tab which then fails to load is a
+   * worse answer than saying so up front. Omitted ⇒ online (the T-7.8 shape).
+   */
+  offline?: boolean;
   /** Fires after the record is written AND the URL opened (analytics/consumer seam). */
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
 }
@@ -122,6 +130,9 @@ export function deeplinkButtonTestID(surface: DeeplinkSurface, partner: Deeplink
 type PanelBuild = DeeplinkBuild | { status: "pending" };
 
 const OPEN_ERROR_MESSAGE = "Couldn't open the link. Try again.";
+
+/** R-itin-29's "offline hint" on a disabled deeplink-out button. */
+export const DEEPLINK_OFFLINE_HINT = "You're offline — reconnect to search.";
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -145,6 +156,8 @@ interface PartnerButtonProps {
   titleOverride?: string;
   /** Non-missing disabled states (Trainline lookup in flight). */
   hintOverride?: string;
+  /** R-itin-29 — disables regardless of build status, with the offline hint. */
+  offline?: boolean;
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
   onOpenError(message: string): void;
 }
@@ -163,16 +176,24 @@ function PartnerButton({
   tripId,
   titleOverride,
   hintOverride,
+  offline = false,
   onUrlOpened,
   onOpenError,
 }: PartnerButtonProps) {
   const s = useStyles();
+  // `omit` still wins over offline: Eventbrite outside a US city has no URL to
+  // build at all (§2.7), so going offline must not materialize a button that
+  // does not exist online.
   if (build.status === "omit") return null;
 
   const testID = deeplinkButtonTestID(surface, partner.id);
-  const ready = build.status === "ready";
-  const hint =
-    build.status === "missing"
+  // R-itin-29: offline disables the row whatever the builder said, and its
+  // hint OUTRANKS the "Needs …" one — with no network, the missing field is
+  // not the user's next problem.
+  const ready = build.status === "ready" && !offline;
+  const hint = offline
+    ? DEEPLINK_OFFLINE_HINT
+    : build.status === "missing"
       ? `Needs ${build.missing.join(", ")}`
       : build.status === "pending"
         ? (hintOverride ?? "Preparing…")
@@ -257,6 +278,8 @@ interface CategoryPanelProps<TFields> {
   surface: DeeplinkSurface;
   fields: TFields;
   destinationName?: string;
+  /** R-itin-29 — forwarded verbatim to every PartnerButton. */
+  offline?: boolean;
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
   onOpenError(message: string): void;
 }
@@ -274,6 +297,7 @@ function FlightPanel(props: CategoryPanelProps<FlightSearchFields>) {
     surface: props.surface,
     category: "flight" as const,
     tripId: props.tripId,
+    offline: props.offline ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -328,6 +352,7 @@ function LodgingPanel(props: CategoryPanelProps<LodgingSearchFields>) {
             surface={props.surface}
             category="lodging"
             tripId={props.tripId}
+            offline={props.offline ?? false}
             {...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null)}
             onOpenError={props.onOpenError}
           />
@@ -382,6 +407,7 @@ function TrainPanel(props: CategoryPanelProps<TrainSearchFields>) {
     surface: props.surface,
     category: "train" as const,
     tripId: props.tripId,
+    offline: props.offline ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -407,6 +433,7 @@ function CarRentalPanel(props: CategoryPanelProps<CarRentalSearchFields>) {
     surface: props.surface,
     category: "car_rental" as const,
     tripId: props.tripId,
+    offline: props.offline ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -430,6 +457,7 @@ function ExternalPanel(
     surface: props.surface,
     category: props.category,
     tripId: props.tripId,
+    offline: props.offline ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -463,6 +491,7 @@ export function DeeplinkPanel({
   surface,
   input,
   destinationName,
+  offline = false,
   onUrlOpened,
 }: DeeplinkPanelProps) {
   const s = useStyles();
@@ -474,6 +503,7 @@ export function DeeplinkPanel({
   const shared = {
     tripId,
     surface,
+    offline,
     ...(destinationName !== undefined ? { destinationName } : null),
     ...(onUrlOpened !== undefined ? { onUrlOpened } : null),
     onOpenError: setOpenError,
