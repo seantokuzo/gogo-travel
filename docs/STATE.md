@@ -23,6 +23,52 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 `CLAUDE.md § Autonomy Contract`. Reviews are **local in-session**
 ([ADR-003](decisions/ADR-003-local-in-session-reviews.md)) — no GitHub Claude app.
 
+## ▶ NEXT SESSION — START HERE (written 2026-08-03, delete when stale)
+
+**Say "next" and do this, in order:**
+
+1. **`gh pr list --state open`.** T-7.9's PR (booking/item detail + offline
+   degrade, branch `P-7/T-7-9-detail-offline`) was dispatched and the builder
+   stops at PR creation BY DESIGN — it does not review or merge.
+   - **PR exists** → run **`/review <N>`**. That's the whole job this session.
+   - **No PR** → the builder died mid-build. Its worktree is under
+     `.claude/worktrees/`; check `git -C <worktree> log --oneline -3` and
+     either resume it or re-dispatch from the T-7.9 brief (scope below).
+2. **Everything you need about the change is in the PR body** — scope, spec
+   refs, pasted evidence, mutation-probe results, and a numbered
+   Interpretations list were all required deliverables. `gh pr view <N>`.
+3. **On merge → P-7 is CODE-COMPLETE.** Then: phase-QA checklist + the
+   **F-043..F-054 ledger flips** (Law #7 — flips need the feature exercised
+   in the running app, NOT green tests). P-6's checklist is still pending too.
+
+**Review-pipeline rules that cost real rounds when ignored:**
+
+- 🔴 **Count the WRITERS before fanning out lanes.** A gate-runner and a
+  falsification-prober both WRITE to the checkout. **At most ONE mutating
+  agent per worktree** — others get `isolation: "worktree"` (then check out
+  the PR branch AND build `@gogo/shared` + `@gogo/tokens`, or ~84 suites are
+  red) or run serially. Three concurrent probers produced a FALSE-RED gate
+  on PR #18. Pure readers (security/perf/conventions via `gh pr diff`) can
+  share freely. Canonical: `.claude/rules/pr-review-files.md`.
+- 🔴 **Brief every lane with the vacuous-pin taxonomy** (7 flavors, in
+  `.claude/rules/mobile.md` + below). Seven were found across PRs #16-#18;
+  all passed CI and lint and read correctly to a human. Only mutation found
+  them. Require: every negative assertion has an ungated CONTROL arm, and
+  every probe is confirmed applied via `git diff --stat` before its result
+  is trusted (a silent no-op mutation already produced one false claim).
+- **Highest-value targets for T-7.9 specifically:** (a) the **cancel flow is
+  the FIRST real consumer of `reconcileBookingRow`'s removal arm** — a
+  cancelled booking must leave the default list and appear under the Ideas
+  bucket's cancelled view; pin both directions; (b) offline degrade must not
+  turn **absent travel legs** (the normal state while Mapbox is parked) into
+  an error; (c) fix diffs are where this phase's defects live — every fix leg
+  on #17 and #18 introduced something the next round caught, so verify fixes
+  independently and re-review targeted lanes rather than going straight to
+  the judge.
+- Round cap 4; judge is a fresh agent with no review history; merge
+  `--merge` only; CI green first — **note `main` has NO branch protection, so
+  that gate is discipline, not mechanism** (Sean's open item).
+
 ## Active phase context
 
 ### P-7 — Itinerary & bookings (ACTIVE since 2026-07-31)
