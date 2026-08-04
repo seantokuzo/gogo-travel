@@ -32,19 +32,32 @@
  * rollback, one banner. Absent legs render nothing at all (R-itin-6), which
  * is the normal state while the Mapbox token is parked.
  *
+ * OFFLINE DEGRADE (T-7.9 / IT-10, R-itin-29): a transport failure is not a
+ * fetch error — it is a state. Cached items, bookings and last-computed legs
+ * keep rendering (the cache is the source; nothing here blanks it), the error
+ * banner is replaced by an informational offline banner with no retry (a retry
+ * button while the transport is down is a lie), and the no-cache case says
+ * "offline" instead of "couldn't load". Deeplink-out buttons are disabled with
+ * the offline hint by the surfaces that mount `DeeplinkPanel` (booking detail,
+ * add form) — this screen mounts none.
+ *
+ * DAY JUMP PARAM (T-7.9): `?day=` scrolls the list to that day on arrival —
+ * booking detail's R-itin-24 "scheduled day/time row → jumps to the itinerary
+ * position" navigates back here with it.
+ *
  * The whole screen sits in a `GestureHandlerRootView` — drag gestures
  * (react-native-reorderable-list) only work inside one, and the app root
  * doesn't mount it.
  */
 import type { Booking, ISODate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useRouter } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
-import { useDayOrder, useItinerary, useItineraryBookings } from "@/data";
+import { useDayOrder, useItinerary, useItineraryBookings, useTripOffline } from "@/data";
 import {
   AddOptionsSheet,
   addOptionSlug,
@@ -104,6 +117,17 @@ export default function ItineraryScreen() {
 
   const itineraryQuery = useItinerary(trip.id);
   const bookingsQuery = useItineraryBookings(trip.id);
+  const offline = useTripOffline(trip.id);
+
+  // R-itin-24 return jump. `typeof` narrowing only — expo-router hands back
+  // `string[]` for a REPEATED query key and the generic is an unchecked
+  // assertion (the item/new precedent), so this is type honesty, not a
+  // validity check. The VALIDITY check is the section-membership test below:
+  // an ISO-shaped date that is not a section is exactly as unjumpable as
+  // "not-a-date", so a scalar-format parse here would be unfalsifiable
+  // defensive code (mutation-probed: removing it turns nothing red).
+  const params = useLocalSearchParams<{ day?: string }>();
+  const jumpDay = typeof params.day === "string" ? (params.day as ISODate) : null;
 
   const [mode, setMode] = useState<ItineraryViewMode>(() => readItineraryViewMode(trip.id));
   const [notice, setNotice] = useState<ReorderNotice>(null);
@@ -243,12 +267,34 @@ export default function ItineraryScreen() {
 
   const days = useMemo(() => rows.flatMap((row) => (row.type === "day" ? [row.date] : [])), [rows]);
 
+  // R-itin-24 arrival jump. Gated on the target actually EXISTING as a
+  // section: `scrollToDay` no-ops on an unknown date, but resolving the target
+  // here means the effect re-runs when the sections that contain it arrive —
+  // the reads settle after mount, so on the first render `days` is empty.
+  const jumpTarget = jumpDay !== null && days.includes(jumpDay) ? jumpDay : null;
+  useEffect(() => {
+    // Grid mode has no scroll-to-day seam (GridSurface's props are the frozen
+    // W4 contract, and its own initial column lands on today) — the jump is a
+    // list-mode affordance, and silently doing nothing beats yanking the
+    // user's persisted view mode out from under them.
+    if (jumpTarget === null || mode !== "list") return;
+    listHandle.current?.scrollToDay(jumpTarget);
+  }, [jumpTarget, mode]);
+
   let body;
   if (!settled) {
     body = failed ? (
       <View style={s.banner}>
+        {/* No cache to fall back on. Retry STAYS here (unlike the
+            banner-over-data case below): with nothing rendered it is the only
+            way forward, and a queued retry is exactly right the moment
+            connectivity returns. */}
         <ErrorBanner
-          message="Couldn't load the itinerary."
+          message={
+            offline
+              ? "You're offline and this trip's plan isn't cached yet."
+              : "Couldn't load the itinerary."
+          }
           onRetry={retryFetch}
           testID="itinerary-error"
         />
@@ -345,7 +391,22 @@ export default function ItineraryScreen() {
             />
           </View>
         ) : null}
-        {settled && failed ? (
+        {/* R-itin-29: offline is a STATE, not a fetch error. It outranks the
+            refresh banner (a transport failure is why the refresh failed),
+            carries no retry — the plan below is real, just not fresh — and
+            fires even when this tab's own reads are cached and happy, because
+            the signal is trip-wide (the `[tripId]` guard's read failing is the
+            loudest offline tell there is). */}
+        {settled && offline ? (
+          <View style={s.banner}>
+            <ErrorBanner
+              tone="warning"
+              message="You're offline — showing your last synced plan."
+              testID="itinerary-banner-offline"
+            />
+          </View>
+        ) : null}
+        {settled && failed && !offline ? (
           <View style={s.banner}>
             <ErrorBanner
               message="Couldn't refresh the itinerary."

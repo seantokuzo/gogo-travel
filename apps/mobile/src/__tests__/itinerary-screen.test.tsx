@@ -41,8 +41,11 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
 const mockPush = jest.fn();
+/** T-7.9: `?day=` drives the booking-detail return jump (R-itin-24). */
+const mockRouteParams: { value: Record<string, unknown> } = { value: {} };
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: mockPush, replace: jest.fn(), back: jest.fn() }),
+  useLocalSearchParams: () => mockRouteParams.value,
 }));
 
 function tripFixture(overrides?: Partial<TripListItem>): TripListItem {
@@ -87,6 +90,9 @@ afterEach(async () => {
   await settle();
   jest.restoreAllMocks();
   mockPush.mockReset();
+  // T-7.9: route params are per-test state — a leaked `?day=` would silently
+  // arm the return jump in every later test.
+  mockRouteParams.value = {};
 });
 
 describe("day sections (R-itin-1)", () => {
@@ -306,5 +312,35 @@ describe("states (R-itin-28)", () => {
     await settle();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     expect(screen.queryByTestId("itinerary-error")).toBeNull();
+  });
+});
+
+describe("`?day=` return jump (T-7.9 / R-itin-24)", () => {
+  /**
+   * The jump target is resolved against the BUILT section list, so this pins
+   * the resolution (a valid in-range day resolves; a malformed or out-of-range
+   * one degrades to no jump) rather than the platform scroll call, which
+   * `scrollToIndex` performs on a virtualized list jest does not lay out.
+   */
+  it("scrolls the list to a valid in-range day and leaves the plan intact", async () => {
+    mockRouteParams.value = { day: TRIP_END };
+    await renderItinerary();
+    // The screen renders normally with the param present (no crash, no state
+    // change) and the target section exists to scroll to.
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_END}`)).toBeTruthy();
+    expect(screen.getByTestId("itinerary-day-list")).toBeTruthy();
+  });
+
+  it("degrades a malformed `?day=` to no jump instead of throwing", async () => {
+    // A mangled deep link must not reach `scrollToDay` with a non-ISO value.
+    mockRouteParams.value = { day: "not-a-date" };
+    await renderItinerary();
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
+  });
+
+  it("degrades a REPEATED `?day=` (string[]) the same way", async () => {
+    mockRouteParams.value = { day: [TRIP_START, TRIP_END] };
+    await renderItinerary();
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
   });
 });

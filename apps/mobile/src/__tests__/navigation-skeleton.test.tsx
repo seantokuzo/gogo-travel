@@ -19,6 +19,7 @@ import { queryClient } from "@/data";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
 import { TEST_INVITE_TOKEN, TEST_TRIP_ID } from "@/test-utils/ids";
+import { makeItineraryItem } from "@/test-utils/itinerary-fixtures";
 import { renderApp } from "@/test-utils/render-app";
 import { SCREEN_ROUTES } from "@/test-utils/screen-routes";
 import { makeInvitePreview, mockNavApi } from "@/test-utils/trip-fixtures";
@@ -92,9 +93,24 @@ describe("dynamic segments thread their params (deep-link plumbing for NAV-5)", 
   });
 
   it("itinerary item id reaches the detail screen", async () => {
+    // T-7.9 replaced the placeholder that echoed the raw id: the real screen
+    // RESOLVES the id against the composite read, so param plumbing now shows
+    // up as that specific item's content rendering — a strictly stronger
+    // proof than echoing the segment back.
+    mockNavApi({
+      invitePreviews: { [TEST_INVITE_TOKEN]: makeInvitePreview() },
+      overrides: {
+        "GET /trips/:tripId/itinerary": () =>
+          Promise.resolve({
+            items: [makeItineraryItem({ id: "item-9", title: "Nishiki Market" })],
+            legs: [],
+          }),
+        "GET /trips/:tripId/bookings": () => Promise.resolve({ items: [], nextCursor: null }),
+      },
+    });
     await renderApp(`/${TEST_TRIP_ID}/itinerary/item/item-9`);
     const detail = await screen.findByTestId("itinerary-item-screen");
-    expect(within(detail).getByText("Item item-9")).toBeOnTheScreen();
+    expect(await within(detail).findByText("Nishiki Market")).toBeOnTheScreen();
   });
 
   it("settle-request id reaches the request screen (R-nav-13 target)", async () => {

@@ -28,9 +28,11 @@ import { evictTripSubtree } from "./collab";
 import {
   applyDayOrder,
   reconcileDayOrder,
+  removeItineraryItem,
   upsertItineraryItem,
   useCreateItineraryItem,
   useDayOrder,
+  useDeleteItineraryItem,
   useUpdateItineraryItem,
 } from "./itinerary";
 import { queryKeys } from "./query-client";
@@ -41,6 +43,7 @@ import {
   ITEM_B_ID,
   ITEM_LODGING_ID,
   makeItineraryItem,
+  makeTravelLeg,
   TRIP_DAY_2,
   TRIP_START,
 } from "@/test-utils/itinerary-fixtures";
@@ -361,5 +364,96 @@ describe("useCreateItineraryItem / useUpdateItineraryItem", () => {
     expect(client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items).toEqual(
       seeded.items,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item delete (T-7.9 / IT-10 — R-itin-27 delete, api R-ib-9/19)
+// ---------------------------------------------------------------------------
+
+describe("removeItineraryItem", () => {
+  it("drops the item AND every leg that referenced it, from either end", () => {
+    const read: ItineraryRead = {
+      items: defaultItineraryItems(),
+      legs: [
+        makeTravelLeg(ITEM_A_ID, ITEM_B_ID, "transit"),
+        makeTravelLeg(ITEM_B_ID, ITEM_LODGING_ID, "transit"),
+        makeTravelLeg(ITEM_A_ID, ITEM_LODGING_ID, "transit"),
+      ],
+    };
+    const next = removeItineraryItem(read, ITEM_B_ID);
+    expect(next.items.map((item) => item.id)).not.toContain(ITEM_B_ID);
+    // The A→LODGING leg touches neither end of the removal — it SURVIVES.
+    // Without it this assertion would hold for a function that dropped every
+    // leg unconditionally.
+    expect(next.legs).toHaveLength(1);
+    expect(next.legs[0]?.from_item_id).toBe(ITEM_A_ID);
+    expect(next.legs[0]?.to_item_id).toBe(ITEM_LODGING_ID);
+  });
+
+  it("is a no-op for an id that is not in the read", () => {
+    const read: ItineraryRead = { items: defaultItineraryItems(), legs: [] };
+    expect(removeItineraryItem(read, "not-a-real-id").items).toEqual(read.items);
+  });
+});
+
+describe("useDeleteItineraryItem", () => {
+  it("calls the DELETE descriptor, prunes the composite read, and invalidates the booking root", async () => {
+    const client = makeClient();
+    client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), seededRead());
+    client.setQueryDefaults(queryKeys.tripBookings(TEST_TRIP_ID), { gcTime: Infinity });
+    client.setQueryData(queryKeys.tripBookings(TEST_TRIP_ID), { items: [], nextCursor: null });
+    const request = (jest.spyOn(apiClient, "request") as unknown as jest.Mock).mockResolvedValue(
+      undefined,
+    );
+    const onMutationSuccess = jest.fn();
+
+    const { result } = await renderHook(
+      () => useDeleteItineraryItem(TEST_TRIP_ID, { onMutationSuccess }),
+      { wrapper: wrapperFor(client) },
+    );
+    await act(async () => {
+      result.current.mutate(ITEM_B_ID);
+    });
+    await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(ITEM_B_ID));
+
+    const [descriptor, input] = request.mock.calls[0] as [
+      { method: string },
+      { params: unknown },
+    ];
+    expect(descriptor.method).toBe("DELETE");
+    expect(input.params).toEqual({ tripId: TEST_TRIP_ID, itemId: ITEM_B_ID });
+    const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+    expect(read?.items.map((item) => item.id)).not.toContain(ITEM_B_ID);
+    // The other seeded items survive — a targeted prune, not a cache reset.
+    expect(read?.items.map((item) => item.id)).toContain(ITEM_A_ID);
+    // R-ib-9: a booking-kind delete is an UNSCHEDULE, so the parent's status
+    // moved server-side and the bucket that renders it must refetch.
+    expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  });
+
+  it("leaves the read intact when the delete fails (409 booked-parent, R-ib-9)", async () => {
+    const client = makeClient();
+    const seeded = seededRead();
+    client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), seeded);
+    const failure = new ApiRequestError(409, "CONFLICT", "booked parent");
+    (jest.spyOn(apiClient, "request") as unknown as jest.Mock).mockRejectedValue(failure);
+    const onMutationError = jest.fn();
+
+    const { result } = await renderHook(
+      () => useDeleteItineraryItem(TEST_TRIP_ID, { onMutationError }),
+      { wrapper: wrapperFor(client) },
+    );
+    await act(async () => {
+      result.current.mutate(ITEM_A_ID);
+    });
+    await waitFor(() => expect(onMutationError).toHaveBeenCalledWith(failure));
+
+    // Nothing optimistic ran, so nothing has to be restored — the item is
+    // still there, which is the point of the not-optimistic posture for an
+    // endpoint whose success is conditional on server-side state.
+    expect(
+      client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items,
+    ).toEqual(seeded.items);
   });
 });

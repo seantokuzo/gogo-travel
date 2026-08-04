@@ -58,19 +58,23 @@ export {
   applyDayOrder,
   byCalendarOrder,
   reconcileDayOrder,
+  removeItineraryItem,
   upsertItineraryItem,
   useCreateItineraryItem,
   useDayOrder,
+  useDeleteItineraryItem,
   useItinerary,
   useItineraryBookings,
   useUpdateItineraryItem,
 } from "./itinerary";
 export type { DayOrderVars, ItemUpdateVars, ItineraryMutationOptions } from "./itinerary";
+export { isOfflineError, tripHasOfflineError, useTripOffline } from "./offline";
 export {
   optimisticScheduleItemId,
   useBooking,
   useCancelledBookings,
   useCreateBooking,
+  useDeleteBooking,
   useScheduleBooking,
   useTripBookings,
   useUpdateBooking,

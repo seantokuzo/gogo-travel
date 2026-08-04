@@ -36,6 +36,7 @@ import {
   useBooking,
   useCancelledBookings,
   useCreateBooking,
+  useDeleteBooking,
   useScheduleBooking,
   useTripBookings,
   useUpdateBooking,
@@ -602,4 +603,79 @@ it("useScheduleBooking failure restores BOTH snapshots and invalidates (stale-pr
   expect(list?.items[0]?.status).toBe("idea");
   expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
   expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// useDeleteBooking (T-7.9 / IT-9 — R-itin-26 delete arm, API §3.4 DELETE)
+// ---------------------------------------------------------------------------
+
+function seedCancelledList(client: QueryClient, bookings: Booking[]): void {
+  client.setQueryDefaults(queryKeys.tripBookingsCancelled(TEST_TRIP_ID), { gcTime: Infinity });
+  client.setQueryData<Paginated<Booking>>(queryKeys.tripBookingsCancelled(TEST_TRIP_ID), {
+    items: bookings,
+    nextCursor: null,
+  });
+}
+
+it("useDeleteBooking prunes the row from BOTH list caches and drops the detail key", async () => {
+  const client = makeTestQueryClient();
+  const target = makeWireBooking({ id: BOOKING_ID, title: "Doomed" });
+  const survivor = makeWireBooking({ id: OTHER_ITEM_ID, title: "Keeper" });
+  seedItinerary(client, []);
+  seedBookingList(client, [target, survivor]);
+  // A cancelled booking lives in its OWN list; deleting it must clear that one
+  // too — `reconcileBookingRow` never touches that key, which is exactly why
+  // the delete arm is a separate function rather than a reconcile with a
+  // tombstone.
+  seedCancelledList(client, [makeWireBooking({ id: BOOKING_ID, status: "cancelled" })]);
+  client.setQueryDefaults(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID), { gcTime: Infinity });
+  client.setQueryData<BookingWithItems>(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID), {
+    ...target,
+    items: [],
+  });
+  spyRequest().mockResolvedValue(undefined);
+  const onMutationSuccess = jest.fn();
+
+  const { result } = await renderHook(() => useDeleteBooking(TEST_TRIP_ID, { onMutationSuccess }), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate(BOOKING_ID);
+  });
+  await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(BOOKING_ID));
+
+  expect(apiClient.request).toHaveBeenCalledWith(bookingEndpoints.deleteBooking, {
+    params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_ID },
+  });
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  // The SURVIVOR is the control: the filter is targeted, not a cache wipe.
+  expect(list?.items.map((row) => row.id)).toEqual([OTHER_ITEM_ID]);
+  const cancelled = client.getQueryData<Paginated<Booking>>(
+    queryKeys.tripBookingsCancelled(TEST_TRIP_ID),
+  );
+  expect(cancelled?.items).toEqual([]);
+  expect(client.getQueryData(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID))).toBeUndefined();
+  expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+});
+
+it("a FAILED delete leaves every cache untouched (nothing optimistic to resurrect)", async () => {
+  const client = makeTestQueryClient();
+  const target = makeWireBooking({ id: BOOKING_ID, title: "Doomed" });
+  seedItinerary(client, []);
+  seedBookingList(client, [target]);
+  spyRequest().mockRejectedValue(new Error("500"));
+  const onMutationError = jest.fn();
+
+  const { result } = await renderHook(() => useDeleteBooking(TEST_TRIP_ID, { onMutationError }), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate(BOOKING_ID);
+  });
+  await waitFor(() => expect(onMutationError).toHaveBeenCalledTimes(1));
+
+  const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+  expect(list?.items.map((row) => row.id)).toEqual([BOOKING_ID]);
+  expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(false);
 });

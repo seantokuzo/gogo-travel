@@ -45,7 +45,7 @@ import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { AppText, Badge, Button, ErrorBanner, Input, SegmentedControl } from "@/components";
-import { useCreateBooking, useScheduleBooking, useUpdateBooking } from "@/data";
+import { useCreateBooking, useScheduleBooking, useTripOffline, useUpdateBooking } from "@/data";
 import { DeeplinkPanel } from "@/features/deeplinks";
 import { DateField } from "@/features/trips";
 
@@ -123,6 +123,11 @@ export function BookingForm({
 }: BookingFormProps) {
   const s = useStyles();
   const editing = booking !== undefined;
+  // R-itin-29 (T-7.9): partner searches need the network as much as the API
+  // does — offline, the panel's buttons go disabled with the offline hint.
+  // Read here rather than threaded as a prop: both hosts of this form already
+  // hand it the trip, and a prop would let one call site forget.
+  const offline = useTripOffline(trip.id);
 
   const [title, setTitle] = useState(booking?.title ?? "");
   const [details, setDetails] = useState<DetailsFormState>(() =>
@@ -473,6 +478,7 @@ export function BookingForm({
         surface="form"
         input={deeplinkInputFor(category, details)}
         destinationName={trip.destination_name}
+        offline={offline}
       />
 
       {savedToIdeas ? (
