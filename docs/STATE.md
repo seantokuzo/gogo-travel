@@ -27,13 +27,13 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 **Say "next" and do this, in order:**
 
-1. **`gh pr list --state open`.** T-7.9's PR (booking/item detail + offline
-   degrade, branch `P-7/T-7-9-detail-offline`) was dispatched and the builder
-   stops at PR creation BY DESIGN — it does not review or merge.
-   - **PR exists** → run **`/review <N>`**. That's the whole job this session.
-   - **No PR** → the builder died mid-build. Its worktree is under
-     `.claude/worktrees/`; check `git -C <worktree> log --oneline -3` and
-     either resume it or re-dispatch from the T-7.9 brief (scope below).
+1. **Run `/review 19`.** T-7.9 shipped as **PR #19**
+   (`P-7/T-7-9-detail-offline`, head `b5288ab`, 29 files, mobile
+   898→**991 tests / 107 suites**). The builder stopped at PR creation by
+   design — it did not review or merge. That review is the whole job.
+   Its worktree is still mounted under `.claude/worktrees/` — the
+   correctness lane can run the CI gate there (sole writer), and any
+   mutation-probing lane needs its OWN `isolation: "worktree"`.
 2. **Everything you need about the change is in the PR body** — scope, spec
    refs, pasted evidence, mutation-probe results, and a numbered
    Interpretations list were all required deliverables. `gh pr view <N>`.
@@ -56,15 +56,33 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   them. Require: every negative assertion has an ungated CONTROL arm, and
   every probe is confirmed applied via `git diff --stat` before its result
   is trusted (a silent no-op mutation already produced one false claim).
-- **Highest-value targets for T-7.9 specifically:** (a) the **cancel flow is
-  the FIRST real consumer of `reconcileBookingRow`'s removal arm** — a
-  cancelled booking must leave the default list and appear under the Ideas
-  bucket's cancelled view; pin both directions; (b) offline degrade must not
-  turn **absent travel legs** (the normal state while Mapbox is parked) into
-  an error; (c) fix diffs are where this phase's defects live — every fix leg
-  on #17 and #18 introduced something the next round caught, so verify fixes
-  independently and re-review targeted lanes rather than going straight to
-  the judge.
+- 🔴 **TWO PROBE RULES LEARNED IN T-7.9 — brief every lane with these:**
+  (1) **`git diff --stat` is BLIND to files the PR ADDS**, so the standard
+  "confirm the probe applied" step silently lies on new modules and a real
+  probe looks exactly like a no-op mutation — run **`git add -N .` first**.
+  PR #19 adds 9 new files, so this WILL bite. (2) A "hold it in flight" pin
+  must release its deferred promise in **`finally`** — otherwise a failing
+  assertion leaves the mutation permanently in flight and the suite HANGS
+  (10 min observed) instead of going RED, so the probe reads as a timeout,
+  not a discriminating failure. Both are in `.claude/rules/mobile.md`.
+- **Highest-value review targets for PR #19:** (a) the **cancel flow is the
+  FIRST real consumer of `reconcileBookingRow`'s removal arm** — the builder
+  pins it end-to-end across two screens with a stateful fake server; verify
+  that pin genuinely reaches the removal arm and isn't satisfied some other
+  way; (b) **offline is DERIVED, not measured** — inferred from
+  `ApiRequestError(status: 0)`, and the builder states the limitation that a
+  fresh cache can hide offline; judge whether that's acceptable or a finding;
+  (c) absent travel legs (normal while Mapbox is parked) must not read as an
+  error anywhere in the new offline surface; (d) 28 interpretations — Law #4
+  completeness/accuracy has been a blocking finding on all three prior PRs
+  this phase; (e) fix diffs are where this phase's defects live — every fix
+  leg on #17/#18 introduced something the next round caught, so verify fixes
+  independently and re-review targeted lanes before the judge.
+- **`refresh-legs` deferral: builder resolved it WON'T BUILD** and the
+  reasoning looks sound — §2.10 names it out of scope ("Today tab — separate
+  bundle … day-of leg refresh"), R-ib-23's staleness job covers the online
+  case, and a refresh button beside deliberately-absent legs would read as
+  broken (R-itin-6 forbids exactly that). Sanity-check, then drop the row.
 - Round cap 4; judge is a fresh agent with no review history; merge
   `--merge` only; CI green first — **note `main` has NO branch protection, so
   that gate is discipline, not mechanism** (Sean's open item).
