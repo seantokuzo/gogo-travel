@@ -121,17 +121,47 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   chips + conflict) and W6 (T-7.9 detail + offline) remain.** T-7.7's 15
   interpretations (incl. MIN_BLOCK_HEIGHT floor + grid testIDs) also in the
   QUEUE spec-pass row.
-- **W5 DISPATCHED 2026-08-02 (in-flight):** T-7.5 [IT-3, IT-4] travel-time
-  chips + conflict surfacing — SERIAL (sole agent, isolated worktree off
-  `d5140b1`). Owns the whole itinerary surface this wave: the `leg`
-  DayListRow variant at T-7.4's marked seam in `model.ts`, mode sheet,
-  directions handoff, absent-leg states (R-itin-4..6) + list overlap chips,
-  sort-by-time, and the R-itin-20 FORM conflict notice in T-7.6's add-edit
-  forms (R-itin-7). Grid overlap half already shipped in T-7.7 — not rebuilt.
-  **Absent legs are the NORMAL path** while Mapbox is parked (transit-only
-  via Transitous) — "no data", never an error. T-7.9 [IT-9, IT-10] closes
-  P-7 after; run it serially too (both want the screen file) unless a seam
-  is frozen first, per the W4 precedent.
+- **W5 ✅ T-7.5 MERGED a84c9cf (PR #18) 2026-08-03** [IT-3 travel chips +
+  mode sheet + Google-Maps directions handoff + absent-leg states · IT-4
+  list overlap chips + sort-by-time + the R-itin-20 form conflict notice].
+  Mobile 776→**898 tests / 99 suites**; guard suite 49. 2 rounds + 4 fix
+  legs + 3 independent verifications + a targeted security pass; judge
+  merge/high (it independently probed the 4th fix leg, which no verifier
+  had covered, and read `legs-model.ts` in full). 35 interpretations →
+  spec-pass row. **P-7 is now ONE TASK from code-complete: T-7.9
+  [IT-9, IT-10] booking/item detail + offline degrade.** Run it serially
+  (it wants the screen file) unless a seam is frozen first, per the W4
+  precedent — the frozen-seam pattern produced ZERO conflicts across two
+  large concurrent PRs and is the reason W4 worked.
+- **🔴 NUL-BYTE / INVISIBLE-DIFF INCIDENT (T-7.5, the most important thing
+  this phase learned).** Two raw `U+0000` bytes typed into
+  `legs-model.ts` made git classify it BINARY: `gh pr diff` rendered ZERO
+  lines and GitHub's API reported `additions=0, patch=false`, so a
+  6641-byte production module (incl. `pickDefaultMode`) passed a FIVE-LANE
+  review that structurally could not display it — and BSD `grep` exits 1
+  **silently** on such a file, so an agent searching concludes the symbol
+  doesn't exist. tsc/eslint/expo-lint all pass. Fixed + **guard-enforced
+  repo-wide** (`.github/scripts/check-nul-bytes.mjs`, wired into the Guard
+  job, 49 tests, exit contract pinned both directions). Rule now in
+  `.claude/rules/mobile.md`; it had lived ONLY in `server.md`, path-scoped
+  to `apps/server/**`, which is exactly why mobile re-stepped it —
+  **a universal landmine must not live in one workspace's rule file.**
+  Residual, NOT closed (QUEUE row): a `.gitattributes` `*.ts -diff`
+  reproduces the identical invisible diff with zero NUL bytes.
+- **Vacuous-pin taxonomy (7 found in T-7.5/T-7.6 — a green suite proves
+  nothing until mutated).** All in `.claude/rules/mobile.md`: (1) rejecting
+  an already-settled promise never observes in-flight state; (2) non-strict
+  zod STRIPS unknown keys so a misspelled field round-trips green; (3) RNTL
+  won't fire a handler on a `disabled` element, so "press it, assert
+  nothing happened" passes with the guard gone; (4) a fixture where two
+  behaviors yield the same value (23:00, where clip-at-midnight ==
+  start+60min); (5) a CONTROL arm that structurally can't reach the code it
+  controls for (a car rental can never hit a `lodging` clause); (6) a "no-op
+  mutation" that looks like a passing falsification (`undefined ?? null`);
+  (7) asserting a negative with no ungated control. **Rule: every negative
+  assertion needs a control arm proving it could have failed, and every
+  probe must be confirmed applied via `git diff --stat` before its result
+  is trusted.**
 - **T-7.6/T-7.7 landmines (NEW — 3 VACUOUS-PIN FLAVORS, all codified in
   `.claude/rules/mobile.md`; a green suite proved nothing three times in one
   PR):** (1) a pin that rejects an ALREADY-SETTLED promise never observes the
