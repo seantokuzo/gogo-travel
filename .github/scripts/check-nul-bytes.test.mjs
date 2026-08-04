@@ -10,10 +10,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
+  extensionOf,
   findNulBytes,
   isSourceFile,
+  KNOWN_BINARY_EXTENSIONS,
   main,
+  readIfRegularFile,
+  safeAnnotationPath,
   SOURCE_EXTENSIONS,
   trackedFiles,
 } from "./check-nul-bytes.mjs";
@@ -56,18 +64,54 @@ test("skips legitimately-binary tracked assets", () => {
   assert.deepEqual(findNulBytes(Object.keys(files), readerFor(files)), []);
 });
 
-test("isSourceFile: EVERY tracked file that is not a known binary asset is in scope", () => {
-  // Derived from the repo, not from a hardcoded list. The previous version of
-  // this test asserted the same claim against a list it wrote itself, and so
-  // missed that `.env.example` — the one tracked file whose entire purpose is
-  // being read by a human — was being skipped. An allowlist only stays honest
-  // if something checks it against reality.
+test("every tracked file is EITHER scanned or a declared binary asset", () => {
+  // Derived from the repo, and checked against the SCRIPT's own declaration —
+  // never against a list this test writes itself. Two earlier shapes of this
+  // assertion were wrong in opposite directions: a hardcoded format list
+  // missed that `.env.example` was silently skipped, and a hardcoded
+  // known-binary regex would have turned the guard job RED on the first
+  // tracked font (`AssertionError: unscanned tracked text files:
+  // SpaceMono.ttf` — a font called a text file), whose obvious fix is to
+  // loosen THIS file and reopen the blind spot.
+  //
+  // So the only question asked here is: does anything fall through both sets?
+  // If so, the guard fails and someone decides which set it belongs in — both
+  // are one-line edits in check-nul-bytes.mjs.
   const skipped = trackedFiles().filter((f) => !isSourceFile(f));
-  const unexpected = skipped.filter((f) => !/\.(png|parquet)$/i.test(f));
-  assert.deepEqual(unexpected, [], `unscanned tracked text files: ${unexpected.join(", ")}`);
+  const undeclared = skipped.filter((f) => !KNOWN_BINARY_EXTENSIONS.has(extensionOf(f)));
+  assert.deepEqual(
+    undeclared,
+    [],
+    `tracked files matching neither SOURCE_EXTENSIONS nor KNOWN_BINARY_EXTENSIONS: ` +
+      `${undeclared.join(", ")} — add each to whichever set it belongs in`,
+  );
   // …and the binary assets really are being skipped, so the filter above is
   // not vacuously empty.
   assert.ok(skipped.length > 0, "expected the repo to track some binary assets");
+});
+
+test("a NEW binary asset type does not red the job; an UNDECLARED one does", () => {
+  // The near-term trigger: expo-font is a dependency and an app.json plugin
+  // with no font files tracked yet.
+  assert.equal(isSourceFile("apps/mobile/assets/fonts/SpaceMono.ttf"), false);
+  assert.ok(KNOWN_BINARY_EXTENSIONS.has("ttf"), "fonts are declared, so a .ttf drop is quiet");
+
+  // …while a format in neither set is the deliberate decision point.
+  assert.equal(isSourceFile("apps/mobile/assets/model.usdz"), false);
+  assert.equal(KNOWN_BINARY_EXTENSIONS.has("usdz"), false);
+});
+
+test("the two sets are disjoint — no format is both scanned and declared binary", () => {
+  const both = [...SOURCE_EXTENSIONS].filter((ext) => KNOWN_BINARY_EXTENSIONS.has(ext));
+  assert.deepEqual(both, []);
+});
+
+test("extensionOf: dotfiles and extensionless names have no extension", () => {
+  assert.equal(extensionOf("a/b/icon.PNG"), "png");
+  assert.equal(extensionOf(".gitignore"), "");
+  assert.equal(extensionOf("path/to/.prettierignore"), "");
+  assert.equal(extensionOf("Makefile"), "");
+  assert.equal(extensionOf("a.b/c"), "");
 });
 
 test("isSourceFile: the formats round 2 found missing are now in scope", () => {
@@ -121,4 +165,63 @@ test("main() over the REAL tree is clean — the guard guards itself", () => {
 test("the allowlist is an allowlist — an unknown binary format is out of scope", () => {
   assert.equal(SOURCE_EXTENSIONS.has("png"), false);
   assert.equal(isSourceFile("x.wasm"), false);
+});
+
+test("readIfRegularFile: non-regular entries are skipped, not crashed on", () => {
+  // Reproduces the three shapes a tracked path can take that are not a plain
+  // file. Before the lstat check these were EISDIR, ENOENT, and — worst — an
+  // unbounded read that presents as a mystery CI stall.
+  const dir = mkdtempSync(join(tmpdir(), "nul-guard-"));
+  try {
+    const real = join(dir, "real.ts");
+    writeFileSync(real, "export const k = 1;\n");
+    assert.ok(readIfRegularFile(real) !== null, "a real file is still read");
+
+    // A directory, as a submodule gitlink presents.
+    assert.equal(readIfRegularFile(dir), null);
+
+    // A committed symlink whose target does not exist.
+    const broken = join(dir, "broken.ts");
+    symlinkSync(join(dir, "nope.ts"), broken);
+    assert.equal(readIfRegularFile(broken), null);
+
+    // A symlink to a character device — the unbounded-read case.
+    const zero = join(dir, "zero.ts");
+    symlinkSync("/dev/zero", zero);
+    assert.equal(readIfRegularFile(zero), null);
+
+    // A path that simply is not there.
+    assert.equal(readIfRegularFile(join(dir, "absent.ts")), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("findNulBytes/main survive a tree containing non-regular entries", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nul-guard-"));
+  try {
+    const zero = join(dir, "zero.ts");
+    symlinkSync("/dev/zero", zero);
+    const clean = join(dir, "clean.ts");
+    writeFileSync(clean, "export const k = 1;\n");
+    // Completes, reports nothing, exits 0 — rather than hanging.
+    assert.deepEqual(findNulBytes([dir, zero, clean]), []);
+    assert.equal(main({ files: [dir, zero, clean] }), 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("safeAnnotationPath: a crafted filename cannot emit its own workflow command", () => {
+  // A path is untrusted input and lands in a `::error file=…::` line. A
+  // newline in it would start a NEW workflow command on the runner's stdout.
+  const attack = "src/a\n::stop-commands::deadbeef\nb.ts";
+  const safe = safeAnnotationPath(attack);
+  assert.ok(!safe.includes("\n"), "no newline survives");
+  assert.ok(!safe.includes("\r"), "no carriage return survives");
+  assert.ok(!safe.includes("::"), "no command delimiter survives");
+  assert.equal(safe, "src/a __stop-commands__deadbeef b.ts");
+
+  // Ordinary paths are untouched.
+  assert.equal(safeAnnotationPath("apps/mobile/src/x.ts"), "apps/mobile/src/x.ts");
 });

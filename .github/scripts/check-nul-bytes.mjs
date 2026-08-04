@@ -29,7 +29,7 @@
  * widen the guard's blind spot.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 
 /** Text formats tracked in this repo. Extend deliberately, never by accident. */
 export const SOURCE_EXTENSIONS = new Set([
@@ -60,14 +60,65 @@ export const SOURCE_EXTENSIONS = new Set([
   "example",
 ]);
 
-/** True when `file` is one of the text formats this guard is responsible for. */
-export function isSourceFile(file) {
+/**
+ * Binary asset formats this repo may legitimately track, i.e. the files the
+ * scan is EXPECTED to skip.
+ *
+ * This lives in the script, not in the test, on purpose. The test asserts
+ * `skipped ⊆ KNOWN_BINARY_EXTENSIONS`, so the first tracked file matching
+ * neither set fails the guard job and forces a decision: is it text (add it to
+ * SOURCE_EXTENSIONS and scan it) or an asset (add it here)? Both are one-line
+ * edits HERE.
+ *
+ * The alternative — the test carrying its own regex of known-binary types —
+ * puts the widening in the wrong file: the obvious way back to green becomes
+ * "loosen the test", which silently reopens the blind spot the guard exists to
+ * close. `expo-font` is already a dependency and an `app.json` plugin with no
+ * font files tracked yet, so a `.ttf` landing on an unrelated PR was the
+ * near-term trigger.
+ */
+export const KNOWN_BINARY_EXTENSIONS = new Set([
+  // images
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "ico",
+  "icns",
+  // fonts (expo-font is a dep + app.json plugin; a .ttf is the likeliest next asset)
+  "ttf",
+  "otf",
+  "woff",
+  "woff2",
+  // media
+  "mp3",
+  "mp4",
+  "mov",
+  "wav",
+  // data / archives / signing
+  "parquet",
+  "zip",
+  "gz",
+  "pdf",
+  "keystore",
+  "jks",
+  "mobileprovision",
+]);
+
+/** Extension of `file`, lowercased; "" for an extensionless name or dotfile. */
+export function extensionOf(file) {
   const base = file.slice(file.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
+  return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
+}
+
+/** True when `file` is one of the text formats this guard is responsible for. */
+export function isSourceFile(file) {
   // Dotfiles (`.gitignore`, `.prettierignore`) have no extension to speak of
   // but are plain text — scan them.
-  if (dot <= 0) return true;
-  return SOURCE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
+  const ext = extensionOf(file);
+  return ext === "" || SOURCE_EXTENSIONS.has(ext);
 }
 
 /**
@@ -79,11 +130,32 @@ export function isSourceFile(file) {
  *
  * Returns `[{ file, offset }]`, one entry per offending file (first offset).
  */
-export function findNulBytes(files, read = (f) => readFileSync(f)) {
+export function readIfRegularFile(file) {
+  // `lstat`, not `stat`: a tracked entry can be a submodule gitlink (a
+  // directory — `readFileSync` throws EISDIR), a committed symlink whose
+  // target no longer exists (ENOENT), or a symlink to a character device such
+  // as /dev/zero, which `readFileSync` will read UNBOUNDED — presenting as a
+  // mystery CI stall rather than a failure. `lstat` describes the link itself,
+  // so every one of those is a non-regular entry and is skipped. A symlink to
+  // a real tracked file is skipped too, correctly: the target is scanned under
+  // its own path.
+  let stats;
+  try {
+    stats = lstatSync(file);
+  } catch {
+    // Vanished between `git ls-files` and here. Not our problem to report.
+    return null;
+  }
+  return stats.isFile() ? readFileSync(file) : null;
+}
+
+export function findNulBytes(files, read = readIfRegularFile) {
   const hits = [];
   for (const file of files) {
     if (!isSourceFile(file)) continue;
     const buffer = read(file);
+    // `null` = deliberately not read (non-regular entry).
+    if (buffer === null || buffer === undefined) continue;
     const offset = buffer.indexOf(0);
     if (offset !== -1) hits.push({ file, offset });
   }
@@ -96,6 +168,18 @@ export function trackedFiles() {
     .toString("utf8")
     .split("\0")
     .filter((f) => f.length > 0);
+}
+
+/**
+ * A path is untrusted input (anyone who can land a file names it), and it goes
+ * into a GitHub workflow-command line. A newline would let a crafted filename
+ * emit its own `::` command — `::stop-commands::…` was reproduced on this
+ * script's stdout. It cannot flip the gate (the exit code is the gate), but it
+ * is annotation forgery in a world-readable log, so newlines and `::` are
+ * neutralised before printing.
+ */
+export function safeAnnotationPath(file) {
+  return file.replace(/[\r\n]+/g, " ").replaceAll("::", "__");
 }
 
 /**
@@ -117,7 +201,7 @@ export function main({ files, read } = {}) {
   }
   for (const { file, offset } of hits) {
     console.error(
-      `::error file=${file}::Raw NUL byte at offset ${offset}. ` +
+      `::error file=${safeAnnotationPath(file)}::Raw NUL byte at offset ${offset}. ` +
         "Git treats this file as BINARY: it vanishes from `gh pr diff` and " +
         "`grep` exits 1 in silence. Write the escape \\u0000 instead.",
     );
