@@ -289,6 +289,64 @@ export function useUpdateBooking(
   });
 }
 
+/**
+ * Remove one booking from every cache that can hold it — the DELETE arm
+ * (T-7.9 / R-itin-26 second half). Deliberately NOT folded into
+ * `reconcileBookingRow`: that function's contract is "reconcile a row that
+ * still EXISTS server-side to its post-state", and its invariant (the cached
+ * default list satisfies R-ib-10) is stated in terms of a live row's status.
+ * A hard delete has no post-state, and it must also clear the CANCELLED list
+ * (which `reconcileBookingRow` never touches, because a live cancel is exactly
+ * the transition that puts a row there) and the detail key (whose entry would
+ * otherwise re-render a 404'd booking if the screen remounts before the
+ * invalidation refetch lands).
+ */
+function removeBookingEverywhere(qc: QueryClient, tripId: string, bookingId: string): void {
+  for (const key of [queryKeys.tripBookings(tripId), queryKeys.tripBookingsCancelled(tripId)]) {
+    qc.setQueryData<Paginated<Booking>>(key, (old) =>
+      old === undefined ? old : { ...old, items: old.items.filter((row) => row.id !== bookingId) },
+    );
+  }
+  qc.removeQueries({ queryKey: queryKeys.tripBooking(tripId, bookingId), exact: true });
+}
+
+/**
+ * `DELETE /trips/:tripId/bookings/:bookingId` (§3.4) — hard delete; items
+ * cascade in the DB and expense links SET NULL (schema §3.6: the ledger
+ * outlives the booking, which is why R-itin-26's confirm copy says so).
+ *
+ * NOT optimistic (module-doc policy): the row is gone or it isn't, and a
+ * failed delete that had already emptied the screen would have to resurrect
+ * it. Success prunes every cache holding the row, then invalidates the booking
+ * root (filtered lists) and the composite itinerary read (the cascaded items).
+ */
+export function useDeleteBooking(
+  tripId: string,
+  options?: BookingMutationOptions<string>,
+): UseMutationResult<string, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (bookingId: string) => {
+      await apiClient.request(bookingEndpoints.deleteBooking, {
+        params: { tripId, bookingId },
+      });
+      // 204 carries no body — the id is the only useful post-state, and the
+      // hook-level seam needs it to route/close.
+      return bookingId;
+    },
+    onSuccess: (bookingId) => {
+      // Seam first (fires for EVERY settled call — superseded-call law).
+      options?.onMutationSuccess?.(bookingId);
+      removeBookingEverywhere(qc, tripId, bookingId);
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.tripItinerary(tripId) });
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
 export interface ScheduleBookingVars {
   bookingId: string;
   input: ScheduleBookingInput;
