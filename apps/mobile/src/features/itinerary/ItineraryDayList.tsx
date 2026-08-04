@@ -18,9 +18,10 @@
  * rows `itinerary-day-add-{date}`; day headers `itinerary-day-header-{date}`
  * (new id, same flag).
  *
- * TRAVEL-TIME SEAM (T-7.5): chips render between consecutive located entry
- * rows — extend the row model (`model.ts` seam note) and add the row case to
- * `renderRow` below.
+ * TRAVEL-TIME SEAM (T-7.5 — FILLED): `leg` rows render `LegChip` between the
+ * entry rows the model paired; `overlapping` entry rows carry the R-itin-7
+ * warning Badge and an `unsorted` day header exposes the "Sort day by time"
+ * affordance. Absent legs produce no row at all (R-itin-6).
  */
 import type { ISODate } from "@gogo/shared";
 import { createStyles, useTheme } from "@gogo/tokens/react";
@@ -31,6 +32,8 @@ import ReorderableList, { useReorderableDrag } from "react-native-reorderable-li
 import { AppText, Badge, Card, Icon } from "@/components";
 import { triggerHaptic } from "@/theme/haptics";
 
+import { LegChip } from "./legs/LegChip";
+import type { DayLeg } from "./legs/legs-model";
 import { formatDayHeader, statusBadgeTone, type DayEntry, type DayListRow } from "./model";
 
 const useStyles = createStyles((t) =>
@@ -43,6 +46,17 @@ const useStyles = createStyles((t) =>
       justifyContent: "space-between",
       paddingTop: t.space[5],
       paddingBottom: t.space[2],
+    },
+    dayHeaderTrailing: { flexDirection: "row", alignItems: "center", gap: t.space[3] },
+    // R-ds-9: 28pt + hitSlop.sm (8/8) = 44pt, the ErrorBanner-control pattern.
+    // Without the minHeight this row is ~18pt and lands at 34pt with slop —
+    // and it sits directly beside the day-header tap band, so a mis-hit fires
+    // a DIFFERENT affordance (scroll-to-day) rather than doing nothing.
+    sortAction: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: t.space[1],
+      minHeight: 28,
     },
     emptyDay: {
       flexDirection: "row",
@@ -69,11 +83,13 @@ export interface ItineraryDayListHandle {
 
 interface EntryCardProps {
   entry: DayEntry;
+  /** R-itin-7: this item's timed span directly overlaps another's. */
+  overlapping: boolean;
   onOpen(entry: DayEntry): void;
 }
 
 /** §2.2 item card — press → detail, long-press → drag lift (R-itin-2). */
-function EntryCard({ entry, onOpen }: EntryCardProps) {
+function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
   const { theme } = useTheme();
   const s = useStyles();
   const drag = useReorderableDrag();
@@ -105,6 +121,16 @@ function EntryCard({ entry, onOpen }: EntryCardProps) {
           </AppText>
         </View>
         <View style={s.badges}>
+          {/* R-itin-7 warning chip — the SAME overlap the grid splits
+              side-by-side and badges (R-itin-15), one rule seen twice. */}
+          {overlapping ? (
+            <Badge
+              label="Overlap"
+              tone="warning"
+              size="sm"
+              testID={`itinerary-list-item-${entry.itemId}-overlap`}
+            />
+          ) : null}
           {entry.checkpoint !== null ? (
             <Badge
               label={entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}
@@ -134,6 +160,14 @@ export interface ItineraryDayListProps {
   onOpenEntry(entry: DayEntry): void;
   /** Empty-day "Add to this day" row (R-itin-1). */
   onAddToDay(date: ISODate): void;
+  /** R-itin-4: chip tap → the mode Sheet (owned by the screen). */
+  onOpenLeg(leg: DayLeg): void;
+  /**
+   * R-itin-7 "Sort day by time". Undefined ⇒ the affordance never renders —
+   * it issues a day-order PUT, so viewers (R-ib-24) and a pending reorder
+   * must not see it.
+   */
+  onSortDay?: ((date: ISODate) => void) | undefined;
   ref?: Ref<ItineraryDayListHandle>;
 }
 
@@ -143,6 +177,8 @@ export function ItineraryDayList({
   onReorder,
   onOpenEntry,
   onAddToDay,
+  onOpenLeg,
+  onSortDay,
   ref,
 }: ItineraryDayListProps) {
   const { theme } = useTheme();
@@ -164,19 +200,59 @@ export function ItineraryDayList({
       switch (row.type) {
         case "day":
           return (
+            // The Pressable stays the OUTER element, as T-7.4 shipped it, so
+            // the whole band — not just the title glyphs — scrolls to the day
+            // (§2.2). Touch-wise that is fine: RN resolves a press to the
+            // innermost responder, so the nested sort button never fights it.
+            //
+            // `accessible={false}` is LOAD-BEARING (R-ds-12). RN 0.86's
+            // Pressable defaults `accessible: true`, and on iOS an accessible
+            // view flattens its whole subtree into ONE element: VoiceOver
+            // would announce "Mon, Sep 1 Sort by time 3 items" as a single
+            // header whose double-tap scrolls the day, leaving the sort WRITE
+            // with no gesture that reaches it. `ConfirmDialog.tsx` resolved
+            // the identical nesting the same way. RNTL does not model iOS
+            // flattening, so the suite cannot see this — hence the dedicated
+            // pin, on ConfirmDialog's template.
+            //
+            // The header ROLE moves onto the title text, which is where every
+            // other header in this codebase puts it (Section, PageHeader,
+            // Sheet, ConfirmDialog) — so the rotor still finds the day.
             <Pressable
               onPress={() => scrollToDay(row.date)}
               testID={`itinerary-day-header-${row.date}`}
-              accessibilityRole="header"
+              accessible={false}
+              style={s.dayHeader}
             >
-              <View style={s.dayHeader}>
-                <AppText role="subheading">{formatDayHeader(row.date)}</AppText>
+              <AppText role="subheading" accessibilityRole="header">
+                {formatDayHeader(row.date)}
+              </AppText>
+              <View style={s.dayHeaderTrailing}>
+                {/* R-itin-7: offered only when the day's row order disagrees
+                    with its start times — never an auto-resort. */}
+                {row.unsorted && onSortDay !== undefined ? (
+                  <Pressable
+                    onPress={() => onSortDay(row.date)}
+                    style={s.sortAction}
+                    hitSlop={theme.hitSlop.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Sort ${formatDayHeader(row.date)} by time`}
+                    testID={`itinerary-sort-by-time-${row.date}`}
+                  >
+                    <Icon name="swap-vertical" size={14} color={theme.color.text.accent} />
+                    <AppText role="caption" color="accent">
+                      Sort by time
+                    </AppText>
+                  </Pressable>
+                ) : null}
                 <AppText role="caption" color="secondary">
                   {row.count === 0 ? "" : row.count === 1 ? "1 item" : `${row.count} items`}
                 </AppText>
               </View>
             </Pressable>
           );
+        case "leg":
+          return <LegChip leg={row.leg} onPress={onOpenLeg} />;
         case "empty-day":
           return (
             <Pressable
@@ -194,10 +270,12 @@ export function ItineraryDayList({
             </Pressable>
           );
         case "entry":
-          return <EntryCard entry={row.entry} onOpen={onOpenEntry} />;
+          return (
+            <EntryCard entry={row.entry} overlapping={row.overlapping} onOpen={onOpenEntry} />
+          );
       }
     },
-    [onAddToDay, onOpenEntry, s, scrollToDay, theme],
+    [onAddToDay, onOpenEntry, onOpenLeg, onSortDay, s, scrollToDay, theme],
   );
 
   return (

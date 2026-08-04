@@ -9,6 +9,13 @@
  *  - Pure builders + partner registry exported for direct use (tests,
  *    future surfaces).
  */
+export {
+  buildDirectionsUrl,
+  DIRECTIONS_TRAVEL_MODE,
+  directionsUrlFor,
+  GOOGLE_MAPS_DIRECTIONS_BASE,
+} from "./directions";
+export type { DirectionsInput } from "./directions";
 export { DeeplinkPanel, deeplinkButtonTestID } from "./DeeplinkPanel";
 export type {
   DeeplinkPanelProps,

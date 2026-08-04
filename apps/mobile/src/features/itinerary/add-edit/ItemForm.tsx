@@ -9,6 +9,10 @@
  * rule reuses the SHARED `violatesSingleDayTimeOrder` — no local redefine.
  * Consumes the `?day=`/`?time=` prefills (grid gap-tap, R-itin-14; the
  * empty-day add row sends day only).
+ *
+ * R-itin-20 (T-7.5): the chosen day/times are checked against the trip's
+ * existing items on every render and surfaced as a NON-BLOCKING inline
+ * notice — overlaps are legal (R-ib-17) and save stays enabled.
  */
 import {
   ItineraryItemCreateSchema,
@@ -28,8 +32,10 @@ import { Button, ErrorBanner, Input } from "@/components";
 import { useCreateItineraryItem, useUpdateItineraryItem } from "@/data";
 import { DateField } from "@/features/trips";
 
+import { ConflictNotice } from "./ConflictNotice";
 import { PlacePickerField } from "./PlacePickerField";
 import { TimeField } from "./TimeField";
+import { useFormConflicts } from "./useFormConflicts";
 
 export interface ItemFormProps {
   tripId: string;
@@ -86,6 +92,31 @@ export function ItemForm({
     onMutationError: () => setFormError("Couldn't save the changes. Try again."),
   });
   const pending = create.isPending || update.isPending;
+
+  // R-itin-20: an untimed item occupies no span, so it can never conflict —
+  // no day or no start time ⇒ no placement to check.
+  const conflicts = useFormConflicts(
+    tripId,
+    day === "" || startTime === ""
+      ? []
+      : [
+          {
+            day,
+            // Carried from the edited row, not hardcoded null: the form has no
+            // end-day field, so an EXISTING spanning item would otherwise be
+            // described as same-day and its real [start, midnight] clip would
+            // shrink to a zero-length span, under-reporting the overlap the
+            // save actually produces.
+            end_day: item?.end_day ?? null,
+            start_time: startTime,
+            end_time: endTime === "" ? null : endTime,
+            // `place_visit`/`custom` items are never the spanning-lodging
+            // all-day case (that shape only comes from a lodging booking).
+            spanning: false,
+          },
+        ],
+    item !== undefined ? { itemIds: [item.id] } : {},
+  );
 
   const touch = <T,>(setter: (value: T) => void) => {
     return (value: T): void => {
@@ -166,6 +197,9 @@ export function ItemForm({
           testID="itinerary-item-new-error"
         />
       ) : null}
+
+      {/* R-itin-20: inline, non-blocking — save is never gated on it. */}
+      <ConflictNotice conflicts={conflicts} />
 
       {kind === "custom" ? (
         <Input

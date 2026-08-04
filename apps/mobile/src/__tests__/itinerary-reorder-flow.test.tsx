@@ -35,6 +35,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -81,6 +82,10 @@ async function releaseDrag(from: number, to: number) {
   await act(async () => {
     mockListHarness.onReorder?.({ from, to });
   });
+  // The release fires the optimistic write, whose notify batch is scheduled
+  // for a LATER tick — drain it here rather than leaving it to land at some
+  // `await` further down (T-7.5: it surfaced as a cross-suite act warning).
+  await settle();
 }
 
 /** Card ids in current tree order — the VISIBLE order under pin. */
@@ -110,9 +115,7 @@ async function renderItinerary(opts?: {
   );
   // Settle both queries' notify batches inside act (B-2 posture — see
   // itinerary-screen.test.tsx renderItinerary).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
   return { request, trip };
 }
@@ -133,9 +136,7 @@ const DAY1_DEFAULT_ORDER = [
 ];
 
 afterEach(async () => {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
   mockedHaptic.mockReset();
   mockListHarness.onReorder = null;
@@ -248,6 +249,7 @@ describe("gates", () => {
     await act(async () => {
       resolvePut?.({ items: [] });
     });
+    await settle();
     await waitFor(() => expect(mockListHarness.dragEnabled).toBe(true));
   });
 

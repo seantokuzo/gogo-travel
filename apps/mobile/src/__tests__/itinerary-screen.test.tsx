@@ -14,7 +14,7 @@
  * skeleton/empty/error states (R-itin-28), §2.9 testIDs (R-itin-30).
  */
 import type { TripListItem } from "@gogo/shared";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
 import { ApiRequestError } from "@/auth";
@@ -34,6 +34,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
+import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -74,9 +75,7 @@ async function renderItinerary(opts?: {
   // with two mounted queries, the second's notification otherwise lands
   // during a later findBy poll sleep — an un-acted update under contention
   // (B-2 class; surfaced in full-suite runs only).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   return { request, trip, view };
 }
 
@@ -85,9 +84,7 @@ afterEach(async () => {
   // act scope BEFORE the next test starts — a notification scheduled by this
   // test's last settled op otherwise fires inside the next test's window
   // (the B-2 floating-update class; surfaced only in full-file runs).
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+  await settle();
   jest.restoreAllMocks();
   mockPush.mockReset();
 });
@@ -306,9 +303,7 @@ describe("states (R-itin-28)", () => {
     await fireEvent.press(screen.getByTestId("itinerary-error-retry"));
     // Absorb the refetch's notify batch inside act (same B-2 posture as the
     // post-mount flush in renderItinerary).
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
+    await settle();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     expect(screen.queryByTestId("itinerary-error")).toBeNull();
   });

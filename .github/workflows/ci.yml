@@ -60,6 +60,16 @@ jobs:
           fi
           echo "OK — no metered API keys, LLM actions, or secret references."
 
+      - name: No raw NUL bytes in tracked source
+        # A stray U+0000 makes git classify a source file BINARY: it vanishes
+        # from `gh pr diff` (reviewers review a hole) and BSD `grep` exits 1 in
+        # silence (agents conclude the symbol doesn't exist). tsc/eslint/expo
+        # lint all pass with one in place — nothing else catches it.
+        # `.claude/rules/server.md` has carried the rule since T-5.1 but is
+        # path-scoped to apps/server, so it recurred in apps/mobile (PR #18).
+        # Scanner + its own falsification suite: .github/scripts/.
+        run: node .github/scripts/check-nul-bytes.mjs
+
       - name: Aggregator unit tests
         # The verdict aggregator (.github/scripts/) sits outside turbo's
         # package graph; run its zero-dep node:test suite here so it gates
