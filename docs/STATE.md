@@ -133,6 +133,18 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   (it wants the screen file) unless a seam is frozen first, per the W4
   precedent — the frozen-seam pattern produced ZERO conflicts across two
   large concurrent PRs and is the reason W4 worked.
+- **W6 DISPATCHED 2026-08-03 (in-flight, PHASE CLOSER):** T-7.9
+  [IT-9 R-itin-24..26 · IT-10 R-itin-27, R-itin-29] booking/item detail
+  screens + offline degrade — SERIAL, sole agent, isolated worktree off
+  `0473eac`. Owns both stub routes (`booking/[bookingId].tsx`,
+  `item/[itemId].tsx`), detail components, `data/bookings.ts` extensions
+  (cancel/delete), and the tab's offline posture. **Its cancel flow is the
+  FIRST real consumer of `reconcileBookingRow`'s removal arm** — the
+  cancelled-booking cache invariant becomes reachable here, so it must be
+  pinned both directions. Inherited deferrals routed to this task: T-7.8's
+  R-itin-29 offline deferral and T-7.5's `refresh-legs` client affordance
+  (R-itin-6 forbids a retry prompt on the chip surface itself).
+  **On merge, P-7 is CODE-COMPLETE → phase QA + F-043..F-054 ledger flips.**
 - **🔴 NUL-BYTE / INVISIBLE-DIFF INCIDENT (T-7.5, the most important thing
   this phase learned).** Two raw `U+0000` bytes typed into
   `legs-model.ts` made git classify it BINARY: `gh pr diff` rendered ZERO
