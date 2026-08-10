@@ -14,6 +14,7 @@ import { screen, waitFor } from "@testing-library/react-native";
 
 import BookingDetailScreen from "@/app/[tripId]/itinerary/booking/[bookingId]";
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
+import ItineraryItemScreen from "@/app/[tripId]/itinerary/item/[itemId]";
 import { ApiRequestError } from "@/auth";
 import { queryKeys } from "@/data";
 import { DEEPLINK_OFFLINE_HINT } from "@/features/deeplinks";
@@ -36,6 +37,10 @@ jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("@/theme/clipboard", () => ({ copyToClipboard: jest.fn() }));
 
 const mockLodgingBookingId = "bbbbbbb2-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
+/** Per-test route params — booking detail reads `bookingId`, item detail `itemId`. */
+const mockRouteParams: { value: Record<string, unknown> } = {
+  value: { bookingId: mockLodgingBookingId },
+};
 jest.mock("expo-router", () => ({
   useRouter: () => ({
     push: jest.fn(),
@@ -44,7 +49,7 @@ jest.mock("expo-router", () => ({
     navigate: jest.fn(),
     canGoBack: () => true,
   }),
-  useLocalSearchParams: () => ({ bookingId: mockLodgingBookingId }),
+  useLocalSearchParams: () => mockRouteParams.value,
   useNavigation: () => ({
     navigate: jest.fn(),
     getParent: () => undefined,
@@ -105,6 +110,9 @@ function lodgingBooking(): Booking {
 afterEach(async () => {
   await settle();
   jest.restoreAllMocks();
+  // Route params are per-test state — a leaked `itemId` would point the next
+  // booking-detail render at nothing.
+  mockRouteParams.value = { bookingId: mockLodgingBookingId };
 });
 
 describe("R-itin-29 — the plan surface renders from cache", () => {
@@ -228,6 +236,124 @@ describe("R-itin-29 — the plan surface renders from cache", () => {
 
     const banner = await screen.findByTestId("itinerary-error");
     expect(banner).toHaveTextContent(/Couldn't load the itinerary/);
+    expect(banner).not.toHaveTextContent(/offline/i);
+  });
+});
+
+describe("R-itin-29 — the DETAIL screens degrade from cache (R1 B2)", () => {
+  /**
+   * Same posture as the plan-surface suite above: every offline assertion is
+   * paired with a 500 CONTROL on the identical fixture, or a degrade surface
+   * that fired on ANY failure would pass every offline test here.
+   */
+  async function renderBookingDegrade(opts: { cached: boolean; error: () => ApiRequestError }) {
+    seedAuthenticated();
+    const trip = tripFixture();
+    const client = makeClient();
+    if (opts.cached) {
+      const detail: BookingWithItems = { ...lodgingBooking(), items: [] };
+      client.setQueryData(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_LODGING_ID), detail);
+    }
+    await armGuardFailure(client, opts.error());
+    mockNavApi({
+      trips: [trip],
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.reject(opts.error()),
+        "GET /trips/:tripId/bookings": () => Promise.resolve({ items: [], nextCursor: null }),
+      },
+    });
+    await renderWithProviders(
+      <TripProvider trip={trip}>
+        <BookingDetailScreen />
+      </TripProvider>,
+      { queryClient: client },
+    );
+    await settle();
+  }
+
+  async function renderItemDegrade(opts: { cached: boolean; error: () => ApiRequestError }) {
+    seedAuthenticated();
+    const trip = tripFixture();
+    const client = makeClient();
+    if (opts.cached) {
+      client.setQueryData(queryKeys.tripItinerary(TEST_TRIP_ID), {
+        items: cachedItems(),
+        legs: [],
+      });
+    }
+    await armGuardFailure(client, opts.error());
+    mockRouteParams.value = { itemId: ITEM_B_ID };
+    mockNavApi({
+      trips: [trip],
+      overrides: {
+        "GET /trips/:tripId/itinerary": () => Promise.reject(opts.error()),
+      },
+    });
+    await renderWithProviders(
+      <TripProvider trip={trip}>
+        <ItineraryItemScreen />
+      </TripProvider>,
+      { queryClient: client },
+    );
+    await settle();
+  }
+
+  it("booking detail keeps the cached booking under the OFFLINE banner; the refresh banner is suppressed", async () => {
+    await renderBookingDegrade({ cached: true, error: NETWORK });
+    expect(await screen.findByTestId("booking-detail-banner-offline")).toBeTruthy();
+    // The cached data is still on screen — the failed refetch blanked nothing.
+    expect(screen.getByTestId("booking-detail-status")).toBeTruthy();
+    // Offline OUTRANKS the refresh error (`isError && !offline`): one failure,
+    // one banner, and it is the one that explains the failure.
+    expect(screen.queryByTestId("booking-detail-banner-refresh")).toBeNull();
+  });
+
+  it("CONTROL: the identical booking fixture with a 500 shows the REFRESH banner, never the offline one", async () => {
+    await renderBookingDegrade({ cached: true, error: SERVER });
+    expect(await screen.findByTestId("booking-detail-banner-refresh")).toBeTruthy();
+    expect(screen.getByTestId("booking-detail-status")).toBeTruthy();
+    expect(screen.queryByTestId("booking-detail-banner-offline")).toBeNull();
+  });
+
+  it("item detail keeps the cached item under the OFFLINE banner; the refresh banner is suppressed", async () => {
+    await renderItemDegrade({ cached: true, error: NETWORK });
+    expect(await screen.findByTestId("itinerary-item-banner-offline")).toBeTruthy();
+    expect(screen.getByTestId("itinerary-item-when")).toBeTruthy();
+    expect(screen.queryByTestId("itinerary-item-banner-refresh")).toBeNull();
+  });
+
+  it("CONTROL: the identical item fixture with a 500 shows the REFRESH banner, never the offline one", async () => {
+    await renderItemDegrade({ cached: true, error: SERVER });
+    expect(await screen.findByTestId("itinerary-item-banner-refresh")).toBeTruthy();
+    expect(screen.getByTestId("itinerary-item-when")).toBeTruthy();
+    expect(screen.queryByTestId("itinerary-item-banner-offline")).toBeNull();
+  });
+
+  it("booking detail with NO cache says OFFLINE, not \"couldn't load\"", async () => {
+    await renderBookingDegrade({ cached: false, error: NETWORK });
+    const banner = await screen.findByTestId("booking-detail-error");
+    expect(banner).toHaveTextContent(/offline/i);
+    expect(banner).toHaveTextContent(/isn't cached yet/);
+  });
+
+  it("CONTROL: booking detail with NO cache + 500 keeps the ordinary copy", async () => {
+    await renderBookingDegrade({ cached: false, error: SERVER });
+    const banner = await screen.findByTestId("booking-detail-error");
+    expect(banner).toHaveTextContent(/Couldn't load this booking/);
+    expect(banner).not.toHaveTextContent(/offline/i);
+  });
+
+  it("item detail with NO cache says OFFLINE, not \"couldn't load\"", async () => {
+    await renderItemDegrade({ cached: false, error: NETWORK });
+    const banner = await screen.findByTestId("itinerary-item-error");
+    expect(banner).toHaveTextContent(/offline/i);
+    expect(banner).toHaveTextContent(/isn't cached yet/);
+  });
+
+  it("CONTROL: item detail with NO cache + 500 keeps the ordinary copy", async () => {
+    await renderItemDegrade({ cached: false, error: SERVER });
+    const banner = await screen.findByTestId("itinerary-item-error");
+    expect(banner).toHaveTextContent(/Couldn't load this item/);
     expect(banner).not.toHaveTextContent(/offline/i);
   });
 });
