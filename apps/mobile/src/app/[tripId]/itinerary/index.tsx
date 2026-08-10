@@ -273,13 +273,22 @@ export default function ItineraryScreen() {
   // the reads settle after mount, so on the first render `days` is empty.
   const jumpTarget = jumpDay !== null && days.includes(jumpDay) ? jumpDay : null;
   useEffect(() => {
+    // `settled` gates BOTH arms: the itinerary read alone can resolve the
+    // target while the bookings read is still in flight — the body is still
+    // the skeleton, the list handle is null, and dispatching (or consuming)
+    // then would eat the jump before the list exists to scroll.
+    if (jumpTarget === null || !settled) return;
     // Grid mode has no scroll-to-day seam (GridSurface's props are the frozen
     // W4 contract, and its own initial column lands on today) — the jump is a
     // list-mode affordance, and silently doing nothing beats yanking the
     // user's persisted view mode out from under them.
-    if (jumpTarget === null || mode !== "list") return;
-    listHandle.current?.scrollToDay(jumpTarget);
-  }, [jumpTarget, mode]);
+    if (mode === "list") listHandle.current?.scrollToDay(jumpTarget);
+    // Consume the param after handling: the SAME day must be jumpable again
+    // from another booking (the effect can't re-fire on identical deps), and
+    // a param left armed in grid mode would yank a later grid→list toggle to
+    // a day the user never asked to see again.
+    router.setParams({ day: undefined });
+  }, [jumpTarget, mode, router, settled]);
 
   let body;
   if (!settled) {

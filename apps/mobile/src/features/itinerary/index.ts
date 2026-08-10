@@ -92,6 +92,7 @@ export {
   CREATE_STATUS_OPTIONS,
   deeplinkInputFor,
   emptyFormState,
+  kebab,
   parseMoneyToCents,
   primaryStartKey,
   stateFromDetails,
@@ -110,6 +111,7 @@ export {
   BOOKING_STATUS_LABELS,
   detailFieldRows,
   detailStatusTone,
+  itemWhenLabel,
   scheduleSummary,
   statusActionsFor,
 } from "./detail/detail-model";

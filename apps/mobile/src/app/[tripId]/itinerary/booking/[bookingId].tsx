@@ -56,6 +56,7 @@ import {
   detailFieldRows,
   detailStatusTone,
   formatIdeaPrice,
+  kebab,
   scheduleSummary,
   stateFromDetails,
   statusActionsFor,
@@ -111,7 +112,10 @@ export default function BookingDetailScreen() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  // The VALUE that was copied, not a boolean: "Copied" is a claim about the
+  // code on screen, and an edit that changes the code must put the affordance
+  // back to "Copy" — the clipboard still holds the old value.
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   const update = useUpdateBooking(trip.id, {
     // HOOK-level seam — fires for EVERY settled call (superseded-call law).
@@ -138,6 +142,10 @@ export default function BookingDetailScreen() {
   const busy = update.isPending || remove.isPending;
   const editor = trip.role !== "viewer";
   const booking = bookingQuery.data;
+  const copied =
+    booking !== undefined &&
+    booking.confirmation_code !== null &&
+    booking.confirmation_code === copiedCode;
 
   const is404 = bookingQuery.error instanceof ApiRequestError && bookingQuery.error.status === 404;
 
@@ -150,7 +158,7 @@ export default function BookingDetailScreen() {
   const copyCode = (code: string): void => {
     copyToClipboard(code);
     triggerHaptic("selection");
-    setCopied(true);
+    setCopiedCode(code);
   };
 
   let body: ReactNode;
@@ -267,7 +275,13 @@ export default function BookingDetailScreen() {
           {fields.length > 0 ? (
             <Section label="Details">
               {fields.map((field) => (
-                <View key={field.key} style={s.fieldRow} testID={`booking-detail-field-${field.key}`}>
+                <View
+                  key={field.key}
+                  style={s.fieldRow}
+                  // §2.9 grammar: qualifiers are kebab-case — the SAME `kebab`
+                  // the form's inputs run this key through (one id family).
+                  testID={`booking-detail-field-${kebab(field.key)}`}
+                >
                   <AppText role="caption" color="secondary">
                     {field.label}
                   </AppText>
@@ -363,6 +377,9 @@ export default function BookingDetailScreen() {
               input={deeplinkInputFor(booking.category, stateFromDetails(booking.details))}
               destinationName={trip.destination_name}
               offline={offline}
+              // R-ib-24: a viewer's hop must not arm the return prompt — its
+              // "Add it manually" lands on a form that blocks viewers.
+              recordDisabled={!editor}
             />
           </View>
 

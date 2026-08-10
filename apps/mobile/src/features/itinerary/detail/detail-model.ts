@@ -157,6 +157,24 @@ function itemTimeLabel(item: ItineraryItem): string {
 }
 
 /**
+ * "Mon, Mar 1 · 09:00 – 11:30" — the item detail screen's When row (R-itin-27).
+ * Wall values straight off the row (schema §3.3: item day/times are trip-local
+ * wall values, no tz math); a spanning item names its end day rather than
+ * implying a single date. The time clause is `itemTimeLabel` — the SAME join
+ * the booking schedule row renders, so a copy/format change to it can never
+ * make the two detail screens disagree about identical wall times.
+ */
+export function itemWhenLabel(item: ItineraryItem): string {
+  const parts = [formatDayHeader(item.day)];
+  if (item.end_day !== null && item.end_day > item.day) {
+    parts.push(`through ${formatDayHeader(item.end_day)}`);
+  }
+  const time = itemTimeLabel(item);
+  parts.push(time === "" ? "No time set" : time);
+  return parts.join(" · ");
+}
+
+/**
  * The booking's calendar presence, collapsed to ONE row.
  *
  * Zero items ⇒ null: an idea, a timeless bucket booking, or a cancelled one

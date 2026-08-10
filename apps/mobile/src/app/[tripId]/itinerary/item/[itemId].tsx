@@ -26,12 +26,12 @@
  * OFFLINE (R-itin-29): cached items keep rendering with a banner; a failed
  * refetch never blanks a loaded item.
  */
-import type { ItineraryItem } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 
+import { ApiRequestError } from "@/auth";
 import {
   AppText,
   Button,
@@ -43,7 +43,7 @@ import {
   Skeleton,
 } from "@/components";
 import { useDeleteItineraryItem, useItinerary, useTripOffline } from "@/data";
-import { formatDayHeader } from "@/features/itinerary";
+import { itemWhenLabel } from "@/features/itinerary";
 import { jumpToTripTab } from "@/navigation/tab-jump";
 import { useTripContext } from "@/navigation/trip-context";
 
@@ -57,28 +57,6 @@ const useStyles = createStyles((t) =>
     state: { flex: 1, justifyContent: "center" },
   }),
 );
-
-/**
- * "Mon, Mar 1 · 09:00 – 11:30" — wall values straight off the row (schema
- * §3.3: item day/times are trip-local wall values, no tz math). A spanning
- * item names its end day rather than implying a single date.
- */
-export function itemWhenLabel(item: ItineraryItem): string {
-  const parts = [formatDayHeader(item.day)];
-  if (item.end_day !== null && item.end_day > item.day) {
-    parts.push(`through ${formatDayHeader(item.end_day)}`);
-  }
-  if (item.start_time !== null && item.end_time !== null) {
-    parts.push(`${item.start_time} – ${item.end_time}`);
-  } else if (item.start_time !== null) {
-    parts.push(item.start_time);
-  } else if (item.end_time !== null) {
-    parts.push(`until ${item.end_time}`);
-  } else {
-    parts.push("No time set");
-  }
-  return parts.join(" · ");
-}
 
 export default function ItineraryItemScreen() {
   const trip = useTripContext();
@@ -126,12 +104,32 @@ export default function ItineraryItemScreen() {
 
   const editor = trip.role !== "viewer";
   const settled = itineraryQuery.data !== undefined;
+  const is404 =
+    itineraryQuery.error instanceof ApiRequestError && itineraryQuery.error.status === 404;
+
+  // ONE missing body for both routes to it: an id the composite read doesn't
+  // contain, and a fresh 404 on the read itself.
+  const missingBody = (
+    <View style={s.state}>
+      <EmptyState
+        icon="alert-circle-outline"
+        title="Item not found"
+        body="It may have been deleted from the itinerary."
+        testID="itinerary-item-missing"
+      />
+    </View>
+  );
 
   let body;
   if (bookingId !== null) {
     // The replace is queued; render the neutral hold rather than this item's
     // half-built detail for the frame before it lands.
     body = <Skeleton variant="rect" height={120} testID="itinerary-item-loading" />;
+  } else if (is404) {
+    // BEFORE the loaded branch (booking detail's `is404` posture, Law #3
+    // client half): a fresh 404 on the composite read is a membership
+    // verdict, and retained cache must not keep rendering through it.
+    body = missingBody;
   } else if (!settled) {
     body = itineraryQuery.isError ? (
       <View style={s.banner}>
@@ -150,16 +148,7 @@ export default function ItineraryItemScreen() {
       </View>
     );
   } else if (item === undefined) {
-    body = (
-      <View style={s.state}>
-        <EmptyState
-          icon="alert-circle-outline"
-          title="Item not found"
-          body="It may have been deleted from the itinerary."
-          testID="itinerary-item-missing"
-        />
-      </View>
-    );
+    body = missingBody;
   } else {
     body = (
       <ScrollView contentContainerStyle={s.content}>

@@ -56,6 +56,7 @@ import {
   CREATE_STATUS_OPTIONS,
   deeplinkInputFor,
   emptyFormState,
+  kebab,
   parseMoneyToCents,
   stateFromDetails,
   statusOptionsFor,
@@ -105,10 +106,6 @@ const useStyles = createStyles((t) =>
     section: { gap: t.space[3] },
   }),
 );
-
-function kebab(key: string): string {
-  return key.replaceAll("_", "-");
-}
 
 export function BookingForm({
   trip,

@@ -15,6 +15,7 @@ import {
   BOOKING_SOURCE_LABELS,
   detailFieldRows,
   detailStatusTone,
+  itemWhenLabel,
   scheduleSummary,
   statusActionsFor,
 } from "./detail-model";
@@ -199,6 +200,41 @@ describe("scheduleSummary (R-itin-24 scheduled day/time row)", () => {
     expect(summary?.label).toContain("Mon, Mar 1 · 14:00");
     // CONTROL: one item names no count.
     expect(scheduleSummary([pickup])?.label).not.toContain("calendar entries");
+  });
+});
+
+describe("itemWhenLabel (R-itin-27 When row)", () => {
+  const day1 = "2027-03-01";
+  const day3 = "2027-03-03";
+
+  it("joins the day header and the full time range", () => {
+    const item = makeItineraryItem({
+      id: "i1",
+      day: day1,
+      start_time: "09:00",
+      end_time: "11:30",
+    });
+    expect(itemWhenLabel(item)).toBe("Mon, Mar 1 · 09:00 – 11:30");
+  });
+
+  it("degrades each partial-time arm: start-only, end-only, none at all", () => {
+    expect(itemWhenLabel(makeItineraryItem({ id: "i1", day: day1, start_time: "09:00" }))).toBe(
+      "Mon, Mar 1 · 09:00",
+    );
+    expect(itemWhenLabel(makeItineraryItem({ id: "i1", day: day1, end_time: "11:30" }))).toBe(
+      "Mon, Mar 1 · until 11:30",
+    );
+    expect(itemWhenLabel(makeItineraryItem({ id: "i1", day: day1 }))).toBe(
+      "Mon, Mar 1 · No time set",
+    );
+  });
+
+  it("names the end day of a SPANNING item rather than implying a single date", () => {
+    expect(itemWhenLabel(makeItineraryItem({ id: "i1", day: day1, end_day: day3 }))).toBe(
+      "Mon, Mar 1 · through Wed, Mar 3 · No time set",
+    );
+    // CONTROL: no span, no "through" — the clause tracks `end_day`.
+    expect(itemWhenLabel(makeItineraryItem({ id: "i1", day: day1 }))).not.toContain("through");
   });
 });
 

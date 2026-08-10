@@ -111,6 +111,14 @@ export interface DeeplinkPanelProps {
    * worse answer than saying so up front. Omitted ⇒ online (the T-7.8 shape).
    */
   offline?: boolean;
+  /**
+   * R-ib-24 client half (T-7.9 R1): a tap still OPENS the partner URL (a
+   * search is a read any role may do) but writes no deeplink-out record — the
+   * return prompt it would arm ends in "Add it manually", a write flow the
+   * consumer knows this user cannot complete (viewers on booking detail).
+   * Omitted ⇒ record as normal.
+   */
+  recordDisabled?: boolean;
   /** Fires after the record is written AND the URL opened (analytics/consumer seam). */
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
 }
@@ -158,6 +166,8 @@ interface PartnerButtonProps {
   hintOverride?: string;
   /** R-itin-29 — disables regardless of build status, with the offline hint. */
   offline?: boolean;
+  /** R-ib-24 — open the URL but write no deeplink-out record. */
+  recordDisabled?: boolean;
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
   onOpenError(message: string): void;
 }
@@ -177,6 +187,7 @@ function PartnerButton({
   titleOverride,
   hintOverride,
   offline = false,
+  recordDisabled = false,
   onUrlOpened,
   onOpenError,
 }: PartnerButtonProps) {
@@ -200,13 +211,16 @@ function PartnerButton({
         : undefined;
 
   const openUrl = (url: string): void => {
-    recordDeeplinkOut({ partner: partner.id, category, tripId, timestamp: Date.now() });
+    if (!recordDisabled) {
+      recordDeeplinkOut({ partner: partner.id, category, tripId, timestamp: Date.now() });
+    }
     Linking.openURL(url)
       .then(() => onUrlOpened?.(partner.id, url))
       .catch(() => {
         // The hop never happened — a lingering record would prompt "Did you
-        // book it?" for nothing.
-        clearDeeplinkOutRecord();
+        // book it?" for nothing. (No record was written when recording is
+        // disabled — clearing someone else's would be a new bug.)
+        if (!recordDisabled) clearDeeplinkOutRecord();
         onOpenError(OPEN_ERROR_MESSAGE);
       });
   };
@@ -280,6 +294,8 @@ interface CategoryPanelProps<TFields> {
   destinationName?: string;
   /** R-itin-29 — forwarded verbatim to every PartnerButton. */
   offline?: boolean;
+  /** R-ib-24 — forwarded verbatim to every PartnerButton. */
+  recordDisabled?: boolean;
   onUrlOpened?(partner: DeeplinkPartnerId, url: string): void;
   onOpenError(message: string): void;
 }
@@ -298,6 +314,7 @@ function FlightPanel(props: CategoryPanelProps<FlightSearchFields>) {
     category: "flight" as const,
     tripId: props.tripId,
     offline: props.offline ?? false,
+    recordDisabled: props.recordDisabled ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -353,6 +370,7 @@ function LodgingPanel(props: CategoryPanelProps<LodgingSearchFields>) {
             category="lodging"
             tripId={props.tripId}
             offline={props.offline ?? false}
+            recordDisabled={props.recordDisabled ?? false}
             {...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null)}
             onOpenError={props.onOpenError}
           />
@@ -408,6 +426,7 @@ function TrainPanel(props: CategoryPanelProps<TrainSearchFields>) {
     category: "train" as const,
     tripId: props.tripId,
     offline: props.offline ?? false,
+    recordDisabled: props.recordDisabled ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -434,6 +453,7 @@ function CarRentalPanel(props: CategoryPanelProps<CarRentalSearchFields>) {
     category: "car_rental" as const,
     tripId: props.tripId,
     offline: props.offline ?? false,
+    recordDisabled: props.recordDisabled ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -458,6 +478,7 @@ function ExternalPanel(
     category: props.category,
     tripId: props.tripId,
     offline: props.offline ?? false,
+    recordDisabled: props.recordDisabled ?? false,
     ...(props.onUrlOpened !== undefined ? { onUrlOpened: props.onUrlOpened } : null),
     onOpenError: props.onOpenError,
   };
@@ -492,6 +513,7 @@ export function DeeplinkPanel({
   input,
   destinationName,
   offline = false,
+  recordDisabled = false,
   onUrlOpened,
 }: DeeplinkPanelProps) {
   const s = useStyles();
@@ -504,6 +526,7 @@ export function DeeplinkPanel({
     tripId,
     surface,
     offline,
+    recordDisabled,
     ...(destinationName !== undefined ? { destinationName } : null),
     ...(onUrlOpened !== undefined ? { onUrlOpened } : null),
     onOpenError: setOpenError,
