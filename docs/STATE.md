@@ -23,73 +23,9 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 `CLAUDE.md § Autonomy Contract`. Reviews are **local in-session**
 ([ADR-003](decisions/ADR-003-local-in-session-reviews.md)) — no GitHub Claude app.
 
-## ▶ NEXT SESSION — START HERE (written 2026-08-03, delete when stale)
-
-**Say "next" and do this, in order:**
-
-1. **Run `/review 19`.** T-7.9 shipped as **PR #19**
-   (`P-7/T-7-9-detail-offline`, head `b5288ab`, 29 files, mobile
-   898→**991 tests / 107 suites**). The builder stopped at PR creation by
-   design — it did not review or merge. That review is the whole job.
-   Its worktree is still mounted under `.claude/worktrees/` — the
-   correctness lane can run the CI gate there (sole writer), and any
-   mutation-probing lane needs its OWN `isolation: "worktree"`.
-2. **Everything you need about the change is in the PR body** — scope, spec
-   refs, pasted evidence, mutation-probe results, and a numbered
-   Interpretations list were all required deliverables. `gh pr view <N>`.
-3. **On merge → P-7 is CODE-COMPLETE.** Then: phase-QA checklist + the
-   **F-043..F-054 ledger flips** (Law #7 — flips need the feature exercised
-   in the running app, NOT green tests). P-6's checklist is still pending too.
-
-**Review-pipeline rules that cost real rounds when ignored:**
-
-- 🔴 **Count the WRITERS before fanning out lanes.** A gate-runner and a
-  falsification-prober both WRITE to the checkout. **At most ONE mutating
-  agent per worktree** — others get `isolation: "worktree"` (then check out
-  the PR branch AND build `@gogo/shared` + `@gogo/tokens`, or ~84 suites are
-  red) or run serially. Three concurrent probers produced a FALSE-RED gate
-  on PR #18. Pure readers (security/perf/conventions via `gh pr diff`) can
-  share freely. Canonical: `.claude/rules/pr-review-files.md`.
-- 🔴 **Brief every lane with the vacuous-pin taxonomy** (7 flavors, in
-  `.claude/rules/mobile.md` + below). Seven were found across PRs #16-#18;
-  all passed CI and lint and read correctly to a human. Only mutation found
-  them. Require: every negative assertion has an ungated CONTROL arm, and
-  every probe is confirmed applied via `git diff --stat` before its result
-  is trusted (a silent no-op mutation already produced one false claim).
-- 🔴 **TWO PROBE RULES LEARNED IN T-7.9 — brief every lane with these:**
-  (1) **`git diff --stat` is BLIND to files the PR ADDS**, so the standard
-  "confirm the probe applied" step silently lies on new modules and a real
-  probe looks exactly like a no-op mutation — run **`git add -N .` first**.
-  PR #19 adds 9 new files, so this WILL bite. (2) A "hold it in flight" pin
-  must release its deferred promise in **`finally`** — otherwise a failing
-  assertion leaves the mutation permanently in flight and the suite HANGS
-  (10 min observed) instead of going RED, so the probe reads as a timeout,
-  not a discriminating failure. Both are in `.claude/rules/mobile.md`.
-- **Highest-value review targets for PR #19:** (a) the **cancel flow is the
-  FIRST real consumer of `reconcileBookingRow`'s removal arm** — the builder
-  pins it end-to-end across two screens with a stateful fake server; verify
-  that pin genuinely reaches the removal arm and isn't satisfied some other
-  way; (b) **offline is DERIVED, not measured** — inferred from
-  `ApiRequestError(status: 0)`, and the builder states the limitation that a
-  fresh cache can hide offline; judge whether that's acceptable or a finding;
-  (c) absent travel legs (normal while Mapbox is parked) must not read as an
-  error anywhere in the new offline surface; (d) 28 interpretations — Law #4
-  completeness/accuracy has been a blocking finding on all three prior PRs
-  this phase; (e) fix diffs are where this phase's defects live — every fix
-  leg on #17/#18 introduced something the next round caught, so verify fixes
-  independently and re-review targeted lanes before the judge.
-- **`refresh-legs` deferral: builder resolved it WON'T BUILD** and the
-  reasoning looks sound — §2.10 names it out of scope ("Today tab — separate
-  bundle … day-of leg refresh"), R-ib-23's staleness job covers the online
-  case, and a refresh button beside deliberately-absent legs would read as
-  broken (R-itin-6 forbids exactly that). Sanity-check, then drop the row.
-- Round cap 4; judge is a fresh agent with no review history; merge
-  `--merge` only; CI green first — **note `main` has NO branch protection, so
-  that gate is discipline, not mechanism** (Sean's open item).
-
 ## Active phase context
 
-### P-7 — Itinerary & bookings (ACTIVE since 2026-07-31)
+### P-7 — Itinerary & bookings (CODE-COMPLETE 2026-08-10 — PHASE QA + F-043..F-054 FLIPS PENDING)
 
 - **The plan surface** (~6 PRs, 9 tasks T-7.1..T-7.9, PLANNING § P-7):
   bookings by category (10 detail types, §3.2 status machine, single-source
@@ -197,18 +133,28 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   (it wants the screen file) unless a seam is frozen first, per the W4
   precedent — the frozen-seam pattern produced ZERO conflicts across two
   large concurrent PRs and is the reason W4 worked.
-- **W6 DISPATCHED 2026-08-03 (in-flight, PHASE CLOSER):** T-7.9
-  [IT-9 R-itin-24..26 · IT-10 R-itin-27, R-itin-29] booking/item detail
-  screens + offline degrade — SERIAL, sole agent, isolated worktree off
-  `0473eac`. Owns both stub routes (`booking/[bookingId].tsx`,
-  `item/[itemId].tsx`), detail components, `data/bookings.ts` extensions
-  (cancel/delete), and the tab's offline posture. **Its cancel flow is the
-  FIRST real consumer of `reconcileBookingRow`'s removal arm** — the
-  cancelled-booking cache invariant becomes reachable here, so it must be
-  pinned both directions. Inherited deferrals routed to this task: T-7.8's
-  R-itin-29 offline deferral and T-7.5's `refresh-legs` client affordance
-  (R-itin-6 forbids a retry prompt on the chip surface itself).
-  **On merge, P-7 is CODE-COMPLETE → phase QA + F-043..F-054 ledger flips.**
+- **W6 ✅ T-7.9 MERGED a572947 (PR #19) 2026-08-10 — P-7 CODE-COMPLETE**
+  (all 9 tasks, PRs #11–#19; full round narrative: QUEUE row). Booking/item
+  detail + offline degrade; the cancel flow pinned end-to-end into
+  `reconcileBookingRow`'s removal arm (survived 2 novel verifier probes).
+  Mobile 898→**1011 tests / 107 suites**. 1 round + 1 fix leg (9e15a28 prod +
+  e8c63f9 tests) + independent verification, judge merge/high. R1: 2 blocking
+  (BOTH detail screens' R-itin-29 offline arms UNPINNED — a 5-way gap mutation
+  stayed 66/66 green against the PR's explicit both-screens claim; snake_case
+  `-field-{key}` testIDs forking the §2.7 kebab inventory) + 9 advisory —
+  8 fixed, ONE defer (offline signal blind to mutation-cache transport
+  failures → QUEUE row; rides the interp-15 measured-connectivity escalation).
+  `refresh-legs` inherited deferral CLOSED WON'T-BUILD (§2.10 names day-of leg
+  refresh verbatim; R-ib-23 covers online; R-itin-6 forbids the affordance —
+  citations lane-verified). **NEW LANDMINES:** held-in-flight pins must
+  collect deferred resolvers in an ARRAY (single slot strands the 2nd fire and
+  WEDGES the file instead of going RED — now in mobile.md); the deeplink
+  return-record store is device-local MMKV shared ACROSS trips — any clear
+  path must be role/context-guarded (fixer's failed-open guard, verifier-
+  validated). Large-diff escalation banner fired (3348 adds) — PR #16
+  note-not-stop precedent; `/code-review ultra` stays available on the merged
+  diff, Sean-triggered. **NEXT: phase QA — batch P-6 checklist ①–⑦ + P-7
+  checklist in ONE dev-client rebuild + sim session → F-030..F-054 flips.**
 - **🔴 NUL-BYTE / INVISIBLE-DIFF INCIDENT (T-7.5, the most important thing
   this phase learned).** Two raw `U+0000` bytes typed into
   `legs-model.ts` made git classify it BINARY: `gh pr diff` rendered ZERO
