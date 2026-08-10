@@ -92,6 +92,7 @@ export {
   CREATE_STATUS_OPTIONS,
   deeplinkInputFor,
   emptyFormState,
+  kebab,
   parseMoneyToCents,
   primaryStartKey,
   stateFromDetails,
@@ -105,6 +106,16 @@ export type {
   FieldValue,
   MoneyParse,
 } from "./add-edit/form-model";
+export {
+  BOOKING_SOURCE_LABELS,
+  BOOKING_STATUS_LABELS,
+  detailFieldRows,
+  detailStatusTone,
+  itemWhenLabel,
+  scheduleSummary,
+  statusActionsFor,
+} from "./detail/detail-model";
+export type { DetailFieldRow, ScheduleSummary } from "./detail/detail-model";
 export { BOOKING_DAY_LOCK_HINT, resolveDrop } from "./reorder";
 export type { DropResolution } from "./reorder";
 export { readItineraryViewMode, storeItineraryViewMode } from "./view-mode";

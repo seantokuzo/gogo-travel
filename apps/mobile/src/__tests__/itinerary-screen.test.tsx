@@ -15,9 +15,12 @@
  */
 import type { TripListItem } from "@gogo/shared";
 import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { useImperativeHandle, useRef } from "react";
 
 import ItineraryScreen from "@/app/[tripId]/itinerary/index";
 import { ApiRequestError } from "@/auth";
+import { storeItineraryViewMode } from "@/features/itinerary";
+import type { ItineraryDayListHandle, ItineraryDayListProps } from "@/features/itinerary";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID, TRIP_C_ID } from "@/test-utils/ids";
 import {
@@ -41,8 +44,62 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
 const mockPush = jest.fn();
+/** T-7.9: `?day=` drives the booking-detail return jump (R-itin-24). */
+const mockRouteParams: { value: Record<string, unknown> } = { value: {} };
+/**
+ * Mirrors the real router's semantics so the consumption pins are honest: a
+ * `setParams({ day: undefined })` REMOVES the key from the route, and the next
+ * render reads the consumed params. (Re-renders stay test-driven — the mock
+ * can't schedule one — so consumption-dependent tests rerender explicitly.)
+ */
+const mockSetParams = jest.fn((params: Record<string, unknown>) => {
+  const next: Record<string, unknown> = { ...mockRouteParams.value, ...params };
+  for (const key of Object.keys(next)) {
+    if (next[key] === undefined) delete next[key];
+  }
+  mockRouteParams.value = next;
+});
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ push: mockPush, replace: jest.fn(), back: jest.fn() }),
+  useRouter: () => ({
+    push: mockPush,
+    replace: jest.fn(),
+    back: jest.fn(),
+    setParams: mockSetParams,
+  }),
+  useLocalSearchParams: () => mockRouteParams.value,
+}));
+
+/**
+ * T-7.9 R1 (A1): the day-jump DISPATCH pins observe the screen's
+ * `listHandle.current?.scrollToDay(...)` seam. The wrapper renders the REAL
+ * `ItineraryDayList` (this suite's charter — a render-time fault in the drag
+ * list must still fail here) and only interposes on the imperative handle;
+ * the platform scroll itself stays sim-verified (jest lays out no virtualized
+ * rows). `mock`-prefixed module-scope names so the hoisted factory may
+ * reference them (jest's lazy-init exemption).
+ */
+const mockScrollToDay = jest.fn();
+const mockActualItinerary =
+  jest.requireActual<typeof import("@/features/itinerary")>("@/features/itinerary");
+function MockSpiedDayList({ ref, ...props }: ItineraryDayListProps) {
+  const inner = useRef<ItineraryDayListHandle>(null);
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToDay: (date) => {
+        mockScrollToDay(date);
+        inner.current?.scrollToDay(date);
+      },
+    }),
+    [],
+  );
+  return <mockActualItinerary.ItineraryDayList {...props} ref={inner} />;
+}
+jest.mock("@/features/itinerary", () => ({
+  // Lazily re-required here: the hoisted factory runs during import
+  // resolution, before this file's module-scope consts initialize.
+  ...jest.requireActual<typeof import("@/features/itinerary")>("@/features/itinerary"),
+  ItineraryDayList: MockSpiedDayList,
 }));
 
 function tripFixture(overrides?: Partial<TripListItem>): TripListItem {
@@ -65,18 +122,21 @@ async function renderItinerary(opts?: {
     trips: [trip],
     overrides: { ...itineraryApiOverrides(opts?.api), ...opts?.overrides },
   });
-  const view = await renderWithProviders(
+  // A FRESH element per call — `rerender` with the identical element
+  // reference makes React bail out on element identity and the screen never
+  // re-reads its route params (the consumption pins depend on that re-read).
+  const makeUi = () => (
     <TripProvider trip={trip}>
       <ItineraryScreen />
-    </TripProvider>,
-    { queryClient: makeTestQueryClient() },
+    </TripProvider>
   );
+  const view = await renderWithProviders(makeUi(), { queryClient: makeTestQueryClient() });
   // Settle BOTH queries' notify batches (setTimeout 0) inside an act window:
   // with two mounted queries, the second's notification otherwise lands
   // during a later findBy poll sleep — an un-acted update under contention
   // (B-2 class; surfaced in full-suite runs only).
   await settle();
-  return { request, trip, view };
+  return { request, trip, view, makeUi };
 }
 
 afterEach(async () => {
@@ -87,6 +147,13 @@ afterEach(async () => {
   await settle();
   jest.restoreAllMocks();
   mockPush.mockReset();
+  mockScrollToDay.mockReset();
+  // Clear, not reset: `mockSetParams` carries the router-mirroring
+  // implementation above.
+  mockSetParams.mockClear();
+  // T-7.9: route params are per-test state — a leaked `?day=` would silently
+  // arm the return jump in every later test.
+  mockRouteParams.value = {};
 });
 
 describe("day sections (R-itin-1)", () => {
@@ -306,5 +373,82 @@ describe("states (R-itin-28)", () => {
     await settle();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     expect(screen.queryByTestId("itinerary-error")).toBeNull();
+  });
+});
+
+describe("`?day=` return jump (T-7.9 / R-itin-24)", () => {
+  /**
+   * R1 (A1): the DISPATCH is pinned at the screen's handle seam (the
+   * `SpiedDayList` wrapper above); the platform scroll stays sim-verified.
+   * The target still resolves against the BUILT section list, so malformed
+   * and out-of-range values degrade to no dispatch at all.
+   */
+  it("dispatches ONE scroll to a valid in-range day and CONSUMES the param", async () => {
+    mockRouteParams.value = { day: TRIP_END };
+    await renderItinerary();
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_END}`)).toBeTruthy();
+    expect(screen.getByTestId("itinerary-day-list")).toBeTruthy();
+    await waitFor(() => expect(mockScrollToDay).toHaveBeenCalledTimes(1));
+    expect(mockScrollToDay).toHaveBeenCalledWith(TRIP_END);
+    // Consumed after handling — the param is genuinely gone from the route.
+    expect(mockSetParams).toHaveBeenCalledWith({ day: undefined });
+    expect(mockRouteParams.value).toEqual({});
+  });
+
+  it("a REPEAT jump to the SAME day re-fires — the consumption resets the effect between", async () => {
+    mockRouteParams.value = { day: TRIP_END };
+    const { view, makeUi } = await renderItinerary();
+    await waitFor(() => expect(mockScrollToDay).toHaveBeenCalledTimes(1));
+    await settle();
+
+    // The router re-renders the route with the consumed (empty) params…
+    await view.rerender(makeUi());
+    await settle();
+    expect(mockScrollToDay).toHaveBeenCalledTimes(1);
+
+    // …then a SECOND booking's schedule row navigates back with the identical
+    // day. Un-consumed, the params would be byte-identical and the effect
+    // could never re-fire — R-itin-24 would work once per day value.
+    mockRouteParams.value = { day: TRIP_END };
+    await view.rerender(makeUi());
+    await settle();
+    await waitFor(() => expect(mockScrollToDay).toHaveBeenCalledTimes(2));
+    expect(mockScrollToDay).toHaveBeenNthCalledWith(2, TRIP_END);
+  });
+
+  it("degrades a malformed `?day=` to NO dispatch instead of throwing", async () => {
+    // A mangled deep link must not reach `scrollToDay` with a non-ISO value.
+    mockRouteParams.value = { day: "not-a-date" };
+    await renderItinerary();
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
+    await settle();
+    expect(mockScrollToDay).not.toHaveBeenCalled();
+  });
+
+  it("degrades a REPEATED `?day=` (string[]) the same way", async () => {
+    mockRouteParams.value = { day: [TRIP_START, TRIP_END] };
+    await renderItinerary();
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
+    await settle();
+    expect(mockScrollToDay).not.toHaveBeenCalled();
+  });
+
+  it("arriving in GRID mode consumes WITHOUT dispatching — a later grid→list toggle does not scroll", async () => {
+    // Persist grid for this trip first (the R-itin-9 store the screen reads
+    // at mount) — the toggle back below restores list mode (file hygiene).
+    storeItineraryViewMode(TEST_TRIP_ID, "grid");
+    mockRouteParams.value = { day: TRIP_END };
+    await renderItinerary();
+    expect(await screen.findByTestId("itinerary-grid-surface")).toBeTruthy();
+    // The param is consumed (grid has no scroll-to-day seam; silently doing
+    // nothing beats yanking the persisted view mode) with NO dispatch…
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledWith({ day: undefined }));
+    expect(mockScrollToDay).not.toHaveBeenCalled();
+
+    // …so a grid→list toggle minutes later must NOT scroll to the stale day.
+    await fireEvent.press(screen.getByTestId("itinerary-view-toggle"));
+    expect(await screen.findByTestId(`itinerary-day-header-${TRIP_START}`)).toBeTruthy();
+    await settle();
+    expect(mockScrollToDay).not.toHaveBeenCalled();
   });
 });

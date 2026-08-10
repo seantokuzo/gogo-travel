@@ -265,6 +265,61 @@ export interface ItemUpdateVars {
  * truth to reconcile to — R-ib-18, no improvised conflict handling beyond
  * it). Post-state replaces the cached row wherever its day landed.
  */
+/**
+ * Drop one item from the composite read. Legs referencing it are dropped too:
+ * a leg whose endpoint no longer exists can never be rendered (the day-row
+ * model looks legs up by item-id pair) and the server deletes it on the next
+ * recompute (R-ib-22) — leaving it in the cache is dead weight that a future
+ * item reusing the id could, in principle, resurrect against.
+ */
+export function removeItineraryItem(read: ItineraryRead, itemId: string): ItineraryRead {
+  return {
+    items: read.items.filter((item) => item.id !== itemId),
+    legs: read.legs.filter((leg) => leg.from_item_id !== itemId && leg.to_item_id !== itemId),
+  };
+}
+
+/**
+ * `DELETE /trips/:tripId/itinerary/items/:itemId` (R-ib-9/19) — the item
+ * detail's delete action (T-7.9 / IT-10, R-itin-27).
+ *
+ * NOT optimistic (module-doc policy) — and here that is load-bearing rather
+ * than stylistic: for a `booking`-kind item this endpoint is UNSCHEDULE, not
+ * deletion (R-ib-9 reverts a `planned` parent to `idea`; a `booked` parent
+ * 409s outright), so an optimistic removal would have to guess a server-side
+ * status transition it cannot see and would show a phantom removal for the
+ * 409 case. Success prunes the item from the composite read and invalidates
+ * the booking root, because the parent booking's status may have moved.
+ */
+export function useDeleteItineraryItem(
+  tripId: string,
+  options?: ItineraryMutationOptions<string>,
+): UseMutationResult<string, Error, string> {
+  const qc = useQueryClient();
+  const key = queryKeys.tripItinerary(tripId);
+  return useMutation({
+    mutationFn: async (itemId: string) => {
+      await apiClient.request(itineraryEndpoints.deleteItineraryItem, {
+        params: { tripId, itemId },
+      });
+      // 204 — the id is the only post-state (and what the seam needs to close).
+      return itemId;
+    },
+    onSuccess: (itemId) => {
+      options?.onMutationSuccess?.(itemId);
+      qc.setQueryData<ItineraryRead>(key, (old) =>
+        old === undefined ? old : removeItineraryItem(old, itemId),
+      );
+      // R-ib-9: a booking-kind delete is an unschedule — the parent's status
+      // (and the Ideas bucket that renders it) moved server-side.
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+    },
+    onError: (err) => {
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
 export function useUpdateItineraryItem(
   tripId: string,
   options?: ItineraryMutationOptions<ItineraryItem>,

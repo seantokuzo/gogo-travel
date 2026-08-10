@@ -16,7 +16,7 @@ export {
   GOOGLE_MAPS_DIRECTIONS_BASE,
 } from "./directions";
 export type { DirectionsInput } from "./directions";
-export { DeeplinkPanel, deeplinkButtonTestID } from "./DeeplinkPanel";
+export { DeeplinkPanel, deeplinkButtonTestID, DEEPLINK_OFFLINE_HINT } from "./DeeplinkPanel";
 export type {
   DeeplinkPanelProps,
   DeeplinkSearchInput,

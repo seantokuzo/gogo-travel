@@ -43,6 +43,8 @@ jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 jest.mock("expo-linking", () => ({ openURL: jest.fn(async () => true) }));
 jest.mock("expo-router", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), back: jest.fn() }),
+  // T-7.9: the screen reads `?day=` for the booking-detail return jump.
+  useLocalSearchParams: () => ({}),
 }));
 
 const openURLMock = Linking.openURL as jest.Mock;

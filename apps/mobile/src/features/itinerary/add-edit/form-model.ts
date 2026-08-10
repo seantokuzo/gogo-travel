@@ -121,6 +121,15 @@ export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingF
   ],
 };
 
+/**
+ * Kebab-case a `CATEGORY_FIELDS` key for the §2.9 testID grammar — ONE home so
+ * the form inputs and the detail grid can never fork the id family
+ * (`…-input-flight-number` / `booking-detail-field-flight-number`).
+ */
+export function kebab(key: string): string {
+  return key.replaceAll("_", "-");
+}
+
 /** The category's primary-start detail key (§3.3 table) — gap-tap prefill target. */
 export function primaryStartKey(category: BookingCategory): string {
   switch (category) {
