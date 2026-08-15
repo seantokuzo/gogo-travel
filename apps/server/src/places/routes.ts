@@ -30,7 +30,7 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Paginated } from "@gogo/shared/api/envelope";
-import { placeEndpoints, type Place } from "@gogo/shared/domains/place";
+import { placeEndpoints, type Place, type PlaceDetails } from "@gogo/shared/domains/place";
 import { regionCellsForBbox } from "@gogo/shared/region-grid";
 import {
   PLACES_SEARCH_MISS_MAX_CELLS,
@@ -259,6 +259,57 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
 
       const body: Paginated<Place> = { items, nextCursor };
       return c.json(body);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // GET /places/:placeId — details (T-8.1 / PL-3): spine read + the DORMANT
+  // fetch-fresh seam (R-places-11..14; premium details MVP-deferred, Gate 2).
+  // Registered AFTER /places/search so registration order alone guarantees
+  // the static path wins; the `resolvePlaceAccess` UUID pre-check would fold
+  // a stray "search" into the canonical 404 anyway (belt and suspenders).
+  // Visibility is THE shared predicate (visibility.ts): spine/owned/
+  // referenced are readable, anything else 404s indistinguishably from
+  // absent (R-places-8 posture — Law #3).
+  //
+  // v1 `?fresh=true` semantics (PL-3: "spine read + fresh_unavailable_reason
+  // plumbing only" — the FSQ client, entitlement read, and per-user/global
+  // guards are DEFERRED with the premium feature): `fresh` is never present;
+  // the reason is `no_fsq_id` for places with no FSQ id to query (§3.4:
+  // only `fsq_os` rows have one) and `disabled` otherwise (the deployment
+  // has no FSQ integration — R-places-14's disable semantics, spine-only
+  // responses continue).
+  // -------------------------------------------------------------------------
+  router.get(
+    placeEndpoints.getPlace.path,
+    zValidator("query", placeEndpoints.getPlace.query, (result, c) =>
+      result.success ? undefined : rejectInvalidBody(c, result.error),
+    ),
+    async (c) => {
+      const { userId } = authContextOf(c);
+      const freshRequested = c.req.valid("query").fresh === true;
+
+      // R-places-11: non-cacheable whenever `fresh` was requested — set
+      // BEFORE any branch so every outcome (200 AND the 404 arm) carries it
+      // uniformly. No oracle: the header depends only on caller-controlled
+      // input, never on resource state, so 404 byte-identity within a given
+      // `fresh` value is preserved.
+      if (freshRequested) c.header("Cache-Control", "no-store");
+
+      const access = await resolvePlaceAccess(deps.db, {
+        placeId: c.req.param("placeId"),
+        userId,
+      });
+      if (access.kind === "not_found") return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+
+      const body: PlaceDetails = { place: toPlaceWire(access.row) };
+      if (freshRequested) {
+        // `fsq_os` ⇒ `source_id` present (DB CHECK: custom ⇔ NULL source_id;
+        // spine rows always carry their upstream id) — so source alone
+        // decides the no-FSQ-id arm (§3.4).
+        body.fresh_unavailable_reason = access.row.source === "fsq_os" ? "disabled" : "no_fsq_id";
+      }
+      return c.json(body satisfies PlaceDetails);
     },
   );
 

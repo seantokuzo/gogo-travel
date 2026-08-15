@@ -53,17 +53,35 @@ export const PlaceSchema = z
   });
 export type Place = z.infer<typeof PlaceSchema>;
 
+/**
+ * Saved-place note cap — the notes-like-prose bound (2000, the itinerary
+ * `ItemNotesSchema` / booking `optionalNotes` convention). Applied on BOTH
+ * the write shapes and the read schema (caps cover every schema class —
+ * T-7.1 landmine): the server only ever persists what the write cap admitted,
+ * so the read bound can never reject a legitimate row.
+ */
+const SavedPlaceNoteSchema = z.string().max(2000);
+
 export const SavedPlaceSchema = z.object({
   id: UuidSchema,
   trip_id: UuidSchema,
   place_id: UuidSchema,
-  note: z.string().nullable(),
+  note: SavedPlaceNoteSchema.nullable(),
   /** Attribution in collab trips; nullable so member removal doesn't lose the pin. */
   created_by: UuidSchema.nullable(),
   created_at: ISODateTimeSchema,
   updated_at: ISODateTimeSchema,
 });
 export type SavedPlace = z.infer<typeof SavedPlaceSchema>;
+
+/**
+ * List/read/write saved-place responses embed the place row (`SavedPlace &
+ * { place: Place }`, spec §3.2) — one round trip renders the map pins + list.
+ */
+export const SavedPlaceWithPlaceSchema = SavedPlaceSchema.extend({
+  place: PlaceSchema,
+});
+export type SavedPlaceWithPlace = z.infer<typeof SavedPlaceWithPlaceSchema>;
 
 // ---------------------------------------------------------------------------
 // Coarse categories (§3.2.3) — pure mapping over the shared config tables
@@ -280,10 +298,137 @@ export type PlaceSearchQuery = z.infer<typeof PlaceSearchQuerySchema>;
 export type PlaceSearchQueryInput = z.input<typeof PlaceSearchQuerySchema>;
 
 // ---------------------------------------------------------------------------
+// Place details (§3.3 GET /places/:placeId, R-places-11..14/17 — PL-3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Why `fresh` was requested but not returned (§3.3 response contract).
+ * Append-only tuple (R-shared-2 pattern; wire enum owned by this domain):
+ *  - `no_fsq_id` — only `fsq_os`-sourced places carry an FSQ id to query
+ *    (§3.4); Overture/custom places can never have premium details.
+ *  - `not_entitled` — `resolveEntitlements(user).premium_place_details`
+ *    is false (R-places-12; ADR-005 seam).
+ *  - `upstream_error` — the FSQ call failed / timed out (R-places-13).
+ *  - `disabled` — the fresh feature is off: the global budget guard tripped
+ *    (R-places-14) or the deployment has no FSQ integration (all of v1 —
+ *    premium details are MVP-deferred, resolved Gate 2).
+ */
+export const FRESH_UNAVAILABLE_REASONS = [
+  "no_fsq_id",
+  "not_entitled",
+  "upstream_error",
+  "disabled",
+] as const;
+export const FreshUnavailableReasonSchema = z.enum(FRESH_UNAVAILABLE_REASONS);
+export type FreshUnavailableReason = z.infer<typeof FreshUnavailableReasonSchema>;
+
+/**
+ * Fetch-fresh premium details (§3.2) — NEVER persisted anywhere: no
+ * Postgres, no server cache, no logs, no client store (R-places-11 /
+ * R-map-9; licensing). DORMANT in v1: premium details are MVP-deferred
+ * (Gate 2), so no server code path produces this shape yet — it is the
+ * frozen wire contract the post-MVP FSQ integration fills. Field types are
+ * deliberately display-shaped and capped (strings, arrays, AND array
+ * elements — the T-7.1 caps landmine; FSQ is an untrusted upstream); the
+ * field-exact FSQ mapping is pinned when that integration lands (§3.2).
+ */
+export const FreshPlaceDetailsSchema = z.object({
+  fetched_at: ISODateTimeSchema.max(64),
+  /** Foursquare-required attribution — present on EVERY fresh block (R-places-17). */
+  attribution: z.object({
+    text: z.string().max(300),
+    logo_required: z.boolean(),
+    url: z.string().max(2048),
+  }),
+  fields: z.object({
+    /** Display-ready hours summary. */
+    hours: z.string().max(500).optional(),
+    open_now: z.boolean().optional(),
+    /** FSQ rating scale 0–10. */
+    rating: z.number().min(0).max(10).optional(),
+    /** FSQ price tier 1–4. */
+    price_level: z.int().min(1).max(4).optional(),
+    photos: z.array(z.string().max(2048)).max(20).optional(),
+    tips: z
+      .array(
+        z.object({
+          text: z.string().max(2000),
+          created_at: ISODateTimeSchema.max(64),
+        }),
+      )
+      .max(20)
+      .optional(),
+    website: z.string().max(2048).optional(),
+    phone: z.string().max(50).optional(),
+  }),
+});
+export type FreshPlaceDetails = z.infer<typeof FreshPlaceDetailsSchema>;
+
+/**
+ * `GET /places/:placeId` response (§3.3): spine data always; `fresh` present
+ * only when requested AND `source='fsq_os'` AND entitled AND the FSQ call
+ * succeeded within budget (never in v1 — dormant seam);
+ * `fresh_unavailable_reason` present exactly when `fresh` was requested but
+ * is absent. Served with `Cache-Control: no-store` whenever `fresh` was
+ * requested (R-places-11).
+ */
+export const PlaceDetailsSchema = z.object({
+  place: PlaceSchema,
+  fresh: FreshPlaceDetailsSchema.optional(),
+  fresh_unavailable_reason: FreshUnavailableReasonSchema.optional(),
+});
+export type PlaceDetails = z.infer<typeof PlaceDetailsSchema>;
+
+/**
+ * `GET /places/:placeId` query (§3.3): `fresh?` boolean, default false —
+ * query-string boolean via `stringbool` (the bookings `unscheduled`
+ * precedent; unrecognized values are a 400, never silently false).
+ */
+export const PlaceDetailsQuerySchema = z.object({
+  fresh: z.stringbool().optional(),
+});
+export type PlaceDetailsQuery = z.infer<typeof PlaceDetailsQuerySchema>;
+/** The pre-parse (client-side / query-string) shape. */
+export type PlaceDetailsQueryInput = z.input<typeof PlaceDetailsQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Saved-place write/query shapes (§3.3, R-places-15/16 — PL-4)
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /trips/:tripId/saved-places` (§3.3): the server sets
+ * `created_by = caller`; `place_id` must be visible to the caller (Law #3 —
+ * an invisible custom place 404s indistinguishably from an absent one).
+ */
+export const SavedPlaceCreateSchema = z.object({
+  place_id: UuidSchema,
+  note: SavedPlaceNoteSchema.optional(),
+});
+export type SavedPlaceCreate = z.infer<typeof SavedPlaceCreateSchema>;
+
+/** `PATCH /trips/:tripId/saved-places/:savedPlaceId` (§3.3): `null` clears the note. */
+export const SavedPlaceUpdateSchema = z.object({
+  note: SavedPlaceNoteSchema.nullable(),
+});
+export type SavedPlaceUpdate = z.infer<typeof SavedPlaceUpdateSchema>;
+
+/**
+ * `GET /trips/:tripId/saved-places` query (§3.3): default 100 — the map
+ * wants the full pin set in one page for typical trips; the bound here IS
+ * the cap (trips convention), larger pin sets paginate.
+ */
+export const SavedPlacesListQuerySchema = CursorQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+export type SavedPlacesListQuery = z.infer<typeof SavedPlacesListQuerySchema>;
+
+// ---------------------------------------------------------------------------
 // Endpoint descriptors (places spec §3.3; contracts spec §3.6)
 // ---------------------------------------------------------------------------
 
 const placeIdParams = z.object({ placeId: UuidSchema });
+const savedPlacesTripParams = z.object({ tripId: UuidSchema });
+const savedPlaceParams = z.object({ tripId: UuidSchema, savedPlaceId: UuidSchema });
 
 /**
  * Machine-readable mirror of the PL-2 routes (T-6.5). All run behind
@@ -315,6 +460,20 @@ export const placeEndpoints = {
     body: PlaceCreateSchema,
     response: PlaceSchema,
   },
+  /**
+   * Place details (PL-3): spine read + the dormant fetch-fresh seam
+   * (R-places-11..14 — premium details MVP-deferred, so v1 answers
+   * `?fresh=true` with spine data + `fresh_unavailable_reason`, under
+   * `Cache-Control: no-store`). Invisible custom place → the
+   * indistinguishable 404 (R-places-8 posture).
+   */
+  getPlace: {
+    method: "GET",
+    path: "/places/:placeId",
+    params: placeIdParams,
+    query: PlaceDetailsQuerySchema,
+    response: PlaceDetailsSchema,
+  },
   /** Creator-only; spine places reject mutation for everyone (R-places-10). */
   updatePlace: {
     method: "PATCH",
@@ -328,6 +487,43 @@ export const placeEndpoints = {
     method: "DELETE",
     path: "/places/:placeId",
     params: placeIdParams,
+    response: NoContentSchema,
+  },
+  /**
+   * Saved-places CRUD (PL-4, R-places-15/16). All four run behind
+   * `requireAuth` + the trip-membership gate: a non-member's 404 is
+   * byte-identical to an absent trip's (F-038 posture); reads are any-role,
+   * writes are owner/editor (viewer → 403, server-enforced — the R-ib-24
+   * pattern).
+   */
+  listSavedPlaces: {
+    method: "GET",
+    path: "/trips/:tripId/saved-places",
+    params: savedPlacesTripParams,
+    query: SavedPlacesListQuerySchema,
+    response: paginatedSchema(SavedPlaceWithPlaceSchema),
+  },
+  /** Save-once semantics: duplicate `(trip, place)` → 409 CONFLICT (R-places-16). */
+  createSavedPlace: {
+    method: "POST",
+    path: "/trips/:tripId/saved-places",
+    params: savedPlacesTripParams,
+    body: SavedPlaceCreateSchema,
+    response: SavedPlaceWithPlaceSchema,
+  },
+  /** Note edit; `null` clears (R-places-15). */
+  updateSavedPlace: {
+    method: "PATCH",
+    path: "/trips/:tripId/saved-places/:savedPlaceId",
+    params: savedPlaceParams,
+    body: SavedPlaceUpdateSchema,
+    response: SavedPlaceWithPlaceSchema,
+  },
+  /** Unsave — no tombstone; a re-save afterwards succeeds (R-places-15). */
+  deleteSavedPlace: {
+    method: "DELETE",
+    path: "/trips/:tripId/saved-places/:savedPlaceId",
+    params: savedPlaceParams,
     response: NoContentSchema,
   },
 } as const satisfies Record<string, EndpointDescriptor>;

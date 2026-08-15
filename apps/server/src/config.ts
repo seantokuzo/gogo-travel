@@ -246,6 +246,14 @@ export const PLACES_SEARCH_MISS_MAX_CELLS = 9;
 export const PLACES_SEARCH_MISS_GLOBAL_PER_WINDOW = 200;
 export const PLACES_SEARCH_MISS_GLOBAL_WINDOW_MS = HOUR_MS;
 
+/**
+ * `GET /trips/:tripId/saved-places` default page size when the client omits
+ * `limit` (places spec §3.3: default 100 — the map wants the full pin set in
+ * one page for typical trips). The hard cap (100) lives in the shared
+ * `SavedPlacesListQuerySchema` — spec §3.3.
+ */
+export const SAVED_PLACES_PAGE_SIZE_DEFAULT = 100;
+
 // ---------------------------------------------------------------------------
 // Bookings surface (itinerary-bookings spec §3.4) — T-7.1
 // ---------------------------------------------------------------------------
