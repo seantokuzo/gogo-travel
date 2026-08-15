@@ -54,6 +54,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   - **W3 (∥ worktrees):** T-8.3 interactions ∥ T-8.4 place detail + focus
     contract.
   - **W4:** T-8.5 offline packs + closer rider.
+  - **PHASE-QA ATTEMPT 2026-08-15** (the rebuild leg of W2's plan): the ONE
+    dev-client rebuild ✅ **PASSED on main@293d0ef** — prebuild + CocoaPods
+    clean (the feared Mapbox-SDK pod failure did NOT occur); bake verified
+    in the built dylib (RNMBX ×244, RNDateTimePicker ×36, ExpoNetwork,
+    MapboxCommon/CoreMaps/Turf/ExpoLocation frameworks, hermes-engine
+    250829098.0.16); native smoke PASS (dtp real UIDatePicker · network ·
+    location get-not-request no-TCC · clipboard seam round-trip); tokenless
+    MapView = blank canvas + 401 MapLoad, documented expected state. BUT
+    **all P-6 ①–⑦ + all P-7 checklist legs BLOCKED(creds)** — T-6.6 retired
+    the "Open sample trip" dev door, no auth bypass exists (JWKS-verified
+    sign-in only, no session seeding, server boots health-only without auth
+    env), no tap automation. **ZERO ledger flips** (Law #7 — partial engine
+    evidence only for F-052 picker module + F-054 copy engine, below the
+    bar). Sean decision PENDING: **(a)** drop the OAuth/server env → QA
+    runs signed-in, or **(b)** approve a `__DEV__` session door (Autonomy
+    Contract trigger #4). Evidence: `.tmp/qa-2026-08-15/MANIFEST.md`. Metro
+    left running; rebuilt app installed on sim A6D3CE7C.
 - **Key rulings** (six — PLANNING § P-8 Prep bullet; brief:
   `.tmp/p8-readiness-brief.md`): focusPlaceId = pending-focus store;
   warm-session offline bar — NO TQ persister; photo pins fixture-tested,
@@ -283,8 +300,11 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   [PHASE-006](history/PHASE-006-trips-collab-places.md); per-PR detail in
   QUEUE "Recently done". Ledger **F-030..F-042 stays `passes:false`** until
   the checklist below runs (Law #7).
-- **PHASE-QA CHECKLIST (run on sim before ledger flips; REBUILD the dev
-  client FIRST — datetimepicker native module):** ① two-account collab loop:
+- **PHASE-QA CHECKLIST (run on sim before ledger flips; rebuild precondition
+  ✅ MET 2026-08-15 — dev client rebuilt on main@293d0ef, datetimepicker
+  baked; the blocker is now CREDS, not the build — no signed-in path on sim;
+  see the P-8 PHASE-QA ATTEMPT bullet + QUEUE row for Sean's (a)/(b) unblock
+  decision):** ① two-account collab loop:
   create → invite (share sheet opens) → join via gogo:// link → role change →
   transfer → remove (T-6.2/6.8/6.9); ② warm-start deep-link URL transport
   (jest-untestable leg, T-6.6); ③ offline cached-shell mount
