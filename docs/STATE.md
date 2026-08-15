@@ -25,6 +25,36 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
+### P-8 — Maps, saved places & offline tile packs (ACTIVE since 2026-08-15)
+
+- **Scope** (PLANNING § P-8): @rnmapbox/maps themed map, 3 pin families +
+  clustering + day filter, place sheet/detail w/ spine data + dormant fresh
+  seam, spine-backed search, foreground-only location, offline
+  StylePacks/TileRegions w/ hygiene, map↔itinerary cross-nav. Scoped
+  2026-08-15: 6 tasks T-8.1..T-8.6, ledger F-055..F-062, ~5 PRs, **ALL
+  BUILDS TOKENLESS** (SDK download auth dead — pk token = Sean item at
+  phase QA).
+- **Wave plan:**
+  - **W1 — DISPATCHED 2026-08-15** in parallel isolated worktrees off
+    `171c39e`: T-8.1 place detail + saved-places CRUD [PL-3, PL-4] ∥ T-8.6
+    native scaffold; branches `P-8/T-8-1-place-detail-saved-places` +
+    `P-8/T-8-6-maps-native-scaffold`. After both merge → ONE dev-client
+    rebuild → P-6+P-7 sim QA runs ∥ W2.
+  - **W2:** T-8.2 shell freezes 3 seams (sheet mount + onPinSelect, offline
+    status-pill slot, pending-focus stub).
+  - **W3 (∥ worktrees):** T-8.3 interactions ∥ T-8.4 place detail + focus
+    contract.
+  - **W4:** T-8.5 offline packs + closer rider.
+- **Key rulings** (six — PLANNING § P-8 Prep bullet; brief:
+  `.tmp/p8-readiness-brief.md`): focusPlaceId = pending-focus store;
+  warm-session offline bar — NO TQ persister; photo pins fixture-tested,
+  empty-in-prod till P-12; config-swap default Mapbox styles; token at
+  phase QA.
+- **File-ownership note:** T-8.1 owns `apps/server/src/places/**` +
+  `packages/shared` place domain + schema/migration; T-8.6 owns
+  `apps/mobile` package.json/app.json + `packages/tokens` + lockfile —
+  disjoint by construction.
+
 ### P-7 — Itinerary & bookings (CODE-COMPLETE 2026-08-10 — PHASE QA + F-043..F-054 FLIPS PENDING)
 
 - **The plan surface** (~6 PRs, 9 tasks T-7.1..T-7.9, PLANNING § P-7):
@@ -347,8 +377,8 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   Sean rulings: ONE dev-client rebuild (T-8.6 absorbs the datetimepicker
   obligation) with **P-6+P-7 sim QA running ∥ P-8 W1 review**; Mapbox pk
   token deferred to P-8 phase QA (builds are tokenless — download auth dead);
-  default Mapbox styles behind config swap. Awaiting dispatch buy-in for W1
-  (T-8.1 server ∥ T-8.6 scaffold).
+  default Mapbox styles behind config swap. W1 DISPATCHED 2026-08-15
+  (Sean buy-in) (T-8.1 server ∥ T-8.6 scaffold).
 
 - ~~S-1 stack~~ → **LOCKED 2026-07-09 as
   [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md)**: Expo/RN +
