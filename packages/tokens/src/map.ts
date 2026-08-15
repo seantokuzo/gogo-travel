@@ -45,7 +45,9 @@ const dayColorCache = new WeakMap<Theme, MapDayColors>();
 
 /**
  * Ordered, scheme-tuned 8-hue day-color cycle (map spec §2.2). Consumers
- * index with `dayColors[dayIndex % dayColors.length]`.
+ * index with the Euclidean modulo `dayColors[((dayIndex % 8) + 8) % 8]` —
+ * R-itin-1 unions item days outside the trip range, so `dayIndex` can be
+ * negative, and JS `%` yields a negative remainder (undefined lookup).
  */
 export function mapDayColors(theme: Theme): MapDayColors {
   let colors = dayColorCache.get(theme);

@@ -79,6 +79,25 @@ describe("mapDayColors (map spec §2.2)", () => {
     }
   });
 
+  it("pins the tuning DIRECTION: light = mid(500)/deep(800) stops, dark = mid(400)/soft(200) stops", () => {
+    for (const name of THEME_NAMES) {
+      const light = getTheme(name, "light");
+      const dark = getTheme(name, "dark");
+      const lightDays = mapDayColors(light);
+      const darkDays = mapDayColors(dark);
+      // Mid stops carry days 1–4 (info leads, success second)…
+      expect(lightDays[0], `${name} × light: day 1 mid stop`).toBe(light.ramp.info[500]);
+      expect(lightDays[1], `${name} × light: day 2 mid stop`).toBe(light.ramp.success[500]);
+      expect(darkDays[0], `${name} × dark: day 1 mid stop`).toBe(dark.ramp.info[400]);
+      expect(darkDays[1], `${name} × dark: day 2 mid stop`).toBe(dark.ramp.success[400]);
+      // …days 5–8 are deepened (light) / softened (dark), never the reverse.
+      expect(lightDays[4], `${name} × light: day 5 deep stop`).toBe(light.ramp.info[800]);
+      expect(lightDays[5], `${name} × light: day 6 deep stop`).toBe(light.ramp.success[800]);
+      expect(darkDays[4], `${name} × dark: day 5 soft stop`).toBe(dark.ramp.info[200]);
+      expect(darkDays[5], `${name} × dark: day 6 soft stop`).toBe(dark.ramp.success[200]);
+    }
+  });
+
   it("is palette-invariant per scheme (status ramps are shared, so day identity survives accent switches)", () => {
     for (const scheme of SCHEMES) {
       const reference = mapDayColors(getTheme("goldenHour", scheme));
@@ -120,7 +139,7 @@ describe("mapColors (map spec §2.2)", () => {
     });
   });
 
-  it("traces every concern to its spec'd theme token", () => {
+  it("traces every concern to its designated theme token", () => {
     forEachTheme((theme, label) => {
       const colors = mapColors(theme);
       // §2.2: saved-but-unscheduled pins = accent
@@ -135,11 +154,13 @@ describe("mapColors (map spec §2.2)", () => {
       // cluster count ink rides the R-ds-8-validated onSolid/solid pairing
       expect(colors.clusterFill, label).toBe(theme.color.primary.solid);
       expect(colors.clusterText, label).toBe(theme.color.primary.onSolid);
-      // route line (future §2.2 reservation) comes from the info ramp
+      // route line (future §2.2 reservation) comes from the info ramp…
       expect(
         rampValues(theme.ramp.info).has(colors.routeLine),
         `${label}: routeLine must come from the info ramp`,
       ).toBe(true);
+      // …but never collides with a day stop (a route must not read as a day)
+      expect(mapDayColors(theme), label).not.toContain(colors.routeLine);
     });
   });
 });

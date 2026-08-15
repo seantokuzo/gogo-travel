@@ -218,8 +218,10 @@ export interface MapColors {
 
 /**
  * Ordered 8-hue day-color cycle (map spec §2.2): itinerary pin day index =
- * `(day - trip.start_date)`, color = `dayColors[dayIndex % 8]`; the pin
- * glyph carries the day number so color is never the only signal.
+ * `(day - trip.start_date)`, color = `dayColors[((dayIndex % 8) + 8) % 8]`
+ * (Euclidean modulo — R-itin-1 unions item days outside the trip range, so
+ * `dayIndex` can be negative and JS `%` yields a negative remainder); the
+ * pin glyph carries the day number so color is never the only signal.
  */
 export type MapDayColors = readonly [
   string,
