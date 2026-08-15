@@ -27,7 +27,7 @@
  * spec'd id string in `properties.testID` instead — the stable handle unit
  * tests pin and native-side feature queries can match on.
  */
-import type { Booking, ItineraryItem, SavedPlaceWithPlace } from "@gogo/shared";
+import type { Booking, ItineraryItem, Photo, SavedPlaceWithPlace } from "@gogo/shared";
 import type { MapColors, MapDayColors } from "@gogo/tokens";
 
 import { dayColorFor, dayIndexFor, dayNumberLabel } from "./day-colors";
@@ -51,6 +51,13 @@ export interface PinFeatureProperties {
   photoId: string | null;
   /** Wall-day index from trip start (itinerary family only) — may be negative. */
   dayIndex: number | null;
+  /**
+   * Wall-day index of `end_day` for SPANNING itinerary items (check-out
+   * date, schema spec §3.3.10); null for point items and other families.
+   * The day filter matches every covered day (`day-filter.ts`) — the
+   * itinerary grid's span treatment, mirrored.
+   */
+  endDayIndex: number | null;
   /** Paint color — data-driven via `['get', 'color']` (cluster-config.ts). */
   color: string;
   /** Day-number glyph (itinerary family only, §2.2). */
@@ -115,6 +122,7 @@ export function savedPinFeatures(
         itemId: null,
         photoId: null,
         dayIndex: null,
+        endDayIndex: null,
         color: colors.pinSaved,
         label: null,
       },
@@ -135,7 +143,9 @@ export interface ItineraryPinInput {
  * Itinerary pins — day-color coded (R-map-1, §2.2). An item's place is its
  * own `place_id` or, for `booking`-kind items, the parent booking's; items
  * with no resolvable coordinate are omitted (module doc). Multi-day items
- * pin on their `day` (check-in) index.
+ * are SPAN-AWARE: the pin wears its `day` (check-in) color + glyph, and
+ * carries `endDayIndex` so the day filter keeps it visible on every covered
+ * day (mid-stay included) — mirroring the itinerary grid's span treatment.
  */
 export function itineraryPinFeatures(input: ItineraryPinInput): PinFeatureCollection {
   const bookingPlaceById = new Map(input.bookings.map((b) => [b.id, b.place_id]));
@@ -158,6 +168,7 @@ export function itineraryPinFeatures(input: ItineraryPinInput): PinFeatureCollec
         itemId: item.id,
         photoId: null,
         dayIndex,
+        endDayIndex: item.end_day !== null ? dayIndexFor(item.end_day, input.tripStart) : null,
         // Euclidean modulo inside dayColorFor — the negative-index ruling.
         color: dayColorFor(input.dayColors, dayIndex),
         label: dayNumberLabel(dayIndex),
@@ -168,17 +179,17 @@ export function itineraryPinFeatures(input: ItineraryPinInput): PinFeatureCollec
 }
 
 /**
- * Photo-pin source rows. Photo data arrives P-12 — no `@gogo/shared` photo
- * domain exists yet, so this is the builder's INPUT contract (not a wire
- * redefine); P-12 adapts its wire shape to it. Only viewer-visible photos
- * may ever be passed in (R-map-5 — the caller filters via `canViewPhoto`
- * when the photo domain lands).
+ * Photo-pin source rows — the shared `Photo` wire type (`@gogo/shared`
+ * `PhotoSchema`), NARROWED to what a pin needs by construction: located
+ * (`lat`/`lng` non-null — the schema allows GPS-less photos) and
+ * viewer-visible (Law #3: the CALLER filters through the shared
+ * `canViewPhoto` helper R-map-5 names — no visibility logic lives here).
+ * Derived from `Photo`, not a local redefine; photo DATA arrives P-12.
  */
-export interface PhotoPinSource {
-  id: string;
-  lat: number;
-  lng: number;
-}
+export type PhotoPinSource = Pick<Photo, "id"> & {
+  lat: NonNullable<Photo["lat"]>;
+  lng: NonNullable<Photo["lng"]>;
+};
 
 /**
  * Photo pins — neutral ring (§2.2). FIXTURE-TESTED, EMPTY-IN-PROD until
@@ -203,6 +214,7 @@ export function photoPinFeatures(
         itemId: null,
         photoId: photo.id,
         dayIndex: null,
+        endDayIndex: null,
         color: colors.pinPhotoRing,
         label: null,
       },

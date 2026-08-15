@@ -32,6 +32,11 @@
  * TOKENLESS BUILDS: `configureMapboxAccessToken` no-ops without the
  * env-driven token — blank basemap on sim until phase QA is EXPECTED; every
  * overlay, pin build, and seam still functions (map-style.ts doc).
+ * The call sits at MODULE SCOPE (below) — the SDK-documented pattern — so
+ * the token lands BEFORE the first native MapView is created: the SDK's
+ * global set is async and nothing re-triggers a failed style load, so a
+ * post-mount effect races native view creation on the with-token path
+ * (R1 review, corr A4).
  */
 import { mapColors, mapDayColors } from "@gogo/tokens";
 import { createStyles, useTheme } from "@gogo/tokens/react";
@@ -77,6 +82,14 @@ import {
   type MapPressFeature,
 } from "@/features/map";
 import { useTripContext } from "@/navigation/trip-context";
+
+// Runtime token seam at MODULE SCOPE — before any native MapView exists
+// (module doc "TOKENLESS BUILDS"). Graceful no-op on tokenless builds.
+configureMapboxAccessToken();
+
+// The itinerary family never dims (R-map-3 dims context families only) —
+// its pin style is input-free, so it hoists to a module constant.
+const ITINERARY_PIN_STYLE = pinCircleStyle(1);
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -136,11 +149,6 @@ export default function MapScreen() {
   const [dayFilter, setDayFilter] = useState<MapDayFilter>("all");
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [attributionVisible, setAttributionVisible] = useState(false);
-
-  // Runtime token seam — graceful no-op on tokenless builds (module doc).
-  useEffect(() => {
-    configureMapboxAccessToken();
-  }, []);
 
   const savedQuery = useSavedPlaces(trip.id);
   const itineraryQuery = useItinerary(trip.id);
@@ -237,12 +245,13 @@ export default function MapScreen() {
   }, []);
 
   // FROZEN SEAM (c): drain the pending-focus store on every tab focus —
-  // consumed once, so a revisit never re-triggers (§2.7). T-8.4 wires senders.
+  // consumed once + TRIP-SCOPED (a foreign trip's armed focus is discarded,
+  // never presented), so a revisit never re-triggers (§2.7). T-8.4 senders.
   useFocusEffect(
     useCallback(() => {
-      const placeId = consumePendingMapFocus();
+      const placeId = consumePendingMapFocus(trip.id);
       if (placeId !== null) onPinSelect(placeId);
-    }, [onPinSelect]),
+    }, [trip.id, onPinSelect]),
   );
 
   const savedSourceRef = useRef<ShapeSource>(null);
@@ -313,9 +322,19 @@ export default function MapScreen() {
   const showEmpty =
     settled && cameraTargetFor(allPinCoordinates, destination).kind === "world";
 
-  const clusterCircle = clusterCircleStyle(colors);
-  const clusterCount = clusterCountStyle(colors);
+  // Layer styles are memoized on their actual inputs (R1 review, perf A6):
+  // a fresh object per render re-sends reactStyle across the bridge and
+  // Mapbox re-applies paint on every layer per re-render — the exact
+  // interaction T-8.3's per-tap re-renders make hot.
   const contextOpacity = contextPinOpacity(dayFilter, colors.dimOpacity);
+  const clusterCircle = useMemo(() => clusterCircleStyle(colors), [colors]);
+  const clusterCount = useMemo(() => clusterCountStyle(colors), [colors]);
+  const photoPinStyle = useMemo(
+    () => photoPinCircleStyle(colors, contextOpacity),
+    [colors, contextOpacity],
+  );
+  const contextPinStyle = useMemo(() => pinCircleStyle(contextOpacity), [contextOpacity]);
+  const itineraryLabelStyle = useMemo(() => itineraryPinLabelStyle(colors), [colors]);
 
   return (
     <View style={s.screen} testID="map-screen">
@@ -359,7 +378,7 @@ export default function MapScreen() {
           <CircleLayer
             id="map-layer-photo-pin"
             filter={UNCLUSTERED_FILTER}
-            style={photoPinCircleStyle(colors, contextOpacity)}
+            style={photoPinStyle}
           />
         </ShapeSource>
 
@@ -385,7 +404,7 @@ export default function MapScreen() {
           <CircleLayer
             id="map-layer-saved-pin"
             filter={UNCLUSTERED_FILTER}
-            style={pinCircleStyle(contextOpacity)}
+            style={contextPinStyle}
           />
         </ShapeSource>
 
@@ -411,12 +430,12 @@ export default function MapScreen() {
           <CircleLayer
             id="map-layer-itinerary-pin"
             filter={UNCLUSTERED_FILTER}
-            style={pinCircleStyle(1)}
+            style={ITINERARY_PIN_STYLE}
           />
           <SymbolLayer
             id="map-layer-itinerary-pin-label"
             filter={UNCLUSTERED_FILTER}
-            style={itineraryPinLabelStyle(colors)}
+            style={itineraryLabelStyle}
           />
         </ShapeSource>
       </MapView>

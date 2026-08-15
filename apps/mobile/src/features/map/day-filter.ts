@@ -68,6 +68,15 @@ function addDaysISO(iso: ISODate, days: number): ISODate {
 /**
  * R-map-3: a selected day shows ONLY that day's itinerary pins. Applied to
  * the source data so cluster counts stay truthful (module doc).
+ *
+ * SPAN-AWARE (R1 review): a spanning item (`endDayIndex` from `end_day`,
+ * check-out date) matches EVERY covered day — `dayIndex ≤ filter ≤
+ * endDayIndex` — mirroring the itinerary grid, which renders the stay on
+ * both end days. Point items (`endDayIndex` null) match their day only.
+ * The end index is clamped to ≥ dayIndex so a malformed inverted span
+ * degrades to point behavior, never to an always-hidden pin. "all" returns
+ * the collection UNCHANGED BY IDENTITY (perf: the source's shape identity
+ * gates native re-diffs).
  */
 export function itineraryFeaturesForFilter(
   collection: PinFeatureCollection,
@@ -76,7 +85,12 @@ export function itineraryFeaturesForFilter(
   if (filter === "all") return collection;
   return {
     type: "FeatureCollection",
-    features: collection.features.filter((feature) => feature.properties.dayIndex === filter),
+    features: collection.features.filter((feature) => {
+      const { dayIndex, endDayIndex } = feature.properties;
+      if (dayIndex === null) return false;
+      const end = Math.max(dayIndex, endDayIndex ?? dayIndex);
+      return dayIndex <= filter && filter <= end;
+    }),
   };
 }
 

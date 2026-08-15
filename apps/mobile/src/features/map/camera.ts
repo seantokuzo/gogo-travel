@@ -21,9 +21,11 @@ import type { LngLat } from "./pin-features";
 export const DESTINATION_FALLBACK_ZOOM = 12;
 
 /**
- * Fitting bounds to ONE pin is degenerate (ne === sw ⇒ max zoom); a single
- * pin centers at street-block zoom instead. Spec-uncovered choice —
- * PR interpretation.
+ * Fitting ZERO-SPAN bounds is degenerate (ne === sw ⇒ fitBounds at ~max
+ * zoom, a rooftop view): one pin, or N pins at the SAME coordinate — the
+ * common first-use state when a saved place is also an itinerary item.
+ * Those collapse to a center stop at street-block zoom instead.
+ * Spec-uncovered choice — PR interpretation.
  */
 export const SINGLE_PIN_ZOOM = 14;
 
@@ -71,11 +73,15 @@ export function cameraTargetFor(
   destination: { lat: number; lng: number } | undefined,
 ): CameraTarget {
   const finite = pinCoordinates.filter(isFinitePair);
-  if (finite.length === 1) {
-    return { kind: "center", center: finite[0] as LngLat, zoom: SINGLE_PIN_ZOOM };
-  }
   const bounds = boundsFor(finite);
-  if (bounds !== undefined) return { kind: "bounds", bounds };
+  if (bounds !== undefined) {
+    // Zero-span envelope (single pin OR N identical coordinates) — the
+    // degenerate-fit guard; subsumes the old single-pin-only arm.
+    if (bounds.ne[0] === bounds.sw[0] && bounds.ne[1] === bounds.sw[1]) {
+      return { kind: "center", center: bounds.ne, zoom: SINGLE_PIN_ZOOM };
+    }
+    return { kind: "bounds", bounds };
+  }
   if (
     destination !== undefined &&
     Number.isFinite(destination.lat) &&
