@@ -450,9 +450,33 @@ pnpm test && pnpm build`
   T-8.2 map shell: styles, camera, layers, clustering, day filter [MAP-1] ·
   T-8.3 pin interactions + search + location [MAP-2, MAP-4] · T-8.4 place
   detail screen + map↔itinerary linking [MAP-3, MAP-6] · T-8.5 offline packs
-  lifecycle [MAP-5]
+  lifecycle [MAP-5] · T-8.6 native scaffold: `expo install`
+  @rnmapbox/maps + expo-location + expo-network, config-plugin entries,
+  native-SDK pin (registry-verified provenance, T-6.4 precedent), tokens
+  `mapColors`/`mapDayColors`, ONE dev-client rebuild (absorbs the
+  datetimepicker QA-rebuild obligation)
 - **Linked specs:** `client/map`, `api/places`
 - **Ledger:** F-055..F-062
+- **Prep (2026-08-15 — readiness brief `.tmp/p8-readiness-brief.md`):**
+  `@rnmapbox/maps` 10.3.5 verified (peers clean on Expo 57/RN 0.86; offline
+  API present; CocoaPods→SPM EOL Dec 2026 watch). **SDK download-token auth
+  is DEAD** → every P-8 PR lands $0/tokenless, fixture-driven; the runtime
+  `pk.` token gates only sim tiles, pack QA, Studio styles, live legs, and
+  the F-055..F-062 flips — **Sean ruling: token lands at P-8 phase QA;
+  default `mapbox://styles/mapbox/{light,dark}-v11` behind a config swap.**
+  **Wave plan:** W1 T-8.1 ∥ T-8.6 → ONE rebuild → **P-6+P-7 sim QA runs ∥
+  W1 review (Sean ruling)** → W2 T-8.2 shell (freezes 3 seams: sheet mount +
+  onPinSelect, offline status-pill slot, pending-focus stub) → W3 ∥
+  worktrees T-8.3 ∥ T-8.4 → W4 T-8.5 + closer rider (airplane-mode E2E prep,
+  testID spec-sync, plist audit evidence). **Rulings:** `focusPlaceId`
+  transport = pending-focus store consumed once by the map screen (imperative
+  cross-tab pushes no-op — mobile.md; extends `jumpToTripTab`, decided before
+  T-8.4); offline acceptance bar = WARM-SESSION airplane-mode only (no TQ
+  persister exists; trip-data sync is offline-spec scope §2.9 — do NOT build
+  one); photo-pin layer ships fixture-tested + empty-in-prod until P-12
+  (absent-legs-by-design analogue); viewport-bbox-rides-search verified at
+  T-8.3 (PL-3 min-chars row). Jest never renders native MapView — camera-fit,
+  day-color, cluster-config, pack state machine built as pure logic modules.
 
 ### P-9 — Money: budgets, expenses, splits & settle-up
 

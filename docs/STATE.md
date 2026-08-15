@@ -342,6 +342,14 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
 
 ## In-flight decisions
 
+- **P-8 ROADMAP-PREP COMPLETE 2026-08-15** (rulings + wave plan: PLANNING
+  § P-8 Prep bullet; full readiness brief: `.tmp/p8-readiness-brief.md`).
+  Sean rulings: ONE dev-client rebuild (T-8.6 absorbs the datetimepicker
+  obligation) with **P-6+P-7 sim QA running ∥ P-8 W1 review**; Mapbox pk
+  token deferred to P-8 phase QA (builds are tokenless — download auth dead);
+  default Mapbox styles behind config swap. Awaiting dispatch buy-in for W1
+  (T-8.1 server ∥ T-8.6 scaffold).
+
 - ~~S-1 stack~~ → **LOCKED 2026-07-09 as
   [ADR-004](decisions/ADR-004-stack-expo-rn-hono-drizzle.md)**: Expo/RN +
   Hono + Drizzle/Postgres monorepo, iOS-first, StyleSheet+tokens styling.
