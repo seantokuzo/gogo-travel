@@ -35,13 +35,22 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   BUILDS TOKENLESS** (SDK download auth dead — pk token = Sean item at
   phase QA).
 - **Wave plan:**
-  - **W1 — DISPATCHED 2026-08-15** in parallel isolated worktrees off
-    `171c39e`: T-8.1 place detail + saved-places CRUD [PL-3, PL-4] ∥ T-8.6
-    native scaffold; branches `P-8/T-8-1-place-detail-saved-places` +
-    `P-8/T-8-6-maps-native-scaffold`. After both merge → ONE dev-client
-    rebuild → P-6+P-7 sim QA runs ∥ W2.
-  - **W2:** T-8.2 shell freezes 3 seams (sheet mount + onPinSelect, offline
-    status-pill slot, pending-focus stub).
+  - **W1 ✅ DONE 2026-08-15 — T-8.1 MERGED a40ea7f (PR #21) ∥ T-8.6 MERGED
+    30caa40 (PR #20).** T-8.1: place detail + saved-places CRUD [PL-3,
+    PL-4] — FIRST all-5-lanes-ship round 1 on a functional PR (0 blocking/6
+    advisory, one fix leg a0fe8bb, verifier VERIFIED-CLEAN, judge
+    merge/high; server 717→720). T-8.6: maps/location/network deps + config
+    plugins w/ the foreground-only lock + `mapColors`/`mapDayColors` tokens
+    (1 blocking filing gap + 5 advisory, fixed 30300cd, verifier
+    VERIFIED-CLEAN, judge merge/high; tokens 322→323). Full narratives:
+    QUEUE rows.
+  - **W2 — T-8.2 DISPATCHED 2026-08-15** (map shell; freezes 3 seams —
+    sheet mount + onPinSelect, offline status-pill slot, pending-focus
+    stub; brief carries the §2.2-vs-R-itin-1 Euclidean-modulo note, the
+    pending-focus-store ruling, and the photo-pins-empty-in-prod ruling)
+    ∥ **Hermes/dedup chore in-flight** (QUEUE P1 row — pre-rebuild). ONE
+    dev-client rebuild AFTER the Hermes chore merges → P-6+P-7 sim QA
+    ∥ W2 review.
   - **W3 (∥ worktrees):** T-8.3 interactions ∥ T-8.4 place detail + focus
     contract.
   - **W4:** T-8.5 offline packs + closer rider.
