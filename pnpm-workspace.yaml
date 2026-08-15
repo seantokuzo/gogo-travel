@@ -29,3 +29,5 @@ minimumReleaseAgeExclude:
   - "@expo/metro-runtime@57.0.6"
   # jose@6.2.4 was younger than the 24h release cooldown at T-5.2 (2026-07-22); delete once aged.
   - jose@6.2.4
+  # expo-location@57.0.10 (SDK-57 line) published 2026-08-14, <24h before T-8.6 (2026-08-15); delete once aged.
+  - expo-location@57.0.10

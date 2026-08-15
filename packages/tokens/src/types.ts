@@ -188,6 +188,52 @@ export interface Insets {
   right: number;
 }
 
+// ---------------------------------------------------------------- map layer
+
+/**
+ * Map-layer color set (map spec §2.2 — delegated here by tokens spec §2.10).
+ * The Mapbox layer must never use literal colors (R-map-7; P-8 acceptance
+ * criterion): every pin/cluster/route color derives from the active Theme
+ * via `mapColors`/`mapDayColors`.
+ */
+export interface MapColors {
+  /** Saved-but-unscheduled pin fill — §2.2: "saved pins = accent". */
+  pinSaved: string;
+  /** Photo-pin thumbnail ring — §2.2: "photo pins = neutral ring". */
+  pinPhotoRing: string;
+  /** Ring around the selected pin (mirrors `border.focus` semantics). */
+  pinSelectedRing: string;
+  /** Cluster bubble fill. */
+  clusterFill: string;
+  /**
+   * Cluster count-badge ink — paired with `clusterFill` as
+   * `primary.onSolid` on `primary.solid`, an R-ds-8 AA-validated pairing.
+   */
+  clusterText: string;
+  /** Route/polyline color — reserved by §2.2 ("route-line color (future)"). */
+  routeLine: string;
+  /** Opacity for non-matching pins while a day filter is active (R-map-3). */
+  dimOpacity: number;
+}
+
+/**
+ * Ordered 8-hue day-color cycle (map spec §2.2): itinerary pin day index =
+ * `(day - trip.start_date)`, color = `dayColors[((dayIndex % 8) + 8) % 8]`
+ * (Euclidean modulo — R-itin-1 unions item days outside the trip range, so
+ * `dayIndex` can be negative and JS `%` yields a negative remainder); the
+ * pin glyph carries the day number so color is never the only signal.
+ */
+export type MapDayColors = readonly [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+];
+
 // ---------------------------------------------------------------- haptics
 
 /** Semantic haptic events (spec §2.8) — components reference events only. */
