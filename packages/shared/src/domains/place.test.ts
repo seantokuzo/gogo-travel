@@ -6,10 +6,19 @@ import {
 import {
   coarseCategory,
   coarseCategoryTokens,
+  FRESH_UNAVAILABLE_REASONS,
+  FreshPlaceDetailsSchema,
   PlaceCreateSchema,
+  PlaceDetailsQuerySchema,
+  PlaceDetailsSchema,
+  placeEndpoints,
   PlaceSchema,
   PlaceSearchQuerySchema,
   PlaceUpdateSchema,
+  SavedPlaceCreateSchema,
+  SavedPlacesListQuerySchema,
+  SavedPlaceUpdateSchema,
+  SavedPlaceWithPlaceSchema,
 } from "./place.js";
 
 const UUID = "6f9d9d31-6d4a-4b7a-9df6-9b4a3f6d2e1c";
@@ -245,5 +254,205 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
     expect(
       PlaceSearchQuerySchema.safeParse({ q: "belem", trip_id: "not-a-uuid" }).success,
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T-8.1 (PL-3/PL-4) — details + saved-places contract
+// ---------------------------------------------------------------------------
+
+const spinePlace = { ...base, source: "overture", source_id: "gers-123" };
+
+describe("PlaceDetails (§3.3 GET /places/:placeId)", () => {
+  it("parses spine-only (no fresh, no reason) — the default detail answer", () => {
+    const parsed = PlaceDetailsSchema.parse({ place: spinePlace });
+    expect(parsed.fresh).toBeUndefined();
+    expect(parsed.fresh_unavailable_reason).toBeUndefined();
+  });
+
+  it("parses every documented fresh_unavailable_reason; rejects an undocumented one", () => {
+    for (const reason of FRESH_UNAVAILABLE_REASONS) {
+      expect(
+        PlaceDetailsSchema.parse({ place: spinePlace, fresh_unavailable_reason: reason })
+          .fresh_unavailable_reason,
+      ).toBe(reason);
+    }
+    expect(
+      PlaceDetailsSchema.safeParse({ place: spinePlace, fresh_unavailable_reason: "nope" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("the embedded place still enforces the R-db-6 invariant (checks survive nesting)", () => {
+    expect(
+      PlaceDetailsSchema.safeParse({ place: { ...base, source: "custom", source_id: "x" } })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("PlaceDetailsQuery (?fresh= stringbool — the bookings `unscheduled` precedent)", () => {
+  it("accepts boolish strings and defaults to absent", () => {
+    expect(PlaceDetailsQuerySchema.parse({ fresh: "true" }).fresh).toBe(true);
+    expect(PlaceDetailsQuerySchema.parse({ fresh: "1" }).fresh).toBe(true);
+    expect(PlaceDetailsQuerySchema.parse({ fresh: "false" }).fresh).toBe(false);
+    expect(PlaceDetailsQuerySchema.parse({ fresh: "0" }).fresh).toBe(false);
+    expect(PlaceDetailsQuerySchema.parse({}).fresh).toBeUndefined();
+  });
+  it("rejects non-boolish values — never silently false", () => {
+    expect(PlaceDetailsQuerySchema.safeParse({ fresh: "maybe" }).success).toBe(false);
+  });
+});
+
+describe("FreshPlaceDetails caps (T-7.1 landmine: every schema class bounded)", () => {
+  const freshBase = {
+    fetched_at: "2026-08-15T12:00:00Z",
+    attribution: { text: "Powered by Foursquare", logo_required: true, url: "https://fsq.dev" },
+    fields: {},
+  };
+
+  it("CONTROL: a fully-populated in-bounds block parses", () => {
+    const parsed = FreshPlaceDetailsSchema.parse({
+      ...freshBase,
+      fields: {
+        hours: "Mon–Sun 09:00–18:00",
+        open_now: true,
+        rating: 9.4,
+        price_level: 2,
+        photos: ["https://example.com/p.jpg"],
+        tips: [{ text: "Go early.", created_at: "2026-08-01T00:00:00Z" }],
+        website: "https://example.com",
+        phone: "+81 75-641-7331",
+      },
+    });
+    expect(parsed.fields.rating).toBe(9.4);
+  });
+
+  it("formatted scalars are length-capped (iso.datetime alone accepts unbounded fractions)", () => {
+    const longFraction = `2026-08-15T12:00:00.${"9".repeat(80)}Z`;
+    expect(
+      FreshPlaceDetailsSchema.safeParse({ ...freshBase, fetched_at: longFraction }).success,
+    ).toBe(false);
+    expect(
+      FreshPlaceDetailsSchema.safeParse({
+        ...freshBase,
+        fields: { tips: [{ text: "ok", created_at: longFraction }] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("arrays AND array elements are capped", () => {
+    expect(
+      FreshPlaceDetailsSchema.safeParse({
+        ...freshBase,
+        fields: { photos: Array.from({ length: 21 }, () => "https://x.example") },
+      }).success,
+    ).toBe(false);
+    expect(
+      FreshPlaceDetailsSchema.safeParse({
+        ...freshBase,
+        fields: { photos: ["h".repeat(2049)] },
+      }).success,
+    ).toBe(false);
+    expect(
+      FreshPlaceDetailsSchema.safeParse({
+        ...freshBase,
+        fields: { tips: [{ text: "x".repeat(2001), created_at: "2026-08-01T00:00:00Z" }] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("attribution strings are capped; numeric fields are range-bound", () => {
+    expect(
+      FreshPlaceDetailsSchema.safeParse({
+        ...freshBase,
+        attribution: { ...freshBase.attribution, text: "x".repeat(301) },
+      }).success,
+    ).toBe(false);
+    expect(
+      FreshPlaceDetailsSchema.safeParse({ ...freshBase, fields: { rating: 10.1 } }).success,
+    ).toBe(false);
+    expect(
+      FreshPlaceDetailsSchema.safeParse({ ...freshBase, fields: { price_level: 5 } }).success,
+    ).toBe(false);
+  });
+});
+
+describe("SavedPlace write shapes (§3.3, R-places-15/16)", () => {
+  it("create: place_id must be a uuid; note optional, capped at 2000", () => {
+    expect(SavedPlaceCreateSchema.parse({ place_id: UUID }).note).toBeUndefined();
+    expect(
+      SavedPlaceCreateSchema.parse({ place_id: UUID, note: "n".repeat(2000) }).note,
+    ).toHaveLength(2000);
+    expect(
+      SavedPlaceCreateSchema.safeParse({ place_id: UUID, note: "n".repeat(2001) }).success,
+    ).toBe(false);
+    expect(SavedPlaceCreateSchema.safeParse({ place_id: "not-a-uuid" }).success).toBe(false);
+    expect(SavedPlaceCreateSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("update: note is REQUIRED (null clears); same 2000 cap", () => {
+    expect(SavedPlaceUpdateSchema.parse({ note: null }).note).toBeNull();
+    expect(SavedPlaceUpdateSchema.parse({ note: "hi" }).note).toBe("hi");
+    expect(SavedPlaceUpdateSchema.safeParse({}).success).toBe(false);
+    expect(SavedPlaceUpdateSchema.safeParse({ note: "n".repeat(2001) }).success).toBe(false);
+  });
+
+  it("list query: limit coerced, capped at 100 (the default IS the ceiling)", () => {
+    expect(SavedPlacesListQuerySchema.parse({ limit: "100" }).limit).toBe(100);
+    expect(SavedPlacesListQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+    expect(SavedPlacesListQuerySchema.safeParse({ limit: 0 }).success).toBe(false);
+  });
+});
+
+describe("SavedPlaceWithPlace (§3.2 — one round trip renders pins + list)", () => {
+  const savedBase = {
+    id: UUID,
+    trip_id: UUID,
+    place_id: UUID,
+    note: null,
+    created_by: UUID,
+    created_at: "2026-08-15T00:00:00Z",
+    updated_at: "2026-08-15T00:00:00Z",
+  };
+
+  it("parses with the embedded place; note cap applies on the READ shape too", () => {
+    const parsed = SavedPlaceWithPlaceSchema.parse({ ...savedBase, place: spinePlace });
+    expect(parsed.place.source).toBe("overture");
+    expect(
+      SavedPlaceWithPlaceSchema.safeParse({
+        ...savedBase,
+        note: "n".repeat(2001),
+        place: spinePlace,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("the embedded place is required and R-db-6-checked", () => {
+    expect(SavedPlaceWithPlaceSchema.safeParse(savedBase).success).toBe(false);
+    expect(
+      SavedPlaceWithPlaceSchema.safeParse({
+        ...savedBase,
+        place: { ...base, source: "custom", source_id: "x" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T-8.1 endpoint descriptors (§3.3 route mirror)", () => {
+  it("pins the five new paths + methods", () => {
+    expect(placeEndpoints.getPlace.method).toBe("GET");
+    expect(placeEndpoints.getPlace.path).toBe("/places/:placeId");
+    expect(placeEndpoints.listSavedPlaces.path).toBe("/trips/:tripId/saved-places");
+    expect(placeEndpoints.createSavedPlace.method).toBe("POST");
+    expect(placeEndpoints.createSavedPlace.path).toBe("/trips/:tripId/saved-places");
+    expect(placeEndpoints.updateSavedPlace.method).toBe("PATCH");
+    expect(placeEndpoints.updateSavedPlace.path).toBe(
+      "/trips/:tripId/saved-places/:savedPlaceId",
+    );
+    expect(placeEndpoints.deleteSavedPlace.method).toBe("DELETE");
+    expect(placeEndpoints.deleteSavedPlace.path).toBe(
+      "/trips/:tripId/saved-places/:savedPlaceId",
+    );
   });
 });
