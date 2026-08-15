@@ -18,6 +18,8 @@ export type {
   HapticCall,
   HapticEvent,
   Insets,
+  MapColors,
+  MapDayColors,
   Motion,
   PaletteDef,
   RadiusKey,
@@ -48,6 +50,9 @@ export {
 
 // shared status ramps (spec §2.2 layer 1)
 export { dangerRamp, infoRamp, successRamp, warningRamp } from "./ramps.js";
+
+// map-layer colors (map spec §2.2 — delegated here by tokens spec §2.10)
+export { mapColors, mapDayColors } from "./map.js";
 
 // theme registry (Gate-3: all palettes user-selectable)
 export { DEFAULT_THEME, THEME_NAMES, themes } from "./themes.js";
