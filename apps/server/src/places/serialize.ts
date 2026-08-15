@@ -5,10 +5,15 @@
  * (`places.category` stays the raw source-taxonomy string). `numeric`
  * coordinates arrive as STRINGS (db/schema/_shared.ts) and convert here.
  */
-import { coarseCategory, type Place } from "@gogo/shared/domains/place";
+import {
+  coarseCategory,
+  type Place,
+  type SavedPlaceWithPlace,
+} from "@gogo/shared/domains/place";
 import type * as schema from "../db/schema/index.js";
 
 export type PlaceRow = typeof schema.places.$inferSelect;
+export type SavedPlaceRow = typeof schema.savedPlaces.$inferSelect;
 
 export function toPlaceWire(row: PlaceRow): Place {
   return {
@@ -24,5 +29,22 @@ export function toPlaceWire(row: PlaceRow): Place {
     created_by: row.createdBy,
     created_at: row.createdAt.toISOString(),
     updated_at: row.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * `SavedPlace & { place }` (spec §3.2 — T-8.1/PL-4): every saved-place
+ * read/write answers the pin AND its place row in one round trip.
+ */
+export function toSavedPlaceWire(row: SavedPlaceRow, place: PlaceRow): SavedPlaceWithPlace {
+  return {
+    id: row.id,
+    trip_id: row.tripId,
+    place_id: row.placeId,
+    note: row.note,
+    created_by: row.createdBy,
+    created_at: row.createdAt.toISOString(),
+    updated_at: row.updatedAt.toISOString(),
+    place: toPlaceWire(place),
   };
 }

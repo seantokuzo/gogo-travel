@@ -6,6 +6,7 @@ import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
 import { createItineraryRouter, type ItineraryRouterDeps } from "./itinerary/routes.js";
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
+import { createSavedPlacesRouter } from "./places/saved-places-routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
 import { createTravelLegsRouter, type TravelLegsRouterDeps } from "./travel-legs/routes.js";
@@ -167,6 +168,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.places) {
     app.route(API_BASE, createPlacesRouter(options.places));
+    // Saved-places CRUD (T-8.1/PL-4) rides the places dep set: same DB, and
+    // every route sits behind requireAuth + the trip-membership gate.
+    app.route(API_BASE, createSavedPlacesRouter({ db: options.places.db }));
   }
 
   if (options.bookings) {
