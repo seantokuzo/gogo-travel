@@ -362,7 +362,7 @@ describe.skipIf(!dockerAvailable)("T-8.1 place detail + saved-places routes (int
     expect(((await garbage.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
-  it("F-038 detail door: invisible custom ≡ absent ≡ malformed (byte-identical 404s)", async () => {
+  it("F-038 detail door: invisible custom ≡ absent ≡ malformed (byte-identical 404s), with and without ?fresh=true; the fresh 404 arm carries no-store", async () => {
     const creator = await seedUserWithToken();
     const stranger = await seedUserWithToken();
     const hidden = await seedCustomPlace(creator.userId, "Hidden Cabin");
@@ -372,6 +372,21 @@ describe.skipIf(!dockerAvailable)("T-8.1 place detail + saved-places routes (int
       await getDetail(NONEXISTENT_UUID, stranger.accessToken), // does not exist
       await getDetail("not-a-uuid", stranger.accessToken), // malformed, same door
     ]);
+
+    // The fresh=true door (R-places-11): `Cache-Control: no-store` must ride
+    // EVERY fresh-requesting response — the 404 arm included, or a stale
+    // negative gets cached — and the three 404 classes stay byte-identical
+    // within that door (the header depends only on caller input, so it is no
+    // existence oracle).
+    const freshProbes = [
+      await getDetail(hidden.id, stranger.accessToken, "?fresh=true"),
+      await getDetail(NONEXISTENT_UUID, stranger.accessToken, "?fresh=true"),
+      await getDetail("not-a-uuid", stranger.accessToken, "?fresh=true"),
+    ];
+    for (const probe of freshProbes) {
+      expect(probe.headers.get("cache-control")).toBe("no-store");
+    }
+    await expectIndistinguishable404s(freshProbes);
   });
 
   it("route-order control: /places/search still resolves to the search handler, not the :placeId 404 door", async () => {
@@ -579,6 +594,49 @@ describe.skipIf(!dockerAvailable)("T-8.1 place detail + saved-places routes (int
     const malformed = await listSaved(trip.id, owner.accessToken, "?cursor=%%%garbage");
     expect(malformed.status).toBe(200);
     expect(PaginatedSavedPlacesSchema.parse(await malformed.json()).items[0]?.id).toBe(ids[2]);
+  });
+
+  it("list pagination tiebreak: identical created_at rows walk id DESC — every row exactly once, no skip, no dup (r1 A4)", async () => {
+    const owner = await seedUserWithToken();
+    const trip = await seedTrip(owner.userId);
+    // ONE shared timestamp (a single-txn bulk save shares now()): only the id
+    // tiebreak can order this walk. If the ORDER BY tiebreak ever flipped to
+    // `id ASC` while the row-value cursor predicate stayed DESC, the page-2
+    // predicate would exclude every remaining equal-timestamp row and the
+    // walk would silently drop pins — this test's exactly-once check goes RED.
+    const sharedCreatedAt = new Date("2026-08-05T12:00:00Z");
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const place = await seedSpinePlace({ source: "overture", name: `Tiebreak Pin ${i}` });
+      const saved = await insertSavedPlace({
+        tripId: trip.id,
+        placeId: place.id,
+        createdBy: owner.userId,
+        createdAt: sharedCreatedAt,
+      });
+      ids.push(saved.id);
+    }
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const query = `?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const res = await listSaved(trip.id, owner.accessToken, query);
+      expect(res.status).toBe(200);
+      const body = PaginatedSavedPlacesSchema.parse(await res.json());
+      for (const item of body.items) seen.push(item.id);
+      cursor = body.nextCursor;
+      pages += 1;
+    } while (cursor !== null && pages < 10);
+
+    // Exhaustion (not truncation) ended the walk; every id exactly once.
+    expect(cursor).toBeNull();
+    expect(seen).toHaveLength(3);
+    expect([...seen].sort()).toEqual([...ids].sort());
+    // And the visit order IS id DESC — canonical uuid text sorts bytewise,
+    // so a lexicographic sort mirrors Postgres uuid ordering exactly.
+    expect(seen).toEqual([...ids].sort().reverse());
   });
 
   it("list authz: non-member trip door byte-identical 404s; unauthenticated → 401", async () => {

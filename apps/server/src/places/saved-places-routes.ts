@@ -249,13 +249,16 @@ export function createSavedPlacesRouter(deps: SavedPlacesRouterDeps): Hono<Reque
         .returning();
       if (!updated) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      // FK RESTRICT guarantees the place row outlives its pins — an absent
-      // row here is corruption, never a client condition.
+      // Benign race, not corruption: a concurrent unsave releases the FK
+      // RESTRICT, so a concurrent place delete can land between our UPDATE
+      // and this SELECT — the pin this PATCH just touched is already gone.
+      // Converge on the canonical indistinguishable 404 (the routes.ts
+      // raced-concurrent-delete precedent).
       const [place] = await deps.db
         .select()
         .from(schema.places)
         .where(eq(schema.places.id, updated.placeId));
-      if (!place) throw new HttpError("INTERNAL", "saved place references a missing place row");
+      if (!place) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
       return c.json(toSavedPlaceWire(updated, place) satisfies SavedPlaceWithPlace);
     },

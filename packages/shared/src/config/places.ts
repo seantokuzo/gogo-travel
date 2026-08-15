@@ -232,8 +232,9 @@ export interface PlaceAttribution {
 
 /**
  * Per-source attribution registry (§3.2.4). PL-1 ships the two open-data
- * spine entries it ingests; PL-3 widens the key union with `foursquare_api`
- * (+ `mapbox` on the map side) when the details surface lands.
+ * spine entries it ingests; the post-MVP FSQ integration (premium details)
+ * widens the key union with `foursquare_api`; `mapbox` is owned by the map
+ * surface (T-8.2+).
  *
  * Wording verified against provider policy 2026-07-25 (R-places-17: never
  * from training data):
