@@ -30,6 +30,59 @@ describe("mapStyleUrlForScheme (config-swap ruling)", () => {
     expect(mapStyleUrlForScheme("light", overrides)).toBe("mapbox://styles/sean/custom-light");
     expect(mapStyleUrlForScheme("dark", overrides)).toBe("mapbox://styles/mapbox/dark-v11");
   });
+
+  // The ENV channel is the seam's advertised purpose (Sean's Studio styles
+  // land as an env change, zero code) — pinned per scheme so a fallback-chain
+  // "simplification" can't kill it silently (R1 review, tests A8 / probe N5).
+  describe("env override channel", () => {
+    const LIGHT_KEY = "EXPO_PUBLIC_MAPBOX_STYLE_URL_LIGHT";
+    const DARK_KEY = "EXPO_PUBLIC_MAPBOX_STYLE_URL_DARK";
+
+    /** Set env keys for one assertion block; restore (or delete) in finally. */
+    function withEnv(env: Record<string, string>, run: () => void): void {
+      const previous = new Map(Object.keys(env).map((key) => [key, process.env[key]]));
+      for (const [key, value] of Object.entries(env)) process.env[key] = value;
+      try {
+        run();
+      } finally {
+        for (const [key, value] of previous) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+
+    it("env LIGHT wins over the default — for the light scheme only", () => {
+      withEnv({ [LIGHT_KEY]: "mapbox://styles/sean/env-light" }, () => {
+        expect(mapStyleUrlForScheme("light")).toBe("mapbox://styles/sean/env-light");
+        expect(mapStyleUrlForScheme("dark")).toBe(DEFAULT_MAP_STYLE_URLS.dark);
+      });
+    });
+
+    it("env DARK wins over the default — for the dark scheme only", () => {
+      withEnv({ [DARK_KEY]: "mapbox://styles/sean/env-dark" }, () => {
+        expect(mapStyleUrlForScheme("dark")).toBe("mapbox://styles/sean/env-dark");
+        expect(mapStyleUrlForScheme("light")).toBe(DEFAULT_MAP_STYLE_URLS.light);
+      });
+    });
+
+    it("explicit overrides beat env (the test seam stays strongest)", () => {
+      withEnv(
+        {
+          [LIGHT_KEY]: "mapbox://styles/sean/env-light",
+          [DARK_KEY]: "mapbox://styles/sean/env-dark",
+        },
+        () => {
+          expect(
+            mapStyleUrlForScheme("light", { light: "mapbox://styles/sean/override-light" }),
+          ).toBe("mapbox://styles/sean/override-light");
+          expect(mapStyleUrlForScheme("dark", { dark: "mapbox://styles/sean/override-dark" })).toBe(
+            "mapbox://styles/sean/override-dark",
+          );
+        },
+      );
+    });
+  });
 });
 
 describe("configureMapboxAccessToken (tokenless-build seam)", () => {

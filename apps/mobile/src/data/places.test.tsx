@@ -3,8 +3,9 @@
  *  - KEY-CACHE LAW: `tripSavedPlaces` joins the `["trips", tripId, …]`
  *    DETAIL subtree (never `["trip-list"]`, never a foreign root) so the
  *    guard's 404-scrub + `evictTripSubtree` prefix removal reach it.
- *  - The hook requests the PL-4 descriptor at the full-pin-set page limit
- *    and surfaces the page's items.
+ *  - The hook requests the PL-4 descriptor at the server page cap and
+ *    follows `nextCursor` to exhaustion (R1 review: one page silently
+ *    dropped pins >100 and their itinerary twins).
  *
  * apiClient spy per the members/bookings test pattern.
  */
@@ -64,6 +65,35 @@ it("fetches the saved-places page through the PL-4 descriptor and caches under t
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(client.getQueryData(queryKeys.tripSavedPlaces(TEST_TRIP_ID))).toEqual(page);
+});
+
+it("follows nextCursor to exhaustion: >1 page accumulates EVERY row (R1 review)", async () => {
+  const first = makeSavedPlaceWithPlace({ id: "55555555-5555-4555-8555-555555555551" });
+  const second = makeSavedPlaceWithPlace({ id: "55555555-5555-4555-8555-555555555552" });
+  // Paging fake: page 1 (no cursor) hands back a nextCursor; page 2 ends it.
+  const request = spyRequest().mockImplementation(
+    (_descriptor: unknown, input: { query?: { cursor?: string } }) =>
+      input.query?.cursor === undefined
+        ? Promise.resolve({ items: [first], nextCursor: "cursor-2" })
+        : Promise.resolve({ items: [second], nextCursor: null }),
+  );
+  const client = makeTestQueryClient();
+
+  const { result } = await renderHook(() => useSavedPlaces(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  // Both pages surfaced, in order — the >100-pin trip loses nothing.
+  expect(result.current.data).toEqual({ items: [first, second], nextCursor: null });
+  expect(request).toHaveBeenCalledTimes(2);
+  // The opaque cursor round-trips verbatim as `?cursor=` (§3.5).
+  expect(request).toHaveBeenNthCalledWith(
+    2,
+    placeEndpoints.listSavedPlaces,
+    { params: { tripId: TEST_TRIP_ID }, query: { limit: 100, cursor: "cursor-2" } },
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
 });
 
 it("surfaces a fetch failure as error state (screen banner arm)", async () => {

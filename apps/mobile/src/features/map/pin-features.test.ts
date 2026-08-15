@@ -64,6 +64,7 @@ describe("savedPinFeatures", () => {
       itemId: null,
       photoId: null,
       dayIndex: null,
+      endDayIndex: null,
       color: colors.pinSaved,
       label: null,
     });
@@ -98,9 +99,34 @@ describe("itineraryPinFeatures", () => {
       itemId: "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
       photoId: null,
       dayIndex: 2,
+      endDayIndex: null,
       color: dayColors[2],
       label: "3",
     });
+  });
+
+  it("SPAN-AWARE (R1 review): a multi-day item carries endDayIndex, wears CHECK-IN color + glyph", () => {
+    const stay = makeItineraryItem({
+      id: "aaaaaaa7-aaaa-4aaa-8aaa-aaaaaaaaaaa7",
+      kind: "place_visit",
+      place_id: PLACE_A,
+      title: null,
+      day: "2027-03-02", // dayIndex 1
+      end_day: "2027-03-05", // dayIndex 4 — the check-out date (§3.3.10)
+    });
+    const collection = itineraryPinFeatures({
+      items: [stay],
+      bookings: [],
+      placeIndex,
+      dayColors,
+      tripStart: TRIP_START,
+    });
+    const properties = collection.features[0]?.properties;
+    expect(properties?.dayIndex).toBe(1);
+    expect(properties?.endDayIndex).toBe(4);
+    // Check-in day owns the visual identity: color + glyph never shift mid-stay.
+    expect(properties?.color).toBe(dayColors[1]);
+    expect(properties?.label).toBe("2");
   });
 
   it("NEGATIVE-INDEX ARM (binding ruling): a pre-trip item day gets a DEFINED wrapped color", () => {
@@ -193,6 +219,7 @@ describe("photoPinFeatures (fixture-tested, EMPTY-IN-PROD until P-12)", () => {
       itemId: null,
       photoId: "photo-1",
       dayIndex: null,
+      endDayIndex: null,
       color: colors.pinPhotoRing,
       label: null,
     });

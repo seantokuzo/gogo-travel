@@ -11,7 +11,11 @@ import type { PinFeature, PinFeatureCollection } from "./pin-features";
 
 const dayColors = mapDayColors(lightTheme);
 
-function itineraryFeature(id: string, dayIndex: number | null): PinFeature {
+function itineraryFeature(
+  id: string,
+  dayIndex: number | null,
+  endDayIndex: number | null = null,
+): PinFeature {
   return {
     type: "Feature",
     id,
@@ -23,6 +27,7 @@ function itineraryFeature(id: string, dayIndex: number | null): PinFeature {
       itemId: id,
       photoId: null,
       dayIndex,
+      endDayIndex,
       color: "#000000",
       label: "1",
     },
@@ -83,6 +88,37 @@ describe("itineraryFeaturesForFilter (R-map-3)", () => {
 
   it("CONTROL: a day with no features filters to empty (the predicate can exclude)", () => {
     expect(itineraryFeaturesForFilter(collection, 5).features).toEqual([]);
+  });
+
+  describe("SPAN-AWARE matching (R1 review — hotel day 0→4)", () => {
+    // A spanning stay (check-in day 0, check-out day 4) + a point sibling.
+    const spanning = collectionOf([
+      itineraryFeature("stay", 0, 4),
+      itineraryFeature("point", 2),
+    ]);
+
+    it("a MID-STAY day keeps the spanning pin (the itinerary grid parity arm)", () => {
+      // Filter day 1: inside the span, no point item — the stay alone.
+      expect(itineraryFeaturesForFilter(spanning, 1).features.map((f) => f.id)).toEqual(["stay"]);
+      // Filter day 2: span + the point sibling.
+      expect(itineraryFeaturesForFilter(spanning, 2).features.map((f) => f.id)).toEqual([
+        "stay",
+        "point",
+      ]);
+    });
+
+    it("matches BOTH end days (check-in and check-out) and nothing outside", () => {
+      expect(itineraryFeaturesForFilter(spanning, 0).features.map((f) => f.id)).toEqual(["stay"]);
+      expect(itineraryFeaturesForFilter(spanning, 4).features.map((f) => f.id)).toEqual(["stay"]);
+      expect(itineraryFeaturesForFilter(spanning, 5).features).toEqual([]);
+      expect(itineraryFeaturesForFilter(spanning, -1).features).toEqual([]);
+    });
+
+    it("a malformed INVERTED span degrades to point behavior (check-in day only)", () => {
+      const inverted = collectionOf([itineraryFeature("bad", 3, 1)]);
+      expect(itineraryFeaturesForFilter(inverted, 3).features.map((f) => f.id)).toEqual(["bad"]);
+      expect(itineraryFeaturesForFilter(inverted, 2).features).toEqual([]);
+    });
   });
 });
 

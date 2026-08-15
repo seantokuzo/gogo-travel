@@ -54,6 +54,16 @@ describe("cameraTargetFor (§2.1 ladder)", () => {
     });
   });
 
+  it("ZERO-SPAN (R1 review): N≥2 IDENTICAL coordinates center at street zoom, never a rooftop fit", () => {
+    // The common first-use state: one saved place that is also an itinerary
+    // item — two pins, one coordinate. fitBounds(ne === sw) ⇒ ~max zoom.
+    expect(cameraTargetFor([KYOTO, [135.7681, 35.0116], KYOTO], destination)).toEqual({
+      kind: "center",
+      center: KYOTO,
+      zoom: SINGLE_PIN_ZOOM,
+    });
+  });
+
   it("falls back to the destination at z12 with no pins", () => {
     expect(cameraTargetFor([], destination)).toEqual({
       kind: "center",

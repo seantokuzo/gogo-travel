@@ -18,11 +18,13 @@
  */
 import { ATTRIBUTION, type TripListItem } from "@gogo/shared";
 import { mapColors } from "@gogo/tokens";
-import { fireEvent, screen } from "@testing-library/react-native";
+import { act, fireEvent, screen } from "@testing-library/react-native";
 
 import MapScreen from "@/app/[tripId]/map/index";
+import { queryKeys } from "@/data/query-client";
 import {
   DEFAULT_MAP_STYLE_URLS,
+  resetMapboxAccessTokenForTests,
   setPendingMapFocus,
   usePendingMapFocusStore,
 } from "@/features/map";
@@ -74,7 +76,10 @@ const mapboxMock = jest.requireMock("@rnmapbox/maps") as {
 
 const PLACE_A = "44444444-4444-4444-8444-444444444441";
 const PLACE_B = "44444444-4444-4444-8444-444444444442";
+const PLACE_C = "44444444-4444-4444-8444-444444444443";
 const ITEM_ID = "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+const ITEM_DAY0_ID = "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+const FOREIGN_TRIP_ID = "99999999-9999-4999-8999-999999999999";
 
 /** Fushimi Inari + Nishiki Market — the known coordinate fixtures. */
 const savedFixtures = () => [
@@ -131,14 +136,15 @@ async function renderMap(opts?: {
       ...opts?.overrides,
     },
   });
+  const client = makeTestQueryClient();
   const view = await renderWithProviders(
     <TripProvider trip={trip}>
       <MapScreen />
     </TripProvider>,
-    { queryClient: makeTestQueryClient(), ...(opts?.scheme ? { scheme: opts.scheme } : {}) },
+    { queryClient: client, ...(opts?.scheme ? { scheme: opts.scheme } : {}) },
   );
   await settle();
-  return { request, trip, view };
+  return { request, trip, view, client };
 }
 
 /** The mocked source View exposes the screen-built collection as `shape`. */
@@ -152,7 +158,10 @@ afterEach(async () => {
   mapboxMock.__mock.setAccessToken.mockClear();
   mapboxMock.__mock.camera.setCamera.mockClear();
   mapboxMock.__mock.shapeSource.getClusterExpansionZoom.mockClear();
-  usePendingMapFocusStore.setState({ pendingPlaceId: null });
+  usePendingMapFocusStore.setState({ pending: null });
+  // Latch hygiene (R1 review, tests A7): the module-level token latch must
+  // never leak across tests — a stale `true` masks the deletion direction.
+  resetMapboxAccessTokenForTests();
 });
 
 describe("shell composition (R-map-1, R-map-7)", () => {
@@ -187,11 +196,47 @@ describe("shell composition (R-map-1, R-map-7)", () => {
     expect(screen.getByTestId("map-view").props.styleURL).toBe(DEFAULT_MAP_STYLE_URLS.dark);
   });
 
-  it("boots TOKENLESS: no access token handed to the SDK without env config", async () => {
-    await renderMap();
-    // Negative with control: map-style.test.ts pins the with-token arm of
-    // the SAME seam, so this assertion is falsifiable.
-    expect(mapboxMock.__mock.setAccessToken).not.toHaveBeenCalled();
+  /**
+   * The token seam is a MODULE-SCOPE call in the screen file (R1 review,
+   * corr A4: a post-mount effect races native MapView creation). Each pin
+   * evaluates the screen module in a FRESH registry (fresh token latch, the
+   * jest.setup mock factory re-runs) so the module-scope hand-off itself is
+   * what's under test — the pair closes probe N1's deletion direction.
+   */
+  function importScreenFresh(): { setAccessToken: jest.Mock } {
+    let fresh: { __mock: { setAccessToken: jest.Mock } } | undefined;
+    jest.isolateModules(() => {
+      jest.requireActual("@/app/[tripId]/map/index");
+      fresh = jest.requireMock("@rnmapbox/maps") as { __mock: { setAccessToken: jest.Mock } };
+    });
+    if (fresh === undefined) throw new Error("isolateModules did not run");
+    return fresh.__mock;
+  }
+
+  function withAccessTokenEnv(value: string | undefined, run: () => void): void {
+    const previous = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    if (value === undefined) delete process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    else process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = value;
+    try {
+      run();
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+      else process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = previous;
+    }
+  }
+
+  it("boots TOKENLESS: no access token handed to the SDK without env config", () => {
+    withAccessTokenEnv(undefined, () => {
+      expect(importScreenFresh().setAccessToken).not.toHaveBeenCalled();
+    });
+  });
+
+  it("WITH-TOKEN control: the screen module hands the env token to the SDK at module scope", () => {
+    withAccessTokenEnv("pk.screen-env-token", () => {
+      const setAccessToken = importScreenFresh().setAccessToken;
+      expect(setAccessToken).toHaveBeenCalledTimes(1);
+      expect(setAccessToken).toHaveBeenCalledWith("pk.screen-env-token");
+    });
   });
 });
 
@@ -207,6 +252,40 @@ describe("camera (§2.1)", () => {
       }),
     );
   });
+
+  it("later refetches NEVER yank the camera — the fit-once guard survives invalidation (R1 review)", async () => {
+    // T-8.3's spec'd job is invalidating tripSavedPlaces after a save; new
+    // rows mean new feature identities — the camera must hold mid-browse.
+    let calls = 0;
+    const extra = makeSavedPlaceWithPlace({
+      id: "55555555-5555-4555-8555-555555555553",
+      place_id: PLACE_C,
+      place: { id: PLACE_C, name: "Kyoto Station", lat: 34.9858, lng: 135.7588 },
+    });
+    const { client } = await renderMap({
+      overrides: {
+        "GET /trips/:tripId/saved-places": () => {
+          calls += 1;
+          return Promise.resolve({
+            items: calls === 1 ? savedFixtures() : [...savedFixtures(), extra],
+            nextCursor: null,
+          });
+        },
+      },
+    });
+    const setCamera = mapboxMock.__mock.camera.setCamera;
+    expect(setCamera).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: queryKeys.tripSavedPlaces(TEST_TRIP_ID) });
+    });
+    await settle();
+
+    // Applied-proof: the refetch really landed NEW pin identities…
+    expect(sourceShape("map-source-saved").features).toHaveLength(3);
+    // …and the initial fit stayed the ONLY setCamera call.
+    expect(setCamera).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("day filter (R-map-3)", () => {
@@ -220,15 +299,31 @@ describe("day filter (R-map-3)", () => {
     expect(screen.queryByTestId("map-day-filter-chip-3")).toBeNull();
   });
 
-  it("selecting a day keeps only that day's itinerary pins, dims context pins, refits camera", async () => {
-    await renderMap();
+  it("selecting a day keeps ONLY that day's itinerary pins (strict subset), dims context pins, refits camera", async () => {
+    // Two items on DIFFERENT days (R1 review, tests A9): filtered must be a
+    // STRICT subset of unfiltered, so an unfiltered-passthrough goes RED.
+    await renderMap({
+      items: [
+        ...itemFixtures(),
+        makeItineraryItem({
+          id: ITEM_DAY0_ID,
+          kind: "place_visit",
+          place_id: PLACE_B,
+          title: null,
+          day: TRIP_START, // dayIndex 0 — dropped by the day-2 filter
+        }),
+      ],
+    });
     const setCamera = mapboxMock.__mock.camera.setCamera;
     setCamera.mockClear();
+    expect(sourceShape("map-source-itinerary").features).toHaveLength(2);
 
     await fireEvent.press(screen.getByTestId("map-day-filter-chip-2"));
 
-    // The item sits on dayIndex 2 → still present.
-    expect(sourceShape("map-source-itinerary").features).toHaveLength(1);
+    // Only the dayIndex-2 item survives — 2 → 1, the strict subset.
+    const filtered = sourceShape("map-source-itinerary").features;
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.properties["testID"]).toBe(`map-pin-itinerary-${ITEM_ID}`);
     // Saved pins REMAIN, dimmed to the token opacity.
     const savedLayer = screen.getByTestId("map-layer-saved-pin");
     expect(savedLayer.props.layerStyle.circleOpacity).toBe(mapColors(lightTheme).dimOpacity);
@@ -309,11 +404,21 @@ describe("press routing (R-map-2 + frozen seam a)", () => {
 
 describe("pending focus (frozen seam c)", () => {
   it("drains the store on focus into the selection seam — consumed once", async () => {
-    setPendingMapFocus(PLACE_B);
+    setPendingMapFocus(TEST_TRIP_ID, PLACE_B);
     await renderMap();
     expect(screen.getByTestId("map-place-sheet-slot").props.selectedPlaceId).toBe(PLACE_B);
     // Consumed: nothing pending for the next focus.
-    expect(usePendingMapFocusStore.getState().pendingPlaceId).toBeNull();
+    expect(usePendingMapFocusStore.getState().pending).toBeNull();
+  });
+
+  it("a focus armed for ANOTHER trip is discarded-and-cleared, never presented (R1 review)", async () => {
+    // Scenario: trip-A sender arms, the jump is interrupted; this trip's map
+    // focuses later — the stale foreign id must not open a sheet here.
+    setPendingMapFocus(FOREIGN_TRIP_ID, PLACE_B);
+    await renderMap();
+    expect(screen.getByTestId("map-place-sheet-slot").props.selectedPlaceId).toBeNull();
+    // Discard-and-CLEAR: the stale focus is gone entirely.
+    expect(usePendingMapFocusStore.getState().pending).toBeNull();
   });
 
   it("no pending focus → nothing selected on mount (control arm)", async () => {
