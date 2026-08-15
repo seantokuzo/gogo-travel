@@ -15,6 +15,7 @@ import type {
   MemberListItem,
   Paginated,
   Place,
+  SavedPlaceWithPlace,
   TripListItem,
   TripMember,
   UserProfile,
@@ -109,6 +110,24 @@ export function makePlace(overrides?: Partial<Place>): Place {
     created_at: "2026-07-01T00:00:00.000Z",
     updated_at: "2026-07-01T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+/** Saved-place row with the embedded place (T-8.2 — map pin fixtures). */
+export function makeSavedPlaceWithPlace(
+  overrides?: Omit<Partial<SavedPlaceWithPlace>, "place"> & { place?: Partial<Place> },
+): SavedPlaceWithPlace {
+  const place = makePlace(overrides?.place);
+  return {
+    id: "55555555-5555-4555-8555-555555555551",
+    trip_id: TEST_TRIP_ID,
+    place_id: place.id,
+    note: null,
+    created_by: TEST_USER.id,
+    created_at: "2026-07-01T00:00:00.000Z",
+    updated_at: "2026-07-01T00:00:00.000Z",
+    ...overrides,
+    place,
   };
 }
 
@@ -289,6 +308,11 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
           return Promise.resolve({ items: [], nextCursor: null });
         case "PUT /trips/:tripId/itinerary/days/:day/order":
           return Promise.resolve({ items: [] });
+        // Map tab (T-8.2) — same empty-universe posture as the itinerary
+        // family above: route-tree suites mounting the map tab settle
+        // without retry noise; real pin sets ride `overrides`.
+        case "GET /trips/:tripId/saved-places":
+          return Promise.resolve({ items: [], nextCursor: null });
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:

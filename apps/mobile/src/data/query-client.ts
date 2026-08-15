@@ -91,6 +91,14 @@ export const queryKeys = {
     ["trips", tripId, "bookings", bookingId] as const,
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
+  /**
+   * `GET /trips/:tripId/saved-places` (T-8.2 / MAP-1) — the map's saved-pin
+   * set (R-map-1). DETAIL-SUBTREE key (key-cache law): rooted under
+   * `trip(tripId)` so the membership guard's 404-scrub and `evictTripSubtree`
+   * (prefix removal) evict it on access loss — the NAV-4 zero-trip-data
+   * posture, same rationale as `tripItinerary`.
+   */
+  tripSavedPlaces: (tripId: string) => ["trips", tripId, "saved-places"] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */
   invitePreview: (token: string) => ["invites", token, "preview"] as const,
 } as const;
