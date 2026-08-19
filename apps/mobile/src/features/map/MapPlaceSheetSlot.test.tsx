@@ -21,7 +21,7 @@
 import type { Place } from "@gogo/shared";
 import { itineraryEndpoints, placeEndpoints } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { apiClient } from "@/auth";
 import { MapPlaceSheetSlot } from "./MapPlaceSheetSlot";
@@ -155,10 +155,14 @@ let harnessSelectPin: ((placeId: string | null) => void) | null = null;
 function Harness() {
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [searchPlace, setSearchPlace] = useState<Place | null>(null);
-  harnessSelectPin = (placeId) => {
-    setSearchPlace(null);
-    setSelectedPlaceId(placeId);
-  };
+  // Effect, not render-time assignment (react-hooks/globals): the setters
+  // are stable, so exposing once after mount is sound.
+  useEffect(() => {
+    harnessSelectPin = (placeId) => {
+      setSearchPlace(null);
+      setSelectedPlaceId(placeId);
+    };
+  }, []);
   return (
     <TripProvider trip={trip}>
       <MapPlaceSheetSlot
