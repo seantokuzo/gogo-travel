@@ -14,6 +14,7 @@ import {
   isMobileRuntimeSource,
   main,
   PERSISTER_TOKENS,
+  SINK_MODULE_SPECIFIERS,
   SINK_TOKENS,
   trackedFiles,
 } from "./check-place-fresh-persistence.mjs";
@@ -74,7 +75,7 @@ test("flags a fresh-touching module that imports a storage sink", () => {
         'import type { FreshPlaceDetails } from "@gogo/shared";\n',
     }),
   );
-  assert.deepEqual(hits, [{ file, rule: "fresh-sink", token: 'from "react-native-mmkv"' }]);
+  assert.deepEqual(hits, [{ file, rule: "fresh-sink", token: 'from "react-native-mmkv' }]);
 });
 
 test("flags a fresh-touching module that console-logs", () => {
@@ -84,6 +85,68 @@ test("flags a fresh-touching module that console-logs", () => {
     readerFor({ [file]: 'const x = usePlaceFresh(id);\nconsole.log(x);\n' }),
   );
   assert.deepEqual(hits, [{ file, rule: "fresh-sink", token: "console." }]);
+});
+
+test("flags a SINGLE-QUOTED sink import — Prettier's quote style is not a CI gate (R1 review)", () => {
+  const file = "apps/mobile/src/features/places/fresh-cache.ts";
+  const hits = findFreshPersistenceViolations(
+    [file],
+    readerFor({
+      [file]:
+        "import { MMKV } from 'react-native-mmkv';\n" +
+        "import type { FreshPlaceDetails } from '@gogo/shared';\n",
+    }),
+  );
+  assert.deepEqual(hits, [{ file, rule: "fresh-sink", token: "from 'react-native-mmkv" }]);
+  // The exit contract trips on it too — the CI-visible half of the pin.
+  assert.equal(
+    main({
+      files: [file],
+      read: readerFor({
+        [file]: "import { s } from 'zustand';\nexport const x = usePlaceFresh;\n",
+      }),
+    }),
+    1,
+  );
+});
+
+test("flags require()-form sink loads, both quote styles", () => {
+  const file = "apps/mobile/src/data/fresh-store.ts";
+  for (const line of [
+    'const { MMKV } = require("react-native-mmkv");',
+    "const { MMKV } = require('react-native-mmkv');",
+  ]) {
+    const hits = findFreshPersistenceViolations(
+      [file],
+      readerFor({ [file]: `${line}\nexport const cache = usePlaceFresh;\n` }),
+    );
+    assert.equal(hits.length, 1, line);
+    assert.equal(hits[0].rule, "fresh-sink", line);
+  }
+});
+
+test("flags a sink SUBPATH import (specifier tokens are prefixes)", () => {
+  const file = "apps/mobile/src/data/fresh-store.ts";
+  const hits = findFreshPersistenceViolations(
+    [file],
+    readerFor({
+      [file]:
+        'import { AsyncStorage } from "@react-native-async-storage/async-storage";\n' +
+        "export const cache = usePlaceFresh;\n",
+    }),
+  );
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0].rule, "fresh-sink");
+});
+
+test("STRUCTURAL: every sink module specifier carries all four import/require quote shapes", () => {
+  assert.ok(SINK_MODULE_SPECIFIERS.length > 0);
+  for (const spec of SINK_MODULE_SPECIFIERS) {
+    const shapes = [`from "${spec}`, `from '${spec}`, `require("${spec}`, `require('${spec}`];
+    for (const shape of shapes) {
+      assert.ok(SINK_TOKENS.includes(shape), shape);
+    }
+  }
 });
 
 test("CONTROL: sink WITHOUT fresh domain is clean (zustand stores are fine elsewhere)", () => {

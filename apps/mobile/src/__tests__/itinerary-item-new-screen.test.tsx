@@ -474,6 +474,20 @@ it("a malformed ?placeId= degrades to the empty picker (validated against the sh
   expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue("");
 });
 
+it("an oversized ?placeName= renders CAPPED at 100 chars (R1 security review — display-only, id-truth write)", async () => {
+  // The param is attacker-shaped (any deep link): a multi-hundred-KB name
+  // must never render unbounded. The cap is display-only — the create body
+  // still carries place_id alone, pinned by the preselect test above.
+  await renderScreen({
+    category: "place-visit",
+    placeId: PLACE.id,
+    placeName: "x".repeat(500),
+  });
+  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue(
+    "x".repeat(100),
+  );
+});
+
 it("custom block consumes day+time prefills into a valid ItineraryItemCreate", async () => {
   const created: unknown[] = [];
   await renderScreen(

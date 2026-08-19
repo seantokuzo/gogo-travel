@@ -4,15 +4,18 @@
  *
  * WHAT THIS SUITE PINS: the user-visible outcome of the detail screen's two
  * itinerary-bound affordances on the real vendored navigator — pathname
- * flips, the target screen MOUNTS, the `?day=` / prefill params ARRIVE and
- * are consumed. It is the regression net for the whole chain (screen →
- * jump → navigate/push → param consumption).
+ * flips, the target screen MOUNTS, prefill params ARRIVE and are consumed,
+ * and linked rows land on the ITEM'S OWN DETAIL per kind (interp 17 / the
+ * MAP-6 "lands on item detail with tab stacks intact" bullet): item-kind →
+ * `item/[itemId]`, booking-kind → `booking/[bookingId]` directly. It is the
+ * regression net for the whole chain (screen → jump → push → target).
  *
- * WHAT IT DELIBERATELY DOES NOT CLAIM (mutation-probe result, 2026-08-19):
- * removing the `jumpToTripTab` leg and firing the bare cross-tab
+ * WHAT IT DELIBERATELY DOES NOT CLAIM (mutation-probe result, 2026-08-19 —
+ * R1 tests lane confirmed the same on the PUSH shape): removing the
+ * `jumpToTripTab` leg and firing the bare cross-tab `router.push`/
  * `router.navigate` STAYS GREEN under renderRouter — jest does NOT
  * reproduce the sim-confirmed "imperative navigate at another tab's URL
- * silently no-ops" landmine for this call shape, so this suite cannot
+ * silently no-ops" landmine for these call shapes, so this suite cannot
  * prove the tab-jump leg is load-bearing. The two-step ships anyway: the
  * tab-bar-equivalent move is the one mechanic sim-verified to work
  * (mobile.md), and the ORDER of the two legs is pinned component-level in
@@ -28,12 +31,16 @@
  */
 import { fireEvent, screen, waitFor } from "expo-router/testing-library";
 
+import { ApiRequestError } from "@/auth";
 import { queryClient } from "@/data";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
+  BOOKING_LODGING_ID,
+  defaultBookings,
   ITEM_C_ID,
+  ITEM_LODGING_ID,
   itineraryApiOverrides,
   TRIP_END,
   TRIP_START,
@@ -73,14 +80,31 @@ jest.mock("react-native-reorderable-list", () => {
 /** The fixture place — ITEM_C (place_visit, day 3) points at it. */
 const PLACE = makePlace({ name: "Fushimi Inari" });
 
+/**
+ * The lodging booking sits AT this place too — its booking-kind item
+ * (ITEM_LODGING) resolves the place through the parent booking, so the
+ * detail lists BOTH linked-row kinds (the interp-17 per-kind walkthrough).
+ */
+const BOOKINGS_AT_PLACE = defaultBookings().map((booking) =>
+  booking.id === BOOKING_LODGING_ID ? { ...booking, place_id: TEST_PLACE_ID } : booking,
+);
+
 beforeEach(() => {
   mockNavApi({
     trips: [makeTrip({ id: TEST_TRIP_ID, start_date: TRIP_START, end_date: TRIP_END })],
     overrides: {
-      ...itineraryApiOverrides(),
+      ...itineraryApiOverrides({ bookings: BOOKINGS_AT_PLACE }),
       "GET /places/:placeId": () => Promise.resolve({ place: PLACE }),
       "GET /trips/:tripId/saved-places": () =>
         Promise.resolve({ items: [makeSavedPlaceWithPlace()], nextCursor: null }),
+      // Booking detail's own read (the walkthrough's booking-kind leg).
+      "GET /trips/:tripId/bookings/:bookingId": (input) => {
+        const params = input.params as { bookingId?: string } | undefined;
+        const booking = BOOKINGS_AT_PLACE.find((row) => row.id === params?.bookingId);
+        return booking === undefined
+          ? Promise.reject(new ApiRequestError(404, "NOT_FOUND", "not found"))
+          : Promise.resolve({ ...booking, items: [] });
+      },
     },
   });
 });
@@ -97,36 +121,53 @@ it("cold URL entry mounts the place detail inside the map tab (R-map-4 push rout
   expect(await screen.findByTestId("place-detail-screen")).toBeOnTheScreen();
   expect(await screen.findByText("Fushimi Inari")).toBeOnTheScreen();
   expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/map/place/${TEST_PLACE_ID}`);
-  // R-map-14: ITEM_C (place_visit at this place) is the one linked row —
-  // resolved through the SAME place resolution the pin builder uses.
+  // R-map-14: both linked-row kinds render — ITEM_C by its own place_id,
+  // ITEM_LODGING through its parent booking (the SAME place resolution the
+  // pin builder uses).
   expect(await screen.findByTestId(`place-detail-list-item-${ITEM_C_ID}`)).toBeOnTheScreen();
+  expect(await screen.findByTestId(`place-detail-list-item-${ITEM_LODGING_ID}`)).toBeOnTheScreen();
 });
 
-it("WALKTHROUGH: linked item → itinerary day list (two-step, R-map-14/23) → back via tab bar → Add to day opens the prefilled modal (R-map-12)", async () => {
+it("WALKTHROUGH: linked rows land on ITEM DETAIL per kind with tab stacks intact (interp 17, MAP-6 bullet) → Add to day opens the prefilled modal (R-map-12)", async () => {
   const result = await renderApp(`/${TEST_TRIP_ID}/map/place/${TEST_PLACE_ID}`);
   await screen.findByTestId("place-detail-screen");
 
-  // ---- Leg 1: linked itinerary item → the itinerary tab's day list.
+  // ---- Leg 1: ITEM-kind linked row → the item's OWN detail in the
+  // itinerary tab's stack (§2.7's push mechanic — never the day list).
   await fireEvent.press(await screen.findByTestId(`place-detail-list-item-${ITEM_C_ID}`));
-  await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary`));
-  expect(await screen.findByTestId("itinerary-screen")).toBeOnTheScreen();
-  // The `?day=` arrival param rode along (ITEM_C is on day 3). The index
-  // CONSUMES it after handling (T-7.9), so accept either the armed value or
-  // the consumed end-state — the pathname + mounted screen above are the
-  // landmine-proof half; the param handoff is pinned exactly at the moment
-  // of arrival below (before the settled read can consume it).
-  const dayParam = result.getSearchParams()["day"];
-  expect(dayParam === TRIP_END || dayParam === undefined).toBe(true);
+  await waitFor(() =>
+    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/${ITEM_C_ID}`),
+  );
+  expect(await screen.findByTestId("itinerary-item-screen")).toBeOnTheScreen();
 
   // ---- Leg 2: tab-bar press back to the map tab — its stack is preserved
-  // (R-nav-10), so the place detail is still the top of the map stack.
+  // (R-nav-10), so the place detail is still the top of the map stack:
+  // "with tab stacks intact", the bullet's second half.
   await fireEvent.press(screen.getByTestId("tab-bar-map"));
   await waitFor(() =>
     expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/map/place/${TEST_PLACE_ID}`),
   );
   expect(await screen.findByTestId("place-detail-screen")).toBeOnTheScreen();
 
-  // ---- Leg 3: Add to day → the item/new modal in the itinerary stack,
+  // ---- Leg 3: BOOKING-kind linked row → booking/[bookingId] DIRECTLY
+  // (routing via item/[itemId] would only R-itin-27-replace itself there).
+  await fireEvent.press(await screen.findByTestId(`place-detail-list-item-${ITEM_LODGING_ID}`));
+  await waitFor(() =>
+    expect(result.getPathname()).toBe(
+      `/${TEST_TRIP_ID}/itinerary/booking/${BOOKING_LODGING_ID}`,
+    ),
+  );
+  expect(await screen.findByTestId("booking-detail-screen")).toBeOnTheScreen();
+
+  // ---- Leg 4: back to the map tab once more — the place detail survives
+  // a second round trip.
+  await fireEvent.press(screen.getByTestId("tab-bar-map"));
+  await waitFor(() =>
+    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/map/place/${TEST_PLACE_ID}`),
+  );
+  expect(await screen.findByTestId("place-detail-screen")).toBeOnTheScreen();
+
+  // ---- Leg 5: Add to day → the item/new modal in the itinerary stack,
   // prefilled place_visit + place (R-map-12).
   await fireEvent.press(screen.getByTestId("place-detail-button-add-to-day"));
   await waitFor(() =>

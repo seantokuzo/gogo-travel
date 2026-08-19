@@ -9,13 +9,17 @@
  *  - The list hook requests the PL-4 descriptor at the server page cap and
  *    follows `nextCursor` to exhaustion (R1 review: one page silently
  *    dropped pins >100 and their itinerary twins).
- *  - The §2.4 fetch-fresh contract (R-map-9): spec-verbatim key,
- *    staleTime 0 / gcTime 0 / retry false, `fresh=true` on the wire, cache
- *    entry EVAPORATES after use (the no-persister world's equivalent of
- *    "the persister snapshot contains no place-fresh entry").
+ *  - v1 STRUCTURAL dormancy (R1 review): `PLACE_FRESH_ENABLED` is folded
+ *    into `usePlaceFresh` itself — a bare call issues nothing, and an
+ *    explicit `enabled: true` cannot override the flag. The flag-ON §2.4
+ *    contract (spec-verbatim key, staleTime 0 / gcTime 0 / retry false,
+ *    `fresh=true` on the wire, evaporation) is places-fresh.test.tsx.
  *  - R-map-11 save/unsave: optimistic against the ACCUMULATED list shape,
- *    reconcile-to-server-row, rollback + invalidate on failure, and
- *    409 ≡ success (R-places-16 client half).
+ *    reconcile-to-server-row, rollback + invalidate on failure,
+ *    409 ≡ success (R-places-16 client half) — plus the R1 hardening pins:
+ *    never-loaded-list save invalidates (no silent strand), unsave success
+ *    re-asserts removal (resurrection window), and the double-insert guard
+ *    is held-in-flight pinned.
  *
  * apiClient spy per the members/bookings test pattern.
  */
@@ -187,117 +191,25 @@ it("usePlace enabled:false issues no request (the empty-param screen guard)", as
 });
 
 // ---------------------------------------------------------------------------
-// usePlaceFresh — the §2.4 fetch-fresh contract (R-map-9/10)
+// usePlaceFresh — v1 STRUCTURAL dormancy (R1 review / A3). The flag-ON §2.4
+// contract pins live in places-fresh.test.tsx (the flag module is mocked
+// there; here the REAL `PLACE_FRESH_ENABLED = false` is the world under pin).
 // ---------------------------------------------------------------------------
 
-/**
- * LIBRARY-DEFAULT client for the fresh pins — deliberately NOT
- * `makeTestQueryClient`: its `gcTime: 0` / `retry: false` DEFAULTS satisfy
- * the very §2.4 config under pin, so against it the evaporation and
- * retry-count tests stay green with the hook's own options deleted
- * (mutation-probed 2026-08-19 — the probe could not go red). A bare client
- * (gcTime 5 min, retry 3× defaults) makes the hook's config the only thing
- * that can pass these pins.
- */
-function libraryDefaultClient(): QueryClient {
-  return new QueryClient();
-}
-
-it("usePlaceFresh sends fresh=true, selects the fresh block, and carries the §2.4 config", async () => {
-  const details: PlaceDetails = {
-    place: makePlace({ source: "fsq_os", source_id: "fsq-1" }),
-    fresh: {
-      fetched_at: "2026-08-18T00:00:00.000Z",
-      attribution: { text: "Powered by Foursquare", logo_required: false, url: "https://foursquare.com" },
-      fields: { hours: "9–17", open_now: true },
-    },
-  };
-  const request = spyRequest().mockResolvedValue(details);
-  const client = libraryDefaultClient();
-
-  const { result } = await renderHook(() => usePlaceFresh(TEST_PLACE_ID, { enabled: true }), {
-    wrapper: makeWrapper(client),
-  });
-
-  await waitFor(() => expect(result.current.isSuccess).toBe(true));
-  expect(request).toHaveBeenCalledWith(
-    placeEndpoints.getPlace,
-    { params: { placeId: TEST_PLACE_ID }, query: { fresh: "true" } },
-    expect.objectContaining({ signal: expect.any(AbortSignal) }),
-  );
-  // select narrows to the fresh block — render-only props.
-  expect(result.current.data).toEqual(details.fresh);
-
-  // The §2.4 config sits on the live query itself, not just our source text
-  // — against library defaults, so only the HOOK can have set these. (The
-  // public `Query["options"]` type omits per-query staleTime — structural
-  // read of the live options object.)
-  const query = client.getQueryCache().find({ queryKey: queryKeys.placeFresh(TEST_PLACE_ID) });
-  const options = query?.options as { staleTime?: unknown; gcTime?: unknown } | undefined;
-  expect(options?.staleTime).toBe(0);
-  expect(options?.gcTime).toBe(0);
-});
-
-it("usePlaceFresh: absent fresh block selects to null (R-map-10 — silent absence, not an error)", async () => {
-  spyRequest().mockResolvedValue({
-    place: makePlace(),
-    fresh_unavailable_reason: "disabled",
-  } satisfies PlaceDetails);
-  const { result } = await renderHook(() => usePlaceFresh(TEST_PLACE_ID, { enabled: true }), {
+it("a BARE usePlaceFresh call issues NOTHING in v1 (the flag is folded into the hook, not caller discipline)", async () => {
+  const request = spyRequest().mockResolvedValue({ place: makePlace() });
+  const { result } = await renderHook(() => usePlaceFresh(TEST_PLACE_ID), {
     wrapper: makeWrapper(makeTestQueryClient()),
   });
-  await waitFor(() => expect(result.current.isSuccess).toBe(true));
-  expect(result.current.data).toBeNull();
+  expect(request).not.toHaveBeenCalled();
+  // Disabled, not errored — the screen's silent-absence arm.
+  expect(result.current.data).toBeUndefined();
+  expect(result.current.isError).toBe(false);
 });
 
-it("usePlaceFresh: retry:false — ONE request then error state (degrade, never hammer a metered upstream)", async () => {
-  // Library-default client: its retry default is 3× — the single call below
-  // can only come from the HOOK's retry:false.
-  const request = spyRequest().mockRejectedValue(new ApiRequestError(502, "UNKNOWN", "upstream"));
-  const { result } = await renderHook(() => usePlaceFresh(TEST_PLACE_ID, { enabled: true }), {
-    wrapper: makeWrapper(libraryDefaultClient()),
-  });
-  await waitFor(() => expect(result.current.isError).toBe(true));
-  expect(request).toHaveBeenCalledTimes(1);
-});
-
-it("usePlaceFresh: the cache entry EVAPORATES once unobserved (gcTime 0 — nothing survives to persist)", async () => {
-  spyRequest().mockResolvedValue({
-    place: makePlace(),
-    fresh: {
-      fetched_at: "2026-08-18T00:00:00.000Z",
-      attribution: { text: "Powered by Foursquare", logo_required: false, url: "https://foursquare.com" },
-      fields: {},
-    },
-  } satisfies PlaceDetails);
-  // Library-default client (gcTime 5 min default): evaporation below can
-  // only come from the HOOK's gcTime 0.
-  const client = libraryDefaultClient();
-  const { result, unmount } = await renderHook(
-    () => usePlaceFresh(TEST_PLACE_ID, { enabled: true }),
-    { wrapper: makeWrapper(client) },
-  );
-  await waitFor(() => expect(result.current.isSuccess).toBe(true));
-  expect(
-    client.getQueryCache().find({ queryKey: queryKeys.placeFresh(TEST_PLACE_ID) }),
-  ).toBeDefined();
-
-  // RNTL v14 unmount is async — un-awaited it leaves the observer attached
-  // while the assertion runs (mobile.md: await every RNTL call).
-  await unmount();
-  await act(async () => {
-    // gcTime 0 schedules removal on a 0 ms timer — drain a couple of cycles.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-  expect(
-    client.getQueryCache().find({ queryKey: queryKeys.placeFresh(TEST_PLACE_ID) }),
-  ).toBeUndefined();
-});
-
-it("usePlaceFresh enabled:false issues NO request (the v1 dormancy arm the screen rides)", async () => {
+it("the flag OUTRANKS an explicit enabled:true — no caller can issue ?fresh=true in v1", async () => {
   const request = spyRequest().mockResolvedValue({ place: makePlace() });
-  await renderHook(() => usePlaceFresh(TEST_PLACE_ID, { enabled: false }), {
+  await renderHook(() => usePlaceFresh(TEST_PLACE_ID, { enabled: true }), {
     wrapper: makeWrapper(makeTestQueryClient()),
   });
   expect(request).not.toHaveBeenCalled();
@@ -430,6 +342,83 @@ it("save 409 ≡ SUCCESS (R-places-16): the row STAYS, the success seam fires wi
   ).toBe(true);
 });
 
+it("save success with a NEVER-LOADED list INVALIDATES instead of silently bailing (R1 review)", async () => {
+  // The scenario: the initial list fetch is in flight when the user taps
+  // Save — onMutate's cancelQueries kills it, so success finds NO cache
+  // entry to reconcile into. A silent bail strands the query idle (POST
+  // landed, button still "Save place", no saved pin); the invalidation
+  // makes the active observer refetch the truth.
+  const place = makePlace();
+  const serverRow = makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: place.id });
+  const listReleases: ((value: unknown) => void)[] = [];
+  spyRequest().mockImplementation((descriptor: unknown) =>
+    descriptor === placeEndpoints.listSavedPlaces
+      ? new Promise((resolve) => {
+          listReleases.push(resolve);
+        })
+      : Promise.resolve(serverRow),
+  );
+  const client = makeTestQueryClient();
+  const { result } = await renderHook(
+    () => ({ list: useSavedPlaces(TEST_TRIP_ID), save: useSavePlace(TEST_TRIP_ID) }),
+    { wrapper: makeWrapper(client) },
+  );
+  try {
+    // The initial fetch is genuinely in flight — Save isn't gated on it.
+    expect(listReleases).toHaveLength(1);
+    await act(async () => {
+      result.current.save.mutate({ place });
+    });
+    await waitFor(() => expect(result.current.save.isSuccess).toBe(true));
+    // The observable the silent bail never produces: the invalidation made
+    // the active observer issue a SECOND list request.
+    await waitFor(() => expect(listReleases.length).toBeGreaterThanOrEqual(2));
+  } finally {
+    // Release EVERY held fetch (mobile.md: resolvers in an array, settle in
+    // finally) with the server truth.
+    await act(async () => {
+      for (const release of listReleases) release({ items: [serverRow], nextCursor: null });
+    });
+  }
+  // The refetch landed the truth: saved pin present without a second tap.
+  await waitFor(() => expect(result.current.list.data?.items).toEqual([serverRow]));
+});
+
+it("double-device race: saving an ALREADY-PRESENT place appends no duplicate placeholder (held in flight)", async () => {
+  // The scenario: a background refetch lands this place's row (saved from
+  // another device) between render and press; the stale closure fires
+  // mutate anyway. The onMutate dup-guard must leave the cache truthful —
+  // one pin per place, even while the POST is in flight.
+  const place = makePlace();
+  const rowForPlace = makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: place.id });
+  const client = seededClient([rowForPlace]);
+  const releases: ((value: unknown) => void)[] = [];
+  spyRequest().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releases.push(resolve);
+      }),
+  );
+  const { result } = await renderHook(() => useSavePlace(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate({ place });
+  });
+  try {
+    const held = listItems(client);
+    expect(held).toHaveLength(1);
+    // Untouched — not even an identity churn.
+    expect(held[0]).toBe(rowForPlace);
+  } finally {
+    await act(async () => {
+      for (const release of releases) release(rowForPlace);
+    });
+  }
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  expect(listItems(client)).toHaveLength(1);
+});
+
 // ---------------------------------------------------------------------------
 // useUnsavePlace (R-map-11)
 // ---------------------------------------------------------------------------
@@ -479,6 +468,43 @@ it("unsave FAILURE restores the row (rollback) and fires the error seam", async 
   await waitFor(() => expect(result.current.isError).toBe(true));
   expect(listItems(client)).toEqual([row]);
   expect(onError).toHaveBeenCalledTimes(1);
+});
+
+it("unsave success RE-ASSERTS removal — a mid-flight refetch resurrection is filtered back out (R1 review)", async () => {
+  const row = makeSavedPlaceWithPlace({ id: SAVED_ROW_ID });
+  const client = seededClient([row]);
+  const releases: ((value: unknown) => void)[] = [];
+  spyRequest().mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        releases.push(resolve);
+      }),
+  );
+  const { result } = await renderHook(() => useUnsavePlace(TEST_TRIP_ID), {
+    wrapper: makeWrapper(client),
+  });
+  await act(async () => {
+    result.current.mutate(SAVED_ROW_ID);
+  });
+  try {
+    // CONTROL: the optimistic removal took.
+    expect(listItems(client)).toEqual([]);
+    // The scenario: while the DELETE is in flight, a concurrent refetch
+    // (e.g. another save's 409-path invalidation) reads the server BEFORE
+    // the delete commits and RESURRECTS the row into the cache.
+    client.setQueryData<Paginated<SavedPlaceWithPlace>>(
+      queryKeys.tripSavedPlaces(TEST_TRIP_ID),
+      { items: [row], nextCursor: null },
+    );
+    expect(listItems(client)).toEqual([row]);
+  } finally {
+    await act(async () => {
+      for (const release of releases) release(undefined);
+    });
+  }
+  await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  // Success re-filters by id — the zombie pin dies with the DELETE.
+  expect(listItems(client)).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------

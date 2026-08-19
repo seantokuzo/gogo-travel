@@ -3,11 +3,13 @@
  * (T-8.4 / MAP-3 — R-map-9/10; the spec's "fresh details render when
  * stubbed, vanish silently when the stub errors" test bullet).
  *
- * `PLACE_FRESH_ENABLED` is a module const, so the flip rides a partial
- * module mock (requireActual spread — NOTHING else is mocked; the T-5.7
- * crash-masking class needs a WHOLESALE feature mock, which this is not).
- * The flag-off world is pinned in place-detail-screen.test.tsx ("no request
- * carries the fresh param").
+ * `PLACE_FRESH_ENABLED` lives in its own module and is folded into the
+ * HOOK's `enabled` (R1 review — structural dormancy), so the flip is a mock
+ * of `@/data/place-fresh-flag` alone; every hook and screen stays REAL (the
+ * T-5.7 crash-masking class needs a WHOLESALE feature mock, which this is
+ * not). The flag-off world is pinned in place-detail-screen.test.tsx ("no
+ * request carries the fresh param") and places.test.tsx (bare call +
+ * enabled:true both issue nothing).
  */
 import type { PlaceDetails, TripListItem } from "@gogo/shared";
 import { screen } from "@testing-library/react-native";
@@ -40,11 +42,8 @@ jest.mock("expo-router", () => ({
   }),
 }));
 
-// The flag flip — everything else in the data layer stays REAL.
-jest.mock("@/data/places", () => ({
-  ...jest.requireActual<typeof import("@/data/places")>("@/data/places"),
-  PLACE_FRESH_ENABLED: true,
-}));
+// The flag flip — the ONE binding this file changes; the data layer is REAL.
+jest.mock("@/data/place-fresh-flag", () => ({ PLACE_FRESH_ENABLED: true }));
 
 const PLACE = makePlace({ name: "Fushimi Inari", source: "fsq_os", source_id: "fsq-1" });
 

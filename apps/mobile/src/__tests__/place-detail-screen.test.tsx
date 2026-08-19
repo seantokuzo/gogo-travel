@@ -14,9 +14,11 @@
  *    place-detail-fresh.test.tsx's flag-flip arm).
  *  - `is404` OUTRANKS retained cache (Law #3 client half) with the non-404
  *    CONTROL proving the pin reads the status.
- *  - The two-step cross-tab ORDER (tab jump BEFORE the push/navigate) for
- *    Add-to-day and linked items — the real-navigator end of the same
- *    contract lives in place-detail-cross-tab.test.tsx.
+ *  - The two-step cross-tab ORDER (tab jump BEFORE the push) for Add-to-day
+ *    and linked rows, with the PER-KIND destinations (interp 17: item-kind →
+ *    `item/[itemId]`, booking-kind → `booking/[bookingId]`) — the
+ *    real-navigator end of the same contract lives in
+ *    place-detail-cross-tab.test.tsx.
  */
 import { ATTRIBUTION, type SavedPlaceWithPlace, type TripListItem } from "@gogo/shared";
 import { QueryClient } from "@tanstack/react-query";
@@ -29,10 +31,14 @@ import { queryKeys } from "@/data";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
+  BOOKING_LODGING_ID,
+  defaultBookings,
   ITEM_C_ID,
+  ITEM_LODGING_ID,
   itineraryApiOverrides,
   TRIP_END,
   TRIP_START,
+  type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { settle } from "@/test-utils/settle";
@@ -86,6 +92,8 @@ interface RenderOpts {
   placeId?: string;
   trip?: TripListItem;
   savedRows?: SavedPlaceWithPlace[];
+  /** Itinerary/booking universe overrides (per-kind linked-row pins). */
+  itinerary?: ItineraryApiOptions;
   getPlace?: () => Promise<unknown>;
   getSavedPlaces?: () => Promise<unknown>;
   createSavedPlace?: (input: Record<string, unknown>) => Promise<unknown>;
@@ -105,7 +113,7 @@ async function renderDetail(opts: RenderOpts = {}) {
   const request = mockNavApi({
     trips: [trip],
     overrides: {
-      ...itineraryApiOverrides(),
+      ...itineraryApiOverrides(opts.itinerary),
       "GET /places/:placeId": opts.getPlace ?? (() => Promise.resolve({ place: PLACE })),
       "GET /trips/:tripId/saved-places":
         opts.getSavedPlaces ?? (() => Promise.resolve({ items: savedRows, nextCursor: null })),
@@ -353,20 +361,52 @@ describe("R-map-14 — note editor + linked content", () => {
     expect((patch.mock.calls[0]?.[0] as { body?: unknown }).body).toEqual({ note: null });
   });
 
-  it("linked itinerary items render for THIS place and jump tab-first with the ?day= param (R-map-14/23)", async () => {
+  it("an ITEM-kind linked row jumps tab-first then pushes item/[itemId] (R-map-14 'to them' / §2.7 — interp 17)", async () => {
     await renderDetail();
     // ITEM_C is the fixture place_visit at TEST_PLACE_ID (day 3).
     const row = await screen.findByTestId(`place-detail-list-item-${ITEM_C_ID}`);
     await fireEvent.press(row);
     await settle();
-    // ORDER: the tab jump must land BEFORE the same-stack navigate — the
-    // reverse order is the exact landmine class (a navigate at another
-    // tab's URL silently no-ops).
+    // ORDER: the tab jump must land BEFORE the same-stack push — the
+    // reverse order is the exact landmine class (a push at another tab's
+    // URL silently no-ops). DESTINATION: the item's own detail, per the
+    // MAP-6 "lands on item detail" bullet — never the day list.
     expect(callSequence).toEqual([
       ["tab", "itinerary"],
       [
-        "navigate",
-        { pathname: "/[tripId]/itinerary", params: { tripId: TEST_TRIP_ID, day: TRIP_END } },
+        "push",
+        {
+          pathname: "/[tripId]/itinerary/item/[itemId]",
+          params: { tripId: TEST_TRIP_ID, itemId: ITEM_C_ID },
+        },
+      ],
+    ]);
+  });
+
+  it("a BOOKING-kind linked row pushes booking/[bookingId] DIRECTLY (interp 17 — the day-list/grid precedent)", async () => {
+    // Give the lodging booking this place: its booking-kind item
+    // (ITEM_LODGING) then resolves the place through the parent booking —
+    // exactly the pin-builder resolution the linked list shares.
+    await renderDetail({
+      itinerary: {
+        bookings: defaultBookings().map((booking) =>
+          booking.id === BOOKING_LODGING_ID ? { ...booking, place_id: TEST_PLACE_ID } : booking,
+        ),
+      },
+    });
+    const row = await screen.findByTestId(`place-detail-list-item-${ITEM_LODGING_ID}`);
+    await fireEvent.press(row);
+    await settle();
+    // Straight to the booking detail: routing through item/[itemId] would
+    // only R-itin-27-replace itself there, leaving a bounce in the stack.
+    expect(callSequence).toEqual([
+      ["tab", "itinerary"],
+      [
+        "push",
+        {
+          pathname: "/[tripId]/itinerary/booking/[bookingId]",
+          params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_LODGING_ID },
+        },
       ],
     ]);
   });
