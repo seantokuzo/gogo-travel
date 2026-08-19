@@ -20,9 +20,11 @@
  * corner reads as one control stack; 44 pt hit target (R-ds-9).
  *
  * Icon state: filled `locate` once granted (the puck-adjacent affordance),
- * outline otherwise. `busy` renders the pressed-state opacity but taps stay
- * enabled — the store's busy gate is the single-flight guard, and a
- * disabled Pressable would be RNTL-unfalsifiable anyway (mobile.md).
+ * outline otherwise. Taps stay ENABLED while a read is in flight — the
+ * store's `busy` flag is the single-flight gate (a store guard only; this
+ * component never subscribes to it and renders no busy state — the only
+ * pressed opacity is Pressable's own feedback), and a disabled Pressable
+ * would be RNTL-unfalsifiable anyway (mobile.md).
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import * as Linking from "expo-linking";
@@ -88,7 +90,7 @@ export function MapLocateButton() {
       <ConfirmDialog
         visible={dialog === "rationale"}
         title="Show your location?"
-        body="GoGo uses your location to show where you are on the trip map. It stays on your device."
+        body="GoGo uses your location to show where you are on the trip map. GoGo never stores your location or sends it to GoGo's servers."
         confirmLabel="Allow"
         cancelLabel="Not now"
         onConfirm={() => void confirmLocateRationale()}

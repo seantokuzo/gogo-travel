@@ -12,9 +12,13 @@
  *  - Results are ranked blended text+geo server-side (PL-3 §3.3).
  *
  * KEY: extends the CT-2 `placeSearch` family with a `"map"` discriminator +
- * tripId — same `["places","search",…]` root, disjoint entries (the
- * destination search caches text-only responses; a map response for the
- * same `q` differs by bbox/trip_id). NOT under the `["trips", tripId, …]`
+ * tripId + the bbox string — same `["places","search",…]` root, disjoint
+ * entries (the destination search caches text-only responses; a map
+ * response for the same `q` differs by bbox/trip_id). The key carries the
+ * SAME geo bound the request carries, so a response is only ever served for
+ * the region it answered: an edited trip destination — or the rider's
+ * live-viewport bbox swap (escalation list) — is a key MISS, never a
+ * stale-region hit (review A1). NOT under the `["trips", tripId, …]`
  * detail subtree, matching the CT-2 precedent: results are global spine
  * rows, stale-bounded by the default staleTime, not trip data the 404-scrub
  * must evict. The tripId suffix keeps per-trip custom-place visibility from
@@ -64,15 +68,19 @@ export function useMapPlaceSearch(
   rawQuery: string,
 ): UseQueryResult<Paginated<Place>, Error> {
   const q = normalizeSearchText(rawQuery);
+  // Computed once so the KEY and the REQUEST can never disagree about the
+  // geo bound (module doc KEY). Old bbox-less cache entries simply miss
+  // and age out — the key change needs no migration.
+  const bbox = bboxParamFor(searchGeoBoundFor(context.destination));
   return useQuery({
-    queryKey: [...queryKeys.placeSearch(q), "map", context.tripId],
+    queryKey: [...queryKeys.placeSearch(q), "map", context.tripId, bbox],
     queryFn: ({ signal }) =>
       apiClient.request(
         placeEndpoints.searchPlaces,
         {
           query: {
             q,
-            bbox: bboxParamFor(searchGeoBoundFor(context.destination)),
+            bbox,
             trip_id: context.tripId,
             limit: MAP_SEARCH_PAGE_LIMIT,
           },

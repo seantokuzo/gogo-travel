@@ -26,9 +26,17 @@ export function haversineMeters(a: MapLocationCoordinate, b: MapLocationCoordina
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** "850 m" · "1.2 km" · "23 km" (module doc). */
+/**
+ * "850 m" · "1.2 km" · "23 km" (module doc). The UNIT cut branches on the
+ * ROUNDED value: 999.6 would otherwise render "1000 m" — a full kilometer
+ * wearing a sub-km label, against the module doc's "under 1 km" intent —
+ * so anything that rounds to 1000 m displays as km ("1.0 km"; review A12).
+ * The 10 km cut is a PRECISION switch inside the same unit (no label can
+ * misstate magnitude), so it stays a raw-value branch: 9999.6 → "10.0 km".
+ */
 export function formatDistance(meters: number): string {
-  if (meters < 1000) return `${Math.round(meters)} m`;
+  const roundedMeters = Math.round(meters);
+  if (roundedMeters < 1000) return `${roundedMeters} m`;
   const km = meters / 1000;
   if (km < 10) return `${km.toFixed(1)} km`;
   return `${Math.round(km)} km`;
