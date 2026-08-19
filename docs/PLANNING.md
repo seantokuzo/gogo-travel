@@ -454,7 +454,8 @@ pnpm test && pnpm build`
   @rnmapbox/maps + expo-location + expo-network, config-plugin entries,
   native-SDK pin (registry-verified provenance, T-6.4 precedent), tokens
   `mapColors`/`mapDayColors`, ONE dev-client rebuild (absorbs the
-  datetimepicker QA-rebuild obligation)
+  datetimepicker QA-rebuild obligation) · T-8.7 integration rider (W3
+  escalation accumulator — screen wiring; scope in QUEUE)
 - **Linked specs:** `client/map`, `api/places`
 - **Ledger:** F-055..F-062
 - **Prep (2026-08-15 — readiness brief `.tmp/p8-readiness-brief.md`):**
