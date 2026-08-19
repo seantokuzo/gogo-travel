@@ -196,7 +196,8 @@ function sdkPackName(pack: { name: unknown }): string | null {
 /**
  * R-map-20 ceiling purge, executed before a new download: enumerate regions,
  * delete past-trip packs oldest-first while the count nears the ceiling.
- * The incoming trip's own pack is never a candidate (replace handles it).
+ * The incoming trip's own pack is never a candidate AND never counted —
+ * replace deletes it before createPack re-registers the name.
  */
 async function purgeForNewDownload(
   tripId: string,
@@ -204,17 +205,26 @@ async function purgeForNewDownload(
 ): Promise<void> {
   const packs = await offlineManager.getPacks();
   const candidates: CeilingPurgeCandidate[] = [];
+  // Replace semantics: the incoming trip's own pack (if present) is deleted
+  // before createPack, so a refresh nets ZERO regions — counting it (round 1)
+  // purged a past trip's saved map one download earlier than the threshold
+  // requires.
+  let packCount = packs.length;
   for (const pack of packs) {
     const name = sdkPackName(pack);
     const packTripId = name === null ? null : tripIdFromPackName(name);
-    if (name === null || packTripId === null || packTripId === tripId) continue;
+    if (name === null || packTripId === null) continue;
+    if (packTripId === tripId) {
+      packCount -= 1;
+      continue;
+    }
     candidates.push({
       name,
       tripStatus: tripStatusFor(packTripId),
       completedAt: readPackAnnotation(packTripId)?.completedAt ?? null,
     });
   }
-  for (const name of planCeilingPurge(packs.length, candidates)) {
+  for (const name of planCeilingPurge(packCount, candidates)) {
     await offlineManager.deletePack(name);
     const purgedTripId = tripIdFromPackName(name);
     if (purgedTripId !== null) {
@@ -295,8 +305,13 @@ export function startPackDownload(
     try {
       await purgeForNewDownload(tripId, tripStatusFor);
       // Replace semantics: createPack on an existing name errors, so any
-      // previous pack (ready, stale, or half-downloaded) goes first.
+      // previous pack (ready, stale, or half-downloaded) goes first — and its
+      // annotation with it (round 1): if createPack then fails, a surviving
+      // annotation would seed a lying "ready" for a pack the SDK no longer
+      // holds on the next launch AND suppress the R-map-18 re-attempt.
+      // Completion rewrites the annotation; failure leaves an honest none.
       await offlineManager.deletePack(name).catch(() => undefined);
+      removePackAnnotation(tripId);
       await offlineManager.createPack(
         {
           name,

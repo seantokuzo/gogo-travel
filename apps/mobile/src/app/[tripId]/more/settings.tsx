@@ -98,6 +98,41 @@ function themeLabelFor(key: string | null): string {
   return isThemeName(key) ? themes[key].label : key;
 }
 
+/**
+ * Offline map row + management sheet (T-8.5 / R-map-19) — its OWN component
+ * because `useOfflinePackController` re-renders its subscriber on every
+ * distinct download percent (unthrottled on Android): owning the hook here
+ * scopes those ticks to this row + sheet instead of the whole settings tree
+ * (round-1 perf finding). Mounting the row still mounts the controller — the
+ * R-map-18 settings mount point is unchanged (the Sheet is an RN Modal, so
+ * its tree position is presentation-neutral).
+ */
+function OfflineMapRow() {
+  const trip = useTripContext();
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const packState = useOfflinePackController(trip);
+  return (
+    <>
+      <ListItem
+        title="Offline map"
+        subtitle={offlinePackSummary(packState)}
+        leading={<Icon name="cloud-download-outline" size={22} />}
+        trailing="chevron"
+        onPress={() => setSheetOpen(true)}
+        testID="trip-settings-list-item-offline"
+      />
+      <Sheet
+        visible={sheetOpen}
+        onDismiss={() => setSheetOpen(false)}
+        title="Offline map"
+        testID="trip-settings-sheet-offline"
+      >
+        <OfflinePackManager />
+      </Sheet>
+    </>
+  );
+}
+
 const useStyles = createStyles((t) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: t.color.bg.screen },
@@ -328,10 +363,6 @@ export default function TripSettingsScreen() {
     updateTrip.mutate(patch);
   };
 
-  // ---- offline map (T-8.5 / R-map-19) --------------------------------------
-  const [offlineSheetOpen, setOfflineSheetOpen] = useState(false);
-  const packState = useOfflinePackController(trip);
-
   // ---- exit flows (delete / leave) + teardown eviction -----------------------
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -551,14 +582,9 @@ export default function TripSettingsScreen() {
               <View style={s.divider} />
             </>
           ) : null}
-          <ListItem
-            title="Offline map"
-            subtitle={offlinePackSummary(packState)}
-            leading={<Icon name="cloud-download-outline" size={22} />}
-            trailing="chevron"
-            onPress={() => setOfflineSheetOpen(true)}
-            testID="trip-settings-list-item-offline"
-          />
+          {/* Offline map row owns its controller hook (component doc above) —
+              per-percent download updates never re-render this screen. */}
+          <OfflineMapRow />
           <View style={s.divider} />
           <ListItem
             title="Members"
@@ -636,15 +662,6 @@ export default function TripSettingsScreen() {
             />
           ))}
         </View>
-      </Sheet>
-
-      <Sheet
-        visible={offlineSheetOpen}
-        onDismiss={() => setOfflineSheetOpen(false)}
-        title="Offline map"
-        testID="trip-settings-sheet-offline"
-      >
-        <OfflinePackManager />
       </Sheet>
 
       <Sheet

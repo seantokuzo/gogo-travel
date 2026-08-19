@@ -161,7 +161,6 @@ export type {
 } from "./offline-packs";
 export {
   clearPackAnnotationsForTests,
-  listPackAnnotations,
   readPackAnnotation,
   removePackAnnotation,
   writePackAnnotation,

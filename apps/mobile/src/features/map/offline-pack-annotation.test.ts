@@ -1,14 +1,12 @@
 /**
  * MMKV pack annotation (T-8.5 — §2.5's "small MMKV record"). Load-bearing:
  * corrupt or shape-drifted records read as ABSENT (never a crash), and the
- * list surface only returns valid records — the purge planner's candidate
- * source must not see garbage.
+ * keys are namespaced — pack hygiene must never touch foreign gogo.* state.
  */
 import { createMMKV } from "react-native-mmkv";
 
 import {
   clearPackAnnotationsForTests,
-  listPackAnnotations,
   readPackAnnotation,
   removePackAnnotation,
   writePackAnnotation,
@@ -41,14 +39,6 @@ it("corrupt JSON and shape drift read as ABSENT, never throw", () => {
   storage.set("gogo.offlinePack.bad-shape", JSON.stringify({ tripId: 42 }));
   expect(readPackAnnotation("bad-json")).toBeUndefined();
   expect(readPackAnnotation("bad-shape")).toBeUndefined();
-});
-
-it("list returns only VALID records — the purge candidate source", () => {
-  writePackAnnotation(annotation("t1"));
-  writePackAnnotation(annotation("t2"));
-  createMMKV().set("gogo.offlinePack.corrupt", "??");
-  const listed = listPackAnnotations();
-  expect(listed.map((entry) => entry.tripId).sort()).toEqual(["t1", "t2"]);
 });
 
 it("annotations are namespaced — foreign gogo.* keys are untouched by the test reset", () => {

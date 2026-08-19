@@ -56,15 +56,6 @@ export function removePackAnnotation(tripId: string): void {
   storage.remove(keyFor(tripId));
 }
 
-/** Every annotated trip's record — the purge planner's candidate source. */
-export function listPackAnnotations(): OfflinePackAnnotation[] {
-  return storage
-    .getAllKeys()
-    .filter((key) => key.startsWith(KEY_PREFIX))
-    .map((key) => readPackAnnotation(key.slice(KEY_PREFIX.length)))
-    .filter((annotation): annotation is OfflinePackAnnotation => annotation !== undefined);
-}
-
 /** Test-only: wipe every annotation (jest's in-memory MMKV persists per file). */
 export function clearPackAnnotationsForTests(): void {
   for (const key of storage.getAllKeys()) {

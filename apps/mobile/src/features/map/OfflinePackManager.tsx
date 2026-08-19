@@ -26,6 +26,12 @@
  * installed SDK has no estimate API (machine module doc). Every action
  * handler is gated in the HANDLER, never only `disabled` (mobile.md).
  *
+ * UNUSABLE destination (the R-map-1 world degrade arm renders with NaN
+ * coords): the whole surface stands down like the pill — the controller pins
+ * state to `none`, and the estimate/actions are gated on
+ * `isUsableDestination` (the region grid THROWS on bad coords; round-1: the
+ * unguarded estimate memo crashed this surface where the pill survived).
+ *
  * Mounting this surface mounts the pack controller — the second R-map-18
  * activation-trigger mount point (controller doc).
  */
@@ -42,6 +48,7 @@ import { mapStyleUrlForScheme } from "./map-style";
 import {
   estimatePackSizeBytes,
   formatPackSize,
+  isUsableDestination,
   isWifiState,
   packBoundsFor,
   type OfflinePackState,
@@ -110,12 +117,17 @@ export function OfflinePackManager() {
     styleUrl: mapStyleUrlForScheme(scheme),
   };
 
+  // Degrade-arm guard (module doc): the grid throws on unusable coords, so
+  // the estimate is null and every download entry stands down with it.
+  const usable = isUsableDestination(trip.destination_lat, trip.destination_lng);
   const estimate = useMemo(
     () =>
-      formatPackSize(
-        estimatePackSizeBytes(packBoundsFor(trip.destination_lat, trip.destination_lng)),
-      ),
-    [trip.destination_lat, trip.destination_lng],
+      usable
+        ? formatPackSize(
+            estimatePackSizeBytes(packBoundsFor(trip.destination_lat, trip.destination_lng)),
+          )
+        : null,
+    [trip.destination_lat, trip.destination_lng, usable],
   );
 
   /**
@@ -124,7 +136,7 @@ export function OfflinePackManager() {
    * wifi → start, cellular → size-estimate ConfirmDialog, none → notice.
    */
   const requestDownload = (dialogKey: Exclude<CellularDialog, null>) => {
-    if (state.phase === "downloading") return; // handler gate, not `disabled`
+    if (!usable || state.phase === "downloading") return; // handler gate, not `disabled`
     void Network.getNetworkStateAsync().then((network) => {
       if (isWifiState(network)) {
         setOfflineNotice(false);
@@ -163,7 +175,7 @@ export function OfflinePackManager() {
           {state.message}
         </AppText>
       ) : null}
-      {state.phase === "none" ? (
+      {state.phase === "none" && estimate !== null ? (
         <AppText role="caption" color="muted">
           Maps for {trip.destination_name} work without a connection once saved. Estimated
           download: ~{estimate}.
@@ -187,7 +199,7 @@ export function OfflinePackManager() {
       ) : null}
 
       <View style={s.actions}>
-        {state.phase === "none" ? (
+        {state.phase === "none" && usable ? (
           <Button
             title="Download map"
             onPress={() => requestDownload("offline-pack-button-download")}
@@ -222,7 +234,9 @@ export function OfflinePackManager() {
       <ConfirmDialog
         visible={cellularDialog !== null}
         title="Download over cellular?"
-        body={`You're not on Wi-Fi. Saving this map will download about ${estimate} over your cellular connection.`}
+        // `?? ""` is unreachable: the dialog only opens through
+        // requestDownload, which stands down when estimate is null.
+        body={`You're not on Wi-Fi. Saving this map will download about ${estimate ?? ""} over your cellular connection.`}
         confirmLabel="Download"
         onConfirm={onConfirmCellular}
         onCancel={() => setCellularDialog(null)}
