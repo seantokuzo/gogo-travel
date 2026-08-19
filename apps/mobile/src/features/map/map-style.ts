@@ -67,3 +67,37 @@ export function configureMapboxAccessToken(
 export function resetMapboxAccessTokenForTests(): void {
   tokenConfigured = false;
 }
+
+let telemetryDisabled = false;
+
+/**
+ * TELEMETRY SEAM (T-8.7 rider): the Mapbox SDK collects telemetry by
+ * default; `setTelemetryEnabled(false)` is the documented v10 programmatic
+ * opt-out (rnmapbox GettingStarted "Disabling telemetry"; verified against
+ * the installed 10.3.5 — `src/RNMBXModule.ts` exports it and the package's
+ * `types` entry carries it). Called once at screen module scope beside the
+ * token hand-off, idempotent-latched like it.
+ *
+ * The `typeof` guard: under jest the package is WHOLESALE-mocked
+ * (`jest.setup.js` — a T-8.5-owned file this task must not edit; the mock
+ * addition is ESCALATED in the PR) and the mock's default export omits this
+ * method, so absence degrades to `false` instead of a TypeError in every
+ * suite that imports the screen. In a real build the method always exists
+ * (native module contract); the guard's false arm is test-env-only.
+ *
+ * DEVICE-VERIFIABLE REMAINDER: the SDK persists the setting per device —
+ * confirming the events endpoint goes quiet needs a live-token build
+ * (phase-QA item, recorded in the PR body).
+ */
+export function disableMapboxTelemetry(): boolean {
+  if (telemetryDisabled) return true;
+  if (typeof Mapbox.setTelemetryEnabled !== "function") return false;
+  Mapbox.setTelemetryEnabled(false);
+  telemetryDisabled = true;
+  return true;
+}
+
+/** Test-only: reset the telemetry latch between cases. */
+export function resetMapboxTelemetryForTests(): void {
+  telemetryDisabled = false;
+}

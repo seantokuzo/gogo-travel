@@ -24,6 +24,7 @@ import {
   handleLocatePress,
   LOCATE_CAMERA_ZOOM,
   resetMapLocationForTests,
+  syncLocationPermissionFromSystem,
   useMapLocationStore,
 } from "./location";
 
@@ -183,7 +184,10 @@ it("tap while already granted: straight to position, no dialogs", async () => {
   expect(state.position).toEqual({ lat: 34.9, lng: 135.7 });
 });
 
-it("granted but the position read FAILS (location services off) → Settings dialog", async () => {
+it("granted but the position read FAILS → the DISTINCT `unavailable` dialog, not `settings` (interp-17 closure)", async () => {
+  // The `settings` arm means DENIED ("Location is off" copy) — a granted
+  // read fault must not wear it (T-8.7 rider; the denied CONTROL below
+  // proves `settings` still exists for its own arm).
   locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
   locationMock.__mock.getCurrentPositionAsync.mockRejectedValueOnce(
     new Error("location unavailable"),
@@ -192,7 +196,7 @@ it("granted but the position read FAILS (location services off) → Settings dia
   await handleLocatePress();
 
   const state = useMapLocationStore.getState();
-  expect(state.dialog).toBe("settings");
+  expect(state.dialog).toBe("unavailable");
   expect(state.position).toBeNull();
   expect(consumePendingCameraIntent()).toBeNull(); // no fly-to on failure
 });
@@ -223,6 +227,65 @@ it("single-flight: a re-tap during an in-flight read is a no-op", async () => {
   }
   await first;
   expect(useMapLocationStore.getState().busy).toBe(false);
+});
+
+describe("syncLocationPermissionFromSystem (T-8.7 — PR #24 corr A2)", () => {
+  it("a Settings GRANT is observed: permission flips to granted, position untouched", async () => {
+    useMapLocationStore.setState({ permission: "denied" });
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    // A sync READS, never requests or acquires — no prompt, no position.
+    expect(locationMock.__mock.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+    expect(locationMock.__mock.getCurrentPositionAsync).not.toHaveBeenCalled();
+  });
+
+  it("a Settings REVOKE clears the stale position too (the puck-active distance invariant)", async () => {
+    // Granted earlier with a position powering distance labels…
+    useMapLocationStore.setState({
+      permission: "granted",
+      position: { lat: 35.01, lng: 135.77 },
+    });
+    // …revoked in Settings; the app returns to the foreground.
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+      permission("denied", { canAskAgain: false }),
+    );
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("denied");
+    // Without this, sheet/detail distance labels keep rendering from a
+    // position the user just revoked access to — "puck active" would lie.
+    expect(state.position).toBeNull();
+  });
+
+  it("a failed read changes NOTHING (keeps last knowledge)", async () => {
+    useMapLocationStore.setState({
+      permission: "granted",
+      position: { lat: 35.01, lng: 135.77 },
+    });
+    locationMock.__mock.getForegroundPermissionsAsync.mockRejectedValueOnce(new Error("boom"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    expect(state.position).toEqual({ lat: 35.01, lng: 135.77 });
+  });
+
+  it("undetermined maps to undetermined (never invents denied)", async () => {
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+      permission("undetermined"),
+    );
+
+    await syncLocationPermissionFromSystem();
+
+    expect(useMapLocationStore.getState().permission).toBe("undetermined");
+  });
 });
 
 it("dismissing a dialog changes nothing and re-fires nothing", async () => {

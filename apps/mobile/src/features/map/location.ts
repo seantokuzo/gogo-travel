@@ -27,11 +27,12 @@
  *  - Position never leaves the device from this module (§2.6: distance
  *    labels are computed on-device; nothing here touches the ApiClient).
  *
- * PUCK + FLY-TO application are screen-side (frozen — PR escalation list):
- * `<LocationPuck>` must be a MapView child and the camera ref is
- * screen-owned. This module owns the full decision surface — the rider
- * renders the puck off `permission === "granted"` and drains the camera
- * intent (`camera-intent.ts`).
+ * PUCK + FLY-TO application are screen-side: `<LocationPuck>` must be a
+ * MapView child and the camera ref is screen-owned. This module owns the
+ * full decision surface; the screen (wired by the T-8.7 rider, closing PR
+ * #24 escalations E2/E3) renders the puck off `permission === "granted"`,
+ * drains the camera intent (`camera-intent.ts`), and re-syncs permission on
+ * app-active transitions (`syncLocationPermissionFromSystem`).
  */
 import * as Location from "expo-location";
 import { create } from "zustand";
@@ -43,7 +44,14 @@ import { setPendingCameraIntent } from "./camera-intent";
 export const LOCATE_CAMERA_ZOOM = SINGLE_PIN_ZOOM;
 
 export type MapLocationPermission = "unknown" | "undetermined" | "granted" | "denied";
-export type MapLocationDialog = "rationale" | "settings" | null;
+/**
+ * `settings` = permission DENIED (the R-map-16 one-tap Settings path);
+ * `unavailable` = permission GRANTED but the position read failed (services
+ * off / transient GPS fault) — a DISTINCT arm with its own copy (T-8.7
+ * rider closing PR #24 interp 17: "Location is off" was misleading for a
+ * GPS fault with the app-level permission granted).
+ */
+export type MapLocationDialog = "rationale" | "settings" | "unavailable" | null;
 
 export interface MapLocationCoordinate {
   lat: number;
@@ -84,9 +92,11 @@ async function acquirePosition(): Promise<void> {
     });
   } catch {
     // Permission granted but the read failed ⇒ location services are off
-    // (or a transient fault) — Settings is the actionable path either way,
-    // and the map stays fully functional without the puck (R-map-16).
-    useMapLocationStore.setState({ dialog: "settings" });
+    // OR a transient fault — the DISTINCT `unavailable` arm (its copy names
+    // both causes; Settings stays the one actionable hop) so a GPS blip is
+    // never mislabeled "Location is off". The map stays fully functional
+    // without the puck (R-map-16).
+    useMapLocationStore.setState({ dialog: "unavailable" });
   }
 }
 
@@ -138,6 +148,40 @@ export async function confirmLocateRationale(): Promise<void> {
 /** Any dialog dismissed without action — nothing changes, nothing re-fires. */
 export function dismissLocateDialog(): void {
   useMapLocationStore.setState({ dialog: null });
+}
+
+/**
+ * AppState-active permission RE-SYNC (T-8.7 rider — PR #24 corr A2): a
+ * Settings grant/revoke happens OUTSIDE the app, so on background → active
+ * the system truth is re-READ (a `get`, never a `request` — R-map-16's
+ * no-prompt guarantee holds) and the store follows it: a Settings grant
+ * mounts the puck without another locate tap; a revoke unmounts it.
+ *
+ * On any non-granted result the last `position` is cleared too — that keeps
+ * the invariant `position !== null ⟹ permission === "granted"`, which is
+ * what lets the sheet's and detail's §2.3 "distance when puck active"
+ * labels key on `position` alone.
+ *
+ * Called ONLY from the screen's AppState listener — never at import or
+ * mount (the LAZY pin: an app-active transition is a user-driven moment,
+ * and `get` raises no prompt). A failed read changes nothing.
+ */
+export async function syncLocationPermissionFromSystem(): Promise<void> {
+  try {
+    const current = await Location.getForegroundPermissionsAsync();
+    if (current.granted) {
+      useMapLocationStore.setState({ permission: "granted" });
+      return;
+    }
+    useMapLocationStore.setState({
+      permission:
+        current.status === Location.PermissionStatus.UNDETERMINED ? "undetermined" : "denied",
+      position: null,
+    });
+  } catch {
+    // Read failed — keep the store's last knowledge; the next locate tap's
+    // per-tap fresh read (R-map-16 recovery) is the authoritative retry.
+  }
 }
 
 /** Test hygiene (module-scope store — the map-style latch precedent). */
