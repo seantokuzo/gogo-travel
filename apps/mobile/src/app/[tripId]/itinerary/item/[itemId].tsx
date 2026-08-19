@@ -44,6 +44,7 @@ import {
 } from "@/components";
 import { useDeleteItineraryItem, useItinerary, useTripOffline } from "@/data";
 import { itemWhenLabel } from "@/features/itinerary";
+import { setPendingMapFocus } from "@/features/map";
 import { jumpToTripTab } from "@/navigation/tab-jump";
 import { useTripContext } from "@/navigation/trip-context";
 
@@ -200,13 +201,17 @@ export default function ItineraryItemScreen() {
             (mobile.md landmine), so this goes through the tab navigator. The
             place SCREEN belongs to the maps spec (§2.10) — and the composite
             read carries no place NAME (T-7.4's documented gap), which is why
-            the row is labelled by its destination rather than by the place. */}
+            the row is labelled by its destination rather than by the place.
+            T-8.4 (R-map-24): the pending-focus store is armed FIRST, then the
+            jump — the map screen drains it once on focus and selects the pin
+            (trip-scoped; a foreign trip's armed id is discarded). */}
         {item.place_id !== null ? (
           <View style={s.block}>
             <ListItem
               title="View place on the map"
               trailing="chevron"
               onPress={() => {
+                if (item.place_id !== null) setPendingMapFocus(trip.id, item.place_id);
                 jumpToTripTab(navigation, trip.id, "map");
               }}
               testID="itinerary-item-row-place"

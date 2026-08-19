@@ -24,6 +24,7 @@ import {
   BookingCategorySchema,
   ISODateSchema,
   ISOTimeSchema,
+  UuidSchema,
   type BookingCategory,
 } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
@@ -77,6 +78,8 @@ export default function ItineraryItemNewScreen() {
     itemId?: string;
     bookingId?: string;
     source?: string;
+    placeId?: string;
+    placeName?: string;
   }>();
 
   const [option, setOption] = useState<AddOptionId | null>(() => parseOption(params.category));
@@ -100,6 +103,20 @@ export default function ItineraryItemNewScreen() {
   const prefillDay = ISODateSchema.safeParse(params.day).success ? params.day : undefined;
   const prefillTime = ISOTimeSchema.safeParse(params.time).success ? params.time : undefined;
   const deeplinkReturn = params.source === "deeplink_return";
+  // R-map-12 place preselect (T-8.4 — the map detail/sheet "Add to day"):
+  // id validated against the shared scalar so a malformed/repeated param
+  // degrades to "no preselect", never a malformed wire write. The name is
+  // display-only (the picker shows it); absent falls back like edit mode.
+  const prefillPlace =
+    typeof params.placeId === "string" && UuidSchema.safeParse(params.placeId).success
+      ? {
+          id: params.placeId,
+          name:
+            typeof params.placeName === "string" && params.placeName.trim() !== ""
+              ? params.placeName
+              : "Selected place",
+        }
+      : undefined;
 
   const editingBookingId = params.bookingId;
   const editingItemId = params.itemId;
@@ -240,6 +257,7 @@ export default function ItineraryItemNewScreen() {
         kind={option}
         prefillDay={prefillDay}
         prefillTime={prefillTime}
+        prefillPlace={prefillPlace}
         onDirty={onDirty}
         onSaved={onSaved}
       />

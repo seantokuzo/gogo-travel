@@ -21,6 +21,7 @@ import { StyleSheet } from "react-native";
 import BookingDetailScreen from "@/app/[tripId]/itinerary/booking/[bookingId]";
 import { ApiRequestError } from "@/auth";
 import { clearDeeplinkOutRecord, readDeeplinkOutRecord } from "@/features/deeplinks";
+import { usePendingMapFocusStore } from "@/features/map";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -174,6 +175,8 @@ afterEach(async () => {
   // The record store is MMKV-backed module state — a leaked record would make
   // the next suppression pin pass or fail on the wrong test's write.
   clearDeeplinkOutRecord();
+  // Same class: the pending-focus store is module state the sender pin arms.
+  usePendingMapFocusStore.setState({ pending: null });
 });
 
 describe("R-itin-24 — the detail surface", () => {
@@ -275,7 +278,14 @@ describe("R-itin-24 — the detail surface", () => {
 });
 
 describe("R-itin-24 — seam rows", () => {
-  it("shows the place row only when the booking HAS a place, and jumps to the map tab", async () => {
+  it("shows the place row only when the booking HAS a place, arms the pending focus, then jumps to the map tab (R-map-24 sender)", async () => {
+    // ORDER pin (T-8.4): the focus must already be armed WHEN the tab
+    // navigate fires — the map screen drains the store in its focus effect,
+    // so arm-after-jump loses the race by design.
+    const pendingAtJump: unknown[] = [];
+    mockTabNavigate.mockImplementation(() => {
+      pendingAtJump.push(usePendingMapFocusStore.getState().pending);
+    });
     await renderDetail({
       booking: flightBooking({ place_id: "44444444-4444-4444-8444-444444444444" }),
     });
@@ -285,6 +295,9 @@ describe("R-itin-24 — seam rows", () => {
     // silently no-ops) — the router must NOT have been used for this.
     expect(mockTabNavigate).toHaveBeenCalledWith("map");
     expect(mockPush).not.toHaveBeenCalled();
+    expect(pendingAtJump).toEqual([
+      { tripId: TEST_TRIP_ID, placeId: "44444444-4444-4444-8444-444444444444" },
+    ]);
   });
 
   it("hides the place row when the booking has none (CONTROL for the row above)", async () => {

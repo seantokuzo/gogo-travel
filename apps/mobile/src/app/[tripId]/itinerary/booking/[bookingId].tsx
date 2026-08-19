@@ -49,6 +49,7 @@ import {
 } from "@/components";
 import { useBooking, useDeleteBooking, useTripOffline, useUpdateBooking } from "@/data";
 import { DeeplinkPanel } from "@/features/deeplinks";
+import { setPendingMapFocus } from "@/features/map";
 import {
   BOOKING_SOURCE_LABELS,
   BOOKING_STATUS_LABELS,
@@ -316,12 +317,18 @@ export default function BookingDetailScreen() {
                 go through `jumpToTripTab` — an imperative push at another
                 tab's URL silently no-ops (mobile.md landmine). Their
                 DESTINATION screens belong to the maps and money specs
-                (§2.10); this spec only links into them. */}
+                (§2.10); this spec only links into them. T-8.4 (R-map-24):
+                the pending-focus store is armed BEFORE the jump — the map
+                screen drains it once on focus and selects the pin (trip-
+                scoped; a foreign trip's armed id is discarded). */}
             {booking.place_id !== null ? (
               <ListItem
                 title="View place on the map"
                 trailing="chevron"
                 onPress={() => {
+                  if (booking.place_id !== null) {
+                    setPendingMapFocus(trip.id, booking.place_id);
+                  }
                   jumpToTripTab(navigation, trip.id, "map");
                 }}
                 testID="booking-detail-row-place"
