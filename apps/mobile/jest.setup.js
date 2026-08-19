@@ -129,6 +129,30 @@ jest.mock("@rnmapbox/maps", () => {
   const { View } = require("react-native");
 
   const setAccessToken = jest.fn(async () => null);
+  // T-8.7 coordination: the map screen feature-detects setTelemetryEnabled —
+  // the mock carries it so the detect exercises the call path under jest.
+  const setTelemetryEnabled = jest.fn();
+  /**
+   * offlineManager (T-8.5): jest.fn surface matching the installed 10.3.5
+   * typings (modules/offline/offlineManager.d.ts). Defaults are the EMPTY
+   * device (no packs) so no suite inherits pack state it didn't arrange;
+   * suites steer via `jest.requireMock("@rnmapbox/maps").__mock.offlineManager`
+   * and drive downloads by invoking the progress/error listeners captured in
+   * `createPack.mock.calls` (the machine carries the pins — P-8 prep ruling).
+   * `setTileCountLimit` is DELIBERATELY absent: raising the ceiling violates
+   * the Mapbox ToS (readiness brief), so a prod call should fault loudly
+   * (same posture as background APIs missing from the expo-location stub).
+   */
+  const offlineManager = {
+    createPack: jest.fn(async () => undefined),
+    getPacks: jest.fn(async () => []),
+    getPack: jest.fn(async () => undefined),
+    deletePack: jest.fn(async () => undefined),
+    invalidatePack: jest.fn(async () => undefined),
+    subscribe: jest.fn(async () => undefined),
+    unsubscribe: jest.fn(),
+    setProgressEventThrottle: jest.fn(),
+  };
   const cameraHandle = {
     setCamera: jest.fn(),
     fitBounds: jest.fn(),
@@ -168,8 +192,10 @@ jest.mock("@rnmapbox/maps", () => {
 
   return {
     __esModule: true,
-    default: { setAccessToken },
+    default: { setAccessToken, setTelemetryEnabled },
     setAccessToken,
+    setTelemetryEnabled,
+    offlineManager,
     MapView,
     Camera,
     ShapeSource,
@@ -182,6 +208,46 @@ jest.mock("@rnmapbox/maps", () => {
       Light: "mapbox://styles/mapbox/light-v11",
       Dark: "mapbox://styles/mapbox/dark-v11",
     },
-    __mock: { setAccessToken, camera: cameraHandle, shapeSource: shapeSourceHandle },
+    __mock: {
+      setAccessToken,
+      setTelemetryEnabled,
+      camera: cameraHandle,
+      shapeSource: shapeSourceHandle,
+      offlineManager,
+    },
+  };
+});
+
+/**
+ * expo-network (T-8.5): the §2.5 wifi gate's module. Default is the SAFE
+ * no-connection state (`NONE`) — the expo-location pre-consent posture: no
+ * suite accidentally triggers a wifi-gated auto-download it didn't arrange.
+ * Suites steer via `jest.requireMock("expo-network").__mock` and drive the
+ * deferred-retry path by invoking listeners captured in
+ * `addNetworkStateListener.mock.calls`.
+ */
+jest.mock("expo-network", () => {
+  const getNetworkStateAsync = jest.fn(async () => ({
+    type: "NONE",
+    isConnected: false,
+    isInternetReachable: false,
+  }));
+  const addNetworkStateListener = jest.fn(() => ({ remove: jest.fn() }));
+  return {
+    __esModule: true,
+    NetworkStateType: {
+      NONE: "NONE",
+      UNKNOWN: "UNKNOWN",
+      CELLULAR: "CELLULAR",
+      WIFI: "WIFI",
+      BLUETOOTH: "BLUETOOTH",
+      ETHERNET: "ETHERNET",
+      WIMAX: "WIMAX",
+      VPN: "VPN",
+      OTHER: "OTHER",
+    },
+    getNetworkStateAsync,
+    addNetworkStateListener,
+    __mock: { getNetworkStateAsync, addNetworkStateListener },
   };
 });
