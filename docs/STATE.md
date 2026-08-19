@@ -44,16 +44,24 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     (1 blocking filing gap + 5 advisory, fixed 30300cd, verifier
     VERIFIED-CLEAN, judge merge/high; tokens 322→323). Full narratives:
     QUEUE rows.
-  - **W2 — T-8.2 DISPATCHED 2026-08-15** (map shell; freezes 3 seams —
-    sheet mount + onPinSelect, offline status-pill slot, pending-focus
-    stub; brief carries the §2.2-vs-R-itin-1 Euclidean-modulo note, the
-    pending-focus-store ruling, and the photo-pins-empty-in-prod ruling)
-    ∥ **Hermes/dedup chore in-flight** (QUEUE P1 row — pre-rebuild). ONE
-    dev-client rebuild AFTER the Hermes chore merges → P-6+P-7 sim QA
-    ∥ W2 review.
-  - **W3 (∥ worktrees):** T-8.3 interactions ∥ T-8.4 place detail + focus
-    contract.
-  - **W4:** T-8.5 offline packs + closer rider.
+  - **W2 ✅ DONE 2026-08-18 — T-8.2 MERGED 08e656c (PR #23).** Map shell
+    [MAP-1]: themed MapView, 3 clustered pin families, span-aware day
+    filter, camera-fit w/ zero-span collapse, 3 frozen seams
+    (sheet+onPinSelect → T-8.3 · offline pill → T-8.5 · trip-scoped
+    pending-focus → T-8.4). 1 round + 1 fix leg + independent
+    verification + targeted conventions r2 + judge merge/high; mobile
+    1011→1097. Full narrative: QUEUE row. **Judge merge condition:** the
+    interp-#1 pin-coverage structural closure is a named QUEUE Blocked
+    row (P1, Sean spec pass) — rule BEFORE the phase closer.
+    (Hermes/dedup chore also done — PR #22, 293d0ef; QUEUE row folded.)
+  - **W3 DISPATCHED 2026-08-18: T-8.3 [MAP-2, MAP-4] ∥ T-8.4 [MAP-3,
+    MAP-6]** in parallel isolated worktrees off 08e656c; file-ownership:
+    T-8.3 owns MapPlaceSheetSlot + sheet components + search + location +
+    jest-mock additions ∥ T-8.4 owns place/[placeId].tsx + data/places.ts
+    extensions + pending-focus senders on itinerary/booking screens —
+    data/places.ts is T-8.4's EXCLUSIVELY; the shared frozen seams make
+    the map screen file itself off-limits to both.
+  - **W4 (after W3):** T-8.5 offline packs + closer rider.
   - **PHASE-QA ATTEMPT 2026-08-15** (the rebuild leg of W2's plan): the ONE
     dev-client rebuild ✅ **PASSED on main@293d0ef** — prebuild + CocoaPods
     clean (the feared Mapbox-SDK pod failure did NOT occur); bake verified
@@ -67,10 +75,13 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     sign-in only, no session seeding, server boots health-only without auth
     env), no tap automation. **ZERO ledger flips** (Law #7 — partial engine
     evidence only for F-052 picker module + F-054 copy engine, below the
-    bar). Sean decision PENDING: **(a)** drop the OAuth/server env → QA
-    runs signed-in, or **(b)** approve a `__DEV__` session door (Autonomy
-    Contract trigger #4). Evidence: `.tmp/qa-2026-08-15/MANIFEST.md`. Metro
-    left running; rebuilt app installed on sim A6D3CE7C.
+    bar). **Sean ruling 2026-08-16: QA PARKED ("park QA, keep building")
+    — no pending decision**; both unblock options — **(a)** drop the
+    OAuth/server env → QA runs signed-in, or **(b)** approve a `__DEV__`
+    session door (Autonomy Contract trigger #4) — stand recorded (QUEUE
+    row) for whenever QA resumes. Evidence:
+    `.tmp/qa-2026-08-15/MANIFEST.md`. Metro left running; rebuilt app
+    installed on sim A6D3CE7C.
 - **Key rulings** (six — PLANNING § P-8 Prep bullet; brief:
   `.tmp/p8-readiness-brief.md`): focusPlaceId = pending-focus store;
   warm-session offline bar — NO TQ persister; photo pins fixture-tested,
@@ -303,8 +314,8 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
 - **PHASE-QA CHECKLIST (run on sim before ledger flips; rebuild precondition
   ✅ MET 2026-08-15 — dev client rebuilt on main@293d0ef, datetimepicker
   baked; the blocker is now CREDS, not the build — no signed-in path on sim;
-  see the P-8 PHASE-QA ATTEMPT bullet + QUEUE row for Sean's (a)/(b) unblock
-  decision):** ① two-account collab loop:
+  QA PARKED by Sean 2026-08-16 — the (a)/(b) unblock options stand recorded
+  in the P-8 PHASE-QA ATTEMPT bullet + QUEUE row):** ① two-account collab loop:
   create → invite (share sheet opens) → join via gogo:// link → role change →
   transfer → remove (T-6.2/6.8/6.9); ② warm-start deep-link URL transport
   (jest-untestable leg, T-6.6); ③ offline cached-shell mount
