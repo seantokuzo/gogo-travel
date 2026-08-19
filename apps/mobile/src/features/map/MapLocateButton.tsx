@@ -11,6 +11,10 @@
  *    and there is no automatic re-prompt loop (the "once per session" hint
  *    posture: WE never surface it unprompted — it exists only behind the
  *    user's own tap).
+ *  - unavailable (T-8.7 rider, closing PR #24 interp 17) — permission
+ *    GRANTED but the position read failed: DISTINCT copy naming both causes
+ *    (services off / signal fault) instead of the misleading "Location is
+ *    off"; Settings stays the one actionable hop, same non-blocking rules.
  *
  * PLACEMENT — bottom-right, stacked ABOVE the attribution (i) button
  * (PR interpretation, continuing PR #23 interp #18's composition contract):
@@ -108,6 +112,18 @@ export function MapLocateButton() {
         }}
         onCancel={dismissLocateDialog}
         testID="map-dialog-locate-settings"
+      />
+      <ConfirmDialog
+        visible={dialog === "unavailable"}
+        title="Couldn't get your location"
+        body="Your location didn't come through — Location Services may be off, or the signal dropped. Check Settings, or try again in a moment."
+        confirmLabel="Open Settings"
+        onConfirm={() => {
+          dismissLocateDialog();
+          void Linking.openSettings();
+        }}
+        onCancel={dismissLocateDialog}
+        testID="map-dialog-locate-unavailable"
       />
     </View>
   );

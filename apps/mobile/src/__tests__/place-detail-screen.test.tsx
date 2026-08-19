@@ -28,6 +28,7 @@ import { Linking } from "react-native";
 import PlaceDetailScreen from "@/app/[tripId]/map/place/[placeId]";
 import { ApiRequestError } from "@/auth";
 import { queryKeys } from "@/data";
+import { resetMapLocationForTests, useMapLocationStore } from "@/features/map";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -164,6 +165,7 @@ afterEach(async () => {
   mockNavigate.mockClear();
   mockTabNavigate.mockClear();
   callSequence.length = 0;
+  resetMapLocationForTests();
 });
 
 describe("§2.3 — the loaded surface", () => {
@@ -216,6 +218,52 @@ describe("§2.3 — the loaded surface", () => {
     expect(openUrl).toHaveBeenCalledWith(
       `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent("35.0116,135.7681")}`,
     );
+  });
+
+  it("Navigate stays ENABLED and fires OFFLINE (T-8.7 reconciliation — supersedes interp 15's disable)", async () => {
+    // HONEST PIN EVOLUTION: T-8.4 shipped `disabled={offline}` here while
+    // the sheet half of the same R-map-8 action had no gate (R1 A7 recorded
+    // the divergence). The rider reconciled to ENABLED on both — Google
+    // Maps' own offline navigation exists, and offline-inside-a-downloaded-
+    // pack is the headline use case.
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined as never);
+    await renderDetail({
+      queryClient: seededDetailClient(),
+      getSavedPlaces: () => Promise.reject(new ApiRequestError(0, "NETWORK", "offline")),
+    });
+    // The offline signal is REAL in this render (the banner proves it)…
+    await screen.findByTestId("place-detail-banner-offline");
+
+    const navigate = screen.getByTestId("place-detail-button-navigate");
+    expect(navigate).not.toBeDisabled();
+    await fireEvent.press(navigate);
+
+    // …and the handoff still fires (with the coordinate URL — the enabled
+    // path is the REAL one, not a dead tap).
+    expect(openUrl).toHaveBeenCalledWith(
+      `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent("35.0116,135.7681")}`,
+    );
+  });
+});
+
+describe("§2.3 distance-when-puck-active (T-8.7 rider — PR #25 A6)", () => {
+  it("no position ⇒ no distance row (the label is absent, not zeroed)", async () => {
+    await renderDetail();
+    await screen.findByText("Fushimi Inari");
+    expect(screen.queryByTestId("place-detail-distance")).toBeNull();
+  });
+
+  it("a live position renders the on-device distance line", async () => {
+    // `position` non-null ⟹ granted (the location store's re-sync
+    // invariant) — this IS "puck active".
+    useMapLocationStore.setState({
+      permission: "granted",
+      position: { lat: 34.9858, lng: 135.7588 },
+    });
+    await renderDetail();
+
+    const distance = await screen.findByTestId("place-detail-distance");
+    expect(distance.props.children).toMatch(/away$/);
   });
 });
 

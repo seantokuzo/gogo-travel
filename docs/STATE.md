@@ -23,6 +23,21 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 `CLAUDE.md § Autonomy Contract`. Reviews are **local in-session**
 ([ADR-003](decisions/ADR-003-local-in-session-reviews.md)) — no GitHub Claude app.
 
+## ▶ NEXT SESSION — START HERE (written 2026-08-19, session-limit interrupt; delete when stale)
+
+**Session limit hit mid-P-8-W4 (resets 4:10am PT).** Read
+`.tmp/review-26/round-1/RESUME.md` — the full resume manifest. Short form:
+PR #26 (T-8.7 rider, head `22e6c21`) round-1 review was 2/5 lanes done
+(security ship 0/0, performance ship 0/1 — sentinels saved) when the limit
+KILLED correctness/tests/conventions mid-run (no sentinels — re-run all
+three fresh; the tests lane's worktree `agent-aae14caef27c49dff` may hold a
+LIVE MUTATION — remove it unexamined). T-8.5 (offline packs builder,
+worktree `agent-a0fc6e4783ceabb0e`) had no completion notification —
+check for a pushed branch/PR, resume or re-dispatch. Then: aggregate #26 →
+triage → fix → verify → judge → merge; T-8.5 same pipeline; then P-8 is
+CODE-COMPLETE → phase-close doc pass + Sean report (spec-pass ~65 interps,
+pin-coverage ruling P1, QA parked on auth-unblock + pk token).
+
 ## Active phase context
 
 ### P-8 — Maps, saved places & offline tile packs (ACTIVE since 2026-08-15)
@@ -31,7 +46,8 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
   clustering + day filter, place sheet/detail w/ spine data + dormant fresh
   seam, spine-backed search, foreground-only location, offline
   StylePacks/TileRegions w/ hygiene, map↔itinerary cross-nav. Scoped
-  2026-08-15: 6 tasks T-8.1..T-8.6, ledger F-055..F-062, ~5 PRs, **ALL
+  2026-08-15: 6 tasks T-8.1..T-8.6 (+T-8.7 integration rider, added at
+  W3 close), ledger F-055..F-062, ~5 PRs, **ALL
   BUILDS TOKENLESS** (SDK download auth dead — pk token = Sean item at
   phase QA).
 - **Wave plan:**
@@ -54,14 +70,28 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
     interp-#1 pin-coverage structural closure is a named QUEUE Blocked
     row (P1, Sean spec pass) — rule BEFORE the phase closer.
     (Hermes/dedup chore also done — PR #22, 293d0ef; QUEUE row folded.)
-  - **W3 DISPATCHED 2026-08-18: T-8.3 [MAP-2, MAP-4] ∥ T-8.4 [MAP-3,
-    MAP-6]** in parallel isolated worktrees off 08e656c; file-ownership:
-    T-8.3 owns MapPlaceSheetSlot + sheet components + search + location +
-    jest-mock additions ∥ T-8.4 owns place/[placeId].tsx + data/places.ts
-    extensions + pending-focus senders on itinerary/booking screens —
-    data/places.ts is T-8.4's EXCLUSIVELY; the shared frozen seams make
-    the map screen file itself off-limits to both.
-  - **W4 (after W3):** T-8.5 offline packs + closer rider.
+  - **W3 ✅ DONE 2026-08-19 — T-8.3 MERGED c5e0b13 (PR #24) ∥ T-8.4
+    MERGED 510d06b (PR #25).** T-8.3 [MAP-2, MAP-4]: sheet slot filled +
+    geo-bound spine search + full R-map-16 lazy-permission machine +
+    consume-once camera intent — 2 blocking (both test-pin gaps) / 12
+    advisory, fix leg 429d84f+c25d4df, VERIFIED-CLEAN 7/7, judge
+    merge/high; 116→129 suites / 1184. T-8.4 [MAP-3, MAP-6]: place detail
+    screen (fresh seam STRUCTURAL) + saved-places mutations + per-kind
+    linked-item reroute (the round's one blocker) + the
+    place-fresh-persistence CI guard — 1 blocking / 9 advisory, fix leg
+    daddb60+8bc0f30+64da0e1, VERIFIED-CLEAN 7/8 exact, judge merge/high;
+    135 suites / 1243 tests. Full narratives: QUEUE rows. W3's
+    reported-not-taken escalations accumulate into **T-8.7 (integration
+    rider — QUEUE Active row); R-map-17's ledger row must NOT flip until
+    it lands (judge-recorded)**.
+  - **W4 DISPATCHED 2026-08-19: T-8.5 [MAP-5] offline packs ∥ T-8.7
+    integration rider** (scope: QUEUE row) — parallel isolated worktrees
+    off 510d06b; file-ownership: T-8.7 owns `app/[tripId]/map/index.tsx`
+    (the frozen screen unfreezes for its sole owner) + screen-wiring in
+    features/map ∥ T-8.5 owns pack state machine + MMKV annotation +
+    `MapOfflinePillSlot` fill + trip-settings row + jest.setup
+    offlineManager mock; jest.setup is T-8.5's — T-8.7 escalates if
+    needed.
   - **PHASE-QA ATTEMPT 2026-08-15** (the rebuild leg of W2's plan): the ONE
     dev-client rebuild ✅ **PASSED on main@293d0ef** — prebuild + CocoaPods
     clean (the feared Mapbox-SDK pod failure did NOT occur); bake verified

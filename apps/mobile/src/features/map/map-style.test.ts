@@ -8,12 +8,15 @@
 import {
   configureMapboxAccessToken,
   DEFAULT_MAP_STYLE_URLS,
+  disableMapboxTelemetry,
   mapStyleUrlForScheme,
   resetMapboxAccessTokenForTests,
+  resetMapboxTelemetryForTests,
 } from "./map-style";
 
 const mapboxMock = jest.requireMock("@rnmapbox/maps") as {
   __mock: { setAccessToken: jest.Mock };
+  default: { setAccessToken: jest.Mock; setTelemetryEnabled?: jest.Mock };
 };
 
 describe("mapStyleUrlForScheme (config-swap ruling)", () => {
@@ -108,5 +111,41 @@ describe("configureMapboxAccessToken (tokenless-build seam)", () => {
     expect(configureMapboxAccessToken(undefined)).toBe(false);
     expect(configureMapboxAccessToken("pk.test-value")).toBe(true);
     expect(mapboxMock.__mock.setAccessToken).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("disableMapboxTelemetry (T-8.7 rider seam)", () => {
+  // The global jest mock (jest.setup.js — T-8.5-owned, mock addition
+  // ESCALATED) omits `setTelemetryEnabled`; the injected fn below is the
+  // prod-shape stand-in, contained to this file's module registry. The
+  // default-import access happens at CALL time (babel interop), so a
+  // pre-call assignment is what the seam reads.
+  afterEach(() => {
+    delete mapboxMock.default.setTelemetryEnabled;
+    resetMapboxTelemetryForTests();
+  });
+
+  it("degrades to false — no throw — when the test mock omits the API (the guard's only real arm)", () => {
+    expect(mapboxMock.default.setTelemetryEnabled).toBeUndefined();
+    expect(disableMapboxTelemetry()).toBe(false);
+  });
+
+  it("CONTROL: with the API present, disables telemetry exactly once (idempotent latch)", () => {
+    const setTelemetryEnabled = jest.fn();
+    mapboxMock.default.setTelemetryEnabled = setTelemetryEnabled;
+
+    expect(disableMapboxTelemetry()).toBe(true);
+    expect(disableMapboxTelemetry()).toBe(true);
+
+    expect(setTelemetryEnabled).toHaveBeenCalledTimes(1);
+    expect(setTelemetryEnabled).toHaveBeenCalledWith(false);
+  });
+
+  it("recovers on a later call once the API appears (mirrors the token seam)", () => {
+    expect(disableMapboxTelemetry()).toBe(false);
+    const setTelemetryEnabled = jest.fn();
+    mapboxMock.default.setTelemetryEnabled = setTelemetryEnabled;
+    expect(disableMapboxTelemetry()).toBe(true);
+    expect(setTelemetryEnabled).toHaveBeenCalledWith(false);
   });
 });

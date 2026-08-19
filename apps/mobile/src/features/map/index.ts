@@ -70,8 +70,10 @@ export {
 export {
   configureMapboxAccessToken,
   DEFAULT_MAP_STYLE_URLS,
+  disableMapboxTelemetry,
   mapStyleUrlForScheme,
   resetMapboxAccessTokenForTests,
+  resetMapboxTelemetryForTests,
 } from "./map-style";
 export {
   consumePendingMapFocus,
@@ -101,6 +103,7 @@ export {
   handleLocatePress,
   LOCATE_CAMERA_ZOOM,
   resetMapLocationForTests,
+  syncLocationPermissionFromSystem,
   useMapLocationStore,
 } from "./location";
 export type {
