@@ -83,6 +83,11 @@ async function acquirePosition(): Promise<void> {
     const location = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
+    // R1 corr A1: a Settings-revoke round-trip can COMPLETE while the read
+    // is in flight (the AppState re-sync records it) — the resolved fix is
+    // then stale. Committing it would break `position ⟹ granted` (the §2.3
+    // distance-label invariant) and fly the camera on a revoked grant.
+    if (useMapLocationStore.getState().permission !== "granted") return;
     const position = { lat: location.coords.latitude, lng: location.coords.longitude };
     useMapLocationStore.setState({ position });
     // R-map-17: fly the camera to the user (screen applies via the rider).
@@ -91,6 +96,10 @@ async function acquirePosition(): Promise<void> {
       zoom: LOCATE_CAMERA_ZOOM,
     });
   } catch {
+    // R1 corr A1, reject arm: after a mid-flight revoke the `unavailable`
+    // copy (which MEANS granted-but-failed) would be the wrong dialog for a
+    // now-denied state — bail the same way as the resolve arm.
+    if (useMapLocationStore.getState().permission !== "granted") return;
     // Permission granted but the read failed ⇒ location services are off
     // OR a transient fault — the DISTINCT `unavailable` arm (its copy names
     // both causes; Settings stays the one actionable hop) so a GPS blip is
@@ -170,7 +179,15 @@ export async function syncLocationPermissionFromSystem(): Promise<void> {
   try {
     const current = await Location.getForegroundPermissionsAsync();
     if (current.granted) {
-      useMapLocationStore.setState({ permission: "granted" });
+      // R1 corr A3: a grant observed on foreground-return retires a stale
+      // post-denial dialog — `settings` ("Location is off") or `unavailable`
+      // — which is now a lie over a granted map (its Settings hop is
+      // pointless). `rationale` is NEVER cleared here: it fronts an explicit
+      // consent flow (§2.6) and only its own confirm/dismiss retires it.
+      useMapLocationStore.setState((state) => ({
+        permission: "granted",
+        dialog: state.dialog === "rationale" ? state.dialog : null,
+      }));
       return;
     }
     useMapLocationStore.setState({

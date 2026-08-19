@@ -366,7 +366,15 @@ export default function MapScreen() {
     const stop = cameraStopFor(cameraTargetFor([[coordinate.lng, coordinate.lat]], destination), {
       animate: true,
     });
-    if (stop !== undefined) cameraRef.current?.setCamera(stop);
+    if (stop !== undefined) {
+      // Any DELIBERATE camera write satisfies the initial fit (R1 corr B1):
+      // the three pin queries have no order guarantee, so a late settle
+      // would otherwise stomp this centering with the all-pins envelope
+      // while the sheet is open on the focused place. The pre-fit view is
+      // covered by the defaultSettings destination stop.
+      fittedRef.current = true;
+      cameraRef.current?.setCamera(stop);
+    }
   }, [selectedPlaceId, placeIndex, destination]);
 
   // E3 (R-map-17): THE sanctioned camera-intent consumer — the locate flow
@@ -378,6 +386,11 @@ export default function MapScreen() {
     if (pendingCameraIntent === null) return;
     const intent = consumePendingCameraIntent();
     if (intent === null) return;
+    // R1 corr B1 (same rule as the focus-center effect above): a locate
+    // fly-to applied while slow queries are still in flight must not be
+    // teleport-yanked by the envelope fit when they settle — a deliberate
+    // write satisfies the fit.
+    fittedRef.current = true;
     cameraRef.current?.setCamera({
       centerCoordinate: intent.center,
       zoomLevel: intent.zoom,
