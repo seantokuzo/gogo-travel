@@ -57,15 +57,34 @@ export const FRESH_TOKENS = [
   "placeFresh",
 ];
 
-/** Rule-2 sinks: import-/call-shaped so doc-comment prose can't trip them. */
+/**
+ * Rule-2 sink packages, specifier PREFIXES (subpaths like
+ * `zustand/middleware` or `@react-native-async-storage/async-storage` must
+ * match too).
+ */
+export const SINK_MODULE_SPECIFIERS = [
+  "zustand",
+  "react-native-mmkv",
+  "@react-native-async-storage",
+  "expo-secure-store",
+  "expo-sqlite",
+  "expo-file-system",
+];
+
+/**
+ * Rule-2 sinks: import-/call-shaped so doc-comment prose can't trip them.
+ * EVERY quote/require variant per specifier (R1 security review): Prettier's
+ * double-quote style is NOT a CI gate (ci.yml runs eslint only, which
+ * enforces no quote style), so a hand-written single-quoted import — or a
+ * `require()` call — must trip the guard just the same.
+ */
 export const SINK_TOKENS = [
-  'from "zustand"',
-  "from 'zustand'",
-  'from "react-native-mmkv"',
-  'from "@react-native-async-storage',
-  'from "expo-secure-store"',
-  'from "expo-sqlite"',
-  'from "expo-file-system"',
+  ...SINK_MODULE_SPECIFIERS.flatMap((spec) => [
+    `from "${spec}`,
+    `from '${spec}`,
+    `require("${spec}`,
+    `require('${spec}`,
+  ]),
   "AsyncStorage.",
   "SecureStore.",
   "console.",

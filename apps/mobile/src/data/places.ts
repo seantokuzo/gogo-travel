@@ -49,7 +49,10 @@ import {
 
 import { apiClient, ApiRequestError } from "@/auth";
 
+import { PLACE_FRESH_ENABLED } from "./place-fresh-flag";
 import { queryKeys } from "./query-client";
+
+export { PLACE_FRESH_ENABLED };
 
 /**
  * Hook-level mutation side-effect seam (members.ts precedent — module doc
@@ -148,19 +151,13 @@ export function usePlace(
 }
 
 /**
- * v1 DORMANCY FLAG for the fetch-fresh seam. Premium place details are
- * MVP-deferred (places spec Gate-2 resolution: "`fresh` never requested in
- * v1") — the detail screen passes this as `usePlaceFresh`'s `enabled`, so
- * no v1 code path issues `?fresh=true` while the whole §2.4 contract ships
- * built and tested. Flip when the post-MVP Foursquare integration lands
- * (ADR-005 entitlement seam).
- */
-export const PLACE_FRESH_ENABLED = false;
-
-/**
  * `GET /places/:placeId?fresh=true` — the §2.4 fetch-fresh client contract
  * (R-map-9, display-then-discard):
  *
+ * - DORMANT in v1 STRUCTURALLY: `PLACE_FRESH_ENABLED` (own module, doc
+ *   there) is folded into `enabled`, so no caller — however written — can
+ *   issue `?fresh=true` while the flag is off (R1 review: the flag as
+ *   caller discipline left a bare `usePlaceFresh(placeId)` live).
  * - Dedicated query, SPEC-VERBATIM key `['place-fresh', placeId]`.
  * - `staleTime: 0` — refetched per view (every mount), never served warm.
  * - `gcTime: 0` — evaporates from the cache the moment no screen observes
@@ -191,7 +188,7 @@ export function usePlaceFresh(
         { signal },
       ),
     select: (data: PlaceDetails) => data.fresh ?? null,
-    enabled: options?.enabled ?? true,
+    enabled: PLACE_FRESH_ENABLED && (options?.enabled ?? true),
     staleTime: 0,
     gcTime: 0,
     retry: false,
@@ -298,6 +295,15 @@ export function useSavePlace(
     onSuccess: (row) => {
       // Seam first (fires for EVERY settled call — superseded-call law).
       options?.onMutationSuccess?.(row);
+      // NEVER-LOADED list (R1 review): the initial fetch was in flight when
+      // onMutate's cancelQueries killed it, so there is no cache entry to
+      // reconcile INTO — a silent bail would strand the query idle (POST
+      // landed, button still "Save place", no saved pin) until some later
+      // observer. Invalidate so the truth refetches.
+      if (qc.getQueryData<Paginated<SavedPlaceWithPlace>>(listKey) === undefined) {
+        void qc.invalidateQueries({ queryKey: listKey });
+        return;
+      }
       reconcileSavedPlaceRow(qc, tripId, row);
     },
     onError: (err, _vars, ctx) => {
@@ -348,6 +354,16 @@ export function useUnsavePlace(
     },
     onSuccess: (savedPlaceId) => {
       options?.onMutationSuccess?.(savedPlaceId);
+      // RE-ASSERT removal (R1 review, save's symmetric guard): a concurrent
+      // refetch (e.g. another save's 409-path invalidation) can read the
+      // server BEFORE this DELETE commits and resurrect the row into the
+      // cache — without this idempotent re-filter the zombie pin lives for
+      // a full staleTime. Filtering an already-absent id is a no-op.
+      qc.setQueryData<Paginated<SavedPlaceWithPlace>>(listKey, (old) =>
+        old === undefined
+          ? old
+          : { ...old, items: old.items.filter((row) => row.id !== savedPlaceId) },
+      );
     },
     onError: (err, _savedPlaceId, ctx) => {
       if (ctx?.previous !== undefined) qc.setQueryData(listKey, ctx.previous);

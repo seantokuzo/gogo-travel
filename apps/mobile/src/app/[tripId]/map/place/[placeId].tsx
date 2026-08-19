@@ -28,11 +28,15 @@
  * CROSS-TAB (R-map-12/14/23): an imperative push at another tab's URL
  * silently no-ops (mobile.md landmine), so both itinerary-bound affordances
  * jump the TAB first (`jumpToTripTab`, the tab-bar-equivalent move), then
- * push/navigate within the now-active itinerary stack — Add to day opens
- * the item/new modal prefilled `place_visit` + place (R-map-12); a linked
- * item lands on the day list with the T-7.9 `?day=` arrival param (the
- * index consumes it after handling). Pinned end-to-end by the
- * place-detail-cross-tab walkthrough suite.
+ * push within the now-active itinerary stack — Add to day opens the
+ * item/new modal prefilled `place_visit` + place (R-map-12); a linked row
+ * lands on the ITEM'S OWN DETAIL (R-map-14 "to them", §2.7's push
+ * mechanic, the MAP-6 "lands on item detail" test bullet — interp 17):
+ * item-kind rows push `item/[itemId]`, booking-kind rows push
+ * `booking/[bookingId]` directly (the day-list/grid precedent — routing
+ * through item/[itemId] would only R-itin-27-replace itself there). Pinned
+ * per kind component-level and end-to-end by the place-detail-cross-tab
+ * walkthrough suite.
  *
  * OFFLINE + STATES (the T-7.9 posture): `is404` OUTRANKS retained cache
  * (Law #3 client half — a fresh 404 is a visibility/membership verdict);
@@ -40,7 +44,7 @@
  * banner (R-map-22 — the detail is spine-cached and works offline), and a
  * failed refetch never blanks a loaded place.
  */
-import { ATTRIBUTION, type ISODate, type Photo } from "@gogo/shared";
+import { ATTRIBUTION, type ItineraryItem, type Photo } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { useMemo, useState } from "react";
@@ -62,7 +66,6 @@ import {
 import {
   findSavedPlace,
   isOptimisticSavedPlaceId,
-  PLACE_FRESH_ENABLED,
   useItinerary,
   useItineraryBookings,
   usePlace,
@@ -117,11 +120,10 @@ export default function PlaceDetailScreen() {
   const placeId = typeof params.placeId === "string" ? params.placeId : "";
 
   const detailQuery = usePlace(placeId, { enabled: placeId !== "" });
-  // §2.4 fetch-fresh — dormant in v1 (the flag): no request is issued, the
-  // block renders nothing (R-map-10's silent absence covers the dormancy).
-  const freshQuery = usePlaceFresh(placeId, {
-    enabled: PLACE_FRESH_ENABLED && placeId !== "",
-  });
+  // §2.4 fetch-fresh — dormant in v1 STRUCTURALLY: the hook folds
+  // `PLACE_FRESH_ENABLED` into its own `enabled` (R1 review), so no request
+  // is issued and the block renders nothing (R-map-10's silent absence).
+  const freshQuery = usePlaceFresh(placeId, { enabled: placeId !== "" });
   const savedQuery = useSavedPlaces(trip.id);
   const itineraryQuery = useItinerary(trip.id);
   const bookingsQuery = useItineraryBookings(trip.id);
@@ -180,16 +182,25 @@ export default function PlaceDetailScreen() {
   );
 
   /**
-   * R-map-14/23: land on the itinerary DAY LIST scrolled to this item's day.
-   * Tab jump first (the landmine-safe move), then the same-tab `?day=`
-   * arrival param the T-7.9 schedule row uses — consumed after handling, so
-   * the same day is jumpable again.
+   * R-map-14/23 (interp 17): a linked row cross-navigates TO THE ITEM —
+   * §2.7's push into the itinerary tab's stack, per kind. Tab jump first
+   * (the landmine-safe move), then the push in the now-active stack.
+   * Booking-kind rows go STRAIGHT to `booking/[bookingId]` (the
+   * day-list/grid precedent): `item/[itemId]` would only replace itself
+   * with the booking detail (R-itin-27), leaving a bounce in the stack.
    */
-  const openItineraryDay = (day: ISODate): void => {
+  const openLinkedItem = (item: ItineraryItem): void => {
     if (!jumpToTripTab(navigation, trip.id, "itinerary")) return;
-    router.navigate({
-      pathname: "/[tripId]/itinerary",
-      params: { tripId: trip.id, day },
+    if (item.kind === "booking" && item.booking_id !== null) {
+      router.push({
+        pathname: "/[tripId]/itinerary/booking/[bookingId]",
+        params: { tripId: trip.id, bookingId: item.booking_id },
+      });
+      return;
+    }
+    router.push({
+      pathname: "/[tripId]/itinerary/item/[itemId]",
+      params: { tripId: trip.id, itemId: item.id },
     });
   };
 
@@ -405,7 +416,7 @@ export default function PlaceDetailScreen() {
                 }
                 subtitle={itemWhenLabel(item)}
                 trailing="chevron"
-                onPress={() => openItineraryDay(item.day)}
+                onPress={() => openLinkedItem(item)}
                 testID={`place-detail-list-item-${item.id}`}
               />
             ))}
