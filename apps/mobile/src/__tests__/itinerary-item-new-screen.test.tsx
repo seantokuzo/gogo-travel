@@ -434,6 +434,60 @@ it("place visit: CT-2 typeahead against /places/search; create body is a valid I
   expect(body).toEqual({ kind: "place_visit", place_id: PLACE.id, day: TRIP_DAY_2 });
 });
 
+it("?placeId= preselect (T-8.4 / R-map-12): the picker arrives filled and the create writes that place_id — no search round-trip", async () => {
+  const created: unknown[] = [];
+  const searched: unknown[] = [];
+  await renderScreen(
+    {
+      category: "place-visit",
+      day: TRIP_DAY_2,
+      placeId: PLACE.id,
+      placeName: "Shibuya Crossing",
+    },
+    {
+      overrides: {
+        "GET /places/search": (input) => {
+          searched.push(input);
+          return Promise.resolve({ items: [], nextCursor: null });
+        },
+        "POST /trips/:tripId/itinerary/items": (input) => {
+          created.push(input);
+          return Promise.resolve({});
+        },
+      },
+    },
+  );
+  // The picker carries the preselected name — no typeahead needed.
+  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue(
+    "Shibuya Crossing",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = ItineraryItemCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body).toEqual({ kind: "place_visit", place_id: PLACE.id, day: TRIP_DAY_2 });
+  // The preselect is REAL, not display-only: no search call was ever made.
+  expect(searched).toEqual([]);
+});
+
+it("a malformed ?placeId= degrades to the empty picker (validated against the shared scalar — never a malformed write)", async () => {
+  await renderScreen({ category: "place-visit", placeId: "not-a-uuid", placeName: "X" });
+  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue("");
+});
+
+it("an oversized ?placeName= renders CAPPED at 100 chars (R1 security review — display-only, id-truth write)", async () => {
+  // The param is attacker-shaped (any deep link): a multi-hundred-KB name
+  // must never render unbounded. The cap is display-only — the create body
+  // still carries place_id alone, pinned by the preselect test above.
+  await renderScreen({
+    category: "place-visit",
+    placeId: PLACE.id,
+    placeName: "x".repeat(500),
+  });
+  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue(
+    "x".repeat(100),
+  );
+});
+
 it("custom block consumes day+time prefills into a valid ItineraryItemCreate", async () => {
   const created: unknown[] = [];
   await renderScreen(

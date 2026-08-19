@@ -92,6 +92,27 @@ export const queryKeys = {
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
   /**
+   * `GET /places/:placeId` — the place-detail spine read (T-8.4 / MAP-3).
+   * DELIBERATELY OUTSIDE the `["trips", tripId]` detail subtree (KEY-CACHE
+   * LAW note): spine places are globally readable behind auth alone — the
+   * endpoint has no trip in its path and no membership gate (places spec
+   * §3.3; custom-place privacy is the server's indistinguishable-404, which
+   * this cache surfaces as `is404`) — so trip access loss must NOT evict
+   * them, and the guard's 404-scrub prefix removal never needs to reach
+   * them. Rooted beside `placeSearch` under the `["places", …]` family.
+   */
+  placeDetail: (placeId: string) => ["places", "detail", placeId] as const,
+  /**
+   * `GET /places/:placeId?fresh=true` — the fetch-fresh premium block
+   * (T-8.4 / MAP-3, map spec §2.4 — the key is SPEC-VERBATIM:
+   * `['place-fresh', placeId]`). Its own root on purpose: the R-map-9
+   * NON-PERSISTENCE contract (`staleTime: 0`, `gcTime: 0`, `retry: false`,
+   * never persisted anywhere — enforced by
+   * `.github/scripts/check-place-fresh-persistence.mjs`) is scoped by this
+   * prefix, and like `placeDetail` it is not membership-gated.
+   */
+  placeFresh: (placeId: string) => ["place-fresh", placeId] as const,
+  /**
    * `GET /trips/:tripId/saved-places` (T-8.2 / MAP-1) — the map's saved-pin
    * set (R-map-1). DETAIL-SUBTREE key (key-cache law): rooted under
    * `trip(tripId)` so the membership guard's 404-scrub and `evictTripSubtree`

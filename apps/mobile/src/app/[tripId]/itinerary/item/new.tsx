@@ -24,6 +24,7 @@ import {
   BookingCategorySchema,
   ISODateSchema,
   ISOTimeSchema,
+  UuidSchema,
   type BookingCategory,
 } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
@@ -51,6 +52,15 @@ const useStyles = createStyles((t) =>
   }),
 );
 
+/**
+ * Display cap for the `?placeName=` prefill (R1 security review): the param
+ * is attacker-shaped (any deep link), and unbounded it renders a
+ * multi-hundred-KB string into the picker. DISPLAY-ONLY posture — the wire
+ * write carries `place_id` alone (schema-parsed), so truth is never the
+ * name; ~100 chars comfortably covers real place names.
+ */
+const PLACE_NAME_DISPLAY_CAP = 100;
+
 /** Route param → option id (kebab slug or raw enum); unknown → picker step. */
 function parseOption(raw: string | undefined): AddOptionId | null {
   // expo-router hands back a string[] when a query key is REPEATED, and the
@@ -77,6 +87,8 @@ export default function ItineraryItemNewScreen() {
     itemId?: string;
     bookingId?: string;
     source?: string;
+    placeId?: string;
+    placeName?: string;
   }>();
 
   const [option, setOption] = useState<AddOptionId | null>(() => parseOption(params.category));
@@ -100,6 +112,20 @@ export default function ItineraryItemNewScreen() {
   const prefillDay = ISODateSchema.safeParse(params.day).success ? params.day : undefined;
   const prefillTime = ISOTimeSchema.safeParse(params.time).success ? params.time : undefined;
   const deeplinkReturn = params.source === "deeplink_return";
+  // R-map-12 place preselect (T-8.4 — the map detail/sheet "Add to day"):
+  // id validated against the shared scalar so a malformed/repeated param
+  // degrades to "no preselect", never a malformed wire write. The name is
+  // display-only (the picker shows it; the write is id-truth), so it gets
+  // the display cap; absent falls back like edit mode.
+  const rawPlaceName = typeof params.placeName === "string" ? params.placeName.trim() : "";
+  const prefillPlace =
+    typeof params.placeId === "string" && UuidSchema.safeParse(params.placeId).success
+      ? {
+          id: params.placeId,
+          name:
+            rawPlaceName !== "" ? rawPlaceName.slice(0, PLACE_NAME_DISPLAY_CAP) : "Selected place",
+        }
+      : undefined;
 
   const editingBookingId = params.bookingId;
   const editingItemId = params.itemId;
@@ -240,6 +266,7 @@ export default function ItineraryItemNewScreen() {
         kind={option}
         prefillDay={prefillDay}
         prefillTime={prefillTime}
+        prefillPlace={prefillPlace}
         onDirty={onDirty}
         onSaved={onSaved}
       />

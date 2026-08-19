@@ -13,6 +13,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import ItineraryItemScreen from "@/app/[tripId]/itinerary/item/[itemId]";
 import { ApiRequestError } from "@/auth";
 import { queryKeys } from "@/data";
+import { usePendingMapFocusStore } from "@/features/map";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -129,6 +130,9 @@ afterEach(async () => {
   mockReplace.mockReset();
   mockNavigate.mockReset();
   mockTabNavigate.mockReset();
+  // Module state the sender pin arms (consumed-once semantics) — never leak
+  // an armed focus into the next test.
+  usePendingMapFocusStore.setState({ pending: null });
 });
 
 describe("R-itin-27 — the item surface", () => {
@@ -174,12 +178,23 @@ describe("R-itin-27 — the item surface", () => {
     expect(await screen.findByTestId("itinerary-item-when")).toHaveTextContent(/No time set/);
   });
 
-  it("shows the place row for a place_visit and jumps to the map TAB (never a URL push)", async () => {
+  it("shows the place row for a place_visit, arms the pending focus, and jumps to the map TAB (R-map-24 sender)", async () => {
+    // ORDER pin (T-8.4): the focus must already be armed WHEN the tab
+    // navigate fires — the map screen drains the store in its focus effect,
+    // so arm-after-jump loses the race by design. ITEM_C's fixture place is
+    // the spine TEST_PLACE_ID.
+    const pendingAtJump: unknown[] = [];
+    mockTabNavigate.mockImplementation(() => {
+      pendingAtJump.push(usePendingMapFocusStore.getState().pending);
+    });
     await renderItem({ itemId: ITEM_C_ID });
     await fireEvent.press(await screen.findByTestId("itinerary-item-row-place"));
     await settle();
     expect(mockTabNavigate).toHaveBeenCalledWith("map");
     expect(mockPush).not.toHaveBeenCalled();
+    expect(pendingAtJump).toEqual([
+      { tripId: TEST_TRIP_ID, placeId: "44444444-4444-4444-8444-444444444444" },
+    ]);
   });
 
   it("hides the place row on an item with no place (CONTROL for the row above)", async () => {

@@ -69,7 +69,19 @@ export {
 } from "./itinerary";
 export type { DayOrderVars, ItemUpdateVars, ItineraryMutationOptions } from "./itinerary";
 export { isOfflineError, tripHasOfflineError, useTripOffline } from "./offline";
-export { useSavedPlaces } from "./places";
+export {
+  findSavedPlace,
+  isOptimisticSavedPlaceId,
+  optimisticSavedPlaceId,
+  PLACE_FRESH_ENABLED,
+  usePlace,
+  usePlaceFresh,
+  useSavedPlaces,
+  useSavePlace,
+  useUnsavePlace,
+  useUpdateSavedPlaceNote,
+} from "./places";
+export type { PlaceMutationOptions, SavedPlaceNoteVars, SavePlaceVars } from "./places";
 export {
   optimisticScheduleItemId,
   useBooking,

@@ -70,6 +70,16 @@ jobs:
         # Scanner + its own falsification suite: .github/scripts/.
         run: node .github/scripts/check-nul-bytes.mjs
 
+      - name: Place-fresh payloads are never persisted
+        # Map spec §2.4 / R-map-9 (Foursquare zero-caching licensing): the
+        # fetch-fresh place payload is render-only. Two lint-level rules —
+        # no TanStack persister may exist in apps/mobile (the P-8 offline
+        # ruling is warm-session only; a persister without the §2.4
+        # `place-fresh` exclusion would storage-bind the payload), and no
+        # fresh-touching runtime module may import/call a storage or log
+        # sink. Scanner + falsification suite: .github/scripts/.
+        run: node .github/scripts/check-place-fresh-persistence.mjs
+
       - name: Aggregator unit tests
         # The verdict aggregator (.github/scripts/) sits outside turbo's
         # package graph; run its zero-dep node:test suite here so it gates

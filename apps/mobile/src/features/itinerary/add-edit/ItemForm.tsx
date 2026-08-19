@@ -44,6 +44,12 @@ export interface ItemFormProps {
   item?: ItineraryItem;
   prefillDay?: ISODate;
   prefillTime?: ISOTime;
+  /**
+   * Place preselect for add mode (T-8.4 / R-map-12: the map's "Add to day"
+   * opens this form prefilled `place_visit` + place). Ignored in edit mode —
+   * the edited row's own `place_id` wins.
+   */
+  prefillPlace?: { id: string; name: string };
   onDirty(): void;
   onSaved(): void;
 }
@@ -62,6 +68,7 @@ export function ItemForm({
   item,
   prefillDay,
   prefillTime,
+  prefillPlace,
   onDirty,
   onSaved,
 }: ItemFormProps) {
@@ -72,7 +79,7 @@ export function ItemForm({
   const [place, setPlace] = useState<{ id: string; name: string } | null>(
     item !== undefined && item.place_id !== null
       ? { id: item.place_id, name: "Selected place" }
-      : null,
+      : (prefillPlace ?? null),
   );
   const [day, setDay] = useState<string>(item?.day ?? prefillDay ?? "");
   const [startTime, setStartTime] = useState<string>(
