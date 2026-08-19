@@ -3,14 +3,16 @@
  * R-map-9..14, R-map-23/24; pushed from the sheet's "Details", R-map-4).
  *
  * Composition (§2.3, top to bottom): name header · coarse-category icon +
- * category line · save state/toggle (R-map-11) · actions row (Add to day
- * R-map-12 · Navigate R-map-8) · saved-note inline editor (R-map-14) ·
- * fresh premium block (R-map-9/10 — DORMANT in v1, `PLACE_FRESH_ENABLED`) ·
- * linked itinerary items + this-trip photo strip (R-map-14) · spine
- * attribution footer (R-places-17). Distance-from-user is deliberately
- * ABSENT: §2.3 lists it on the SHEET "when puck active" — the puck and the
- * location permission flow are the map screen's (T-8.3 / MAP-4), and this
- * push screen has no location source to compute against.
+ * category line · distance-from-user when puck-active (§2.3 "everything
+ * above plus…" — wired by the T-8.7 rider per PR #25 A6, which corrected
+ * the original "sheet-only" reading; the location seam now exists) · save
+ * state/toggle (R-map-11) · actions row (Add to day R-map-12 · Navigate
+ * R-map-8) · saved-note inline editor (R-map-14) · fresh premium block
+ * (R-map-9/10 — DORMANT in v1, `PLACE_FRESH_ENABLED`) · linked itinerary
+ * items + this-trip photo strip (R-map-14) · spine attribution footer
+ * (R-places-17). The distance keys on `position` alone — the location
+ * store's re-sync invariant (`position !== null ⟹ granted`, location.ts)
+ * makes that exactly "when puck active", same as the sheet's label.
  *
  * TOUR-GUIDE ENTRY (R-map-13): not rendered — the WHEN clause ("the trip
  * has a `ready` bundle") is unreachable until the P-10 AI phase ships a
@@ -77,6 +79,7 @@ import {
   useUpdateSavedPlaceNote,
 } from "@/data";
 import { itemWhenLabel } from "@/features/itinerary";
+import { distanceLabelFor, useMapLocationStore } from "@/features/map";
 import {
   categoryLabel,
   COARSE_CATEGORY_ICONS,
@@ -129,6 +132,9 @@ export default function PlaceDetailScreen() {
   const bookingsQuery = useItineraryBookings(trip.id);
   const offline = useTripOffline(trip.id);
   const viewerId = useSessionStore((state) => state.user?.id ?? "");
+  // §2.3 distance-when-puck-active (T-8.7 rider — PR #25 A6): `position`
+  // is only ever non-null under a live grant (location.ts invariant).
+  const position = useMapLocationStore((state) => state.position);
 
   const [actionError, setActionError] = useState<string | null>(null);
   /** `null` = editor not open; a string = the in-progress draft. */
@@ -153,6 +159,7 @@ export default function PlaceDetailScreen() {
 
   const editor = trip.role !== "viewer";
   const place = detailQuery.data?.place;
+  const distance = place === undefined ? null : distanceLabelFor(position, place);
   const savedRow = findSavedPlace(savedQuery.data, placeId);
   const saved = savedRow !== undefined;
   // Note edits / unsave need the REAL row id — the optimistic placeholder
@@ -313,6 +320,11 @@ export default function PlaceDetailScreen() {
               {categoryLabel(place)}
             </AppText>
           </View>
+          {distance !== null ? (
+            <AppText role="caption" color="muted" testID="place-detail-distance">
+              {distance}
+            </AppText>
+          ) : null}
           {/* R-map-11: viewers see STATE, not the control. */}
           {editor ? (
             <View style={s.actionRow}>
@@ -350,10 +362,11 @@ export default function PlaceDetailScreen() {
               title="Navigate"
               variant="secondary"
               icon="navigate-outline"
-              // R-map-8: URL-scheme handoff, never in-app turn-by-turn. An
-              // external maps app is useless offline anyway; keep the button
-              // honest rather than launching into a blank map.
-              disabled={offline}
+              // R-map-8: URL-scheme handoff, never in-app turn-by-turn.
+              // ENABLED offline (T-8.7 reconciliation of interp 15 + A7,
+              // superseding the original disable): Google Maps' own offline
+              // navigation exists, and offline-inside-a-downloaded-pack is
+              // the headline use case — both R-map-8 surfaces now agree.
               onPress={() => void Linking.openURL(placeNavigateUrl(place))}
               testID="place-detail-button-navigate"
             />

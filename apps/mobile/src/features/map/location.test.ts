@@ -24,6 +24,7 @@ import {
   handleLocatePress,
   LOCATE_CAMERA_ZOOM,
   resetMapLocationForTests,
+  syncLocationPermissionFromSystem,
   useMapLocationStore,
 } from "./location";
 
@@ -183,7 +184,10 @@ it("tap while already granted: straight to position, no dialogs", async () => {
   expect(state.position).toEqual({ lat: 34.9, lng: 135.7 });
 });
 
-it("granted but the position read FAILS (location services off) → Settings dialog", async () => {
+it("granted but the position read FAILS → the DISTINCT `unavailable` dialog, not `settings` (interp-17 closure)", async () => {
+  // The `settings` arm means DENIED ("Location is off" copy) — a granted
+  // read fault must not wear it (T-8.7 rider; the denied CONTROL below
+  // proves `settings` still exists for its own arm).
   locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
   locationMock.__mock.getCurrentPositionAsync.mockRejectedValueOnce(
     new Error("location unavailable"),
@@ -192,9 +196,81 @@ it("granted but the position read FAILS (location services off) → Settings dia
   await handleLocatePress();
 
   const state = useMapLocationStore.getState();
-  expect(state.dialog).toBe("settings");
+  expect(state.dialog).toBe("unavailable");
   expect(state.position).toBeNull();
   expect(consumePendingCameraIntent()).toBeNull(); // no fly-to on failure
+});
+
+describe("revoke lands while a position read is in flight (R1 corr A1)", () => {
+  /** Spin the microtask queue until the deferred read is armed (bounded). */
+  async function flushUntil(armed: () => boolean): Promise<void> {
+    for (let i = 0; i < 20 && !armed(); i += 1) await Promise.resolve();
+  }
+
+  it("RESOLVE arm: the stale fix is DISCARDED — no position commit, no camera intent", async () => {
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+    // Deferred position read, resolvers COLLECTED + released in `finally`
+    // (mobile.md deferred-promise rules).
+    const resolvers: ((value: unknown) => void)[] = [];
+    locationMock.__mock.getCurrentPositionAsync.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const press = handleLocatePress();
+    await flushUntil(() => resolvers.length > 0);
+    try {
+      expect(resolvers).toHaveLength(1); // the read IS genuinely in flight
+      // The Settings-revoke round-trip completes mid-read: the AppState
+      // re-sync records denied (and clears position) BEFORE the read lands.
+      locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+        permission("denied", { canAskAgain: false }),
+      );
+      await syncLocationPermissionFromSystem();
+      expect(useMapLocationStore.getState().permission).toBe("denied");
+    } finally {
+      for (const resolve of resolvers) resolve(position(35.01, 135.77));
+    }
+    await press;
+
+    const state = useMapLocationStore.getState();
+    // The stale fix never commits — `position ⟹ granted` holds…
+    expect(state.position).toBeNull();
+    expect(state.permission).toBe("denied");
+    // …and no fly-to is armed on the revoked grant.
+    expect(consumePendingCameraIntent()).toBeNull();
+  });
+
+  it("REJECT arm: no `unavailable` dialog after a recorded revoke (that copy means granted-but-failed)", async () => {
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+    const rejecters: ((reason: Error) => void)[] = [];
+    locationMock.__mock.getCurrentPositionAsync.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejecters.push(reject);
+        }),
+    );
+
+    const press = handleLocatePress();
+    await flushUntil(() => rejecters.length > 0);
+    try {
+      expect(rejecters).toHaveLength(1);
+      locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+        permission("denied", { canAskAgain: false }),
+      );
+      await syncLocationPermissionFromSystem();
+    } finally {
+      for (const reject of rejecters) reject(new Error("read aborted by revoke"));
+    }
+    await press;
+
+    const state = useMapLocationStore.getState();
+    expect(state.dialog).toBeNull(); // NOT "unavailable" — wrong copy for denied
+    expect(state.position).toBeNull();
+    expect(state.permission).toBe("denied");
+  });
 });
 
 it("single-flight: a re-tap during an in-flight read is a no-op", async () => {
@@ -223,6 +299,102 @@ it("single-flight: a re-tap during an in-flight read is a no-op", async () => {
   }
   await first;
   expect(useMapLocationStore.getState().busy).toBe(false);
+});
+
+describe("syncLocationPermissionFromSystem (T-8.7 — PR #24 corr A2)", () => {
+  it("a Settings GRANT is observed: permission flips to granted, position untouched", async () => {
+    useMapLocationStore.setState({ permission: "denied" });
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    // A sync READS, never requests or acquires — no prompt, no position.
+    expect(locationMock.__mock.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+    expect(locationMock.__mock.getCurrentPositionAsync).not.toHaveBeenCalled();
+  });
+
+  it("a Settings REVOKE clears the stale position too (the puck-active distance invariant)", async () => {
+    // Granted earlier with a position powering distance labels…
+    useMapLocationStore.setState({
+      permission: "granted",
+      position: { lat: 35.01, lng: 135.77 },
+    });
+    // …revoked in Settings; the app returns to the foreground.
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+      permission("denied", { canAskAgain: false }),
+    );
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("denied");
+    // Without this, sheet/detail distance labels keep rendering from a
+    // position the user just revoked access to — "puck active" would lie.
+    expect(state.position).toBeNull();
+  });
+
+  it("a Settings GRANT clears a stale `settings` dialog (R1 corr A3 — no 'Location is off' over a granted map)", async () => {
+    // The Settings dialog was raised while denied; the user backgrounds
+    // WITH IT OPEN, grants in Settings, returns — the copy is now a lie and
+    // its one-tap Settings hop pointless.
+    useMapLocationStore.setState({ permission: "denied", dialog: "settings" });
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    expect(state.dialog).toBeNull();
+  });
+
+  it("a Settings GRANT clears a stale `unavailable` dialog the same way (R1 corr A3)", async () => {
+    useMapLocationStore.setState({ permission: "granted", dialog: "unavailable" });
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+
+    await syncLocationPermissionFromSystem();
+
+    expect(useMapLocationStore.getState().dialog).toBeNull();
+  });
+
+  it("CONTROL: a granted sync NEVER clears an open `rationale` dialog (mid-consent)", async () => {
+    // Rationale fronts an explicit consent flow (§2.6) — only its own
+    // confirm/dismiss retires it, even if the grant already happened in
+    // Settings while it sat open.
+    useMapLocationStore.setState({ permission: "undetermined", dialog: "rationale" });
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    expect(state.dialog).toBe("rationale");
+  });
+
+  it("a failed read changes NOTHING (keeps last knowledge)", async () => {
+    useMapLocationStore.setState({
+      permission: "granted",
+      position: { lat: 35.01, lng: 135.77 },
+    });
+    locationMock.__mock.getForegroundPermissionsAsync.mockRejectedValueOnce(new Error("boom"));
+
+    await syncLocationPermissionFromSystem();
+
+    const state = useMapLocationStore.getState();
+    expect(state.permission).toBe("granted");
+    expect(state.position).toEqual({ lat: 35.01, lng: 135.77 });
+  });
+
+  it("undetermined maps to undetermined (never invents denied)", async () => {
+    locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(
+      permission("undetermined"),
+    );
+
+    await syncLocationPermissionFromSystem();
+
+    expect(useMapLocationStore.getState().permission).toBe("undetermined");
+  });
 });
 
 it("dismissing a dialog changes nothing and re-fires nothing", async () => {

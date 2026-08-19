@@ -8,9 +8,12 @@
  * Result taps hand the FULL place row up (`onSelectResult`) — the slot
  * presents the standard sheet from it (R-map-25 "tapping a result opens the
  * standard place sheet"); rows never route through the saved-places lookup
- * (search results need not be saved). Temporary pins: `searchPinFeatures`
- * consumes this component's same result rows — source wiring is
- * rider-blocked (escalation list), the list is the live tap surface.
+ * (search results need not be saved). Temporary pins (T-8.7 rider, E1):
+ * `onResultsChange` reports the rows the list CURRENTLY shows — the
+ * success rows while the query is active, the stable EMPTY constant on
+ * every other arm (cleared / sub-floor / offline / error / pending) — so
+ * the screen's `map-source-search` mirrors the list exactly and "clearing
+ * the search removes temporary pins" holds by construction.
  *
  * OFFLINE (R-map-25 ⇒ R-map-22 "degrade with an offline notice, no
  * spinners that never resolve"): two arms, both covered —
@@ -27,7 +30,7 @@
  */
 import type { Place } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { FlatList, Pressable, StyleSheet, View } from "react-native";
 
 import { AppText, ErrorBanner, Input, ListItem, Skeleton } from "@/components";
@@ -39,10 +42,18 @@ export interface MapSearchProps {
   tripId: string;
   destination: { lat: number; lng: number };
   onSelectResult(place: Place): void;
+  /** Temp-pin feed (module doc) — reports the visible result rows. */
+  onResultsChange?(places: readonly Place[]): void;
 }
 
 /** ~5 rows before the list scrolls — the map must stay visible behind it. */
 const RESULTS_MAX_HEIGHT = 280;
+
+/**
+ * Stable empty for the report effect: a fresh `[]` per render would defeat
+ * the parent's setState identity bailout and loop the render.
+ */
+const EMPTY_RESULTS: readonly Place[] = [];
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -58,7 +69,7 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function MapSearch({ tripId, destination, onSelectResult }: MapSearchProps) {
+export function MapSearch({ tripId, destination, onSelectResult, onResultsChange }: MapSearchProps) {
   const s = useStyles();
   const [query, setQuery] = useState("");
 
@@ -73,6 +84,15 @@ export function MapSearch({ tripId, destination, onSelectResult }: MapSearchProp
   const active = searchable && !offline;
   const results = search.data?.items ?? [];
   const searchOffline = offline || isOfflineError(search.error);
+
+  // Temp-pin report (module doc): identities are stable — `data.items` per
+  // query result, EMPTY_RESULTS otherwise — so the effect fires only on
+  // real transitions and the parent's setState bails out on repeats.
+  const visibleResults =
+    active && search.isSuccess && search.data !== undefined ? search.data.items : EMPTY_RESULTS;
+  useEffect(() => {
+    onResultsChange?.(visibleResults);
+  }, [onResultsChange, visibleResults]);
 
   return (
     <View style={s.container}>
