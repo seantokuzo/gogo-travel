@@ -11,8 +11,10 @@
  * - base currency (owner-only; the LOCK is server-truth — R-trips-22 409
  *   `base_currency_locked` flips the row to the read-only explainer §2.5
  *   describes; the client has no expense oracle in P-6),
- * - members shortcut + offline-pack placeholder (all roles; offline content
- *   is the offline spec's, later phase),
+ * - members shortcut + the Offline map row (all roles — a device-local
+ *   resource, not trip data; T-8.5 / R-map-19: subtitle mirrors pack state,
+ *   the row opens the `OfflinePackManager` sheet, and the delete/leave exits
+ *   below also drop the trip's pack — R-map-20 hygiene),
  * - leave (editor/viewer, Confirm; owner sees the transfer-first hint row
  *   deep-linking to members — R-tripui-20) and delete (owner, destructive
  *   Confirm stating permanence for ALL members).
@@ -43,7 +45,6 @@ import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
 import { ApiRequestError, useSessionStore } from "@/auth";
 import {
   AppText,
-  Badge,
   Button,
   Card,
   ConfirmDialog,
@@ -69,6 +70,12 @@ import {
   useScreenFocusRefetch,
   useUpdateTrip,
 } from "@/data";
+import {
+  deleteTripPack,
+  OfflinePackManager,
+  offlinePackSummary,
+  useOfflinePackController,
+} from "@/features/map";
 import { LEAVE_TRIP_CONFIRM, memberActionErrorMessage } from "@/features/members";
 import { DateField } from "@/features/trips";
 import { useTripContext } from "@/navigation/trip-context";
@@ -321,6 +328,10 @@ export default function TripSettingsScreen() {
     updateTrip.mutate(patch);
   };
 
+  // ---- offline map (T-8.5 / R-map-19) --------------------------------------
+  const [offlineSheetOpen, setOfflineSheetOpen] = useState(false);
+  const packState = useOfflinePackController(trip);
+
   // ---- exit flows (delete / leave) + teardown eviction -----------------------
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -340,6 +351,10 @@ export default function TripSettingsScreen() {
   }, [client, trip.id]);
 
   const exitToTripList = () => {
+    // R-map-20 hygiene: every exit through here IS a delete/leave outcome
+    // (its only callers), so the trip's offline pack goes with the access —
+    // fire-and-forget; pack cleanup never blocks navigation (R-map-21 rule).
+    void deleteTripPack(trip.id);
     evictOnUnmount.current = true;
     router.replace("/(trips)");
   };
@@ -537,10 +552,11 @@ export default function TripSettingsScreen() {
             </>
           ) : null}
           <ListItem
-            title="Offline pack"
-            subtitle="Maps and trip data for offline use — coming soon."
+            title="Offline map"
+            subtitle={offlinePackSummary(packState)}
             leading={<Icon name="cloud-download-outline" size={22} />}
-            trailing={<Badge label="Not available" tone="neutral" size="sm" />}
+            trailing="chevron"
+            onPress={() => setOfflineSheetOpen(true)}
             testID="trip-settings-list-item-offline"
           />
           <View style={s.divider} />
@@ -620,6 +636,15 @@ export default function TripSettingsScreen() {
             />
           ))}
         </View>
+      </Sheet>
+
+      <Sheet
+        visible={offlineSheetOpen}
+        onDismiss={() => setOfflineSheetOpen(false)}
+        title="Offline map"
+        testID="trip-settings-sheet-offline"
+      >
+        <OfflinePackManager />
       </Sheet>
 
       <Sheet
