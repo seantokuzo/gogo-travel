@@ -72,11 +72,23 @@ async function renderSearch(opts?: {
       .catch(() => undefined);
   }
   const onSelectResult = jest.fn();
+  const onResultsChange = jest.fn();
   await renderWithProviders(
-    <MapSearch tripId={TEST_TRIP_ID} destination={DESTINATION} onSelectResult={onSelectResult} />,
+    <MapSearch
+      tripId={TEST_TRIP_ID}
+      destination={DESTINATION}
+      onSelectResult={onSelectResult}
+      onResultsChange={onResultsChange}
+    />,
     { queryClient: client },
   );
-  return { request, onSelectResult };
+  return { request, onSelectResult, onResultsChange };
+}
+
+/** The last row-set the component reported (T-8.7 temp-pin feed). */
+function lastReported(onResultsChange: jest.Mock): readonly Place[] {
+  const last = onResultsChange.mock.calls.at(-1) as [readonly Place[]] | undefined;
+  return last?.[0] ?? [];
 }
 
 it("stays quiet under the 2-char floor: helper text, zero requests", async () => {
@@ -137,6 +149,31 @@ it("R-map-22 reactive: a transport-dead search shows the notice, not the error b
 
   expect(await screen.findByTestId("map-search-offline")).toBeOnTheScreen();
   expect(screen.queryByTestId("map-search-error")).toBeNull();
+});
+
+describe("onResultsChange — the temp-pin feed (T-8.7 rider, E1)", () => {
+  it("reports the success rows, and reports EMPTY again on clear (pins mirror the list)", async () => {
+    const { onResultsChange } = await renderSearch({ results: [KYOTO, GION] });
+    // Initial mount reports empty (nothing searched yet).
+    expect(lastReported(onResultsChange)).toEqual([]);
+
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "Ky");
+    await screen.findByTestId(`map-search-list-item-${GION.id}`);
+    expect(lastReported(onResultsChange)).toEqual([KYOTO, GION]);
+
+    await fireEvent.press(screen.getByTestId("map-search-clear"));
+    await settle();
+    expect(lastReported(onResultsChange)).toEqual([]);
+  });
+
+  it("offline arm reports EMPTY — no ghost pins under the notice", async () => {
+    const { onResultsChange } = await renderSearch({ seedTripOffline: true });
+
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "Ky");
+    await screen.findByTestId("map-search-offline");
+
+    expect(lastReported(onResultsChange)).toEqual([]);
+  });
 });
 
 it("a real server error keeps the retryable banner (R-ds-17 posture)", async () => {

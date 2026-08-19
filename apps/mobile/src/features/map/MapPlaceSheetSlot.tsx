@@ -1,24 +1,30 @@
 /**
- * FROZEN SEAM (a) — FILLED (T-8.3 / MAP-2+MAP-4; was the T-8.2 null stub).
- * The screen owns pin SELECTION (`onPinSelect(placeId)` → `selectedPlaceId`
- * here); this slot owns everything it presents: the place sheet (R-map-4),
- * the search bar + result list (R-map-25), and the locate button + its
- * dialogs (R-map-16/17). The slot props are STILL the whole contract — the
- * screen file is untouched.
+ * Seam (a) — FILLED (T-8.3 / MAP-2+MAP-4; was the T-8.2 null stub), then
+ * EXTENDED by the T-8.7 integration rider (the sanctioned screen edit).
+ * The screen owns ALL selection state; this slot presents: the place sheet
+ * (R-map-4), the search bar + result list (R-map-25), and the locate
+ * button + its dialogs (R-map-16/17).
  *
  * TWO SELECTION SOURCES, ONE SHEET (R-map-25 "tapping a result opens the
- * standard place sheet"): the seam carries no setter for the screen's
- * selection, so search-result selections live in slot state as the FULL
- * place row (no saved-places lookup — results need not be saved).
- * Precedence + lifecycle keep exactly one active:
- *  - pin tap → screen sets `selectedPlaceId` → it WINS over any stale
- *    search selection (which stays hidden beneath and dies on dismiss);
- *  - result tap → `onClose()` clears the screen's source, then the row
- *    becomes the slot selection;
+ * standard place sheet"). The search selection was slot state while the
+ * screen was frozen; T-8.7 LIFTED it to the screen (`searchPlace` +
+ * `onSelectSearchPlace`) so a search-PIN tap on the map — which only the
+ * screen can observe — lands on the same state as a result-list tap here.
+ * Precedence + lifecycle keep exactly one active (unchanged):
+ *  - pin tap → screen sets `selectedPlaceId` (clearing `searchPlace`) → it
+ *    WINS over any search selection;
+ *  - result tap → `onClose()` clears the screen's pin source, then
+ *    `onSelectSearchPlace(row)` makes the row the selection;
  *  - every sheet dismissal route (close button, scrim — which IS the
  *    map-tap surface while the Modal sheet is up — swipe, Android back)
- *    clears BOTH. With no sheet up, the screen's own MapView-press →
- *    `onClose` wiring covers §2.3 map-tap dismissal.
+ *    clears BOTH (`onSelectSearchPlace(null)` + `onClose()`). With no
+ *    sheet up, the screen's own MapView-press → `onClose` wiring covers
+ *    §2.3 map-tap dismissal.
+ *
+ * `onSearchResultsChange` reports the rows the result list currently shows
+ * — the screen's temp-pin feed (R-map-25, rider E1). `selectedItemId`
+ * carries the itinerary-pin item context through to the sheet's per-kind
+ * "View in itinerary" (R-map-23, rider E5).
  *
  * Screen-selected ids resolve through the TQ-cached saved-places rows
  * (`place-lookup.ts`); unresolved ⇒ no sheet (interim-limited pin coverage
@@ -36,7 +42,7 @@
  */
 import type { Place } from "@gogo/shared";
 import { createStyles, useTheme } from "@gogo/tokens/react";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -54,6 +60,15 @@ const DAY_FILTER_CLEARANCE = 48;
 export interface MapPlaceSheetSlotProps {
   tripId: string;
   selectedPlaceId: string | null;
+  /** Itinerary-pin item context (screen press classification) — null for
+   *  every other selection origin. Feeds the sheet's per-kind
+   *  view-in-itinerary (R-map-23, T-8.7). */
+  selectedItemId: string | null;
+  /** The search-selection source, screen-owned since T-8.7 (module doc). */
+  searchPlace: Place | null;
+  onSelectSearchPlace(place: Place | null): void;
+  /** Temp-pin feed: the rows the result list currently shows (rider E1). */
+  onSearchResultsChange(places: readonly Place[]): void;
   onClose(): void;
 }
 
@@ -69,7 +84,15 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function MapPlaceSheetSlot({ tripId, selectedPlaceId, onClose }: MapPlaceSheetSlotProps) {
+export function MapPlaceSheetSlot({
+  tripId,
+  selectedPlaceId,
+  selectedItemId,
+  searchPlace,
+  onSelectSearchPlace,
+  onSearchResultsChange,
+  onClose,
+}: MapPlaceSheetSlotProps) {
   const s = useStyles();
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
@@ -77,7 +100,6 @@ export function MapPlaceSheetSlot({ tripId, selectedPlaceId, onClose }: MapPlace
   // (the screen renders it) — destination coords are schema-guaranteed.
   const trip = useTripContext();
 
-  const [searchPlace, setSearchPlace] = useState<Place | null>(null);
   const savedQuery = useSavedPlaces(tripId);
 
   const screenPlace =
@@ -89,17 +111,17 @@ export function MapPlaceSheetSlot({ tripId, selectedPlaceId, onClose }: MapPlace
 
   const handleSelectResult = useCallback(
     (place: Place) => {
-      // Clear the screen's source first so the result's row presents.
+      // Clear the screen's pin source first so the result's row presents.
       onClose();
-      setSearchPlace(place);
+      onSelectSearchPlace(place);
     },
-    [onClose],
+    [onClose, onSelectSearchPlace],
   );
 
   const handleDismiss = useCallback(() => {
-    setSearchPlace(null);
+    onSelectSearchPlace(null);
     onClose();
-  }, [onClose]);
+  }, [onSelectSearchPlace, onClose]);
 
   return (
     <>
@@ -111,12 +133,18 @@ export function MapPlaceSheetSlot({ tripId, selectedPlaceId, onClose }: MapPlace
           tripId={tripId}
           destination={{ lat: trip.destination_lat, lng: trip.destination_lng }}
           onSelectResult={handleSelectResult}
+          onResultsChange={onSearchResultsChange}
         />
       </View>
 
       <MapLocateButton />
 
-      <MapPlaceSheet tripId={tripId} place={sheetPlace} onDismiss={handleDismiss} />
+      <MapPlaceSheet
+        tripId={tripId}
+        place={sheetPlace}
+        itineraryItemId={selectedPlaceId !== null ? selectedItemId : null}
+        onDismiss={handleDismiss}
+      />
     </>
   );
 }

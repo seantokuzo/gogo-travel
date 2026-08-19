@@ -11,13 +11,34 @@
  * (R-map-6) · the place-sheet mount slot.
  *
  * THE THREE FROZEN SEAMS (W2 anchor — fillers change their own files, not
- * this screen):
+ * this screen; the T-8.7 integration rider is the ONE sanctioned screen
+ * edit, closing PR #24's E1–E5 escalations):
  *  (a) `MapPlaceSheetSlot` + the `onPinSelect(placeId)` contract — T-8.3
- *      fills the sheet; selection state lives here and feeds the slot.
+ *      filled the sheet; selection state lives here and feeds the slot.
+ *      T-8.7 lifted the SEARCH selection here too (search-pin taps and
+ *      result-list taps land on one state — slot doc) and added the
+ *      itinerary-pin item context for the sheet's per-kind
+ *      view-in-itinerary (R-map-23).
  *  (b) `MapOfflinePillSlot` — T-8.5 fills pack status (`map-pill-offline`).
  *  (c) pending-focus store — drained on focus into `onPinSelect`; T-8.4
  *      wires the senders (R-map-24 — imperative cross-tab pushes no-op, so
- *      the param cannot ride a URL push).
+ *      the param cannot ride a URL push). T-8.7 added the R-map-24 camera
+ *      half: a focus-originated selection centers the camera once its
+ *      coordinate resolves.
+ *
+ * T-8.7 RIDER WIRING (each item cites its escalation record):
+ *  - E1: `map-source-search` non-clustered ShapeSource over the rows the
+ *    search list currently shows (reported up through the slot) — temp pins
+ *    clear when the search does (R-map-25).
+ *  - E2: `<LocationPuck>` gated on `permission === "granted"` + an
+ *    AppState-active permission re-sync so a Settings grant/revoke is
+ *    observed (PR #24 corr A2).
+ *  - E3: the camera-intent drain — the sanctioned consumer of
+ *    `consumePendingCameraIntent()` (locate fly-to, R-map-17).
+ *  - E4: photo-pin taps cross-tab push the photo viewer (tab jump first —
+ *    mobile.md landmine; the route is the T-4.x placeholder until P-12).
+ *  - Telemetry: `disableMapboxTelemetry()` at module scope beside the token
+ *    hand-off (map-style.ts doc).
  *
  * ALL pin logic is pure and separately tested (jest mocks `@rnmapbox/maps`
  * entirely — P-8 prep ruling): builders, camera math, day filter, cluster
@@ -38,13 +59,21 @@
  * post-mount effect races native view creation on the with-token path
  * (R1 review, corr A4).
  */
+import type { Place } from "@gogo/shared";
 import { mapColors, mapDayColors } from "@gogo/tokens";
 import { createStyles, useTheme } from "@gogo/tokens/react";
-import { Camera, CircleLayer, MapView, ShapeSource, SymbolLayer } from "@rnmapbox/maps";
-import { useFocusEffect } from "expo-router";
+import {
+  Camera,
+  CircleLayer,
+  LocationPuck,
+  MapView,
+  ShapeSource,
+  SymbolLayer,
+} from "@rnmapbox/maps";
+import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentRef, RefObject } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { AppState, Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { EmptyState, ErrorBanner, Icon } from "@/components";
@@ -55,15 +84,18 @@ import {
   cameraStopFor,
   cameraTargetFor,
   classifyMapPress,
+  classifySearchPinPress,
   CLUSTER_MAX_ZOOM,
   CLUSTER_RADIUS,
   CLUSTERED_FILTER,
   clusterCircleStyle,
   clusterCountStyle,
   configureMapboxAccessToken,
+  consumePendingCameraIntent,
   consumePendingMapFocus,
   contextPinOpacity,
   dayFilterChips,
+  disableMapboxTelemetry,
   itineraryFeaturesForFilter,
   itineraryPinFeatures,
   itineraryPinLabelStyle,
@@ -76,20 +108,32 @@ import {
   photoPinFeatures,
   pinCircleStyle,
   savedPinFeatures,
+  searchPinFeatures,
+  syncLocationPermissionFromSystem,
   UNCLUSTERED_FILTER,
+  useMapCameraIntentStore,
+  useMapLocationStore,
   type LngLat,
   type MapDayFilter,
   type MapPressFeature,
 } from "@/features/map";
+import { jumpToTripTab } from "@/navigation/tab-jump";
 import { useTripContext } from "@/navigation/trip-context";
 
 // Runtime token seam at MODULE SCOPE — before any native MapView exists
 // (module doc "TOKENLESS BUILDS"). Graceful no-op on tokenless builds.
 configureMapboxAccessToken();
+// Telemetry OFF at the same moment (T-8.7 rider — map-style.ts doc): before
+// any native MapView exists, idempotent, graceful when the test mock omits
+// the API.
+disableMapboxTelemetry();
 
 // The itinerary family never dims (R-map-3 dims context families only) —
 // its pin style is input-free, so it hoists to a module constant.
 const ITINERARY_PIN_STYLE = pinCircleStyle(1);
+// Search temp pins never dim either (transient highlights, not context —
+// E1 rider; paint reads `['get', 'color']`, features carry pinSelectedRing).
+const SEARCH_PIN_STYLE = pinCircleStyle(1);
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -140,6 +184,8 @@ type ShapeSourceRef = RefObject<ShapeSource | null>;
 
 export default function MapScreen() {
   const trip = useTripContext();
+  const router = useRouter();
+  const navigation = useNavigation();
   const { theme, scheme } = useTheme();
   const s = useStyles();
   const insets = useSafeAreaInsets();
@@ -148,7 +194,22 @@ export default function MapScreen() {
 
   const [dayFilter, setDayFilter] = useState<MapDayFilter>("all");
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  /**
+   * The itinerary ITEM a selection came from (itinerary-pin taps only) —
+   * the sheet's per-kind "View in itinerary" context (R-map-23, E5). Null
+   * for saved-pin taps, search selections, and focus drains.
+   */
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  /**
+   * Search-selection source, LIFTED from the slot (T-8.7 — slot doc): a
+   * search-pin tap on the map and a result-list tap land on the SAME state,
+   * and the precedence/lifecycle invariants keep one selection active.
+   */
+  const [searchPlace, setSearchPlace] = useState<Place | null>(null);
+  /** The rows the search list currently shows — the temp-pin feed (E1). */
+  const [searchResults, setSearchResults] = useState<readonly Place[]>([]);
   const [attributionVisible, setAttributionVisible] = useState(false);
+  const locationPermission = useMapLocationStore((state) => state.permission);
 
   const savedQuery = useSavedPlaces(trip.id);
   const itineraryQuery = useItinerary(trip.id);
@@ -177,6 +238,9 @@ export default function MapScreen() {
     () => itineraryFeaturesForFilter(itineraryPins, dayFilter),
     [itineraryPins, dayFilter],
   );
+  // R-map-25 temp pins (E1): mirrors the search list exactly — empty input
+  // (cleared / offline / error / sub-floor) empties the source.
+  const searchPins = useMemo(() => searchPinFeatures(searchResults, colors), [searchResults, colors]);
 
   const chips = useMemo(
     () => dayFilterChips({ start_date: trip.start_date, end_date: trip.end_date }, dayColors),
@@ -233,25 +297,120 @@ export default function MapScreen() {
 
   // ------------------------------------------------------------- selection
   /**
-   * FROZEN SEAM (a) contract — pin selection. T-8.3 builds the sheet on
-   * `selectedPlaceId`; T-8.4's pending-focus drain (below) and the
-   * ShapeSource press handlers both land here.
+   * R-map-24's camera half (T-8.7): the place a FOCUS DRAIN selected, still
+   * owed a camera centering. A ref, not state — it only gates the effect
+   * below; any user-originated selection (pin tap, search) disarms it.
+   */
+  const focusCameraPlaceRef = useRef<string | null>(null);
+
+  /**
+   * Seam (a) contract — pin selection. The pending-focus drain (below) and
+   * the ShapeSource press handlers both land here. Clears the OTHER
+   * selection source (search) — one selection active, slot doc.
    */
   const onPinSelect = useCallback((placeId: string) => {
+    focusCameraPlaceRef.current = null;
+    setSearchPlace(null);
+    setSelectedItemId(null);
     setSelectedPlaceId(placeId);
   }, []);
   const clearSelection = useCallback(() => {
+    focusCameraPlaceRef.current = null;
     setSelectedPlaceId(null);
+    setSelectedItemId(null);
+    setSearchPlace(null);
+  }, []);
+
+  /**
+   * Search-selection path (E1/R-map-25): result-list taps arrive via the
+   * slot's `onSelectSearchPlace`; search-pin taps arrive from the search
+   * ShapeSource handler below. Clearing the pin selection first keeps the
+   * one-selection invariant (slot precedence: `selectedPlaceId` wins).
+   */
+  const handleSelectSearchPlace = useCallback((place: Place | null) => {
+    focusCameraPlaceRef.current = null;
+    setSelectedPlaceId(null);
+    setSelectedItemId(null);
+    setSearchPlace(place);
+  }, []);
+  const handleSearchResultsChange = useCallback((places: readonly Place[]) => {
+    setSearchResults(places);
   }, []);
 
   // FROZEN SEAM (c): drain the pending-focus store on every tab focus —
   // consumed once + TRIP-SCOPED (a foreign trip's armed focus is discarded,
   // never presented), so a revisit never re-triggers (§2.7). T-8.4 senders.
+  // The camera ref arms AFTER onPinSelect (which disarms it as a
+  // user-selection guard) — order matters.
   useFocusEffect(
     useCallback(() => {
       const placeId = consumePendingMapFocus(trip.id);
-      if (placeId !== null) onPinSelect(placeId);
+      if (placeId !== null) {
+        onPinSelect(placeId);
+        focusCameraPlaceRef.current = placeId;
+      }
     }, [trip.id, onPinSelect]),
+  );
+
+  // R-map-24 "center the camera on it" (T-8.7): a focus-originated
+  // selection centers once its coordinate resolves through the place index
+  // (the saved query may still be in flight at drain time — the effect
+  // waits for BOTH). Coordinate never resolves (interim pin-coverage gap,
+  // QUEUE Blocked row) ⇒ no move — the sheet side degrades the same way.
+  useEffect(() => {
+    const target = focusCameraPlaceRef.current;
+    if (target === null || selectedPlaceId !== target) return;
+    const coordinate = placeIndex.get(target);
+    if (coordinate === undefined) return;
+    focusCameraPlaceRef.current = null;
+    const stop = cameraStopFor(cameraTargetFor([[coordinate.lng, coordinate.lat]], destination), {
+      animate: true,
+    });
+    if (stop !== undefined) cameraRef.current?.setCamera(stop);
+  }, [selectedPlaceId, placeIndex, destination]);
+
+  // E3 (R-map-17): THE sanctioned camera-intent consumer — the locate flow
+  // arms {center, zoom: LOCATE_CAMERA_ZOOM}; this drain applies it.
+  // Reactive subscription: consumes on arrival AND drains an intent armed
+  // before mount. Consume-once semantics live in the store.
+  const pendingCameraIntent = useMapCameraIntentStore((state) => state.pending);
+  useEffect(() => {
+    if (pendingCameraIntent === null) return;
+    const intent = consumePendingCameraIntent();
+    if (intent === null) return;
+    cameraRef.current?.setCamera({
+      centerCoordinate: intent.center,
+      zoomLevel: intent.zoom,
+      animationDuration: CAMERA_ANIMATION_MS,
+    });
+  }, [pendingCameraIntent]);
+
+  // E2 (PR #24 corr A2): a Settings grant/revoke happens outside the app —
+  // re-read the system truth on every background → active transition so the
+  // puck gate observes it. The listener itself calls nothing at mount
+  // (R-map-16's lazy pin holds: only a real transition triggers the read).
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") void syncLocationPermissionFromSystem();
+    });
+    return () => subscription.remove();
+  }, []);
+
+  /**
+   * E4 (R-map-4 photo arm): photo pins route to the photo viewer — a
+   * cross-tab PUSH, so tab jump first (mobile.md landmine), then the push
+   * in the now-active more stack. The route is the T-4.x placeholder until
+   * P-12 fills the screen; the wiring is real either way.
+   */
+  const openPhotoViewer = useCallback(
+    (photoId: string) => {
+      if (!jumpToTripTab(navigation, trip.id, "more")) return;
+      router.push({
+        pathname: "/[tripId]/more/photos/[photoId]",
+        params: { tripId: trip.id, photoId },
+      });
+    },
+    [navigation, trip.id, router],
   );
 
   const savedSourceRef = useRef<ShapeSource>(null);
@@ -288,13 +447,20 @@ export default function MapScreen() {
         void expandCluster(ref, event);
         return;
       }
-      if (target.kind === "pin" && target.placeId !== null) {
-        onPinSelect(target.placeId);
+      if (target.kind !== "pin") return;
+      if (target.family === "photo") {
+        // E4 (R-map-4): photo pins open the viewer, never the place sheet.
+        if (target.photoId !== null) openPhotoViewer(target.photoId);
+        return;
       }
-      // Photo pins (placeId null): T-8.3 routes them to the photo viewer
-      // (R-map-4) — a no-op in the shell, where the family is empty anyway.
+      if (target.placeId !== null) {
+        onPinSelect(target.placeId);
+        // R-map-23 fidelity (E5): an itinerary pin remembers ITS item so
+        // the sheet's "View in itinerary" lands on THAT item, per kind.
+        setSelectedItemId(target.family === "itinerary" ? target.itemId : null);
+      }
     },
-    [expandCluster, onPinSelect],
+    [expandCluster, onPinSelect, openPhotoViewer],
   );
   const handleSavedSourcePress = useCallback(
     (event: SourcePressEvent) => handleSourcePress(savedSourceRef, event),
@@ -307,6 +473,19 @@ export default function MapScreen() {
   const handlePhotoSourcePress = useCallback(
     (event: SourcePressEvent) => handleSourcePress(photoSourceRef, event),
     [handleSourcePress],
+  );
+  // E1: a search temp-pin tap feeds the SHEET's search-selection path, not
+  // the saved-places lookup — the row may not be saved (search-pins doc).
+  // Never clustered, so no cluster arm.
+  const handleSearchSourcePress = useCallback(
+    (event: SourcePressEvent) => {
+      const placeId = classifySearchPinPress(event);
+      if (placeId === null) return;
+      const row = searchResults.find((place) => place.id === placeId);
+      if (row === undefined) return;
+      handleSelectSearchPlace(row);
+    },
+    [searchResults, handleSelectSearchPlace],
   );
 
   // ----------------------------------------------------------------- state
@@ -438,6 +617,18 @@ export default function MapScreen() {
             style={itineraryLabelStyle}
           />
         </ShapeSource>
+
+        {/* E1 (R-map-25): search temp pins — rendered LAST so transient
+            highlights sit above every family (§2.1 z-order predates the
+            search family; topmost is the interpretation). Non-clustered:
+            ≤ MAP_SEARCH_PAGE_LIMIT features never need it. */}
+        <ShapeSource id="map-source-search" shape={searchPins} onPress={handleSearchSourcePress}>
+          <CircleLayer id="map-layer-search-pin" style={SEARCH_PIN_STYLE} />
+        </ShapeSource>
+
+        {/* E2 (R-map-15): the puck mounts ONLY under a when-in-use grant —
+            the SDK manages its own location stream from there. */}
+        {locationPermission === "granted" ? <LocationPuck /> : null}
       </MapView>
 
       {showEmpty ? (
@@ -482,10 +673,16 @@ export default function MapScreen() {
         <Icon name="information-circle-outline" size={20} color={theme.color.text.secondary} />
       </Pressable>
 
-      {/* FROZEN SEAM (a) — T-8.3 fills the place sheet (`map-sheet-place`). */}
+      {/* Seam (a) — T-8.3's slot; T-8.7 extended the contract (slot doc):
+          search selection lifted here, results reported up for the temp
+          pins, itinerary-pin item context for per-kind view-in-itinerary. */}
       <MapPlaceSheetSlot
         tripId={trip.id}
         selectedPlaceId={selectedPlaceId}
+        selectedItemId={selectedItemId}
+        searchPlace={searchPlace}
+        onSelectSearchPlace={handleSelectSearchPlace}
+        onSearchResultsChange={handleSearchResultsChange}
         onClose={clearSelection}
       />
 
