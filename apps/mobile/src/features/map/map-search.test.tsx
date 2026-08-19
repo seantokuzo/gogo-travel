@@ -3,7 +3,9 @@
  *  - the 2-char floor gates the QUERY, not just the UI (a sub-floor request
  *    fired past the gate is a live server 400 — CT-2 doc);
  *  - every fired request carries the bbox geo bound + trip_id (the floor's
- *    LEGALITY — text-only 2-char is a 400 by schema);
+ *    LEGALITY — text-only 2-char is a 400 by schema) AND forwards
+ *    TanStack's abort signal (T-6.6 posture — cancel-on-clear/unmount must
+ *    reach the transport; review A10);
  *  - the key extends the CT-2 `placeSearch` family with the map
  *    discriminator + tripId + the request's OWN bbox string, so map and
  *    destination caches never collide AND a moved destination can never
@@ -78,8 +80,14 @@ describe("useMapPlaceSearch", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
     expect(request).toHaveBeenCalledTimes(1);
-    const [descriptor, input] = request.mock.calls[0] as [unknown, { query: Record<string, unknown> }];
+    const [descriptor, input, options] = request.mock.calls[0] as [
+      unknown,
+      { query: Record<string, unknown> },
+      { signal?: AbortSignal } | undefined,
+    ];
     expect(descriptor).toBe(placeEndpoints.searchPlaces);
+    // A10: the abort signal reaches the transport call.
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(input.query["q"]).toBe("ky"); // trimmed + NFC
     expect(input.query["trip_id"]).toBe(TEST_TRIP_ID);
     expect(input.query["limit"]).toBe(20);

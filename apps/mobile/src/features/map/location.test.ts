@@ -8,6 +8,9 @@
  *    the dialog and does NOT call the system API.
  *  - Denied never loops: a system denial records state and stops (no
  *    chained dialog); a tap in denied state raises the Settings dialog.
+ *  - Settings-return RECOVERY: the permission read is per-tap FRESH —
+ *    cached `denied` is never trusted (deny → grant in Settings → the next
+ *    tap acquires, no dialog).
  *  - Grant → single-shot position → camera intent armed (R-map-17) with
  *    [lng, lat] order (the Mapbox wire order — a swap flies to the ocean).
  *  - Single-flight: a second tap while a read is in flight is a no-op
@@ -34,14 +37,17 @@ const locationMock = jest.requireMock("expo-location") as {
 
 /**
  * IMPORT-TIME snapshot, taken before any beforeEach can mockClear: a
- * module-scope permission read in location.ts fires during the import
+ * module-scope location-API touch in location.ts fires during the import
  * graph above, so asserting on live mock state inside a test is VACUOUS
  * against it (probe-caught: an eager `void getForegroundPermissionsAsync()`
- * at module scope left every test green until this snapshot existed).
+ * at module scope left every test green until this snapshot existed; R1
+ * probe P2 caught the same gap for an eager POSITION read — "importing
+ * requests NOTHING" covers ALL THREE APIs, so all three are snapshotted).
  */
-const importTimePermissionReads =
+const importTimeLocationApiCalls =
   locationMock.__mock.getForegroundPermissionsAsync.mock.calls.length +
-  locationMock.__mock.requestForegroundPermissionsAsync.mock.calls.length;
+  locationMock.__mock.requestForegroundPermissionsAsync.mock.calls.length +
+  locationMock.__mock.getCurrentPositionAsync.mock.calls.length;
 
 const permission = (
   status: "granted" | "undetermined" | "denied",
@@ -82,9 +88,10 @@ it("R-map-16 LAZY: module import + initial state touch no permission API", () =>
     dialog: null,
   });
   // The import-time snapshot — NOT the live (clearable) mock state.
-  expect(importTimePermissionReads).toBe(0);
+  expect(importTimeLocationApiCalls).toBe(0);
   expect(locationMock.__mock.getForegroundPermissionsAsync).not.toHaveBeenCalled();
   expect(locationMock.__mock.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+  expect(locationMock.__mock.getCurrentPositionAsync).not.toHaveBeenCalled();
 });
 
 it("first tap on undetermined: rationale dialog up, system prompt NOT fired", async () => {
@@ -144,6 +151,24 @@ it("tap while denied: Settings dialog, never a re-prompt", async () => {
   expect(useMapLocationStore.getState().dialog).toBe("settings");
   expect(useMapLocationStore.getState().permission).toBe("denied");
   expect(locationMock.__mock.requestForegroundPermissionsAsync).not.toHaveBeenCalled();
+});
+
+it("Settings-return recovery: cached denied is NOT trusted — the per-tap fresh read observes the grant", async () => {
+  // Denied earlier this session (the store remembers)…
+  useMapLocationStore.setState({ permission: "denied" });
+  // …the user flips the toggle in Settings and returns. The NEXT tap's
+  // FRESH read must see the grant — an early return trusting the cached
+  // `denied` raises the Settings dialog FOREVER (R-map-16 recovery
+  // dead-end; review B2 / probe N1).
+  locationMock.__mock.getForegroundPermissionsAsync.mockResolvedValueOnce(permission("granted"));
+  locationMock.__mock.getCurrentPositionAsync.mockResolvedValueOnce(position(35.02, 135.76));
+
+  await handleLocatePress();
+
+  const state = useMapLocationStore.getState();
+  expect(state.permission).toBe("granted");
+  expect(state.position).toEqual({ lat: 35.02, lng: 135.76 });
+  expect(state.dialog).toBeNull(); // recovery completes — NO Settings dialog
 });
 
 it("tap while already granted: straight to position, no dialogs", async () => {

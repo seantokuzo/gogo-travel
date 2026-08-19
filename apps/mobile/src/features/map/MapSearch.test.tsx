@@ -2,8 +2,9 @@
  * Map search overlay (T-8.3 / MAP-2 — R-map-25 + the R-map-22 offline
  * degrade). Load-bearing:
  *  - under the 2-char floor NOTHING fires (helper text, zero requests);
- *  - at the floor the results list renders and a row tap hands the FULL
- *    place row up (the sheet's search-selection path);
+ *  - at the floor the results list renders and a row tap hands THAT ROW's
+ *    full place up (two-row fixture — a hardcoded first-row handler fails;
+ *    review A9) — the sheet's search-selection path;
  *  - clear empties input + list (the temp-pin builder input with it);
  *  - offline degrades to the NOTICE, both arms: proactive (trip cache
  *    already failed at transport) fires no request at all; reactive (this
@@ -24,6 +25,8 @@ import { makePlace } from "@/test-utils/trip-fixtures";
 
 const DESTINATION = { lat: 35.0116, lng: 135.7681 };
 const KYOTO = makePlace();
+/** Second row — the WHICH-row discriminator for the tap pin (review A9). */
+const GION = makePlace({ id: "44444444-4444-4444-8444-444444444442", name: "Gion Teahouse" });
 
 function spyRequest(): jest.Mock {
   return jest.spyOn(apiClient, "request") as unknown as jest.Mock;
@@ -85,16 +88,17 @@ it("stays quiet under the 2-char floor: helper text, zero requests", async () =>
   expect(searchCalls(request)).toHaveLength(0);
 });
 
-it("R-map-25: at the floor the result list renders; a row tap hands the full row up", async () => {
-  const { request, onSelectResult } = await renderSearch();
+it("R-map-25: at the floor the result list renders; a row tap hands ITS OWN full row up", async () => {
+  const { request, onSelectResult } = await renderSearch({ results: [KYOTO, GION] });
 
   await fireEvent.changeText(screen.getByTestId("map-search-input"), "Ky");
-  const row = await screen.findByTestId(`map-search-list-item-${KYOTO.id}`);
+  // Tap the SECOND row — a handler wired to `results[0]` cannot pass (A9).
+  const row = await screen.findByTestId(`map-search-list-item-${GION.id}`);
 
   expect(searchCalls(request).length).toBeGreaterThan(0);
   await fireEvent.press(row);
   expect(onSelectResult).toHaveBeenCalledTimes(1);
-  expect(onSelectResult).toHaveBeenCalledWith(KYOTO);
+  expect(onSelectResult).toHaveBeenCalledWith(GION);
 });
 
 it("clear empties the input and removes the list", async () => {

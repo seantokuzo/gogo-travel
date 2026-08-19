@@ -13,13 +13,16 @@
  *  - the screen's pin selection takes precedence over a live search
  *    selection;
  *  - search + locate mount through the slot (the §2.8 map-root controls
- *    exist without touching the frozen screen).
+ *    exist without touching the frozen screen);
+ *  - the slot NEVER drains the camera-intent store — the screen's rider
+ *    drain is the only consumer (dormant-emitter contract).
  */
 import { placeEndpoints } from "@gogo/shared";
 import { fireEvent, screen, within } from "@testing-library/react-native";
 
 import { apiClient } from "@/auth";
 import { MapPlaceSheetSlot } from "./MapPlaceSheetSlot";
+import { setPendingCameraIntent, useMapCameraIntentStore } from "./camera-intent";
 import { resetMapLocationForTests } from "./location";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
@@ -62,6 +65,7 @@ const trip = makeTrip({
 beforeEach(() => {
   jest.clearAllMocks();
   resetMapLocationForTests();
+  useMapCameraIntentStore.setState({ pending: null });
 });
 
 afterEach(() => {
@@ -185,4 +189,21 @@ it("dismissing the search-selection sheet clears it and still reports onClose", 
 
   // onClose fired for the result tap AND the dismissal (both routes clear).
   expect(onClose).toHaveBeenCalledTimes(2);
+});
+
+it("camera-intent DORMANCY: rendering the slot does not drain an armed intent", async () => {
+  // Armed (by a locate flow or any future writer) before the surface
+  // mounts/re-renders…
+  setPendingCameraIntent({ center: [135.77, 35.01], zoom: 14 });
+
+  await renderSlot(null);
+
+  // …and STILL armed after: the screen's rider drain is the only consumer
+  // (camera-intent.ts dormant-emitter contract). A slot-side drain would
+  // eat the intent before the screen applies it — locate fly-to silently
+  // dead the day the rider wires it (review A11 / probe N5).
+  expect(useMapCameraIntentStore.getState().pending).toEqual({
+    center: [135.77, 35.01],
+    zoom: 14,
+  });
 });

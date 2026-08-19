@@ -31,9 +31,15 @@ describe("formatDistance", () => {
     [0, "0 m"],
     [850.4, "850 m"],
     [999.4, "999 m"],
+    // A12 boundary: rounds to 1000 m — the UNIT cut is on the rounded
+    // value, so this is already a kilometer, never "1000 m".
+    [999.6, "1.0 km"],
     [1000, "1.0 km"],
     [1234, "1.2 km"],
     [9949, "9.9 km"],
+    // A12 boundary: the 10 km cut is a PRECISION switch inside the same
+    // unit — raw-value branch, so one decimal survives the round-up.
+    [9999.6, "10.0 km"],
     [10_000, "10 km"],
     [23_400, "23 km"],
   ])("%d m → %s", (meters, expected) => {
