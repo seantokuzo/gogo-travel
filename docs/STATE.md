@@ -23,6 +23,21 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 `CLAUDE.md § Autonomy Contract`. Reviews are **local in-session**
 ([ADR-003](decisions/ADR-003-local-in-session-reviews.md)) — no GitHub Claude app.
 
+## ▶ NEXT SESSION — START HERE (written 2026-08-19, session-limit interrupt; delete when stale)
+
+**Session limit hit mid-P-8-W4 (resets 4:10am PT).** Read
+`.tmp/review-26/round-1/RESUME.md` — the full resume manifest. Short form:
+PR #26 (T-8.7 rider, head `22e6c21`) round-1 review was 2/5 lanes done
+(security ship 0/0, performance ship 0/1 — sentinels saved) when the limit
+KILLED correctness/tests/conventions mid-run (no sentinels — re-run all
+three fresh; the tests lane's worktree `agent-aae14caef27c49dff` may hold a
+LIVE MUTATION — remove it unexamined). T-8.5 (offline packs builder,
+worktree `agent-a0fc6e4783ceabb0e`) had no completion notification —
+check for a pushed branch/PR, resume or re-dispatch. Then: aggregate #26 →
+triage → fix → verify → judge → merge; T-8.5 same pipeline; then P-8 is
+CODE-COMPLETE → phase-close doc pass + Sean report (spec-pass ~65 interps,
+pin-coverage ruling P1, QA parked on auth-unblock + pk token).
+
 ## Active phase context
 
 ### P-8 — Maps, saved places & offline tile packs (ACTIVE since 2026-08-15)
