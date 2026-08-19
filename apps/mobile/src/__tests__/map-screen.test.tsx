@@ -569,6 +569,27 @@ describe("search temp pins (E1 — R-map-25)", () => {
     expect(sourceShape("map-source-search").features).toHaveLength(0);
   });
 
+  it("the search source renders TOPMOST — the LAST source in the map's z-order (interp 1, R1 tests A5)", async () => {
+    // A silent reorder ships the transient highlight UNDER pins/clusters
+    // exactly where the map is densest — pin the whole bottom-up order.
+    await renderMap();
+    await act(async () => {
+      slotProps().onSearchResultsChange([SEARCH_HIT_A]);
+    });
+
+    // Host-order query: getAllBy* returns document (render) order, which for
+    // sibling sources IS the Mapbox z-order (later child renders on top).
+    const sourceIds = screen
+      .getAllByTestId(/^map-source-/)
+      .map((node) => node.props.testID as string);
+    expect(sourceIds).toEqual([
+      "map-source-photo",
+      "map-source-saved",
+      "map-source-itinerary",
+      "map-source-search",
+    ]);
+  });
+
   it("a search-pin tap lands on the SEARCH-selection path and clears the pin selection", async () => {
     await renderMap();
     // A pin selection is active first…
@@ -694,6 +715,46 @@ describe("location puck + permission re-sync (E2 — R-map-15, corr A2)", () => 
     expect(locationMock.__mock.getForegroundPermissionsAsync).toHaveBeenCalled();
     expect(useMapLocationStore.getState().permission).toBe("granted");
   });
+
+  it("unmount REMOVES the AppState listener (R1 tests A4 — no dead-closure re-reads)", async () => {
+    // Without the cleanup, N map visits leave N leaked listeners re-reading
+    // permissions through dead closures on every foreground return.
+    const subs: { type: string; handler: (state: string) => void; remove: jest.Mock }[] = [];
+    jest.spyOn(AppState, "addEventListener").mockImplementation((type, handler) => {
+      const sub = {
+        type: type as string,
+        handler: handler as (state: string) => void,
+        remove: jest.fn(),
+      };
+      subs.push(sub);
+      return sub as unknown as ReturnType<typeof AppState.addEventListener>;
+    });
+    const locationMock = jest.requireMock("expo-location") as {
+      __mock: { getForegroundPermissionsAsync: jest.Mock };
+    };
+    locationMock.__mock.getForegroundPermissionsAsync.mockClear();
+
+    const { view } = await renderMap();
+
+    // Identify the SCREEN's subscription by behavior — the change-listener
+    // whose "active" dispatch triggers the permission re-read — so another
+    // consumer's own subscribe/unsubscribe can never satisfy this pin.
+    const ours: typeof subs = [];
+    for (const sub of subs.filter((candidate) => candidate.type === "change")) {
+      const before = locationMock.__mock.getForegroundPermissionsAsync.mock.calls.length;
+      await act(async () => {
+        sub.handler("active");
+      });
+      if (locationMock.__mock.getForegroundPermissionsAsync.mock.calls.length > before) {
+        ours.push(sub);
+      }
+    }
+    expect(ours).toHaveLength(1);
+    expect(ours[0]?.remove).not.toHaveBeenCalled();
+
+    await view.unmount();
+    expect(ours[0]?.remove).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("camera-intent drain (E3 — R-map-17)", () => {
@@ -761,6 +822,141 @@ describe("focus-originated camera centering (R-map-24)", () => {
 
     expect(slotProps().selectedPlaceId).toBe(PLACE_A);
     expect(setCamera).not.toHaveBeenCalled();
+  });
+});
+
+describe("deliberate camera writes vs the initial fit (R1 corr B1)", () => {
+  // The three pin queries settle in NO guaranteed order; the initial-fit
+  // effect fires whenever they do. Any DELIBERATE camera write that lands
+  // first must satisfy the fit — otherwise the late settle teleport-yanks
+  // the camera with the all-pins envelope (non-animated). The pre-fit view
+  // is never blank: the Camera's defaultSettings destination stop covers it.
+
+  it("locate fly-to, then LATE settle: exactly ONE deliberate setCamera, no envelope yank", async () => {
+    // Slow trip queries — hold saved-places in flight (deferred, released
+    // in `finally` per mobile.md) so `settled` stays false past the locate.
+    const releases: ((value: unknown) => void)[] = [];
+    await renderMap({
+      overrides: {
+        "GET /trips/:tripId/saved-places": () =>
+          new Promise((resolve) => {
+            releases.push(resolve);
+          }),
+      },
+    });
+    const setCamera = mapboxMock.__mock.camera.setCamera;
+
+    try {
+      // Nothing settled and nothing armed — no camera write yet.
+      expect(setCamera).not.toHaveBeenCalled();
+
+      // The user taps locate mid-flight: the drain applies the fly-to.
+      await act(async () => {
+        setPendingCameraIntent({ center: [135.77, 35.01], zoom: LOCATE_CAMERA_ZOOM });
+      });
+      expect(setCamera).toHaveBeenCalledTimes(1);
+      expect(setCamera).toHaveBeenCalledWith(
+        expect.objectContaining({ centerCoordinate: [135.77, 35.01], zoomLevel: LOCATE_CAMERA_ZOOM }),
+      );
+    } finally {
+      // The slow query settles LATE.
+      await act(async () => {
+        for (const release of releases) release({ items: savedFixtures(), nextCursor: null });
+      });
+    }
+    await settle();
+
+    // Applied-proof: the late rows really landed as pins…
+    expect(sourceShape("map-source-saved").features).toHaveLength(2);
+    // …and the locate write stayed the ONLY setCamera — no envelope stomp.
+    expect(setCamera).toHaveBeenCalledTimes(1);
+  });
+
+  it("focus-centering, then LATE settle: the centering survives with the sheet open", async () => {
+    // itinerary→place link: savedQuery resolves first (coordinate resolves,
+    // centering fires, sheet opens), itinerary settles later — the fit must
+    // not stomp the centering (R-map-24 visibly undone otherwise).
+    const releases: ((value: unknown) => void)[] = [];
+    setPendingMapFocus(TEST_TRIP_ID, PLACE_B);
+    await renderMap({
+      overrides: {
+        "GET /trips/:tripId/itinerary": () =>
+          new Promise((resolve) => {
+            releases.push(resolve);
+          }),
+      },
+    });
+    const setCamera = mapboxMock.__mock.camera.setCamera;
+
+    try {
+      // The focus drain selected PLACE_B and the centering already fired.
+      expect(slotProps().selectedPlaceId).toBe(PLACE_B);
+      expect(setCamera).toHaveBeenCalledTimes(1);
+      expect(setCamera).toHaveBeenCalledWith(
+        expect.objectContaining({
+          centerCoordinate: [135.7646, 35.005],
+          zoomLevel: SINGLE_PIN_ZOOM,
+          animationDuration: CAMERA_ANIMATION_MS,
+        }),
+      );
+    } finally {
+      await act(async () => {
+        for (const release of releases) release({ items: itemFixtures(), legs: [] });
+      });
+    }
+    await settle();
+
+    // Applied-proof: the late itinerary rows landed as pins…
+    expect(sourceShape("map-source-itinerary").features).toHaveLength(1);
+    // …the centering stood (no second write), the sheet is still open.
+    expect(setCamera).toHaveBeenCalledTimes(1);
+    expect(slotProps().selectedPlaceId).toBe(PLACE_B);
+  });
+});
+
+describe("itinerary item context on the seam (E5 — R-map-23, R1 tests B2)", () => {
+  it("an itinerary-pin press carries THAT pin's itemId; a saved press clears it (CONTROL)", async () => {
+    // TWO visits to the SAME place on different days — the seam must carry
+    // the PRESSED pin's item, not merely some item of the place (interp 5's
+    // multi-visit disambiguation; place-keyed state alone can't tell them
+    // apart).
+    await renderMap({
+      items: [
+        ...itemFixtures(),
+        makeItineraryItem({
+          id: ITEM_DAY0_ID,
+          kind: "place_visit",
+          place_id: PLACE_A,
+          title: null,
+          day: TRIP_START,
+        }),
+      ],
+    });
+    expect(slotProps().selectedItemId).toBeNull();
+
+    // Press the day-3 pin (ITEM_ID's feature, found by its testID).
+    const dayThree = sourceShape("map-source-itinerary").features.find(
+      (feature) => feature.properties["testID"] === `map-pin-itinerary-${ITEM_ID}`,
+    );
+    expect(dayThree).toBeDefined();
+    await fireEvent(screen.getByTestId("map-source-itinerary"), "press", {
+      features: [dayThree],
+      coordinates: { latitude: 34.9671, longitude: 135.7727 },
+    });
+
+    expect(slotProps().selectedPlaceId).toBe(PLACE_A);
+    // THAT pin's item — not the day-1 visit's.
+    expect(slotProps().selectedItemId).toBe(ITEM_ID);
+
+    // CONTROL: a saved-pin press on the SAME place is item-less — the
+    // context clears (the sheet must not keep offering the stale item).
+    const savedFeature = sourceShape("map-source-saved").features[0];
+    await fireEvent(screen.getByTestId("map-source-saved"), "press", {
+      features: [savedFeature],
+      coordinates: { latitude: 34.9671, longitude: 135.7727 },
+    });
+    expect(slotProps().selectedPlaceId).toBe(PLACE_A);
+    expect(slotProps().selectedItemId).toBeNull();
   });
 });
 
