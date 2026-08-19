@@ -115,18 +115,20 @@ describe("configureMapboxAccessToken (tokenless-build seam)", () => {
 });
 
 describe("disableMapboxTelemetry (T-8.7 rider seam)", () => {
-  // The global jest mock (jest.setup.js — T-8.5-owned, mock addition
-  // ESCALATED) omits `setTelemetryEnabled`; the injected fn below is the
-  // prod-shape stand-in, contained to this file's module registry. The
+  // The global jest mock NOW PROVIDES `setTelemetryEnabled` (jest.setup.js —
+  // the T-8.5 coordination line this suite originally escalated for), so
+  // screen suites exercise the real call path. The degrade arm therefore
+  // arranges its OWN premise: each case deletes or replaces the method on
+  // this file's module registry (contained — registries are per-file). The
   // default-import access happens at CALL time (babel interop), so a
-  // pre-call assignment is what the seam reads.
+  // pre-call assignment/deletion is what the seam reads.
   afterEach(() => {
     delete mapboxMock.default.setTelemetryEnabled;
     resetMapboxTelemetryForTests();
   });
 
-  it("degrades to false — no throw — when the test mock omits the API (the guard's only real arm)", () => {
-    expect(mapboxMock.default.setTelemetryEnabled).toBeUndefined();
+  it("degrades to false — no throw — when the API is absent (deleted here; the guard's only real arm)", () => {
+    delete mapboxMock.default.setTelemetryEnabled;
     expect(disableMapboxTelemetry()).toBe(false);
   });
 
@@ -142,6 +144,7 @@ describe("disableMapboxTelemetry (T-8.7 rider seam)", () => {
   });
 
   it("recovers on a later call once the API appears (mirrors the token seam)", () => {
+    delete mapboxMock.default.setTelemetryEnabled;
     expect(disableMapboxTelemetry()).toBe(false);
     const setTelemetryEnabled = jest.fn();
     mapboxMock.default.setTelemetryEnabled = setTelemetryEnabled;

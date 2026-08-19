@@ -78,12 +78,13 @@ let telemetryDisabled = false;
  * `types` entry carries it). Called once at screen module scope beside the
  * token hand-off, idempotent-latched like it.
  *
- * The `typeof` guard: under jest the package is WHOLESALE-mocked
- * (`jest.setup.js` — a T-8.5-owned file this task must not edit; the mock
- * addition is ESCALATED in the PR) and the mock's default export omits this
- * method, so absence degrades to `false` instead of a TypeError in every
- * suite that imports the screen. In a real build the method always exists
- * (native module contract); the guard's false arm is test-env-only.
+ * The `typeof` guard: under jest the package is WHOLESALE-mocked, and the
+ * global mock (jest.setup.js — the T-8.5-delivered coordination line this
+ * rider escalated for) now PROVIDES `setTelemetryEnabled`, so screen suites
+ * exercise the real call path. Absence still degrades to `false` instead of
+ * a TypeError — map-style.test.ts arranges that arm by deleting the method
+ * on its own registry. In a real build the method always exists (native
+ * module contract); the guard's false arm is test-env-only.
  *
  * DEVICE-VERIFIABLE REMAINDER: the SDK persists the setting per device —
  * confirming the events endpoint goes quiet needs a live-token build
