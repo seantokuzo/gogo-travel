@@ -73,6 +73,57 @@ require("react-native-reanimated").setUpTests();
  * (`features/map/*`) with their own suites; the screen test proves
  * composition only.
  */
+/**
+ * expo-location (T-8.3): global stub in the auth-native class above — the
+ * map slot's locate flow imports it, so any suite rendering the map surface
+ * would fault on the native module outside a device. Defaults are the
+ * PRE-CONSENT state (undetermined, canAskAgain) so no test accidentally
+ * exercises a granted path it didn't arrange; suites steer per-test via
+ * `jest.requireMock("expo-location").__mock` (the mapbox pattern) and reset
+ * in their own beforeEach. Only FOREGROUND APIs exist here — a test
+ * reaching for a background API should fault loudly (P-8 foreground-only
+ * lock).
+ */
+jest.mock("expo-location", () => {
+  const getForegroundPermissionsAsync = jest.fn(async () => ({
+    status: "undetermined",
+    granted: false,
+    canAskAgain: true,
+    expires: "never",
+  }));
+  const requestForegroundPermissionsAsync = jest.fn(async () => ({
+    status: "granted",
+    granted: true,
+    canAskAgain: true,
+    expires: "never",
+  }));
+  const getCurrentPositionAsync = jest.fn(async () => ({
+    coords: {
+      latitude: 35.0116,
+      longitude: 135.7681,
+      altitude: null,
+      accuracy: 5,
+      altitudeAccuracy: null,
+      heading: null,
+      speed: null,
+    },
+    timestamp: 0,
+  }));
+  return {
+    __esModule: true,
+    PermissionStatus: { GRANTED: "granted", UNDETERMINED: "undetermined", DENIED: "denied" },
+    Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
+    getForegroundPermissionsAsync,
+    requestForegroundPermissionsAsync,
+    getCurrentPositionAsync,
+    __mock: {
+      getForegroundPermissionsAsync,
+      requestForegroundPermissionsAsync,
+      getCurrentPositionAsync,
+    },
+  };
+});
+
 jest.mock("@rnmapbox/maps", () => {
   const React = require("react");
   const { View } = require("react-native");
