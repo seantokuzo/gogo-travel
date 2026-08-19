@@ -56,3 +56,81 @@ jest.mock("expo-auth-session/providers/google", () => ({
 require("react-native-gesture-handler/jestSetup");
 jest.mock("react-native-worklets", () => require("react-native-worklets/lib/module/mock"));
 require("react-native-reanimated").setUpTests();
+
+/**
+ * Mapbox (T-8.2): jest mocks `@rnmapbox/maps` ENTIRELY — no native map
+ * rendering under jest (P-8 prep ruling). The package's own `setup-jest.js`
+ * only stubs the NativeModules layer and still renders the real JS
+ * components (native view manager config faults, nondeterministic); a full
+ * module mock is the same class as the auth-native stubs above. Components
+ * render as Views forwarding their props (testID falls back to the source/
+ * layer `id`, so composition tests query `map-source-*`/`map-layer-*`; the
+ * Mapbox layer `style` object is remapped to `layerStyle` so RN's style
+ * pipeline never sees paint props). Imperative handles (camera setCamera,
+ * source getClusterExpansionZoom) are shared jest.fns exposed on `__mock` —
+ * suites read them via `jest.requireMock("@rnmapbox/maps")` and clear them
+ * in their own beforeEach. All pin/camera/filter LOGIC lives in pure modules
+ * (`features/map/*`) with their own suites; the screen test proves
+ * composition only.
+ */
+jest.mock("@rnmapbox/maps", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+
+  const setAccessToken = jest.fn(async () => null);
+  const cameraHandle = {
+    setCamera: jest.fn(),
+    fitBounds: jest.fn(),
+    flyTo: jest.fn(),
+    moveTo: jest.fn(),
+    zoomTo: jest.fn(),
+  };
+  const shapeSourceHandle = {
+    getClusterExpansionZoom: jest.fn(async () => 12),
+    getClusterLeaves: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
+    getClusterChildren: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
+  };
+
+  const hostView = (displayName, handle, { remapStyle = false } = {}) => {
+    const Component = React.forwardRef((props, ref) => {
+      React.useImperativeHandle(ref, () => handle ?? {});
+      const { children, style, ...rest } = props;
+      const forwarded = remapStyle ? { ...rest, layerStyle: style } : { ...rest, style };
+      return React.createElement(
+        View,
+        { ...forwarded, testID: props.testID ?? props.id },
+        children,
+      );
+    });
+    Component.displayName = displayName;
+    return Component;
+  };
+
+  const MapView = hostView("MapView");
+  const Camera = hostView("Camera", cameraHandle);
+  const ShapeSource = hostView("ShapeSource", shapeSourceHandle);
+  const CircleLayer = hostView("CircleLayer", undefined, { remapStyle: true });
+  const SymbolLayer = hostView("SymbolLayer", undefined, { remapStyle: true });
+  const LineLayer = hostView("LineLayer", undefined, { remapStyle: true });
+  const MarkerView = hostView("MarkerView");
+  const LocationPuck = hostView("LocationPuck");
+
+  return {
+    __esModule: true,
+    default: { setAccessToken },
+    setAccessToken,
+    MapView,
+    Camera,
+    ShapeSource,
+    CircleLayer,
+    SymbolLayer,
+    LineLayer,
+    MarkerView,
+    LocationPuck,
+    StyleURL: {
+      Light: "mapbox://styles/mapbox/light-v11",
+      Dark: "mapbox://styles/mapbox/dark-v11",
+    },
+    __mock: { setAccessToken, camera: cameraHandle, shapeSource: shapeSourceHandle },
+  };
+});
