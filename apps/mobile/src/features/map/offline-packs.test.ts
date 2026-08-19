@@ -176,6 +176,14 @@ describe("size estimate (display-only — no SDK estimate API in 10.3.5)", () =>
     expect(estimatePackTileCount(bounds, 6, 6)).toBe(1);
   });
 
+  it("counts an ANTIMERIDIAN envelope as its real span, never a world wrap", () => {
+    // The 179.9°E envelope (lng 179→180.5, lat 9.5→11) is columns 63..64 at
+    // z6 — two columns, one row. A cap/unwrap regression here is user-visible
+    // as an absurd "~size" in the cellular ConfirmDialog (the copy a paid
+    // download decision reads).
+    expect(estimatePackTileCount(packBoundsFor(10.2, 179.9), 6, 6)).toBe(2);
+  });
+
   it("formats bytes for the management UI", () => {
     expect(formatPackSize(12_345_678)).toBe("12 MB");
     expect(formatPackSize(850_000)).toBe("850 KB");

@@ -163,7 +163,25 @@ describe("startPackDownload — §2.5 createPack contract", () => {
     expect(offlinePackStateFor(TEST_TRIP_ID).phase).toBe("ready");
   });
 
-  it("failure marks failed(message) and releases the latch — retry starts a fresh download (R-map-21)", async () => {
+  /**
+   * Both failure arms seed a PRIOR completed download (the REFRESH scenario)
+   * and pin the annotation lifecycle (round 1): the replace-time delete drops
+   * the old annotation, and a failure must leave NO record — a surviving
+   * "ready" annotation would seed a lying row for a pack the SDK no longer
+   * holds on next launch AND suppress the R-map-18 re-attempt. Also kills the
+   * eager-annotation mutant (annotation written at start survived all pins).
+   */
+  const seedPriorDownload = () =>
+    writePackAnnotation({
+      tripId: TEST_TRIP_ID,
+      styleUrl: LIGHT_STYLE,
+      regionKey: packRegionKeyFor(KYOTO.lat, KYOTO.lng),
+      completedAt: "2026-08-01T00:00:00.000Z",
+      sizeBytes: 5_000_000,
+    });
+
+  it("failure marks failed(message), leaves NO annotation, and releases the latch — retry starts a fresh download (R-map-21)", async () => {
+    seedPriorDownload();
     startPackDownload(target());
     await flush();
     capturedErrorListener()(null, { name: "err", message: "tile fetch failed" });
@@ -171,13 +189,15 @@ describe("startPackDownload — §2.5 createPack contract", () => {
       phase: "failed",
       message: "tile fetch failed",
     });
+    expect(readPackAnnotation(TEST_TRIP_ID)).toBeUndefined();
 
     expect(startPackDownload(target())).toBe(true);
     await flush();
     expect(om.createPack).toHaveBeenCalledTimes(2);
   });
 
-  it("a createPack rejection (tokenless device today) lands in failed, never a hang", async () => {
+  it("a createPack rejection (tokenless device today) lands in failed with NO stale annotation, never a hang", async () => {
+    seedPriorDownload();
     om.createPack.mockImplementation(async () => {
       throw new Error("no access token");
     });
@@ -187,6 +207,7 @@ describe("startPackDownload — §2.5 createPack contract", () => {
       phase: "failed",
       message: "no access token",
     });
+    expect(readPackAnnotation(TEST_TRIP_ID)).toBeUndefined();
   });
 });
 
@@ -226,6 +247,38 @@ describe("ceiling purge — R-map-20", () => {
     expect(deleted.filter((name) => name.startsWith("trip-f"))).toHaveLength(0);
     expect(readPackAnnotation("old")).toBeUndefined();
     expect(readPackAnnotation("new")).toBeUndefined();
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+  });
+
+  it("a REFRESH at exactly the threshold purges NOTHING — the trip's own pack never double-counts (replace nets zero)", async () => {
+    // 700 packs on device INCLUDING this trip's own — the refresh replaces
+    // it, so the count stays at the threshold and no past trip loses its
+    // saved map (round 1: counting the own pack purged one download early).
+    const filler = Array.from({ length: 698 }, (_, i) => ({ name: `trip-f${i}` }));
+    om.getPacks.mockImplementation(async () => [
+      ...filler,
+      { name: "trip-past" },
+      { name: packNameFor(TEST_TRIP_ID) },
+    ]);
+    writePackAnnotation({
+      tripId: "past",
+      styleUrl: LIGHT_STYLE,
+      regionKey: "r:70:271",
+      completedAt: "2026-01-01T00:00:00.000Z",
+      sizeBytes: 1,
+    });
+
+    startPackDownload(target(), {
+      tripStatusFor: (id) => (id === "past" ? "past" : undefined),
+    });
+    await flush();
+
+    // Only the replace-time delete of OUR OWN pack — the eligible past pack
+    // and its annotation survive.
+    expect(om.deletePack.mock.calls.map(([name]) => name as string)).toEqual([
+      packNameFor(TEST_TRIP_ID),
+    ]);
+    expect(readPackAnnotation("past")).toBeDefined();
     expect(om.createPack).toHaveBeenCalledTimes(1);
   });
 });
@@ -364,6 +417,30 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
       sizeBytes: 7_000_000,
       completedAt: "2026-08-18T00:00:00.000Z",
     });
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
+    await unmount();
+  });
+
+  it("a STALE pack never auto-refreshes at the HOOK grain — §2.5 trigger 3, even on wifi", async () => {
+    // Machine-grain shouldAutoDownloadPack already pins stale-never-auto; this
+    // pin holds it where the effect actually decides — an inlined phase check
+    // in the hook that also arms on "stale" must fail HERE (round 1: the
+    // machine pin alone let that hook edit silently re-download every mount).
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    om.getPack.mockImplementation(async () => ({ name: packNameFor(TEST_TRIP_ID) }));
+    writePackAnnotation({
+      tripId: TEST_TRIP_ID,
+      styleUrl: "mapbox://styles/mapbox/dark-v11", // style drift ⇒ stale
+      regionKey: packRegionKeyFor(KYOTO.lat, KYOTO.lng),
+      completedAt: "2026-08-01T00:00:00.000Z",
+      sizeBytes: 7_000_000,
+    });
+    const { result, unmount } = await renderHook(
+      () => useOfflinePackController(activeTrip()),
+      { wrapper },
+    );
+    expect(result.current.phase).toBe("stale");
     await act(flush);
     expect(om.createPack).not.toHaveBeenCalled();
     await unmount();

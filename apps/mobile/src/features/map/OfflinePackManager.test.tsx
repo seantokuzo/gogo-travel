@@ -104,6 +104,22 @@ it("stale (style drift): 'Update available' + explainer, refresh/delete present,
   expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
 });
 
+it("UNUSABLE destination coords (the world degrade arm): renders degraded — no crash, no download affordance", async () => {
+  // The R-map-1 fallback renders with NaN coords; the region grid throws on
+  // them. Round 1 (N7): the unguarded estimate memo CRASHED this surface
+  // where the pill's guard survived — the render itself is the pin.
+  const degraded = {
+    ...makeActiveTrip(TEST_TRIP_ID),
+    destination_lat: Number.NaN,
+    destination_lng: Number.NaN,
+  };
+  await renderManager(degraded);
+  await settle();
+
+  expect(screen.getByTestId("offline-pack-status")).toHaveTextContent("Not downloaded");
+  expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
+});
+
 it("R-map-22 proactive degrade: the derived offline signal renders the notice with no press", async () => {
   // Seeded via cache.build + setState with gcTime: Infinity — under the
   // test client's default gcTime: 0 an unobserved query is GC'd one
