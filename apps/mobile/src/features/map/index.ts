@@ -5,11 +5,13 @@
  * Pure logic modules (jest never renders the native MapView — P-8 prep
  * ruling): day-colors, pin-features, camera, day-filter, cluster-config,
  * map-style, search-geo, search-pins, nav-handoff, distance, location,
- * camera-intent, photo-visibility, place-lookup. UI: the day-filter strip,
- * attribution sheet, place sheet, search overlay, locate button. Seams:
- * MapPlaceSheetSlot (FILLED, T-8.3), MapOfflinePillSlot (T-8.5),
- * pending-focus (T-8.4 senders), camera-intent + search-pins
- * (dormant emitters — integration rider drains/wires them).
+ * camera-intent, photo-visibility, place-lookup, offline-packs (+ the
+ * annotation/controller pair behind the offlineManager seam, T-8.5). UI:
+ * the day-filter strip, attribution sheet, place sheet, search overlay,
+ * locate button, offline-pack manager. Seams: MapPlaceSheetSlot (FILLED,
+ * T-8.3), MapOfflinePillSlot (FILLED, T-8.5), pending-focus (T-8.4
+ * senders), camera-intent + search-pins (dormant emitters — integration
+ * rider drains/wires them).
  */
 export {
   DAY_COLOR_COUNT,
@@ -127,6 +129,59 @@ export { MapPlaceSheetSlot } from "./MapPlaceSheetSlot";
 export type { MapPlaceSheetSlotProps } from "./MapPlaceSheetSlot";
 export { MapOfflinePillSlot } from "./MapOfflinePillSlot";
 export type { MapOfflinePillSlotProps } from "./MapOfflinePillSlot";
+export {
+  annotatedPackState,
+  downloadProgressPercent,
+  ESTIMATED_TILE_BYTES,
+  estimatePackSizeBytes,
+  estimatePackTileCount,
+  formatPackSize,
+  isDownloadComplete,
+  isUsableDestination,
+  isWifiState,
+  OFFLINE_PACK_MAX_ZOOM,
+  OFFLINE_PACK_MIN_ZOOM,
+  offlinePillModel,
+  packBoundsFor,
+  packNameFor,
+  packRegionKeyFor,
+  planCeilingPurge,
+  shouldAutoDownloadPack,
+  TILE_REGION_CEILING,
+  TILE_REGION_PURGE_THRESHOLD,
+  tripIdFromPackName,
+} from "./offline-packs";
+export type {
+  CeilingPurgeCandidate,
+  OfflinePackAnnotation,
+  OfflinePackPhase,
+  OfflinePackState,
+  OfflinePillModel,
+  PackBoundsPosition,
+} from "./offline-packs";
+export {
+  clearPackAnnotationsForTests,
+  readPackAnnotation,
+  removePackAnnotation,
+  writePackAnnotation,
+} from "./offline-pack-annotation";
+export {
+  deleteTripPack,
+  offlinePackStateFor,
+  reconcilePackState,
+  resetOfflinePacksForTests,
+  runOrphanPackSweep,
+  startPackDownload,
+  syncPackStateFromAnnotation,
+  useOfflinePackController,
+  useOfflinePackStore,
+} from "./offline-pack-controller";
+export type {
+  OfflinePackTrip,
+  PackDownloadTarget,
+  PackFingerprint,
+} from "./offline-pack-controller";
+export { OfflinePackManager, offlinePackSummary } from "./OfflinePackManager";
 export { MapDayFilterStrip } from "./MapDayFilter";
 export type { MapDayFilterStripProps } from "./MapDayFilter";
 export { MapAttributionSheet } from "./MapAttributionSheet";
