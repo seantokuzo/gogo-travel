@@ -23,24 +23,9 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 `CLAUDE.md § Autonomy Contract`. Reviews are **local in-session**
 ([ADR-003](decisions/ADR-003-local-in-session-reviews.md)) — no GitHub Claude app.
 
-## ▶ NEXT SESSION — START HERE (written 2026-08-19, session-limit interrupt; delete when stale)
-
-**Session limit hit mid-P-8-W4 (resets 4:10am PT).** Read
-`.tmp/review-26/round-1/RESUME.md` — the full resume manifest. Short form:
-PR #26 (T-8.7 rider, head `22e6c21`) round-1 review was 2/5 lanes done
-(security ship 0/0, performance ship 0/1 — sentinels saved) when the limit
-KILLED correctness/tests/conventions mid-run (no sentinels — re-run all
-three fresh; the tests lane's worktree `agent-aae14caef27c49dff` may hold a
-LIVE MUTATION — remove it unexamined). T-8.5 (offline packs builder,
-worktree `agent-a0fc6e4783ceabb0e`) had no completion notification —
-check for a pushed branch/PR, resume or re-dispatch. Then: aggregate #26 →
-triage → fix → verify → judge → merge; T-8.5 same pipeline; then P-8 is
-CODE-COMPLETE → phase-close doc pass + Sean report (spec-pass ~65 interps,
-pin-coverage ruling P1, QA parked on auth-unblock + pk token).
-
 ## Active phase context
 
-### P-8 — Maps, saved places & offline tile packs (ACTIVE since 2026-08-15)
+### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — PHASE QA + F-055..F-062 FLIPS PENDING pk token + QA unpark)
 
 - **Scope** (PLANNING § P-8): @rnmapbox/maps themed map, 3 pin families +
   clustering + day filter, place sheet/detail w/ spine data + dormant fresh
@@ -84,14 +69,21 @@ pin-coverage ruling P1, QA parked on auth-unblock + pk token).
     reported-not-taken escalations accumulate into **T-8.7 (integration
     rider — QUEUE Active row); R-map-17's ledger row must NOT flip until
     it lands (judge-recorded)**.
-  - **W4 DISPATCHED 2026-08-19: T-8.5 [MAP-5] offline packs ∥ T-8.7
-    integration rider** (scope: QUEUE row) — parallel isolated worktrees
-    off 510d06b; file-ownership: T-8.7 owns `app/[tripId]/map/index.tsx`
-    (the frozen screen unfreezes for its sole owner) + screen-wiring in
-    features/map ∥ T-8.5 owns pack state machine + MMKV annotation +
-    `MapOfflinePillSlot` fill + trip-settings row + jest.setup
-    offlineManager mock; jest.setup is T-8.5's — T-8.7 escalates if
-    needed.
+  - **W4 ✅ DONE 2026-08-23 — T-8.7 MERGED 149b014 (PR #26) 2026-08-19 ∥
+    T-8.5 MERGED 2c43848 (PR #27) 2026-08-23.** T-8.7: the W3 escalation
+    accumulator delivered 9/9 (E1–E5 wiring, R-map-24 centering, telemetry
+    OFF prod-real, distance-on-detail, both copy fixes); the round survived
+    the session-limit interrupt (2 sentinels preserved, 3 lanes re-run
+    fresh); 135 suites / 1289. T-8.5: §2.5 pack machine (pure module) + the
+    ONE offlineManager/expo-network controller seam + MMKV annotation
+    hygiene + pill/settings surfaces; **142 suites / 1348 tests on the
+    fully-integrated tree**. Both 1-round + fix leg + VERIFIED-CLEAN +
+    judge merge/high. **The merged-tree gate caught a REAL #26/#27 test
+    contradiction** (#26's telemetry pins asserted the global mock omits
+    the method; #27 delivered exactly that mock line — green on both
+    branches, contradictory merged; the coordination tripwire fired exactly
+    as designed; repaired equivalent-or-stronger w/ per-file registries,
+    judge-affirmed). Full narratives: QUEUE rows.
   - **PHASE-QA ATTEMPT 2026-08-15** (the rebuild leg of W2's plan): the ONE
     dev-client rebuild ✅ **PASSED on main@293d0ef** — prebuild + CocoaPods
     clean (the feared Mapbox-SDK pod failure did NOT occur); bake verified
@@ -112,6 +104,19 @@ pin-coverage ruling P1, QA parked on auth-unblock + pk token).
     row) for whenever QA resumes. Evidence:
     `.tmp/qa-2026-08-15/MANIFEST.md`. Metro left running; rebuilt app
     installed on sim A6D3CE7C.
+- **P-8 CLOSE SUMMARY (2026-08-23):** 7 build tasks + the Hermes chore, 8
+  PRs (#20–#27), every review round-1-only (sole addendum: T-8.2's targeted
+  conventions r2). Mobile 1011→**1348 tests** / 107→**142 suites** across
+  the phase. **102 interpretations** recorded to the spec-pass batch (QUEUE
+  Blocked row, now W1–W4 / PHASE COMPLETE). Committed follow-up rows filed
+  (QUEUE Active): R-map-18 activation-mount ruling (P1, Sean) ·
+  deliberate-camera-writer fit-sweep · keystroke pin-strobe + typeahead
+  debounce · post-merge comment hygiene · remote-pack-deletion gap. Phase
+  QA = the pk-token-gated checklist row (QUEUE Active, blocked) —
+  F-055..F-062 flips pending; ledger verified byte-untouched through all 8
+  PRs. **NEXT: P-9 (money) per the frozen roadmap — roadmap-prep pending
+  Sean's go (P-9 is a SENSITIVE path: payments/splitting, auto-escalated
+  reviews, Law #2).**
 - **Key rulings** (six — PLANNING § P-8 Prep bullet; brief:
   `.tmp/p8-readiness-brief.md`): focusPlaceId = pending-focus store;
   warm-session offline bar — NO TQ persister; photo pins fixture-tested,
