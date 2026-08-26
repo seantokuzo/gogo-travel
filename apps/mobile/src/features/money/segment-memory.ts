@@ -15,6 +15,15 @@
 export const MONEY_SEGMENTS = ["budget", "expenses", "balances"] as const;
 export type MoneySegment = (typeof MONEY_SEGMENTS)[number];
 
+/**
+ * Narrow the DS SegmentedControl's string key back to the union — the
+ * drift-proof alternative to an `as MoneySegment` cast (T-9.5 R1): a key
+ * the tuple doesn't contain is dropped, not smuggled into state.
+ */
+export function isMoneySegment(key: string): key is MoneySegment {
+  return (MONEY_SEGMENTS as readonly string[]).includes(key);
+}
+
 const memory = new Map<string, MoneySegment>();
 
 /** Record a manual segment selection for the rest of the session. */

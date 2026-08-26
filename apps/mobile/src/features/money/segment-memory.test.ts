@@ -4,6 +4,8 @@
  * stand-in, mirroring tab-memory.test.ts).
  */
 import {
+  isMoneySegment,
+  MONEY_SEGMENTS,
   recallMoneySegment,
   rememberMoneySegment,
   resetMoneySegmentMemory,
@@ -28,6 +30,14 @@ it("remembers a manual choice per trip; other trips unaffected", () => {
 
   rememberMoneySegment(TRIP_A, "expenses");
   expect(recallMoneySegment(TRIP_A)).toBe("expenses");
+});
+
+it("isMoneySegment narrows every tuple member and rejects strangers (R1 no-cast guard)", () => {
+  for (const segment of MONEY_SEGMENTS) {
+    expect(isMoneySegment(segment)).toBe(true);
+  }
+  expect(isMoneySegment("settle")).toBe(false);
+  expect(isMoneySegment("")).toBe(false);
 });
 
 it("reset (cold-launch stand-in) clears every trip's choice — re-defaults follow", () => {

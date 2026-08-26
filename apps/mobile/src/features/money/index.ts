@@ -13,6 +13,7 @@ export { ExpensesSegment } from "./ExpensesSegment";
 export type { ExpensesSegmentProps } from "./ExpensesSegment";
 export { moneyLabel, signedMoneyLabel } from "./money-format";
 export {
+  isMoneySegment,
   MONEY_SEGMENTS,
   recallMoneySegment,
   rememberMoneySegment,

@@ -22,11 +22,20 @@ import {
   BalancesSegment,
   BudgetSegment,
   ExpensesSegment,
+  isMoneySegment,
+  MONEY_SEGMENTS,
   recallMoneySegment,
   rememberMoneySegment,
   type MoneySegment,
 } from "@/features/money";
 import { useTripContext } from "@/navigation/trip-context";
+
+/** Labels keyed off the canonical tuple — a new segment is a compile error here. */
+const SEGMENT_LABELS: Readonly<Record<MoneySegment, string>> = {
+  budget: "Budget",
+  expenses: "Expenses",
+  balances: "Balances",
+};
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -53,15 +62,13 @@ export default function MoneyScreen() {
       <PageHeader title="Money" subtitle={trip.name} large testID="money-header" />
       <View style={s.segments}>
         <SegmentedControl
-          segments={[
-            { key: "budget", label: "Budget" },
-            { key: "expenses", label: "Expenses" },
-            { key: "balances", label: "Balances" },
-          ]}
+          // Derived from the canonical tuple (R1: no cast, no parallel list) —
+          // the DS control's string key narrows back through the type guard.
+          segments={MONEY_SEGMENTS.map((key) => ({ key, label: SEGMENT_LABELS[key] }))}
           selectedKey={segment}
-          // The keys above are exactly MONEY_SEGMENTS — the assertion narrows
-          // the DS control's string back to the union.
-          onChange={(key) => selectSegment(key as MoneySegment)}
+          onChange={(key) => {
+            if (isMoneySegment(key)) selectSegment(key);
+          }}
           testID="money-segment"
         />
       </View>
