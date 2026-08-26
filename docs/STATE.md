@@ -447,6 +447,29 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
 
 ## In-flight decisions
 
+- **P-9 ROADMAP-PREP COMPLETE 2026-08-24** (wave plan + headlines: PLANNING
+  § P-9 Prep bullet; full readiness brief: `.tmp/p9-readiness-brief.md`).
+  No migration owed; MON-1 math pre-built in shared; owed = 4 server
+  routers + descriptors + minor-unit helpers + 3 client tasks + T-6.1
+  TOCTOU rider. **ALL 3 RULINGS LANDED 2026-08-25 (Sean decision pack,
+  recs accepted):** ① all money forms default `trip.base_currency`;
+  ② shared ISO-4217 minor-unit helpers in T-9.1 (hand-rolled list) +
+  call-site swap rider, dev booking data uncorrected; ③ FX = keyless
+  Frankfurter v2 behind a thin Hono `GET /fx/rate` per-day-cache proxy
+  (escalation #3 satisfied — no account, no key, $0; client fetches OUR
+  endpoint). Send-the-bill links ship `gogo://` primary + placeholder
+  https until the P-14 domain purchase. **W1 (T-9.1) DISPATCHED
+  2026-08-25 (Sean buy-in), parallel with Sean's device QA.**
+- **DEVICE-QA RIG LIVE 2026-08-24 (Sean unparked QA — backlogged P-5..P-8
+  device pass):** dev client compiled for Sean's iPhone 15 Pro
+  (`DerivedData-device`, arm64, RNMBX baked ×967, signed 4B8499Z59P, main @
+  54f1c0e); Metro running LAN (192.168.1.23:8081; API URL auto-derives via
+  hostUri → :3000/api). **Install blocked on Sean enabling Developer Mode**
+  (first xcodebuild attempt errored exactly there); server on :3000 still
+  HEALTH-ONLY (probed — auth env not loaded), so all signed-in legs remain
+  BLOCKED(creds) until Sean drops server auth env + mobile Google client id
+  (exact vars in the QA artifact). QA checklist artifact published
+  (P-5→P-8 run sheet, ledger-tagged, expected-states documented).
 - **P-8 ROADMAP-PREP COMPLETE 2026-08-15** (rulings + wave plan: PLANNING
   § P-8 Prep bullet; full readiness brief: `.tmp/p8-readiness-brief.md`).
   Sean rulings: ONE dev-client rebuild (T-8.6 absorbs the datetimepicker

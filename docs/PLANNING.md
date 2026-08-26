@@ -512,6 +512,27 @@ pnpm test && pnpm build`
   design — the ledger gates store submission on them, not this phase.
 - **Linked specs:** `api/money`, `client/money`
 - **Ledger:** F-063..F-074
+- **Prep (2026-08-24 — readiness brief `.tmp/p9-readiness-brief.md`):**
+  **NO migration owed** (all 5 money tables + enums in the 0000 baseline,
+  zero column deltas vs schema spec; MON-5's "+migration" task text is
+  stale). **MON-1 math already built** in `@gogo/shared/domains/money.ts`
+  (BigInt largest-remainder `computeShares`/`computeBalances`/`simplifyDebts`
+  plus wire schemas, 802-line tests) — T-9.1 = descriptors + property tests +
+  the missing ISO-4217 minor-unit helpers, not a rewrite. Payment handles +
+  cashtag HEAD validation shipped P-5; money route stubs + SegmentedControl
+  live; booking detail already links `jumpToTripTab(…, "money")`.
+  **Wave plan:** W1 T-9.1 shared → W2 ∥ worktrees T-9.2 expenses+FX+
+  (T-6.1 TOCTOU rider) ∥ T-9.3 balances+settlements → W3 ∥ T-9.4
+  settle-requests+budgets ∥ T-9.5 tab shell → W4 T-9.6 expense screens ∥
+  T-9.7 settle+send-the-bill (seam-freeze or serial). **Rulings RESOLVED 2026-08-25
+  (Sean decision pack, recs accepted):** ① all money forms default
+  `trip.base_currency` (R-tripui-6 surface aligns at next touch); ② shared
+  ISO-4217 minor-unit helpers in T-9.1 (hand-rolled zero-decimal list) +
+  call-site swap rider, dev booking data uncorrected; ③ FX = keyless
+  Frankfurter v2 behind a thin Hono `GET /fx/rate` day-cache proxy
+  (escalation #3 satisfied: $0, no account, no key). R-cmoney-28 Venmo
+  `txn=charge` ships GATED OFF (D1 device test, P-14). **W1 DISPATCHED
+  2026-08-25 (Sean buy-in).**
 
 ### P-10 — AI layer: platform, recommendations, estimates, tour guide, packing, recap
 
