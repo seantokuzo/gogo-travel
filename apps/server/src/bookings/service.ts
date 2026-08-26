@@ -32,10 +32,18 @@
  * is the Neon WebSocket `Pool`, never Neon-HTTP (landmine #1: its
  * `.transaction()` throws; postgres-js tests can't catch it).
  *
- * LOCK ORDER (global, EXTENDED here — never reorder): users → trip_members
- * → invites → **bookings → itinerary_items**. Every service transaction
- * takes the booking row `FOR UPDATE` FIRST; item rows are only ever locked/
- * written while holding their parent booking's lock. IB-2's item mutations
+ * LOCK ORDER (this module's segment of the global chain — canonical full
+ * chain: expenses/service.ts module doc, synced T-9.4; the chain now leads
+ * with **trips** and tails through expenses/settlements/budgets): … →
+ * **bookings → itinerary_items** → …. ⚠️ A no-cycle claim must audit
+ * IMPLICIT locks too (PR #30 R1 landmine): row inserts take RI `FOR KEY
+ * SHARE` on referenced parents — a booking insert key-shares `users`
+ * (created_by) and `trips`, so the created_by-vs-account-deletion AB-BA
+ * class documented at the canonical home applies to this module's inserts
+ * as well (repo-wide class, QUEUE-tracked at PR #30 R1).
+ * Every service transaction takes the booking row `FOR UPDATE` FIRST; item
+ * rows are only ever locked/written while holding their parent booking's
+ * lock. IB-2's item mutations
  * on `booking`-kind items MUST take the parent booking `FOR UPDATE` before
  * touching the item (R-ib-9 writes the booking row too); `place_visit`/
  * `custom` items have no parent and are disjoint. The booking DELETE fences

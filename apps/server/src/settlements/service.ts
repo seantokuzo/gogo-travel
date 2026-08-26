@@ -15,13 +15,21 @@
  * prod client is the Neon WebSocket `Pool`, never Neon-HTTP (landmine #1:
  * its `.transaction()` throws; postgres-js tests can't catch it).
  *
- * LOCK ORDER (global, EXTENDED here — never reorder): users → trip_members →
- * invites → bookings → itinerary_items → **settlements →
- * settlement_requests**. `deleteSettlement` takes the settlement row
- * FOR UPDATE first, then its linked request rows; `createSettlement` locks
- * only the linked request row (its settlement row is a fresh insert). No
- * transaction ever acquires a settlement lock while holding a request lock —
- * no cycle.
+ * LOCK ORDER (this module's segment of the global chain — canonical full
+ * chain: expenses/service.ts module doc, synced T-9.4; the chain leads with
+ * **trips** and tails … → **settlements → settlement_requests** → budgets).
+ * `deleteSettlement` takes the settlement row FOR UPDATE first, then its
+ * linked request rows; `createSettlement` locks only the linked request row
+ * (its settlement row is a fresh insert). No transaction ever acquires a
+ * settlement lock while holding a request lock — no EXPLICIT cycle. ⚠️ A
+ * no-cycle claim must audit IMPLICIT locks too (PR #30 R1 landmine): the
+ * settlement insert takes RI `FOR KEY SHARE` on `users` (from/to/created_by)
+ * and `trips`, so the insert-vs-account-deletion AB-BA class documented at
+ * the canonical home exists on S1 as well (repo-wide class, QUEUE-tracked
+ * at PR #30 R1; Postgres breaks the cycle — the narrow same-user window
+ * surfaces as a rare 40P01). Settle-request creation (T-9.4,
+ * requests-service.ts) takes the trips lock first and absorbs its instance
+ * of the class with a bounded retry.
  *
  * INTERPRETATIONS (Law #4 — numbered; mirrored in the PR body):
  *  [I-1] B1 `members[]` membership: current trip members ALWAYS appear (net 0
