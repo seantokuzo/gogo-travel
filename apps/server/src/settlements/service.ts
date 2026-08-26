@@ -221,9 +221,31 @@ export async function loadBalancesDoc(db: Reader, args: { tripId: string }): Pro
       fromUserId: schema.settlements.fromUserId,
       toUserId: schema.settlements.toUserId,
       amountCents: schema.settlements.amountCents,
+      currency: schema.settlements.currency,
     })
     .from(schema.settlements)
     .where(eq(schema.settlements.tripId, tripId));
+
+  // R1 blocking (PR #29 review): the R-trips-22 base-currency lock probed
+  // only `expenses`, so a settlements-only trip could re-denominate its base
+  // and silently corrupt member nets (USD→JPY is a ≈150× mis-statement while
+  // the doc claims the new base). The ROOT CAUSE is the trips lock probe —
+  // fixed on PR #30's fix leg (outside this module's W2 ownership); THIS is
+  // the in-module belt-and-suspenders half: a settlement row whose currency
+  // differs from the trip base is a ledger-integrity violation, and the read
+  // fails LOUDLY (500 INTERNAL) instead of feeding mis-denominated cents
+  // into the math. S1 makes the state unreachable through the API
+  // (R-money-13); only direct-DB corruption or the pre-#30 lock gap can
+  // produce it — silent mis-denomination is the failure mode this kills.
+  for (const row of settlementRows) {
+    if (row.currency !== baseCurrency) {
+      throw new HttpError(
+        "INTERNAL",
+        "settlement ledger integrity violation: settlement currency differs from trip base currency",
+        { settlements: "currency mismatch" },
+      );
+    }
+  }
 
   const sharesByExpense = new Map<string, { user_id: string; share_cents: number }[]>();
   for (const share of shareRows) {

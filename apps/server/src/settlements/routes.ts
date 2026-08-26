@@ -104,7 +104,8 @@ export function createSettlementsRouter(deps: SettlementsRouterDeps): Hono<Reque
 
   // -------------------------------------------------------------------------
   // GET /trips/:tripId/settlements — the ledger list (S2), `settled_at DESC,
-  // id DESC` (id is the deterministic tiebreaker) on the module's signed
+  // id DESC` (id is the [I-7] deterministic tiebreaker — the spec pins only
+  // `settled_at DESC`; house convention appends id) on the module's signed
   // keyset cursor (settled_at is client-suppliable — see cursor.ts);
   // malformed cursors fall back to page 1 (opaque server-minted token).
   // -------------------------------------------------------------------------
