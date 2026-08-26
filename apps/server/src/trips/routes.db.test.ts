@@ -660,6 +660,53 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     );
   });
 
+  it("PATCH: base_currency racing a first-expense insert → 409, never a stale-snapshot write (T-6.1 TOCTOU closed — T-9.2 rider)", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // Second connection holds the trip row FOR UPDATE — exactly the lock the
+    // expense-create service takes before validating against base_currency
+    // (expenses/service.ts). The PATCH must PARK on it instead of running
+    // its R-trips-22 has-expenses check against the pre-insert snapshot.
+    // Holder object: TS control-flow can't track a `let` assigned inside the
+    // begin-callback closure — a property read re-widens correctly.
+    const holder: { pending?: Promise<Response> } = {};
+    let settled = false;
+    await client.begin(async (tx) => {
+      await tx`SELECT id FROM trips WHERE id = ${trip.id} FOR UPDATE`;
+      const pending = Promise.resolve(
+        patchTrip(trip.id, owner.accessToken, { base_currency: "EUR" }),
+      );
+      holder.pending = pending;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await sleep(200);
+      expect(settled).toBe(false); // parked on the trip-row lock
+      // The racing FIRST expense commits while the lock is held.
+      await tx`
+        INSERT INTO expenses (trip_id, description, category, paid_by, amount_cents, currency, created_by)
+        VALUES (${trip.id}, 'racing first expense', 'food', ${owner.userId}, 1000, 'USD', ${owner.userId})
+      `;
+    });
+
+    if (!holder.pending) throw new Error("pending PATCH never fired");
+    const res = await holder.pending;
+    // Unblocked AFTER the expense committed: the check now sees it → 409.
+    // Before the T-9.2 rider this PATCH read the empty pre-insert snapshot
+    // and changed the base out from under the expense.
+    expect(res.status).toBe(409);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("CONFLICT");
+    expect(envelope.error.details).toEqual({ reason: "base_currency_locked" });
+    expect((await dbTrip(trip.id))?.baseCurrency).toBe("USD"); // nothing written
+  });
+
   it("PATCH: stale expect_updated_at → 409 with the stale reason, row unchanged (R-trips-6)", async () => {
     const { editor, trip } = await seedCollabTrip();
     // Someone else wins the race first.

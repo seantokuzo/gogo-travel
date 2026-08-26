@@ -18,7 +18,11 @@
  * precondition rides inside the guarded UPDATE (http/expect-updated-at.ts,
  * R-trips-6). Multi-row writes (trip + owner member on create, trip +
  * budgets on base-currency change) are REAL transactions — the prod driver
- * is the Neon WebSocket Pool, never Neon-HTTP (landmine #1).
+ * is the Neon WebSocket Pool, never Neon-HTTP (landmine #1). A PATCH
+ * touching `base_currency` takes the trip row FOR UPDATE (T-9.2 rider —
+ * closes the T-6.1 base-currency TOCTOU against racing first-expense
+ * inserts, which take the same lock; expenses/service.ts module doc owns
+ * the lock-order story).
  *
  * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): every committed
  * mutation emits its §3.5 event post-commit via the `tripEvents` seam
@@ -323,18 +327,33 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       let storedStatusChanged = false;
 
       const updated = await deps.db.transaction(async (tx) => {
-        const [current] = await tx
-          .select()
-          .from(schema.trips)
-          .where(eq(schema.trips.id, tripId));
+        // Key-presence touches are known from the body alone — computed
+        // before the load so the base-currency arm can lock it.
+        const touchesBaseCurrency = body.base_currency !== undefined;
+        const touchesStatus = body.status !== undefined;
+
+        // T-6.1 TOCTOU fix (T-9.2 rider — the deferred QUEUE row): a body
+        // touching base_currency takes the trip row FOR UPDATE, so the
+        // R-trips-22 has-expenses check and the budgets-currency sync below
+        // can never act on a pre-race snapshot. Expense create
+        // (expenses/service.ts) takes the SAME lock before validating
+        // against base_currency — the two serialize: a racing first expense
+        // either commits before this check (→ 409 below) or waits and then
+        // validates against the NEW base. Same-value resubmits also lock
+        // (key presence, value-blind): the lock must be held BEFORE the
+        // change/no-change decision reads the row, or the decision itself
+        // races. Lock order: trips leads the global chain (expenses/
+        // service.ts module doc).
+        const currentQuery = tx.select().from(schema.trips).where(eq(schema.trips.id, tripId));
+        const [current] = touchesBaseCurrency
+          ? await currentQuery.for("update")
+          : await currentQuery;
         if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
         // Owner-only FIELDS (R-trips-20): touching base_currency or the
         // manual status override requires role owner — presence of the key
         // is the "touch", regardless of value (403 is safe here: membership
         // already proved the trip exists).
-        const touchesBaseCurrency = body.base_currency !== undefined;
-        const touchesStatus = body.status !== undefined;
         if ((touchesBaseCurrency || touchesStatus) && role !== "owner") {
           throw new HttpError("FORBIDDEN", "insufficient role");
         }
