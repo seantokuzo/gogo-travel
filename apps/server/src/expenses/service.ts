@@ -41,13 +41,29 @@
  * LOCK ORDER (global chain extended per the server rule — never reorder):
  * **trips** → users → trip_members → invites → bookings → itinerary_items
  * → **expenses → expense_shares**. The trip row slots at the FRONT: no
- * existing transaction locks a trips row before its other acquisitions
- * (trip create locks users only; trip PATCH now locks trips first; the trip
- * DELETE member-fence's trip_members → trips-cascade order predates this
- * and stays safe — expense transactions acquire the trips lock FIRST and
- * take no trip_members locks at all, so no cycle exists). Expense UPDATE/
- * DELETE lock only the expenses row; shares rows are only ever written
- * while holding their parent expense's lock.
+ * existing transaction takes an EXPLICIT trips-row lock before its other
+ * acquisitions (trip create locks users only; trip PATCH now locks trips
+ * first; the trip DELETE member-fence's trip_members → trips-cascade order
+ * predates this and stays safe against expense transactions, which take no
+ * trip_members locks at all). Expense UPDATE/DELETE lock only the expenses
+ * row; shares rows are only ever written while holding their parent
+ * expense's lock.
+ *
+ * ⚠️ HONEST RESIDUAL (round-1 security finding — an earlier draft of this
+ * doc claimed "no cycle exists", which audited only EXPLICIT locks and was
+ * FALSE): row inserts take implicit RI `FOR KEY SHARE` locks on every
+ * referenced parent — an expense insert key-shares its `users` rows
+ * (paid_by / created_by / share holders) AFTER this transaction already
+ * holds the trips lock, i.e. trips → users. Account deletion runs the
+ * OPPOSITE chain (its step-0 users-row FOR UPDATE first, trip-scoped locks
+ * later), so a user creating an expense while their own account deletion is
+ * in flight can AB-BA into Postgres 40P01. The window is narrow (same-user
+ * self-race) and Postgres always breaks it; each write path below absorbs
+ * the breakage with ONE bounded retry (`withDeadlockRetry`) instead of
+ * surfacing a 500. Do NOT "fix" this by reordering acquisitions here — the
+ * repo-wide class (created_by-style FK key-shares vs the deletion chain
+ * also exists on bookings/itinerary inserts) is tracked as its own QUEUE
+ * row filed at PR #30 round 1; sibling modules sync their docs there.
  *
  * DRIVER: every multi-row write runs in `db.transaction` — the prod client
  * is the Neon WebSocket `Pool`, never Neon-HTTP (landmine #1: its
@@ -127,6 +143,37 @@ export function isExpenseBookingFkViolation(error: unknown): boolean {
     current = current.cause;
   }
   return false;
+}
+
+/**
+ * Postgres 40P01 (`deadlock_detected`), walked through `cause` like the FK
+ * helper — both driver shapes expose `code` at the same spot.
+ */
+export function isDeadlockError(error: unknown): boolean {
+  let current: unknown = error;
+  while (current instanceof Error) {
+    if ((current as { code?: unknown }).code === "40P01") return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+/**
+ * ONE bounded retry for the module-doc residual (trips-lock → implicit
+ * users KEY SHARE vs account-deletion's users-first chain): Postgres broke
+ * the cycle by aborting us; by rerun time the conflicting transaction has
+ * committed or aborted, so the retry re-validates against settled state. A
+ * second 40P01 propagates (bounded — never a retry loop). Safe to rerun:
+ * the aborted transaction wrote nothing and every check runs again inside
+ * the fresh one.
+ */
+async function withDeadlockRetry<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isDeadlockError(error)) throw error;
+    return run();
+  }
 }
 
 /** Rethrow, mapping the race-window booking-FK violation onto the check's 400. */
@@ -272,6 +319,13 @@ export async function createExpense(
   db: DbClient,
   args: { tripId: string; userId: string; input: ExpenseCreate },
 ): Promise<ExpenseWriteResult> {
+  return withDeadlockRetry(() => createExpenseOnce(db, args));
+}
+
+async function createExpenseOnce(
+  db: DbClient,
+  args: { tripId: string; userId: string; input: ExpenseCreate },
+): Promise<ExpenseWriteResult> {
   const { tripId, userId, input } = args;
 
   return db
@@ -358,6 +412,19 @@ export async function updateExpense(
     expenseId: string;
     userId: string;
     /** Caller's trip role, from the membership gate. */
+    role: "owner" | "editor" | "viewer";
+    input: ExpenseUpdate;
+  },
+): Promise<ExpenseWriteResult> {
+  return withDeadlockRetry(() => updateExpenseOnce(db, args));
+}
+
+async function updateExpenseOnce(
+  db: DbClient,
+  args: {
+    tripId: string;
+    expenseId: string;
+    userId: string;
     role: "owner" | "editor" | "viewer";
     input: ExpenseUpdate;
   },
@@ -494,6 +561,18 @@ export async function updateExpense(
  * into the indistinguishable 404).
  */
 export async function softDeleteExpense(
+  db: DbClient,
+  args: {
+    tripId: string;
+    expenseId: string;
+    userId: string;
+    role: "owner" | "editor" | "viewer";
+  },
+): Promise<{ alreadyDeleted: boolean } | null> {
+  return withDeadlockRetry(() => softDeleteExpenseOnce(db, args));
+}
+
+async function softDeleteExpenseOnce(
   db: DbClient,
   args: {
     tripId: string;
