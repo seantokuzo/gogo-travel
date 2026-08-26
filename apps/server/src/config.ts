@@ -150,6 +150,15 @@ export const RATE_LIMITS = {
    * coalesces whatever gets through into one recompute per window anyway.
    */
   refreshLegs: { limit: 6, windowMs: MINUTE_MS },
+  /**
+   * `GET /fx/rate` — per authenticated user (T-9.4; P-9 ruling ③). The
+   * per-day cache stores only PROVIDER-CONFIRMED pairs, so misses on
+   * never-confirmed pairs always reach the keyless third party — without a
+   * limiter one client could fan unbounded traffic (and timeout holds) at
+   * Frankfurter. 20/min ≫ real expense entry (one fetch per currency pick,
+   * then day-cached), ≪ probe-spam utility.
+   */
+  fxRate: { limit: 20, windowMs: MINUTE_MS },
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
 
 // ---------------------------------------------------------------------------
@@ -293,6 +302,41 @@ export const TRAVEL_LEGS_SWEEP_INTERVAL_MS = HOUR_MS;
  * recompute's deterministic race (a hanging provider can never wedge the
  * serial drain; T-6.3 bounded-settlement lesson). */
 export const TRAVEL_LEGS_PROVIDER_TIMEOUT_MS = 10_000;
+
+// ---------------------------------------------------------------------------
+// Money surface (money spec §3.2) — T-9.2/T-9.3; page-size defaults hoisted
+// here at T-9.4 (the QUEUE dispatch-obligations row: one `config.ts` home
+// for the `*_PAGE_SIZE_DEFAULT` family — the W2 parallel-worktree split kept
+// them module-local, which was three-homes drift waiting to happen).
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /trips/:tripId/expenses` default page size when the client omits
+ * `limit` (E2). The hard cap (100) lives in the shared
+ * `ExpenseListQuerySchema` — client and server validate the same bound
+ * (trips convention).
+ */
+export const EXPENSES_PAGE_SIZE_DEFAULT = 50;
+
+/**
+ * `GET /trips/:tripId/settlements` default page size when the client omits
+ * `limit` (S2). The hard cap (100) lives in the shared
+ * `SettlementListQuerySchema` — same convention.
+ */
+export const SETTLEMENTS_PAGE_SIZE_DEFAULT = 50;
+
+// ---------------------------------------------------------------------------
+// FX proxy (P-9 ruling ③ — keyless Frankfurter v2 behind GET /fx/rate) — T-9.4
+// ---------------------------------------------------------------------------
+
+/**
+ * Outbound Frankfurter call bound (AbortSignal.timeout in the adapter — the
+ * travel-legs provider posture). Short on purpose: the fetch is interactive
+ * expense-entry sugar with a guaranteed manual-rate fallback (R-money-6), so
+ * it fails FAST toward manual entry rather than hanging a form — the
+ * `CASHTAG_HEAD_TIMEOUT_MS` best-effort rationale, same number.
+ */
+export const FX_PROVIDER_TIMEOUT_MS = 4_000;
 
 // ---------------------------------------------------------------------------
 // App-wide request-body cap (PR #11 R1 security defer) — createApp

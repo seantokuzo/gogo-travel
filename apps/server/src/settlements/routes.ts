@@ -32,6 +32,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import { moneyEndpoints, type BalancesRead, type Settlement } from "@gogo/shared/domains/money";
+import { SETTLEMENTS_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
@@ -50,15 +51,6 @@ import { toSettlementWire } from "./serialize.js";
 export interface SettlementsRouterDeps {
   db: DbClient;
 }
-
-/**
- * S2 default page size when the client omits `limit` (the hard cap, 100,
- * lives in the shared `SettlementListQuerySchema` — trips convention).
- * [I-8] Module-local rather than `config.ts`: the W2 file-ownership split
- * keeps this task out of shared files a parallel engineer may touch; T-9.4
- * (the wiring closer) may hoist it beside its siblings.
- */
-export const SETTLEMENTS_PAGE_SIZE_DEFAULT = 50;
 
 export function createSettlementsRouter(deps: SettlementsRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
