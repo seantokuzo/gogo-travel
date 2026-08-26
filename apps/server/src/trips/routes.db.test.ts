@@ -707,6 +707,52 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     expect((await dbTrip(trip.id))?.baseCurrency).toBe("USD"); // nothing written
   });
 
+  it("PATCH: the R-trips-22 probe covers settlements — a settlements-ONLY trip cannot re-denominate its ledger (PR #30 R1, PR #29 root cause)", async () => {
+    const { owner, editor, trip } = await seedCollabTrip();
+    // Zero expenses; ONE settlement row (base currency by convention,
+    // R-money-13). Before the probe extension this PATCH succeeded and
+    // silently re-denominated the settlement (USD→JPY ≈150×).
+    await db.insert(schema.settlements).values({
+      tripId: trip.id,
+      fromUserId: editor.userId,
+      toUserId: owner.userId,
+      amountCents: 2500,
+      currency: "USD",
+      method: "venmo",
+      createdBy: editor.userId,
+    });
+
+    const res = await patchTrip(trip.id, owner.accessToken, { base_currency: "JPY" });
+    expect(res.status).toBe(409);
+    const envelope = (await res.json()) as ErrorEnvelope;
+    expect(envelope.error.code).toBe("CONFLICT");
+    expect(envelope.error.details).toEqual({ reason: "base_currency_locked" });
+    expect((await dbTrip(trip.id))?.baseCurrency).toBe("USD");
+
+    // Same-value resubmit is still not a change — form stays re-savable.
+    expect((await patchTrip(trip.id, owner.accessToken, { base_currency: "USD" })).status).toBe(
+      200,
+    );
+  });
+
+  it("PATCH: the R-trips-22 probe covers settle-requests — a requests-ONLY trip locks its base too (PR #30 R1)", async () => {
+    const { owner, editor, trip } = await seedCollabTrip();
+    await db.insert(schema.settlementRequests).values({
+      tripId: trip.id,
+      fromUserId: editor.userId,
+      toUserId: owner.userId,
+      amountCents: 1800,
+      currency: "USD",
+    });
+
+    const res = await patchTrip(trip.id, owner.accessToken, { base_currency: "EUR" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as ErrorEnvelope).error.details).toEqual({
+      reason: "base_currency_locked",
+    });
+    expect((await dbTrip(trip.id))?.baseCurrency).toBe("USD");
+  });
+
   it("PATCH: stale expect_updated_at → 409 with the stale reason, row unchanged (R-trips-6)", async () => {
     const { editor, trip } = await seedCollabTrip();
     // Someone else wins the race first.

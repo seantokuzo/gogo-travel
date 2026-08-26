@@ -371,20 +371,32 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         }
 
         // Base-currency LOCK (R-trips-22): a CHANGE (value differs) is
-        // rejected once the first expense row exists. Same-value resubmits
+        // rejected once ANY money-ledger row exists. Same-value resubmits
         // are not a change and pass — the settings form must be re-savable.
+        // PR #30 R1 cross-PR rider (root cause of PR #29's security
+        // blocker): the probe covers settlements AND settlement_requests,
+        // not just expenses — both ledgers are denominated in trip base
+        // (R-money-13 / §3.3.25 convention), so a settlements-only trip
+        // changing base would silently re-denominate its ledger
+        // (USD→JPY ≈150×). Runs under the trips FOR UPDATE taken above;
+        // T-9.4 mounts the settlement writers AFTER this lock exists.
+        // (PR #29 carries the belt-and-suspenders: balances 500 loudly on
+        // a mismatched-currency row.) One statement, three EXISTS probes.
         const baseCurrencyChanges =
           touchesBaseCurrency && body.base_currency !== current.baseCurrency;
         if (baseCurrencyChanges) {
-          const [expense] = await tx
-            .select({ id: schema.expenses.id })
-            .from(schema.expenses)
-            .where(eq(schema.expenses.tripId, tripId))
-            .limit(1);
-          if (expense) {
+          const [money] = await tx
+            .select({
+              hasExpense: sql<boolean>`EXISTS (SELECT 1 FROM ${schema.expenses} WHERE ${schema.expenses.tripId} = ${tripId})`,
+              hasSettlement: sql<boolean>`EXISTS (SELECT 1 FROM ${schema.settlements} WHERE ${schema.settlements.tripId} = ${tripId})`,
+              hasSettleRequest: sql<boolean>`EXISTS (SELECT 1 FROM ${schema.settlementRequests} WHERE ${schema.settlementRequests.tripId} = ${tripId})`,
+            })
+            .from(schema.trips)
+            .where(eq(schema.trips.id, tripId));
+          if (money?.hasExpense || money?.hasSettlement || money?.hasSettleRequest) {
             throw new HttpError(
               "CONFLICT",
-              "base currency is locked once the first expense exists",
+              "base currency is locked once the first money-ledger row exists",
               { reason: "base_currency_locked" },
             );
           }
