@@ -458,14 +458,27 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   Frankfurter v2 behind a thin Hono `GET /fx/rate` per-day-cache proxy
   (escalation #3 satisfied — no account, no key, $0; client fetches OUR
   endpoint). Send-the-bill links ship `gogo://` primary + placeholder
-  https until the P-14 domain purchase. **W1 (T-9.1) DISPATCHED
-  2026-08-25 (Sean buy-in), parallel with Sean's device QA.**
+  https until the P-14 domain purchase. **W1 ✅ DONE — T-9.1 MERGED
+  cf6f991 (PR #28) 2026-08-26**: 1 round + fix leg (4 blocking — 3
+  security caps-class + 1 tests save-site-currency-wiring, mutation-
+  proven — / 6 advisory, all fix-now, zero pushback), verifier
+  VERIFIED-CLEAN 10/10, judge merge/high; shared 484 / mobile 1355;
+  escalation banner (sensitive+blocking) note-not-stop, `/code-review
+ultra` available on merged diff. Full narrative: QUEUE Recently-done
+  row. **W2 DISPATCHED 2026-08-26: T-9.2 ∥ T-9.3 in isolated worktrees**
+  (file-ownership split in the QUEUE P-9 row: T-9.2 owns expenses/ +
+  trips TOCTOU + app wiring; T-9.3 owns settlements/ module only, mount
+  rides T-9.4).
 - **DEVICE-QA RIG LIVE 2026-08-24 (Sean unparked QA — backlogged P-5..P-8
   device pass):** dev client compiled for Sean's iPhone 15 Pro
   (`DerivedData-device`, arm64, RNMBX baked ×967, signed 4B8499Z59P, main @
   54f1c0e); Metro running LAN (192.168.1.23:8081; API URL auto-derives via
-  hostUri → :3000/api). **Install blocked on Sean enabling Developer Mode**
-  (first xcodebuild attempt errored exactly there); server on :3000 still
+  hostUri → :3000/api). **INSTALLED + LAUNCHED on the iPhone 2026-08-26**
+  (Developer Mode enabled by Sean; devicectl over LAN — note: first install
+  attempt post-Dev-Mode-reboot hit "connection reset by peer", immediate
+  retry succeeded — known-transient while the tunnel re-establishes); app
+  serves the POST-#28-MERGE bundle (shared+tokens dist rebuilt after main
+  sync — Metro resolves dist, not src); server on :3000 still
   HEALTH-ONLY (probed — auth env not loaded), so all signed-in legs remain
   BLOCKED(creds) until Sean drops server auth env + mobile Google client id
   (exact vars in the QA artifact). QA checklist artifact published
