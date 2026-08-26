@@ -52,6 +52,7 @@ import {
   NONEXISTENT_UUID,
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
+import { decodeSettlementCursor } from "./cursor.js";
 import { createSettlementsRouter } from "./routes.js";
 import { SETTLEMENT_DELETE_WINDOW_MS } from "./service.js";
 
@@ -269,6 +270,8 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
     amountCents: number;
     settledAt?: Date;
     createdBy?: string;
+    /** Corruption knob for the R1 integrity pin — S1 forbids this on the wire. */
+    currency?: string;
   }) {
     const [row] = await db
       .insert(schema.settlements)
@@ -277,7 +280,7 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
         fromUserId: args.fromUserId,
         toUserId: args.toUserId,
         amountCents: args.amountCents,
-        currency: "USD",
+        currency: args.currency ?? "USD",
         method: "cash",
         createdBy: args.createdBy ?? args.fromUserId,
         ...(args.settledAt ? { settledAt: args.settledAt } : {}),
@@ -504,6 +507,38 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
       expect(res.status).toBe(200);
     });
 
+    it("a mis-denominated settlement row fails the read LOUDLY — 500, never silent corruption (R1 blocking; root cause = PR #30 lock fix)", async () => {
+      const owner = await seedUserWithToken();
+      const debtor = await seedUserWithToken();
+      const trip = await createTripVia(owner.accessToken);
+      await addMember(trip.id, debtor.userId, "editor");
+
+      // Unreachable through S1 (R-money-13 rejects non-base currency); this
+      // simulates the pre-#30 lock gap / direct-DB corruption: a USD-trip
+      // ledger holding a JPY-denominated settlement row.
+      await seedSettlementRow({
+        tripId: trip.id,
+        fromUserId: debtor.userId,
+        toUserId: owner.userId,
+        amountCents: 15000,
+        currency: "JPY",
+      });
+
+      const res = await getBalances(trip.id, owner.accessToken);
+      expect(res.status).toBe(500);
+      const body = (await res.json()) as ErrorEnvelope;
+      expect(body.error.code).toBe("INTERNAL");
+      expect(body.error.message).toContain("integrity");
+
+      // Blast radius is the balances DOC only: the S2 list stays truthful —
+      // each row carries its own currency.
+      const list = await listSettlements(trip.id, owner.accessToken);
+      expect(list.status).toBe(200);
+      const items = PaginatedSettlementsSchema.parse(await list.json()).items;
+      expect(items).toHaveLength(1);
+      expect(items[0]!.currency).toBe("JPY");
+    });
+
     it("authz: non-member / absent / malformed trip are indistinguishable 404s (F-038)", async () => {
       const owner = await seedUserWithToken();
       const stranger = await seedUserWithToken();
@@ -725,7 +760,7 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
     });
 
     describe("request linking (R-money-18)", () => {
-      it("settlement + request flip commit together; settlement_id set", async () => {
+      it("settlement + request flip commit together; settlement_id set; amount NOT bound to the request's ([I-9])", async () => {
         const owner = await seedUserWithToken();
         const debtor = await seedUserWithToken();
         const trip = await createTripVia(owner.accessToken);
@@ -734,22 +769,28 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
           tripId: trip.id,
           fromUserId: debtor.userId,
           toUserId: owner.userId,
+          amountCents: 500,
         });
 
+        // Deliberately 300 against the 500 request ([I-9]: R-money-18 links +
+        // flips only — no amount-equality rule exists in the spec, and this
+        // pin keeps one from sneaking in green).
         const res = await postSettlement(trip.id, debtor.accessToken, {
           from_user_id: debtor.userId,
           to_user_id: owner.userId,
-          amount_cents: 500,
+          amount_cents: 300,
           currency: "USD",
           method: "paypal",
           request_id: request.id,
         });
         expect(res.status).toBe(201);
         const settlement = SettlementSchema.parse(await res.json());
+        expect(settlement.amount_cents).toBe(300);
 
         const flipped = await readRequestRow(request.id);
         expect(flipped.status).toBe("settled");
         expect(flipped.settlementId).toBe(settlement.id);
+        expect(flipped.amountCents).toBe(500);
       });
 
       it("non-open request → 409, nothing written ([I-3])", async () => {
@@ -956,26 +997,49 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
           amountCents: 104,
           settledAt: at("2026-08-02T10:00:00Z"),
         }),
-        // Pre-1970: negative epoch-micros — the signed-cursor case.
+        // Pre-1970 rows: negative epoch-micros — the signed-cursor case.
+        // THREE of them so a NON-final page (limit 2) ENDS on a pre-1970 row:
+        // the route must MINT a negative-micros cursor and then dereference
+        // it (R1 advisory — the original walk only ever landed 1969 on the
+        // final page, so the unsigned-codec regression stayed green).
         await seedSettlementRow({
           tripId: trip.id,
           fromUserId: debtor.userId,
           toUserId: owner.userId,
           amountCents: 105,
+          settledAt: at("1969-12-01T00:00:00Z"),
+        }),
+        await seedSettlementRow({
+          tripId: trip.id,
+          fromUserId: debtor.userId,
+          toUserId: owner.userId,
+          amountCents: 106,
           settledAt: at("1969-07-20T20:17:00Z"),
+        }),
+        await seedSettlementRow({
+          tripId: trip.id,
+          fromUserId: debtor.userId,
+          toUserId: owner.userId,
+          amountCents: 107,
+          settledAt: at("1969-01-15T12:00:00Z"),
         }),
       ];
 
       const tiePair = [seeded[2]!, seeded[3]!].sort((a, b) => (a.id > b.id ? -1 : 1));
+      // 7 rows, limit 2 → pages [2,2,2,1]; page 3 is [1969-12, 1969-07] and
+      // has a successor, so its nextCursor carries NEGATIVE micros.
       const expectedIds = [
         seeded[1]!.id,
         tiePair[0]!.id,
         tiePair[1]!.id,
         seeded[0]!.id,
         seeded[4]!.id,
+        seeded[5]!.id,
+        seeded[6]!.id,
       ];
 
       const walked: string[] = [];
+      const mintedCursors: string[] = [];
       let cursor: string | null = null;
       for (let guard = 0; guard < 10; guard += 1) {
         const query = `?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
@@ -985,9 +1049,16 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
         walked.push(...body.items.map((item: Settlement) => item.id));
         cursor = body.nextCursor;
         if (cursor === null) break;
+        mintedCursors.push(cursor);
       }
 
       expect(walked).toEqual(expectedIds);
+      // Probe-proof the signed wire path: at least one cursor the route
+      // minted AND we then dereferenced decodes to negative micros.
+      const negative = mintedCursors
+        .map((raw) => decodeSettlementCursor(raw))
+        .filter((decoded) => decoded !== null && decoded.settledMicros.startsWith("-"));
+      expect(negative.length).toBeGreaterThan(0);
     });
 
     it("malformed cursor falls back to page 1 (opaque token, no 400)", async () => {
@@ -1132,6 +1203,27 @@ describe.skipIf(!dockerAvailable)("T-9.3 settlements routes (integration)", () =
         403,
       );
       expect(await settlementCount(trip.id)).toBe(1);
+    });
+
+    it("a viewer who recorded may delete within the window — role-independent (R-money-26 twin of the viewer-settle pin)", async () => {
+      const owner = await seedUserWithToken();
+      const viewer = await seedUserWithToken();
+      const trip = await createTripVia(owner.accessToken);
+      await addMember(trip.id, viewer.userId, "viewer");
+
+      const created = await postSettlement(trip.id, viewer.accessToken, {
+        from_user_id: viewer.userId,
+        to_user_id: owner.userId,
+        amount_cents: 100,
+        currency: "USD",
+        method: "cashapp",
+      });
+      expect(created.status).toBe(201);
+      const settlement = SettlementSchema.parse(await created.json());
+
+      const res = await deleteSettlementReq(trip.id, settlement.id, viewer.accessToken);
+      expect(res.status).toBe(204);
+      expect(await settlementCount(trip.id)).toBe(0);
     });
 
     it("authz: stranger / absent / malformed / wrong-trip ids are indistinguishable 404s (F-038)", async () => {
