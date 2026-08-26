@@ -465,10 +465,17 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   VERIFIED-CLEAN 10/10, judge merge/high; shared 484 / mobile 1355;
   escalation banner (sensitive+blocking) note-not-stop, `/code-review
 ultra` available on merged diff. Full narrative: QUEUE Recently-done
-  row. **W2 DISPATCHED 2026-08-26: T-9.2 ∥ T-9.3 in isolated worktrees**
-  (file-ownership split in the QUEUE P-9 row: T-9.2 owns expenses/ +
-  trips TOCTOU + app wiring; T-9.3 owns settlements/ module only, mount
-  rides T-9.4).
+  row. **W2 ✅ DONE 2026-08-26 — T-9.3 MERGED 6b109cf (PR #29) ∥ T-9.2
+  MERGED fcdabf4 (PR #30); merged-tree gate GREEN (server 60 files/817 =
+  720+47+50 exact; mobile 1355).** Headline: a CROSS-PR SPLIT DISPOSITION
+  (#29's blocker root-caused in #30's file, fixed there mutation-proven,
+  both judges verified the other half) + a NEW server landmine (no-cycle
+  lock proofs must audit IMPLICIT FK KEY-SHARE locks). Both 1 round + fix
+  leg + VERIFIED-CLEAN + judge merge/high; narratives: QUEUE rows.
+  **W3 DISPATCHED 2026-08-26: T-9.4 (settle-requests + budgets + fx proxy
+  - the QUEUE obligations row: settlements mount · page-size hoist ·
+    lock-chain doc sync · budgets trips-first order) ∥ T-9.5 (money tab
+    shell + balances segment, mobile) — server∥mobile disjoint, worktrees.
 - **DEVICE-QA RIG LIVE 2026-08-24 (Sean unparked QA — backlogged P-5..P-8
   device pass):** dev client compiled for Sean's iPhone 15 Pro
   (`DerivedData-device`, arm64, RNMBX baked ×967, signed 4B8499Z59P, main @
