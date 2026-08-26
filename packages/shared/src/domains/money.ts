@@ -43,6 +43,30 @@ export const FxRateSchema = z.string().regex(/^(?!0+(?:\.0+)?$)\d{1,10}(\.\d{1,8
 });
 export type FxRate = z.infer<typeof FxRateSchema>;
 
+/**
+ * Caps on the client-writable (request-direction) shapes — the booking.ts /
+ * T-6.1 convention (PR #28 R1): name-like free text 200, notes-like prose
+ * 2000, arrays bounded by named consts. Entity schemas (server-generated
+ * responses) stay uncapped, same as bookings.
+ */
+const ExpenseDescriptionSchema = z.string().trim().min(1).max(200);
+const optionalNote = z.string().max(2000).optional();
+/**
+ * Share-rows bound (PR #28 R1). No trip-members cap exists anywhere in
+ * shared to inherit, so 50 is the headroom pick (interpretation — recorded
+ * in the PR): shares are one row per participating member and real groups
+ * top out far below it.
+ */
+export const MAX_EXPENSE_SHARES = 50;
+/**
+ * PR #11 R2 landmine parity (booking.ts `localTime`): `z.iso.datetime`
+ * places NO bound on fractional seconds — a multi-MB "datetime" parses
+ * valid. 64 chars fits every real offset+microseconds datetime with slack;
+ * the cap is LOCAL (the shared scalar stays uncapped — its other uses are
+ * server-generated, never client-writable).
+ */
+const boundedDateTime = ISODateTimeSchema.max(64);
+
 const sharesSumRule = (
   val: {
     amount_cents?: number | undefined;
@@ -127,7 +151,7 @@ export type Expense = z.infer<typeof ExpenseSchema>;
  */
 export const ExpenseCreateSchema = z
   .object({
-    description: z.string().trim().min(1),
+    description: ExpenseDescriptionSchema,
     category: ExpenseCategorySchema,
     paid_by: UuidSchema,
     amount_cents: PositiveCentsSchema,
@@ -137,7 +161,7 @@ export const ExpenseCreateSchema = z
     booking_id: UuidSchema.optional(),
     /** Default: server CURRENT_DATE. */
     spent_at: ISODateSchema.optional(),
-    shares: z.array(ExpenseShareSchema),
+    shares: z.array(ExpenseShareSchema).max(MAX_EXPENSE_SHARES),
   })
   .superRefine(sharesSumRule)
   .superRefine(fxPairRule);
@@ -150,7 +174,7 @@ export type ExpenseCreate = z.infer<typeof ExpenseCreateSchema>;
  */
 export const ExpenseUpdateSchema = z
   .object({
-    description: z.string().trim().min(1).optional(),
+    description: ExpenseDescriptionSchema.optional(),
     category: ExpenseCategorySchema.optional(),
     paid_by: UuidSchema.optional(),
     amount_cents: PositiveCentsSchema.optional(),
@@ -159,7 +183,7 @@ export const ExpenseUpdateSchema = z
     base_amount_cents: PositiveCentsSchema.nullable().optional(),
     booking_id: UuidSchema.nullable().optional(),
     spent_at: ISODateSchema.optional(),
-    shares: z.array(ExpenseShareSchema).optional(),
+    shares: z.array(ExpenseShareSchema).max(MAX_EXPENSE_SHARES).optional(),
   })
   .superRefine((val, ctx) => {
     if (val.amount_cents !== undefined && val.shares === undefined) {
@@ -215,9 +239,9 @@ export const SettlementCreateSchema = z
     amount_cents: PositiveCentsSchema,
     currency: CurrencyCodeSchema,
     method: SettlementMethodSchema,
-    note: z.string().optional(),
+    note: optionalNote,
     /** Default now; not future (server-enforced against its clock). */
-    settled_at: ISODateTimeSchema.optional(),
+    settled_at: boundedDateTime.optional(),
     /** Links + settles an open settle-request (R-money-18). */
     request_id: UuidSchema.optional(),
   })
@@ -280,7 +304,7 @@ export const SettleRequestCreateSchema = z.object({
   from_user_id: UuidSchema,
   /** Default: current pairwise debt from_user → caller. */
   amount_cents: PositiveCentsSchema.optional(),
-  note: z.string().optional(),
+  note: optionalNote,
 });
 export type SettleRequestCreate = z.infer<typeof SettleRequestCreateSchema>;
 
@@ -895,7 +919,12 @@ export const moneyEndpoints = {
     body: BudgetPutSchema,
     response: BudgetsReadSchema,
   },
-  /** Ruling ③ FX proxy (T-9.4 implements) — global, not trip-scoped. */
+  /**
+   * Ruling ③ FX proxy (T-9.4 implements) — global, not trip-scoped, but
+   * still behind `requireAuth`; cache writes only on provider-confirmed
+   * pairs (an unauthenticated open proxy / attacker-fillable cache is the
+   * R1 security finding this line pins against).
+   */
   getFxRate: {
     method: "GET",
     path: "/fx/rate",
