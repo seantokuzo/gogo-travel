@@ -175,6 +175,54 @@ describe("usePutBudget (G2 / R-cmoney-2)", () => {
     });
   });
 
+  it("a stale in-flight G1 refetch cannot LWW-overwrite the PUT's document (R1 cancelQueries pin)", async () => {
+    const client = makeClient();
+    const staleDoc = makeBudgetsRead();
+    const serverDoc = makeBudgetsRead({ items: { food: { cap_cents: 2500 } } });
+    client.setQueryData(queryKeys.tripBudgets(TEST_TRIP_ID), staleDoc);
+    // Deferred-promise discipline: resolvers array, release in finally.
+    const getResolvers: ((value: unknown) => void)[] = [];
+    jest
+      .spyOn(apiClient, "request")
+      .mockImplementation((descriptor: { method: string }) =>
+        descriptor.method === "GET"
+          ? (new Promise((resolve) => {
+              getResolvers.push(resolve);
+            }) as never)
+          : (Promise.resolve(serverDoc) as never),
+      );
+    try {
+      const { result } = await renderHook(
+        () => ({
+          budgets: useTripBudgets(TEST_TRIP_ID),
+          put: usePutBudget(TEST_TRIP_ID),
+        }),
+        { wrapper: wrapperFor(client) },
+      );
+      // The mount's refetch of the stale cache is now HELD in flight…
+      await waitFor(() => expect(getResolvers.length).toBeGreaterThan(0));
+      // …when the PUT fires and settles first.
+      await act(async () => {
+        result.current.put.mutate({ category: "food", cap_cents: 2500 });
+      });
+      await waitFor(() => expect(result.current.put.isSuccess).toBe(true));
+      expect(client.getQueryData<BudgetsRead>(queryKeys.tripBudgets(TEST_TRIP_ID))).toEqual(
+        serverDoc,
+      );
+    } finally {
+      for (const release of getResolvers) release(staleDoc);
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    // The released STALE read must not have overwritten the recomputed doc —
+    // onMutate's cancelQueries makes TanStack discard its late result.
+    // Falsification: delete the onMutate arm and this assert reads staleDoc.
+    expect(client.getQueryData<BudgetsRead>(queryKeys.tripBudgets(TEST_TRIP_ID))).toEqual(
+      serverDoc,
+    );
+  });
+
   it("failure leaves the cache untouched and fires the hook-level seam", async () => {
     const client = makeClient();
     const seeded = makeBudgetsRead();

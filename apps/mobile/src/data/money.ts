@@ -107,6 +107,16 @@ export function usePutBudget(
         params: { tripId, category },
         body: { cap_cents },
       }),
+    onMutate: async () => {
+      // LWW guard (T-9.5 R1 correctness): a stale G1 refetch already in
+      // flight when the PUT fires (slow link + a fresh mount's refetch)
+      // would settle AFTER onSuccess's setQueryData and overwrite the
+      // recomputed document — the saved cap visibly reverts and reads
+      // "fresh" for the whole staleTime. Cancel it: the query fn forwards
+      // TanStack's { signal }, and a cancelled fetch's late result is
+      // discarded instead of applied.
+      await qc.cancelQueries({ queryKey: queryKeys.tripBudgets(tripId) });
+    },
     onSuccess: (doc) => {
       // Seam first (fires for EVERY settled call — superseded-call law).
       options?.onMutationSuccess?.(doc);
