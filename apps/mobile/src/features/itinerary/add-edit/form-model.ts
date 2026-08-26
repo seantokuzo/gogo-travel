@@ -17,6 +17,7 @@
  */
 import {
   ACTIVITY_PROVIDERS,
+  centsToMoneyText as sharedCentsToMoneyText,
   LODGING_PROVIDERS,
   wallDate,
   wallTime,
@@ -247,33 +248,23 @@ export function buildDetails(
 }
 
 // ---------------------------------------------------------------------------
-// Money (Law #2 — integer cents, never float, never string-parsed floats)
+// Money (Law #2 — integer cents, never float). T-9.1 rider: the shared
+// ISO-4217 minor-unit helpers replace the old local 2dp-only parser — the
+// currency the user picked now decides the accepted decimal shape
+// (R-cmoney-8; JPY "1500" → 1500 minor units, USD "89.99" → 8999).
 // ---------------------------------------------------------------------------
 
-const MONEY_RE = /^\s*(\d{1,10})(?:[.,](\d{1,2}))?\s*$/;
-
-export type MoneyParse = { ok: true; cents: number } | { ok: false; error: string };
+export { parseMoneyToCents, type MoneyParse } from "@gogo/shared";
 
 /**
- * "1234.56" → 123456 by STRING math: integer and fraction parts are parsed
- * separately as integers — no float ever holds the amount. v1 assumes
- * two-minor-digit currencies (flagged in the PR).
+ * Form prefill text: the shared formatter with an all-zero minor part
+ * omitted ("120", never "120.00") — the pre-rider display behavior for
+ * 2-decimal currencies, pinned by tests; zero-decimal currencies render
+ * whole ("1500"). Rail links (CMON-5) use the shared default (fixed minor
+ * digits) instead — do not reuse this for §2.5 URL amounts.
  */
-export function parseMoneyToCents(text: string): MoneyParse {
-  const match = MONEY_RE.exec(text);
-  if (match === null) {
-    return { ok: false, error: "Use a plain amount like 120 or 89.99." };
-  }
-  const whole = Number(match[1]);
-  const fraction = Number((match[2] ?? "").padEnd(2, "0"));
-  return { ok: true, cents: whole * 100 + fraction };
-}
-
-/** 123456 → "1234.56"; whole amounts stay whole ("120"). Integer math only. */
-export function centsToMoneyText(cents: number): string {
-  const major = Math.floor(cents / 100);
-  const minor = cents % 100;
-  return minor === 0 ? String(major) : `${major}.${String(minor).padStart(2, "0")}`;
+export function centsToMoneyText(cents: number, currency: string): string {
+  return sharedCentsToMoneyText(cents, currency, { omitZeroMinor: true });
 }
 
 // ---------------------------------------------------------------------------

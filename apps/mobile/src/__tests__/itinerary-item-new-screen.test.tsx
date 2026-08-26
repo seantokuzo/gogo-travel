@@ -201,6 +201,86 @@ it("booking create: body is a valid BookingCreate — default idea status, Law #
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
 });
 
+it("JPY price wires zero-decimal minor units WITH the picked currency (T-9.1 R1 — save-site wiring)", async () => {
+  // R1 finding: the save-site currency argument had zero coverage — a
+  // mutation hardwiring the parse to trip.base_currency stayed green
+  // everywhere. The USD test above is the control arm (base-currency
+  // default); this one PICKS a different, zero-decimal currency and pins
+  // both halves of the wire body.
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "activity" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Kaiseki");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-currency"), "JPY");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-price"), "1500");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.price_cents).toBe(1500); // NOT 150000 — the parse consulted the typed currency
+  expect(body.currency).toBe("JPY");
+});
+
+it("decimal input under JPY blocks the save with the price error — no wire call (T-9.1 R1)", async () => {
+  // Control arm for the rejection: the USD test above saves "89.99" fine —
+  // the block is the CURRENCY's, not a parser-wide regression.
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "activity" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(makeBooking({ id: BOOKING_IDEA_ID }));
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Kaiseki");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-currency"), "JPY");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-price"), "15.00");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-price-error")).toBeOnTheScreen();
+});
+
+it("edit prefill formats the price BY the booking's currency (JPY 1500 → '1500', not '15.00') — first priced edit-mode pin", async () => {
+  const existing: BookingWithItems = {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "activity",
+      status: "idea",
+      starts_at: null,
+      title: "Kaiseki",
+      price_cents: 1500,
+      currency: "JPY",
+    }),
+    items: [],
+  };
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+      },
+    },
+  );
+  const price = await screen.findByTestId("itinerary-item-new-input-price");
+  expect(price.props.value).toBe("1500");
+  expect(screen.getByTestId("itinerary-item-new-input-currency").props.value).toBe("JPY");
+});
+
 it("an invalid price blocks the save client-side (Law #2) — no wire call", async () => {
   const created: unknown[] = [];
   await renderScreen(
