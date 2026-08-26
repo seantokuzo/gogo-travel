@@ -11,21 +11,20 @@ import type { Expense, ExpenseShare } from "@gogo/shared/domains/money";
 import type * as schema from "../db/schema/index.js";
 
 export type ExpenseRow = typeof schema.expenses.$inferSelect;
-export type ExpenseShareRow = typeof schema.expenseShares.$inferSelect;
 
 /**
  * Shares travel sorted ascending by `user_id` — the money spec's canonical
  * ordering ("all ordering in this spec means this", §3.3); deterministic
- * across reads regardless of insert order.
+ * across reads regardless of source order (insert returning, json_agg).
  */
-export function toShareWire(rows: readonly ExpenseShareRow[]): ExpenseShare[] {
+export function toShareWire(rows: readonly ExpenseShare[]): ExpenseShare[] {
   return [...rows]
-    .sort((a, b) => (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0))
-    .map((row) => ({ user_id: row.userId, share_cents: row.shareCents }));
+    .sort((a, b) => (a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0))
+    .map((row) => ({ user_id: row.user_id, share_cents: row.share_cents }));
 }
 
 /** The `Expense` document: row + embedded shares + computed effective base (§3.2). */
-export function toExpenseWire(row: ExpenseRow, shares: readonly ExpenseShareRow[]): Expense {
+export function toExpenseWire(row: ExpenseRow, shares: readonly ExpenseShare[]): Expense {
   return {
     id: row.id,
     trip_id: row.tripId,

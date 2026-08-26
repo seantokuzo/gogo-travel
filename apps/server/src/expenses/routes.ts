@@ -42,7 +42,7 @@
  *     idempotent converge; the FIRST deleter's audit pair is the record.
  */
 import { zValidator } from "@hono/zod-validator";
-import { and, eq, exists, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, exists, gte, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { moneyEndpoints, type Expense } from "@gogo/shared/domains/money";
 import type { Paginated } from "@gogo/shared/api/envelope";
@@ -64,11 +64,12 @@ import {
 } from "./cursor.js";
 import {
   createExpense,
+  expenseSharesJsonExpr,
   getExpenseWithShares,
   softDeleteExpense,
   updateExpense,
 } from "./service.js";
-import { toExpenseWire, type ExpenseShareRow } from "./serialize.js";
+import { toExpenseWire } from "./serialize.js";
 
 export interface ExpensesRouterDeps {
   db: DbClient;
@@ -89,24 +90,6 @@ export function createExpensesRouter(deps: ExpensesRouterDeps): Hono<RequestVars
   /** Malformed `:expenseId` → the same indistinguishable 404 (module doc). */
   const validExpenseId = (raw: string | undefined): string | null =>
     raw !== undefined && UUID_RE.test(raw) ? raw : null;
-
-  /** Batch-load shares for a page of expenses (one query, grouped). */
-  async function sharesByExpense(
-    expenseIds: readonly string[],
-  ): Promise<Map<string, ExpenseShareRow[]>> {
-    const grouped = new Map<string, ExpenseShareRow[]>();
-    if (expenseIds.length === 0) return grouped;
-    const rows = await deps.db
-      .select()
-      .from(schema.expenseShares)
-      .where(inArray(schema.expenseShares.expenseId, [...expenseIds]));
-    for (const row of rows) {
-      const bucket = grouped.get(row.expenseId);
-      if (bucket) bucket.push(row);
-      else grouped.set(row.expenseId, [row]);
-    }
-    return grouped;
-  }
 
   // -------------------------------------------------------------------------
   // GET /trips/:tripId/expenses — E2: paginated list, newest first
@@ -158,10 +141,14 @@ export function createExpensesRouter(deps: ExpensesRouterDeps): Hono<RequestVars
       if (decoded) predicates.push(expenseCursorPredicate(decoded));
 
       // pageSize + 1 sentinel: know whether a next page exists without ever
-      // minting a cursor that dereferences to an empty page.
+      // minting a cursor that dereferences to an empty page. Shares ride the
+      // SAME statement as a correlated json_agg — one snapshot, so a
+      // concurrent share replacement can never desync amount vs shares on a
+      // read (round-1; `expenseSharesJsonExpr` doc owns the reasoning).
       const rows = await deps.db
         .select({
           expense: schema.expenses,
+          shares: expenseSharesJsonExpr(),
           createdMicros: epochMicrosExpr(schema.expenses.createdAt),
         })
         .from(schema.expenses)
@@ -172,8 +159,6 @@ export function createExpensesRouter(deps: ExpensesRouterDeps): Hono<RequestVars
         .limit(pageSize + 1);
 
       const page = rows.slice(0, pageSize);
-      const shares = await sharesByExpense(page.map((row) => row.expense.id));
-
       const last = page[page.length - 1];
       const nextCursor =
         rows.length > pageSize && last
@@ -185,7 +170,7 @@ export function createExpensesRouter(deps: ExpensesRouterDeps): Hono<RequestVars
           : null;
 
       const body: Paginated<Expense> = {
-        items: page.map((row) => toExpenseWire(row.expense, shares.get(row.expense.id) ?? [])),
+        items: page.map((row) => toExpenseWire(row.expense, row.shares)),
         nextCursor,
       };
       return c.json(body);

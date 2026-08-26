@@ -53,13 +53,13 @@
  * is the Neon WebSocket `Pool`, never Neon-HTTP (landmine #1: its
  * `.transaction()` throws; postgres-js tests can't catch it).
  */
-import type { ExpenseCreate, ExpenseUpdate } from "@gogo/shared/domains/money";
-import { and, eq, inArray } from "drizzle-orm";
+import type { ExpenseCreate, ExpenseShare, ExpenseUpdate } from "@gogo/shared/domains/money";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { isFxPairConsistent } from "./fx.js";
-import type { ExpenseRow, ExpenseShareRow } from "./serialize.js";
+import type { ExpenseRow } from "./serialize.js";
 
 /** Any transaction scope (or the client itself) usable for reads. */
 type Tx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
@@ -67,7 +67,30 @@ type Reader = DbClient | Tx;
 
 export interface ExpenseWriteResult {
   expense: ExpenseRow;
-  shares: ExpenseShareRow[];
+  /** Wire-shaped shares (`user_id`/`share_cents`) — the serializer sorts. */
+  shares: ExpenseShare[];
+}
+
+/**
+ * The expense's shares as a single correlated `json_agg` column (round-1
+ * A4-class fix): E2/E3 previously read expense row(s) and shares in SEPARATE
+ * statements, so a concurrent E4 share replacement between them produced an
+ * amount/shares mismatch that fails the wire schema's `sharesSumRule` on the
+ * client — the whole page died. One statement = one READ COMMITTED snapshot;
+ * the mismatch is structurally impossible (no pin: a race test would have to
+ * prove single-statement-ness — pure theater; the existing suites regression
+ * the aggregation path via `ExpenseSchema.parse` on every read).
+ */
+export function expenseSharesJsonExpr(): SQL<ExpenseShare[]> {
+  return sql<ExpenseShare[]>`(
+    SELECT coalesce(
+      json_agg(json_build_object('user_id', es.user_id, 'share_cents', es.share_cents)
+               ORDER BY es.user_id),
+      '[]'::json
+    )
+    FROM expense_shares es
+    WHERE es.expense_id = ${schema.expenses.id}
+  )`;
 }
 
 /** The Drizzle-generated FK constraint guarding `expenses.booking_id`. */
@@ -201,10 +224,13 @@ async function assertBookingInTrip(
   }
 }
 
-/** The expense's shares (insert order irrelevant — serializer sorts). */
-async function sharesOf(reader: Reader, expenseId: string): Promise<ExpenseShareRow[]> {
+/** The expense's shares, wire-shaped (insert order irrelevant — serializer sorts). */
+async function sharesOf(reader: Reader, expenseId: string): Promise<ExpenseShare[]> {
   return reader
-    .select()
+    .select({
+      user_id: schema.expenseShares.userId,
+      share_cents: schema.expenseShares.shareCents,
+    })
     .from(schema.expenseShares)
     .where(eq(schema.expenseShares.expenseId, expenseId));
 }
@@ -218,18 +244,19 @@ async function sharesOf(reader: Reader, expenseId: string): Promise<ExpenseShare
  * posture — the gate's trip is the only world a route can see). `null` =
  * absent; the route folds it into the indistinguishable 404. Soft-deleted
  * expenses ARE returned — E3 is the "visible audit trail" surface
- * (R-money-27; interpretation recorded in the router doc).
+ * (R-money-27; interpretation recorded in the router doc). ONE statement —
+ * row + aggregated shares share a snapshot (see `expenseSharesJsonExpr`).
  */
 export async function getExpenseWithShares(
   db: Reader,
   args: { tripId: string; expenseId: string },
 ): Promise<ExpenseWriteResult | null> {
-  const [expense] = await db
-    .select()
+  const [found] = await db
+    .select({ expense: schema.expenses, shares: expenseSharesJsonExpr() })
     .from(schema.expenses)
     .where(and(eq(schema.expenses.id, args.expenseId), eq(schema.expenses.tripId, args.tripId)));
-  if (!expense) return null;
-  return { expense, shares: await sharesOf(db, expense.id) };
+  if (!found) return null;
+  return { expense: found.expense, shares: found.shares };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,16 +323,23 @@ export async function createExpense(
       if (!expense) throw new HttpError("INTERNAL", "expense insert returned no row");
 
       // Zero-cent shares persist as sent — a zero row records participation
-      // ("payer covered someone entirely", schema §3.3.13).
-      await tx.insert(schema.expenseShares).values(
-        input.shares.map((share) => ({
-          expenseId: expense.id,
-          userId: share.user_id,
-          shareCents: share.share_cents,
-        })),
-      );
+      // ("payer covered someone entirely", schema §3.3.13). `.returning()`
+      // IS the response share set — no post-insert re-read (round-1 perf).
+      const shares = await tx
+        .insert(schema.expenseShares)
+        .values(
+          input.shares.map((share) => ({
+            expenseId: expense.id,
+            userId: share.user_id,
+            shareCents: share.share_cents,
+          })),
+        )
+        .returning({
+          user_id: schema.expenseShares.userId,
+          share_cents: schema.expenseShares.shareCents,
+        });
 
-      return { expense, shares: await sharesOf(tx, expense.id) };
+      return { expense, shares };
     })
     .catch(rethrowBookingFkMapped);
 }
