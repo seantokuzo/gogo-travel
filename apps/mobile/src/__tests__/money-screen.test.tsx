@@ -16,7 +16,7 @@
  * settle route; offline degrade = cached render + banner (R-cmoney-30);
  * §2.8 testID inventory walk (R-cmoney-30).
  */
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import MoneyScreen from "@/app/[tripId]/money/index";
 import { ApiRequestError } from "@/auth";
@@ -52,6 +52,23 @@ jest.mock("expo-router", () => ({
   }),
   useLocalSearchParams: () => ({}),
 }));
+
+/**
+ * A client whose cache SURVIVES an unmount — for the prime-then-remount
+ * "cached data + failing refetch" arms. gcTime Infinity, NOT
+ * makeTestQueryClient's 0 (the P-6 landmine): with gcTime 0 the unmount arms
+ * a GC timer that can collect the "cached" entry before the second mount
+ * subscribes — under CI's 2-core contention it reliably wins, and the test
+ * then exercises the no-cache arm instead.
+ */
+function makePersistentClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: Infinity },
+      mutations: { retry: false, gcTime: 0 },
+    },
+  });
+}
 
 /** Roster: the caller (owner) + two members — balances rows reference all three. */
 function defaultMembers() {
@@ -293,6 +310,20 @@ describe("budget segment (R-cmoney-2/4/29)", () => {
       await settle();
       expect(putCalls).toHaveLength(1);
 
+      // R1 BLOCKING pin — the UN-BACKED route: RNTL refuses to dispatch
+      // events into an `editable={false}` TextInput, so the fireEvent arms
+      // above can never REACH the handler while pending — the `if (pending)
+      // return` guard was deletable with every test green (the
+      // disabled-element vacuous-pin taxonomy, per-route falsification).
+      // A queued NATIVE end-editing event (device double-"done") has no such
+      // courtesy: invoke the handler directly, bypassing RNTL's editable
+      // check. Text is still "300" ≠ the cached cap, so only the handler
+      // guard stands between this call and a second money PUT.
+      await act(async () => {
+        (input.props as { onEndEditing: () => void }).onEndEditing();
+      });
+      expect(putCalls).toHaveLength(1);
+
       // Release the first PUT (resolving again in finally is a no-op) —
       // the gate re-arms and the SAME interaction now issues a second PUT:
       // the ungated control arm proving the block above was the gate.
@@ -369,6 +400,60 @@ describe("budget segment (R-cmoney-2/4/29)", () => {
     await settle();
     expect(await screen.findByTestId("money-budget-list-item-food")).toBeTruthy();
     expect(screen.queryByTestId("money-budget-error")).toBeNull();
+  });
+
+  it("holds the G1 read genuinely in flight → skeleton, no rows; release renders them (R1-5)", async () => {
+    // Deferred-promise discipline (mobile.md): resolvers array, release in
+    // finally — never a promise that dangles past the test.
+    const resolvers: ((value: unknown) => void)[] = [];
+    try {
+      await renderMoney({
+        overrides: {
+          "GET /trips/:tripId/budgets": () =>
+            new Promise((resolve) => {
+              resolvers.push(resolve);
+            }),
+        },
+      });
+      expect(screen.getByTestId("money-budget-loading")).toBeTruthy();
+      expect(screen.queryByTestId("money-budget-list-item-food")).toBeNull();
+    } finally {
+      for (const release of resolvers) release(makeBudgetsRead());
+    }
+    await settle();
+    // Control arm: releasing the read swaps skeleton for rows.
+    expect(await screen.findByTestId("money-budget-list-item-food")).toBeTruthy();
+    expect(screen.queryByTestId("money-budget-loading")).toBeNull();
+  });
+
+  it("an ONLINE refresh failure over cached rows shows the retry banner — not the offline one (R1-4)", async () => {
+    const client = makePersistentClient();
+    const first = await renderMoney({ queryClient: client });
+    await screen.findByTestId("money-budget-list-item-food");
+    await first.view.unmount();
+
+    let calls = 0;
+    await renderMoney({
+      queryClient: client,
+      overrides: {
+        "GET /trips/:tripId/budgets": () => {
+          calls += 1;
+          return calls === 1
+            ? Promise.reject(new ApiRequestError(500, "INTERNAL", "boom"))
+            : Promise.resolve(makeBudgetsRead());
+        },
+      },
+    });
+    expect(await screen.findByTestId("money-budget-refresh-error")).toBeTruthy();
+    // Cached rows survive the failed refresh (no blanking)…
+    expect(screen.getByTestId("money-budget-list-item-food")).toBeTruthy();
+    // …and a 500 is the SERVER talking — not the offline banner (control
+    // for the offline-degrade suite's banner precedence).
+    expect(screen.queryByTestId("money-banner-offline")).toBeNull();
+    await fireEvent.press(screen.getByTestId("money-budget-refresh-error-retry"));
+    await settle();
+    expect(screen.queryByTestId("money-budget-refresh-error")).toBeNull();
+    expect(screen.getByTestId("money-budget-list-item-food")).toBeTruthy();
   });
 });
 
@@ -529,6 +614,67 @@ describe("balances segment (R-cmoney-6/29)", () => {
     expect(screen.queryByTestId(`money-transfer-list-item-${MEMBER_B_ID}-${TEST_USER.id}`)).toBeNull();
   });
 
+  it("the caller's own chip is INERT — press navigates nowhere (control: another chip navigates) (R1-6)", async () => {
+    await openBalances();
+    await fireEvent.press(
+      await screen.findByTestId(`money-balance-list-item-${TEST_USER.id}`),
+    );
+    expect(mockPush).not.toHaveBeenCalled();
+    // Ungated control arm from the SAME render: a member chip navigates.
+    await fireEvent.press(screen.getByTestId(`money-balance-list-item-${MEMBER_B_ID}`));
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the B1 read genuinely in flight → skeleton; release renders the segment (R1-5)", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    try {
+      await openBalances({
+        overrides: {
+          "GET /trips/:tripId/balances": () =>
+            new Promise((resolve) => {
+              resolvers.push(resolve);
+            }),
+        },
+      });
+      expect(screen.getByTestId("money-balances-loading")).toBeTruthy();
+      expect(screen.queryByTestId("money-headline-balances")).toBeNull();
+    } finally {
+      for (const release of resolvers) release(makeBalancesRead());
+    }
+    await settle();
+    // Control arm: releasing the read swaps skeleton for the segment.
+    expect(await screen.findByTestId("money-headline-balances")).toBeTruthy();
+    expect(screen.queryByTestId("money-balances-loading")).toBeNull();
+  });
+
+  it("an ONLINE refresh failure over cached balances shows the retry banner; retry recovers (R1-4)", async () => {
+    const client = makePersistentClient();
+    const first = await openBalances({ queryClient: client });
+    await screen.findByTestId("money-headline-balances");
+    await first.view.unmount();
+
+    let calls = 0;
+    await openBalances({
+      queryClient: client,
+      overrides: {
+        "GET /trips/:tripId/balances": () => {
+          calls += 1;
+          return calls === 1
+            ? Promise.reject(new ApiRequestError(500, "INTERNAL", "boom"))
+            : Promise.resolve(makeBalancesRead());
+        },
+      },
+    });
+    expect(await screen.findByTestId("money-balances-refresh-error")).toBeTruthy();
+    // Cached segment survives (no blanking); a 500 is not "offline".
+    expect(screen.getByTestId("money-headline-balances")).toBeTruthy();
+    expect(screen.queryByTestId("money-banner-offline")).toBeNull();
+    await fireEvent.press(screen.getByTestId("money-balances-refresh-error-retry"));
+    await settle();
+    expect(screen.queryByTestId("money-balances-refresh-error")).toBeNull();
+    expect(screen.getByTestId("money-headline-balances")).toBeTruthy();
+  });
+
   it("a failed balances read renders ErrorBanner; retry recovers", async () => {
     let calls = 0;
     await openBalances({
@@ -566,16 +712,7 @@ describe("offline degrade (R-cmoney-30 posture)", () => {
   it("cached data keeps rendering under a transport failure, with the offline banner (no blanking)", async () => {
     // Mount 1 primes the cache; mount 2 shares the client and its refetch
     // fails at the transport layer (status 0) — the rows must survive.
-    // gcTime Infinity, NOT makeTestQueryClient's 0 (the P-6 landmine): with
-    // gcTime 0 the unmount arms a GC timer that can collect the "cached"
-    // entry before mount 2 subscribes — under CI's 2-core contention it
-    // reliably wins, and the test then exercises the no-cache arm instead.
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false, gcTime: Infinity },
-        mutations: { retry: false, gcTime: 0 },
-      },
-    });
+    const client = makePersistentClient();
     const first = await renderMoney({ queryClient: client });
     await screen.findByTestId("money-budget-list-item-food");
     await first.view.unmount();
