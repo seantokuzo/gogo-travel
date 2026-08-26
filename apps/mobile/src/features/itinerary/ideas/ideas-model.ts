@@ -8,6 +8,7 @@
  */
 import {
   BOOKING_CATEGORIES,
+  centsToMoneyText,
   type Booking,
   type BookingCategory,
   type ItineraryItem,
@@ -86,13 +87,15 @@ export function buildIdeasGroups(unscheduled: readonly Booking[]): IdeasGroup[] 
 }
 
 /**
- * "$ if known" caption (§2.3) — Law #2: integer-cents math only, no float
- * formatting. v1 renders every currency at two minor-unit digits.
+ * "$ if known" caption (§2.3) — Law #2: the shared ISO-4217 minor-unit
+ * formatter (T-9.1 R1 swap — this was the last 2dp-blind money renderer,
+ * and it float-divided). 2-decimal currencies render byte-identical to the
+ * pre-swap output ("USD 1234.56", fixed digits); zero-decimal currencies
+ * now render whole ("JPY 1500" — was "15.00", 100× off). Also the booking
+ * detail screen's price line.
  */
 export function formatIdeaPrice(priceCents: number, currency: string): string {
-  const major = Math.floor(priceCents / 100);
-  const minor = String(priceCents % 100).padStart(2, "0");
-  return `${currency} ${major}.${minor}`;
+  return `${currency} ${centsToMoneyText(priceCents, currency)}`;
 }
 
 /** The flat row list the bucket's FlatList renders (groups flattened). */

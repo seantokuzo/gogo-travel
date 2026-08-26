@@ -84,11 +84,17 @@ describe("buildIdeasRows (flattened render list)", () => {
   });
 });
 
-describe("formatIdeaPrice (Law #2 — integer cents)", () => {
-  it("renders integer-cents math, two minor digits, no float formatting", () => {
+describe("formatIdeaPrice (Law #2 — integer cents; T-9.1 R1: shared ISO-4217 formatter)", () => {
+  it("2-decimal currencies render byte-identical to the pre-swap output (control arms)", () => {
     expect(formatIdeaPrice(123456, "USD")).toBe("USD 1234.56");
     expect(formatIdeaPrice(100, "EUR")).toBe("EUR 1.00");
     expect(formatIdeaPrice(5, "USD")).toBe("USD 0.05");
-    expect(formatIdeaPrice(0, "JPY")).toBe("JPY 0.00");
+  });
+
+  it("zero-decimal currencies render whole minor units (was '15.00' for 1500 — 100× off)", () => {
+    expect(formatIdeaPrice(1500, "JPY")).toBe("JPY 1500");
+    expect(formatIdeaPrice(0, "JPY")).toBe("JPY 0");
+    // Control arm: the same minor-unit count under a 2dp currency scales.
+    expect(formatIdeaPrice(1500, "USD")).toBe("USD 15.00");
   });
 });
