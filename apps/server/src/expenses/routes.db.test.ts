@@ -26,7 +26,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { createLocalJWKSet, generateKeyPair } from "jose";
@@ -386,13 +386,16 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     expect(await dbExpensesOf(trip.id)).toHaveLength(0);
   });
 
-  it("POST: MAX_EXPENSE_SHARES at the boundary — 50 real members split → 201; 51 shares → 400 (schema cap)", async () => {
+  it("POST/PATCH: MAX_EXPENSE_SHARES at the boundary — 50 REAL members → 201; 51 REAL members → 400 naming shares (schema cap, both verbs)", async () => {
     const { owner, trip } = await seedCollabTrip();
 
-    // 49 extra members (owner makes 50 participants), seeded directly. A
-    // provider sub is required: `users_identity_or_scrubbed_ck` rejects a
-    // live row with neither identity.
-    const extras = Array.from({ length: 49 }, (_, i) => ({
+    // 50 extra members (owner makes 51 possible participants), seeded
+    // directly. A provider sub is required: `users_identity_or_scrubbed_ck`
+    // rejects a live row with neither identity. ALL 51 are real members —
+    // round-1 surviving mutant: the old over-cap arm used a NON-member id,
+    // so the membership 400 masked the cap (probe-proven: cap deleted, test
+    // stayed green). With real members only the cap can reject.
+    const extras = Array.from({ length: 50 }, (_, i) => ({
       email: `bulk-${uniq()}-${i}@example.com`,
       displayName: `Bulk Member ${i}`,
       googleSub: `bulk-google-${uniq()}-${i}`,
@@ -406,30 +409,48 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
       })),
     );
 
-    const participants = [owner.userId, ...users.map((user) => user.id)];
-    expect(participants).toHaveLength(MAX_EXPENSE_SHARES);
-    const shares: ExpenseShare[] = participants.map((user_id) => ({ user_id, share_cents: 2 }));
+    const memberIds = [owner.userId, ...users.map((user) => user.id)];
+    const atCapIds = memberIds.slice(0, MAX_EXPENSE_SHARES);
+    expect(atCapIds).toHaveLength(MAX_EXPENSE_SHARES);
+    const atCapShares: ExpenseShare[] = atCapIds.map((user_id) => ({ user_id, share_cents: 2 }));
     const atCap = await postExpense(
       trip.id,
       owner.accessToken,
-      expenseBody(owner.userId, { amount_cents: 100, shares }),
+      expenseBody(owner.userId, { amount_cents: 100, shares: atCapShares }),
     );
     expect(atCap.status).toBe(201);
-    expect(ExpenseSchema.parse(await atCap.json()).shares).toHaveLength(MAX_EXPENSE_SHARES);
+    const atCapExpense = ExpenseSchema.parse(await atCap.json());
+    expect(atCapExpense.shares).toHaveLength(MAX_EXPENSE_SHARES);
 
-    // 51 rows: schema rejects before any membership lookup — random uuids fine.
+    // 51 REAL members, exact sum: ONLY the cap can say no — and the zod
+    // details must name `shares` (proves it was the cap, not membership).
+    const overCapShares: ExpenseShare[] = memberIds.map((user_id) => ({
+      user_id,
+      share_cents: 2,
+    }));
     const overCap = await postExpense(
       trip.id,
       owner.accessToken,
-      expenseBody(owner.userId, {
-        amount_cents: 102,
-        shares: [
-          ...shares,
-          { user_id: NONEXISTENT_UUID, share_cents: 2 },
-        ],
-      }),
+      expenseBody(owner.userId, { amount_cents: 102, shares: overCapShares }),
     );
     expect(overCap.status).toBe(400);
+    const overCapEnvelope = (await overCap.json()) as ErrorEnvelope;
+    expect(overCapEnvelope.error.code).toBe("VALIDATION_FAILED");
+    const overCapDetails = overCapEnvelope.error.details as {
+      fieldErrors?: Record<string, unknown>;
+    };
+    expect(overCapDetails.fieldErrors?.shares).toBeTruthy();
+
+    // ExpenseUpdateSchema carries the same cap: shares-only PATCH with 51
+    // real members summing to the STORED amount → only the cap rejects.
+    const patchOverCap = await patchExpense(trip.id, atCapExpense.id, owner.accessToken, {
+      shares: memberIds.map((user_id, i) => ({ user_id, share_cents: i === 0 ? 0 : 2 })),
+    });
+    expect(patchOverCap.status).toBe(400);
+    const patchDetails = ((await patchOverCap.json()) as ErrorEnvelope).error.details as {
+      fieldErrors?: Record<string, unknown>;
+    };
+    expect(patchDetails.fieldErrors?.shares).toBeTruthy();
   });
 
   it("POST: booking link — this trip's booking → 201; another trip's booking → 400, not 404 (§3.2)", async () => {
@@ -929,6 +950,86 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
       paid_by: stranger.userId,
     });
     expect(badPayer.status).toBe(400);
+  });
+
+  it("PATCH: ex-member history stays editable — description-only PATCH on a departed payer's expense → 200 (R-money-5 incoming-only, interp #4)", async () => {
+    const { owner, editor, trip } = await seedCollabTrip();
+    const created = ExpenseSchema.parse(
+      await (
+        await postExpense(trip.id, editor.accessToken, expenseBody(editor.userId))
+      ).json(),
+    );
+
+    // The payer leaves the trip; their expense/share rows survive (R-money-28).
+    await db
+      .delete(schema.tripMembers)
+      .where(
+        and(eq(schema.tripMembers.tripId, trip.id), eq(schema.tripMembers.userId, editor.userId)),
+      );
+
+    // Owner edits description only: no incoming participant ids, so the
+    // membership check must NOT re-litigate the stored ex-member rows.
+    const res = await patchExpense(trip.id, created.id, owner.accessToken, {
+      description: "ex-member history edit",
+    });
+    expect(res.status).toBe(200);
+    const after = ExpenseSchema.parse(await res.json());
+    expect(after.description).toBe("ex-member history edit");
+    expect(after.paid_by).toBe(editor.userId); // history intact
+
+    // Control: naming the departed member as an INCOMING participant fails.
+    const incoming = await patchExpense(trip.id, created.id, owner.accessToken, {
+      paid_by: editor.userId,
+    });
+    expect(incoming.status).toBe(400);
+  });
+
+  it("PATCH: booking link re-validated on update — foreign trip's booking_id → 400; null clears → 200 (update-side assertBookingInTrip)", async () => {
+    const a = await seedCollabTrip();
+    const b = await seedCollabTrip();
+    const [ownBooking] = await db
+      .insert(schema.bookings)
+      .values({
+        tripId: a.trip.id,
+        category: "restaurant",
+        title: "Linked",
+        createdBy: a.owner.userId,
+      })
+      .returning({ id: schema.bookings.id });
+    const [foreignBooking] = await db
+      .insert(schema.bookings)
+      .values({
+        tripId: b.trip.id,
+        category: "restaurant",
+        title: "Foreign",
+        createdBy: b.owner.userId,
+      })
+      .returning({ id: schema.bookings.id });
+    if (!ownBooking || !foreignBooking) throw new Error("booking seed failed");
+
+    const created = ExpenseSchema.parse(
+      await (
+        await postExpense(
+          a.trip.id,
+          a.owner.accessToken,
+          expenseBody(a.owner.userId, { booking_id: ownBooking.id }),
+        )
+      ).json(),
+    );
+
+    const foreign = await patchExpense(a.trip.id, created.id, a.owner.accessToken, {
+      booking_id: foreignBooking.id,
+    });
+    expect(foreign.status).toBe(400);
+    expect(((await foreign.json()) as ErrorEnvelope).error.details).toEqual({
+      booking_id: "not in this trip",
+    });
+
+    const cleared = await patchExpense(a.trip.id, created.id, a.owner.accessToken, {
+      booking_id: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(ExpenseSchema.parse(await cleared.json()).booking_id).toBeNull();
   });
 
   it("PATCH: two concurrent PATCHes serialize — final state is ONE complete write, never mixed (§4 concurrency)", async () => {
