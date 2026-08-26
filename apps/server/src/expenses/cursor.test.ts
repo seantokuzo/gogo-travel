@@ -50,6 +50,22 @@ describe("expenses keyset cursor codec (three-part, date-led — T-9.2)", () => 
     expect(decodeExpenseCursor("%not-a-cursor%")).toBeNull();
   });
 
+  it("CALENDAR-exact dates, not just calendar-shaped (round-1 blocking): impossible days fold to null, never the ::date 22008 500", () => {
+    // Shape-valid but non-existent: Feb 31 / Feb 30 / Apr 31 pass the RE and
+    // would bind `::date` → Postgres 22008 → unhandled 500 (verified live in
+    // review). The Date.UTC round-trip folds them to page 1.
+    expect(decodeExpenseCursor(b64(`2026-02-31|123|${ID}`))).toBeNull();
+    expect(decodeExpenseCursor(b64(`2026-02-30|123|${ID}`))).toBeNull();
+    expect(decodeExpenseCursor(b64(`2026-04-31|123|${ID}`))).toBeNull();
+    // Leap-year control: Feb 29 is real in 2024, impossible in 2026.
+    expect(decodeExpenseCursor(b64(`2024-02-29|123|${ID}`))).toEqual({
+      spentAt: "2024-02-29",
+      createdMicros: "123",
+      id: ID,
+    });
+    expect(decodeExpenseCursor(b64(`2026-02-29|123|${ID}`))).toBeNull();
+  });
+
   it("18-digit micros (max magnitude) still decode, both signs", () => {
     const max = "9".repeat(18);
     expect(

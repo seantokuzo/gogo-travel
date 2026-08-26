@@ -685,6 +685,22 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     expect(malformed.status).toBe(200);
     const first = PaginatedExpensesSchema.parse(await malformed.json());
     expect(first.items.map((e) => e.description)).toEqual(["expense-4", "expense-3"]);
+
+    // Round-1 blocking pin: a shape-valid IMPOSSIBLE date ('2026-02-31')
+    // must fold to page 1 — before the calendar-exact check it reached the
+    // `::date` cast and 500'd (Postgres 22008) on an authed surface.
+    const impossible = Buffer.from(
+      `2026-02-31|1|${seen[0]?.id ?? NONEXISTENT_UUID}`,
+      "utf8",
+    ).toString("base64url");
+    const crafted = await listExpenses(
+      trip.id,
+      owner.accessToken,
+      `?limit=2&cursor=${encodeURIComponent(impossible)}`,
+    );
+    expect(crafted.status).toBe(200);
+    const craftedPage = PaginatedExpensesSchema.parse(await crafted.json());
+    expect(craftedPage.items.map((e) => e.description)).toEqual(["expense-4", "expense-3"]);
   });
 
   it("GET list: filters — category, member-as-payer, member-as-share-holder, date range (§3.2)", async () => {

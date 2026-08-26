@@ -34,8 +34,30 @@ export interface ExpenseKeysetCursor {
  * bookings-cursor round-1 A2 lesson).
  */
 const MICROS_RE = /^-?\d{1,18}$/;
-/** Calendar-shaped `YYYY-MM-DD` — keeps crafted cursors out of the `::date` cast. */
+/** First-pass shape gate; `isCalendarDate` below does the real validation. */
 const DATE_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+/**
+ * CALENDAR-exact, not just calendar-shaped (round-1 blocking, two lanes
+ * convergent): `2026-02-31` passes the shape RE, binds `::date`, and
+ * Postgres answers 22008 → an unhandled 500 on an authed surface. A
+ * `Date.UTC` round-trip only equals its inputs when the y/m/d name a real
+ * day (JS date rollover turns Feb 31 into Mar 3) — so impossible dates fold
+ * to `null`/page-1 exactly as the module doc promises, and nothing
+ * non-calendar ever reaches the cast.
+ */
+function isCalendarDate(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+  const roundTrip = new Date(Date.UTC(year, month - 1, day));
+  return (
+    roundTrip.getUTCFullYear() === year &&
+    roundTrip.getUTCMonth() === month - 1 &&
+    roundTrip.getUTCDate() === day
+  );
+}
 
 export function encodeExpenseCursor(cursor: ExpenseKeysetCursor): string {
   return Buffer.from(`${cursor.spentAt}|${cursor.createdMicros}|${cursor.id}`, "utf8").toString(
@@ -49,7 +71,7 @@ export function decodeExpenseCursor(raw: string): ExpenseKeysetCursor | null {
   const parts = decoded.split("|");
   if (parts.length !== 3) return null;
   const [spentAt, createdMicros, id] = parts as [string, string, string];
-  if (!DATE_RE.test(spentAt) || !MICROS_RE.test(createdMicros) || !UUID_RE.test(id)) return null;
+  if (!isCalendarDate(spentAt) || !MICROS_RE.test(createdMicros) || !UUID_RE.test(id)) return null;
   return { spentAt, createdMicros, id };
 }
 
