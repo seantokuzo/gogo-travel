@@ -92,6 +92,7 @@ describe.skipIf(!dockerAvailable)("T-9.4 settle-requests routes (integration)", 
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
+  let authDeps: AuthRouterDeps;
   let signer: AccessTokenSigner;
 
   let seq = 0;
@@ -109,7 +110,7 @@ describe.skipIf(!dockerAvailable)("T-9.4 settle-requests routes (integration)", 
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
-    const authDeps: AuthRouterDeps = {
+    authDeps = {
       db,
       verifier: {
         appleJwks: createLocalJWKSet({ keys: [] }),
@@ -590,5 +591,60 @@ describe.skipIf(!dockerAvailable)("T-9.4 settle-requests routes (integration)", 
       body: JSON.stringify({ from_user_id: NONEXISTENT_UUID }),
     });
     expect(res.status).toBe(401);
+  });
+
+  // -------------------------------------------------------------------------
+  // Wiring closer (T-9.4 obligation 1): the PRODUCTION app-option mount path
+  // — createApp({ settlements, budgets, fx }) — exposes all four surfaces,
+  // not just the factory-mounted routers this suite otherwise exercises.
+  // -------------------------------------------------------------------------
+  it("app-option wiring exposes settlements, settle-requests, budgets AND fx end-to-end", async () => {
+    const creditor = await seedUserWithToken();
+    const debtor = await seedUserWithToken();
+    const trip = await createTripVia(creditor.accessToken); // seeded via the shared db
+    await addMember(trip.id, debtor.userId, "editor");
+    await seedDebt(trip.id, creditor.userId, debtor.userId, 640);
+
+    const wired = createApp({
+      auth: authDeps,
+      trips: { db },
+      settlements: { db },
+      budgets: { db },
+      fx: {
+        provider: {
+          provider: "stub",
+          rate: (base, quote) =>
+            Promise.resolve({
+              kind: "rate" as const,
+              read: { base, quote, rate: "1.1675", as_of: "2026-08-26" },
+            }),
+        },
+      },
+    });
+    const wiredRequest = (path: string, init?: RequestInit) =>
+      wired.request(path, {
+        ...init,
+        headers: {
+          ...(init?.body ? { "content-type": "application/json" } : {}),
+          authorization: `Bearer ${creditor.accessToken}`,
+          ...(init?.headers ?? {}),
+        },
+      });
+
+    // Settlements router (T-9.3, previously unmounted): B1 answers.
+    expect((await wiredRequest(`/api/trips/${trip.id}/balances`)).status).toBe(200);
+    // Settle-requests router: Q1 creates through the same option.
+    const created = await wiredRequest(`/api/trips/${trip.id}/settle-requests`, {
+      method: "POST",
+      body: JSON.stringify({ from_user_id: debtor.userId }),
+    });
+    expect(created.status).toBe(201);
+    expect(SettleRequestSchema.parse(await created.json()).amount_cents).toBe(640);
+    // Budgets router: G1 answers.
+    expect((await wiredRequest(`/api/trips/${trip.id}/budgets`)).status).toBe(200);
+    // FX router: global route behind the same requireAuth.
+    expect((await wiredRequest(`/api/fx/rate?base=EUR&quote=USD`)).status).toBe(200);
+    // And the guard still fronts it all: no token → uniform 401.
+    expect((await wired.request(`/api/trips/${trip.id}/budgets`)).status).toBe(401);
   });
 });
