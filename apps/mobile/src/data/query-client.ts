@@ -122,6 +122,27 @@ export const queryKeys = {
   tripSavedPlaces: (tripId: string) => ["trips", tripId, "saved-places"] as const,
   /** `GET /invites/:token` — join-screen preview (R-nav-11). */
   invitePreview: (token: string) => ["invites", token, "preview"] as const,
+  /**
+   * Money-tab keys (T-9.5 / CMON-1+CMON-4). DETAIL-SUBTREE keys, all three
+   * (key-cache law — the T-7.4 `tripItinerary` precedent): every money read
+   * is trip-scoped behind the membership gate (api money spec R-money-25:
+   * a non-member's 404 is indistinguishable from an absent trip), so
+   * rooting under `trip(tripId)` makes the guard's 404-scrub and
+   * `evictTripSubtree` prefix removal evict money data on access loss —
+   * the NAV-4 zero-trip-data posture. NOT a disjoint root: unlike
+   * `placeDetail` (global reads that must survive trip eviction), money
+   * data without membership is exactly what must NOT survive.
+   *
+   * `tripExpensesRoot` is the INVALIDATION root of the R-cmoney-32 trio
+   * (`invalidateMoneyData` in data/money.ts); T-9.6's expense list/detail
+   * keys EXTEND this prefix with trailing args (the `tripBookingsRoot`
+   * convention) — never replace it.
+   */
+  tripExpensesRoot: (tripId: string) => ["trips", tripId, "expenses"] as const,
+  /** `GET /trips/:tripId/balances` — computed nets + pairwise + simplified (B1). */
+  tripBalances: (tripId: string) => ["trips", tripId, "balances"] as const,
+  /** `GET /trips/:tripId/budgets` — full-taxonomy caps + computed spend (G1). */
+  tripBudgets: (tripId: string) => ["trips", tripId, "budgets"] as const,
 } as const;
 
 /**
