@@ -1,19 +1,29 @@
 import { describe, expect, it } from "vitest";
 import { descriptorKey } from "../api/descriptor.js";
+import { NoContentSchema } from "../api/envelope.js";
 import {
   allocateProportional,
   BalancesReadSchema,
   BudgetCategorySegmentSchema,
+  BudgetPutSchema,
   BudgetsReadSchema,
   computeBalances,
   computeShares,
   ExpenseCreateSchema,
   ExpenseListQuerySchema,
+  ExpenseSchema,
   ExpenseUpdateSchema,
+  FxRateQuerySchema,
   FxRateReadSchema,
   FxRateSchema,
+  MAX_EXPENSE_SHARES,
   moneyEndpoints,
   SettlementCreateSchema,
+  SettlementListQuerySchema,
+  SettlementSchema,
+  SettleRequestCreateSchema,
+  SettleRequestDetailSchema,
+  SettleRequestSchema,
   simplifyDebts,
   type ExpenseForBalance,
   type MemberNet,
@@ -1080,5 +1090,248 @@ describe("money endpoint descriptors (§3.1 mirror)", () => {
     expect(
       BudgetsReadSchema.safeParse({ ...doc, items: [{ ...item, spent_cents: -1 }] }).success,
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Round-1 caps on the request-direction shapes (PR #28 R1 — booking.ts
+// parity). Every cap gets both boundary pins: max accepted, max+1 rejected.
+// ---------------------------------------------------------------------------
+
+describe("request-direction caps (PR #28 R1)", () => {
+  /** Distinct valid uuids beyond the single-digit U() helper. */
+  const UU = (n: number): string => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+
+  const expenseBase = {
+    category: "food",
+    paid_by: U(1),
+    currency: "USD",
+    amount_cents: 100,
+    shares: [{ user_id: U(1), share_cents: 100 }],
+  };
+
+  it("expense description: 200 accepted, 201 rejected (create AND update)", () => {
+    expect(
+      ExpenseCreateSchema.safeParse({ ...expenseBase, description: "d".repeat(200) }).success,
+    ).toBe(true);
+    expect(
+      ExpenseCreateSchema.safeParse({ ...expenseBase, description: "d".repeat(201) }).success,
+    ).toBe(false);
+    expect(ExpenseUpdateSchema.safeParse({ description: "d".repeat(200) }).success).toBe(true);
+    expect(ExpenseUpdateSchema.safeParse({ description: "d".repeat(201) }).success).toBe(false);
+  });
+
+  it(`shares array: ${MAX_EXPENSE_SHARES} rows accepted, ${MAX_EXPENSE_SHARES + 1} rejected (create AND update)`, () => {
+    const shares = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ user_id: UU(i + 1), share_cents: 1 }));
+    expect(
+      ExpenseCreateSchema.safeParse({
+        ...expenseBase,
+        description: "Group dinner",
+        amount_cents: MAX_EXPENSE_SHARES,
+        shares: shares(MAX_EXPENSE_SHARES),
+      }).success,
+    ).toBe(true);
+    expect(
+      ExpenseCreateSchema.safeParse({
+        ...expenseBase,
+        description: "Group dinner",
+        amount_cents: MAX_EXPENSE_SHARES + 1,
+        shares: shares(MAX_EXPENSE_SHARES + 1),
+      }).success,
+    ).toBe(false);
+    expect(ExpenseUpdateSchema.safeParse({ shares: shares(MAX_EXPENSE_SHARES) }).success).toBe(
+      true,
+    );
+    expect(
+      ExpenseUpdateSchema.safeParse({ shares: shares(MAX_EXPENSE_SHARES + 1) }).success,
+    ).toBe(false);
+  });
+
+  const settlementBase = {
+    from_user_id: U(1),
+    to_user_id: U(2),
+    amount_cents: 100,
+    currency: "USD",
+    method: "cash",
+  };
+
+  it("settlement note: 2000 accepted, 2001 rejected", () => {
+    expect(
+      SettlementCreateSchema.safeParse({ ...settlementBase, note: "n".repeat(2000) }).success,
+    ).toBe(true);
+    expect(
+      SettlementCreateSchema.safeParse({ ...settlementBase, note: "n".repeat(2001) }).success,
+    ).toBe(false);
+  });
+
+  it("settle-request note: 2000 accepted, 2001 rejected", () => {
+    expect(
+      SettleRequestCreateSchema.safeParse({ from_user_id: U(1), note: "n".repeat(2000) }).success,
+    ).toBe(true);
+    expect(
+      SettleRequestCreateSchema.safeParse({ from_user_id: U(1), note: "n".repeat(2001) }).success,
+    ).toBe(false);
+  });
+
+  it("settled_at: bounded at 64 chars (PR #11 R2 landmine — unbounded fractional seconds)", () => {
+    // Real microsecond-precision offset datetime (32 chars) — well inside.
+    expect(
+      SettlementCreateSchema.safeParse({
+        ...settlementBase,
+        settled_at: "2026-08-25T12:00:00.123456+09:00",
+      }).success,
+    ).toBe(true);
+    // Format-valid datetime whose fractional seconds push it past 64 chars.
+    const bloated = `2026-08-25T12:00:00.${"1".repeat(50)}Z`;
+    expect(bloated.length).toBeGreaterThan(64);
+    expect(
+      SettlementCreateSchema.safeParse({ ...settlementBase, settled_at: bloated }).success,
+    ).toBe(false);
+    // Control arm: the SAME shape within the cap parses — the rejection is
+    // the length bound's, not the datetime format's.
+    const inside = `2026-08-25T12:00:00.${"1".repeat(40)}Z`;
+    expect(inside.length).toBeLessThanOrEqual(64);
+    expect(
+      SettlementCreateSchema.safeParse({ ...settlementBase, settled_at: inside }).success,
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Descriptor slot-binding identity (PR #28 R1 — trip.test.ts precedent):
+// the slots bind the EXACT exported schema objects, not lookalikes.
+// ---------------------------------------------------------------------------
+
+describe("descriptor slot bindings are the exported schemas (identity)", () => {
+  it("body/query/response slots bind by identity", () => {
+    const e = moneyEndpoints;
+    expect(e.createExpense.body).toBe(ExpenseCreateSchema);
+    expect(e.createExpense.response).toBe(ExpenseSchema);
+    expect(e.listExpenses.query).toBe(ExpenseListQuerySchema);
+    expect(e.getExpense.response).toBe(ExpenseSchema);
+    expect(e.updateExpense.body).toBe(ExpenseUpdateSchema);
+    expect(e.updateExpense.response).toBe(ExpenseSchema);
+    expect(e.deleteExpense.response).toBe(NoContentSchema);
+    expect(e.getBalances.response).toBe(BalancesReadSchema);
+    expect(e.createSettlement.body).toBe(SettlementCreateSchema);
+    expect(e.createSettlement.response).toBe(SettlementSchema);
+    expect(e.listSettlements.query).toBe(SettlementListQuerySchema);
+    expect(e.deleteSettlement.response).toBe(NoContentSchema);
+    expect(e.createSettleRequest.body).toBe(SettleRequestCreateSchema);
+    expect(e.createSettleRequest.response).toBe(SettleRequestSchema);
+    expect(e.getSettleRequest.response).toBe(SettleRequestDetailSchema);
+    expect(e.cancelSettleRequest.response).toBe(NoContentSchema);
+    expect(e.getBudgets.response).toBe(BudgetsReadSchema);
+    expect(e.putBudget.body).toBe(BudgetPutSchema);
+    expect(e.putBudget.response).toBe(BudgetsReadSchema);
+    expect(e.getFxRate.query).toBe(FxRateQuerySchema);
+    expect(e.getFxRate.response).toBe(FxRateReadSchema);
+  });
+
+  it("paginated list responses wrap the exact item schemas", () => {
+    const itemOf = (schema: unknown): unknown =>
+      (schema as { shape: { items: { element: unknown } } }).shape.items.element;
+    expect(itemOf(moneyEndpoints.listExpenses.response)).toBe(ExpenseSchema);
+    expect(itemOf(moneyEndpoints.listSettlements.response)).toBe(SettlementSchema);
+  });
+
+  it("param schemas are shared instances per path shape and parse them", () => {
+    const e = moneyEndpoints;
+    // One instance per params shape — descriptors on the same path share it.
+    expect(e.listExpenses.params).toBe(e.createExpense.params);
+    expect(e.getBalances.params).toBe(e.createExpense.params);
+    expect(e.createSettlement.params).toBe(e.createExpense.params);
+    expect(e.listSettlements.params).toBe(e.createExpense.params);
+    expect(e.createSettleRequest.params).toBe(e.createExpense.params);
+    expect(e.getBudgets.params).toBe(e.createExpense.params);
+    expect(e.updateExpense.params).toBe(e.getExpense.params);
+    expect(e.deleteExpense.params).toBe(e.getExpense.params);
+    expect(e.cancelSettleRequest.params).toBe(e.getSettleRequest.params);
+    expect("params" in e.getFxRate).toBe(false);
+    // …and they parse their path shapes.
+    expect(e.createExpense.params?.safeParse({ tripId: U(1) }).success).toBe(true);
+    expect(e.getExpense.params?.safeParse({ tripId: U(1), expenseId: U(2) }).success).toBe(true);
+    expect(e.deleteSettlement.params?.safeParse({ tripId: U(1), settlementId: U(2) }).success).toBe(
+      true,
+    );
+    expect(e.getSettleRequest.params?.safeParse({ tripId: U(1), requestId: U(2) }).success).toBe(
+      true,
+    );
+    expect(e.putBudget.params?.safeParse({ tripId: U(1), category: "total" }).success).toBe(true);
+    expect(e.putBudget.params?.safeParse({ tripId: U(1), category: "food" }).success).toBe(true);
+    expect(e.putBudget.params?.safeParse({ tripId: U(1), category: "junk" }).success).toBe(false);
+    expect(e.getExpense.params?.safeParse({ tripId: U(1) }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wire documents that had no direct pins (PR #28 R1)
+// ---------------------------------------------------------------------------
+
+describe("wire-document pins (PR #28 R1)", () => {
+  it("BudgetPut: null clears the cap (R-money-20); floats and negatives rejected", () => {
+    expect(BudgetPutSchema.parse({ cap_cents: null })).toEqual({ cap_cents: null });
+    expect(BudgetPutSchema.parse({ cap_cents: 50000 })).toEqual({ cap_cents: 50000 });
+    expect(BudgetPutSchema.safeParse({ cap_cents: 500.5 }).success).toBe(false);
+    expect(BudgetPutSchema.safeParse({ cap_cents: -1 }).success).toBe(false);
+    expect(BudgetPutSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("SettlementListQuery: limit coerced from string and capped at 100", () => {
+    expect(SettlementListQuerySchema.parse({ cursor: "abc", limit: "25" })).toEqual({
+      cursor: "abc",
+      limit: 25,
+    });
+    expect(SettlementListQuerySchema.parse({})).toEqual({});
+    expect(SettlementListQuerySchema.safeParse({ limit: "101" }).success).toBe(false);
+    expect(SettlementListQuerySchema.safeParse({ limit: "0" }).success).toBe(false);
+  });
+
+  it("FxRateQuery: 3-letter uppercase codes only", () => {
+    expect(FxRateQuerySchema.parse({ base: "USD", quote: "VND" })).toEqual({
+      base: "USD",
+      quote: "VND",
+    });
+    expect(FxRateQuerySchema.safeParse({ base: "usd", quote: "VND" }).success).toBe(false);
+    expect(FxRateQuerySchema.safeParse({ base: "USDT", quote: "VND" }).success).toBe(false);
+    expect(FxRateQuerySchema.safeParse({ base: "USD" }).success).toBe(false);
+  });
+
+  it("SettleRequestDetail: requires a requester matching UserProfile (R-money-17)", () => {
+    const request = {
+      id: U(1),
+      trip_id: U(2),
+      from_user_id: U(3),
+      to_user_id: U(4),
+      amount_cents: 2550,
+      currency: "USD",
+      note: null,
+      status: "open",
+      resolved: false,
+      settlement_id: null,
+      created_by: U(4),
+      created_at: "2026-08-25T12:00:00Z",
+      link: "https://example.test/t/x/request/y",
+    };
+    const requester = {
+      id: U(4),
+      display_name: "Sean",
+      avatar_key: null,
+      venmo_username: "seantokuzo",
+      cashtag: null,
+      paypalme_username: null,
+      zelle_handle: null,
+      zelle_display_name: null,
+    };
+    expect(SettleRequestDetailSchema.safeParse({ ...request, requester }).success).toBe(true);
+    // The bare request (no requester) is NOT a detail document…
+    expect(SettleRequestDetailSchema.safeParse(request).success).toBe(false);
+    // …and a malformed requester fails even when the request itself is valid
+    // (control: SettleRequestSchema alone accepts the bare request).
+    expect(
+      SettleRequestDetailSchema.safeParse({ ...request, requester: { id: U(4) } }).success,
+    ).toBe(false);
+    expect(SettleRequestSchema.safeParse(request).success).toBe(true);
   });
 });

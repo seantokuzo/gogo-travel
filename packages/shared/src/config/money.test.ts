@@ -9,6 +9,31 @@ import {
 } from "./money.js";
 
 describe("minorUnitDigits (ruling ② — hand-rolled zero-decimal list)", () => {
+  it("the ruling-② list is EXACTLY these 17 codes (literal snapshot — a dropped code must go RED)", () => {
+    // PR #28 R1: the previous pin iterated the list itself (self-referential —
+    // green no matter what the list contained). This is the ruling artifact,
+    // pinned literally.
+    expect([...ZERO_DECIMAL_CURRENCIES]).toEqual([
+      "BIF",
+      "CLP",
+      "DJF",
+      "GNF",
+      "ISK",
+      "JPY",
+      "KMF",
+      "KRW",
+      "PYG",
+      "RWF",
+      "UGX",
+      "UYI",
+      "VND",
+      "VUV",
+      "XAF",
+      "XOF",
+      "XPF",
+    ]);
+  });
+
   it("zero-decimal currencies report 0; everything else 2", () => {
     for (const code of ZERO_DECIMAL_CURRENCIES) expect(minorUnitDigits(code)).toBe(0);
     for (const code of ["USD", "EUR", "GBP", "AUD", "MXN", "THB"]) {
