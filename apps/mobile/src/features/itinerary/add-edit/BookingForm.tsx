@@ -135,7 +135,9 @@ export function BookingForm({
   const [status, setStatus] = useState<BookingStatus>(booking?.status ?? "idea");
   const [priceText, setPriceText] = useState(
     booking !== undefined && booking.price_cents !== null
-      ? centsToMoneyText(booking.price_cents)
+      ? // T-9.1 rider: minor-unit-aware prefill — the stored currency (falling
+        // back to trip base, same as currencyText below) decides the shape.
+        centsToMoneyText(booking.price_cents, booking.currency ?? trip.base_currency)
       : "",
   );
   const [currencyText, setCurrencyText] = useState(
@@ -244,13 +246,16 @@ export function BookingForm({
 
     // Law #2: money enters as a plain-text amount, parsed with integer
     // string math into cents; a price requires a currency (R-ib-12).
+    // T-9.1 rider: the parse is ISO-4217 minor-unit aware — the currency
+    // field decides the accepted decimal shape (JPY "1500" → 1500).
     let cents: number | undefined;
     let currency: string | undefined;
     if (priceText.trim() !== "") {
-      const parsed = parseMoneyToCents(priceText);
+      const normalizedCurrency = currencyText.trim().toUpperCase();
+      const parsed = parseMoneyToCents(priceText, normalizedCurrency);
       if (!parsed.ok) errors["price"] = parsed.error;
       else cents = parsed.cents;
-      const currencyParsed = CurrencyCodeSchema.safeParse(currencyText.trim().toUpperCase());
+      const currencyParsed = CurrencyCodeSchema.safeParse(normalizedCurrency);
       if (!currencyParsed.success) errors["currency"] = "3-letter code, like USD.";
       else currency = currencyParsed.data;
     }

@@ -88,28 +88,52 @@ describe("buildDetails (state → wire)", () => {
   });
 });
 
-describe("money (Law #2 — integer cents, string math)", () => {
-  it("parses plain amounts into exact cents", () => {
-    expect(parseMoneyToCents("120")).toEqual({ ok: true, cents: 12000 });
-    expect(parseMoneyToCents("89.99")).toEqual({ ok: true, cents: 8999 });
-    expect(parseMoneyToCents("89,9")).toEqual({ ok: true, cents: 8990 });
-    expect(parseMoneyToCents("0.05")).toEqual({ ok: true, cents: 5 });
+describe("money (Law #2 — integer cents, string math; T-9.1 rider: shared ISO-4217 helpers)", () => {
+  it("parses plain amounts into exact cents (2-decimal behavior unchanged by the rider)", () => {
+    expect(parseMoneyToCents("120", "USD")).toEqual({ ok: true, cents: 12000 });
+    expect(parseMoneyToCents("89.99", "USD")).toEqual({ ok: true, cents: 8999 });
+    expect(parseMoneyToCents("89,9", "USD")).toEqual({ ok: true, cents: 8990 });
+    expect(parseMoneyToCents("0.05", "USD")).toEqual({ ok: true, cents: 5 });
     // The classic float trap: 0.1 + 0.2 territory stays exact via strings.
-    expect(parseMoneyToCents("0.29")).toEqual({ ok: true, cents: 29 });
+    expect(parseMoneyToCents("0.29", "USD")).toEqual({ ok: true, cents: 29 });
   });
 
-  it("rejects junk (negatives, letters, three decimals, thousands separators)", () => {
-    for (const bad of ["-5", "abc", "1.234", "1,234.56", "12.", ""]) {
-      expect(parseMoneyToCents(bad).ok).toBe(false);
+  it("zero-decimal currencies parse whole text AS the minor units (the rider's behavior change)", () => {
+    expect(parseMoneyToCents("1500", "JPY")).toEqual({ ok: true, cents: 1500 });
+    // Control arm: the SAME text under a 2dp currency still scales ×100 —
+    // the split is the currency's, not a parser-wide change.
+    expect(parseMoneyToCents("1500", "USD")).toEqual({ ok: true, cents: 150000 });
+  });
+
+  it("zero-decimal currencies reject decimal input (control: identical text valid under USD)", () => {
+    for (const text of ["1500.5", "1500,5"]) {
+      expect(parseMoneyToCents(text, "JPY").ok).toBe(false);
+      expect(parseMoneyToCents(text, "USD").ok).toBe(true);
     }
   });
 
-  it("centsToMoneyText round-trips", () => {
-    expect(centsToMoneyText(12000)).toBe("120");
-    expect(centsToMoneyText(8999)).toBe("89.99");
-    expect(centsToMoneyText(5)).toBe("0.05");
+  it("rejects junk for any currency (negatives, letters, three decimals, thousands separators)", () => {
+    for (const bad of ["-5", "abc", "1.234", "1,234.56", "12.", ""]) {
+      expect(parseMoneyToCents(bad, "USD").ok).toBe(false);
+      expect(parseMoneyToCents(bad, "JPY").ok).toBe(false);
+    }
+  });
+
+  it("centsToMoneyText keeps the pre-rider 2dp display shape EXACTLY and round-trips", () => {
+    expect(centsToMoneyText(12000, "USD")).toBe("120");
+    expect(centsToMoneyText(8999, "USD")).toBe("89.99");
+    expect(centsToMoneyText(5, "USD")).toBe("0.05");
     for (const cents of [12000, 8999, 5, 100, 1]) {
-      const parsed = parseMoneyToCents(centsToMoneyText(cents));
+      const parsed = parseMoneyToCents(centsToMoneyText(cents, "USD"), "USD");
+      expect(parsed).toEqual({ ok: true, cents });
+    }
+  });
+
+  it("centsToMoneyText renders zero-decimal currencies whole and round-trips", () => {
+    expect(centsToMoneyText(1500, "JPY")).toBe("1500");
+    expect(centsToMoneyText(2550, "JPY")).toBe("2550");
+    for (const cents of [1500, 2550, 1, 999999]) {
+      const parsed = parseMoneyToCents(centsToMoneyText(cents, "JPY"), "JPY");
       expect(parsed).toEqual({ ok: true, cents });
     }
   });
