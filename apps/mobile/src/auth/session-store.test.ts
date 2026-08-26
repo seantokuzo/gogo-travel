@@ -17,6 +17,7 @@ import {
   readDeeplinkOutRecord,
   recordDeeplinkOut,
 } from "@/features/deeplinks/return-prompt-store";
+import { recallMoneySegment, rememberMoneySegment } from "@/features/money/segment-memory";
 import { readLastViewedTrip, stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 
@@ -300,9 +301,12 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
       tripId: "trip-x",
       timestamp: Date.now(),
     });
+    // T-9.5 R1 (security): money-segment memory is the same R-nav-4 class.
+    rememberMoneySegment("trip-x", "balances");
     expect(recallTab("trip-x")).toBe("map");
     expect(readLastViewedTrip()?.tripId).toBe("trip-x");
     expect(readDeeplinkOutRecord()).not.toBeNull();
+    expect(recallMoneySegment("trip-x")).toBe("balances");
 
     // No access token → the best-effort /auth/logout is skipped (that branch
     // is slice-tested above); this test is about the onSignedOut wiring.
@@ -314,6 +318,8 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
     // T-7.8 R1 sign-out hygiene: no "Did you book it?" prompt can cross
     // accounts for the previous account's trip.
     expect(readDeeplinkOutRecord()).toBeNull();
+    // T-9.5 R1: the next account's money tab re-defaults to budget.
+    expect(recallMoneySegment("trip-x")).toBeUndefined();
     expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
   });
 });
