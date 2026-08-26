@@ -4,6 +4,7 @@ import { bodyLimit } from "hono/body-limit";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
+import { createExpensesRouter, type ExpensesRouterDeps } from "./expenses/routes.js";
 import { createItineraryRouter, type ItineraryRouterDeps } from "./itinerary/routes.js";
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
 import { createSavedPlacesRouter } from "./places/saved-places-routes.js";
@@ -90,6 +91,13 @@ export interface CreateAppOptions {
    * wiring bug.
    */
   travelLegs?: TravelLegsRouterDeps;
+  /**
+   * Expenses-surface dependencies (T-9.2 expense service + router). Same
+   * pairing rule: every route is Auth: Required AND sits behind the
+   * trip-membership gate (R-money-25) — expenses-without-auth is a wiring
+   * bug. (T-9.3's settlements surface mounts with T-9.4, not here.)
+   */
+  expenses?: ExpensesRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -110,6 +118,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.travelLegs && !options.auth) {
     throw new Error("travel-legs router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.expenses && !options.auth) {
+    throw new Error("expenses router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -183,6 +194,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.travelLegs) {
     app.route(API_BASE, createTravelLegsRouter(options.travelLegs));
+  }
+
+  if (options.expenses) {
+    app.route(API_BASE, createExpensesRouter(options.expenses));
   }
 
   return app;

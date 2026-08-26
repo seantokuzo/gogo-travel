@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
+import { buildExpensesDeps } from "./expenses/wire.js";
 import { buildItineraryDeps } from "./itinerary/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
 import { buildTravelLegs } from "./travel-legs/wire.js";
@@ -74,6 +75,9 @@ if (authDeps) {
     itinerary: buildItineraryDeps(travelLegs.marker),
     // Refresh-legs endpoint (T-7.3) + the staleness sweep below.
     travelLegs: travelLegs.routerDeps,
+    // Expenses CRUD + FX validation (T-9.2 / MON-2). Settlements (T-9.3)
+    // mount with T-9.4's wiring closer — deliberately NOT pre-wired here.
+    expenses: buildExpensesDeps(),
   };
   travelLegs.startStalenessJob();
 }
