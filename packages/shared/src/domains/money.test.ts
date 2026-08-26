@@ -1,15 +1,24 @@
 import { describe, expect, it } from "vitest";
+import { descriptorKey } from "../api/descriptor.js";
 import {
   allocateProportional,
+  BalancesReadSchema,
+  BudgetCategorySegmentSchema,
+  BudgetsReadSchema,
   computeBalances,
   computeShares,
   ExpenseCreateSchema,
+  ExpenseListQuerySchema,
   ExpenseUpdateSchema,
+  FxRateReadSchema,
   FxRateSchema,
+  moneyEndpoints,
   SettlementCreateSchema,
   simplifyDebts,
   type ExpenseForBalance,
   type MemberNet,
+  type ShareAllocation,
+  type SplitSpec,
 } from "./money.js";
 
 const U = (n: number): string => `0000000${n}-0000-4000-8000-00000000000${n}`;
@@ -797,6 +806,279 @@ describe("SettlementCreate", () => {
         currency: "USD",
         method: "cash",
       }).success,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Property tests (MON-1 cross-cutting, money spec §4): exact-sum invariant,
+// permutation-invariance, determinism — seeded sweep over all four types.
+// ---------------------------------------------------------------------------
+
+/** mulberry32 — tiny deterministic PRNG (same harness as the simplifyDebts sweep). */
+const mulberry32 = (seed: number) => (): number => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
+/** Mixed casing on purpose — exercises the canonical-LOWERCASE ordering. */
+const USER_POOL = [
+  "Alice",
+  "bob",
+  "CARA",
+  "dave",
+  "Erin",
+  "frank",
+  "GRACE",
+  "heidi",
+  "Ivan",
+  "judy",
+] as const;
+
+const shuffled = <T>(items: readonly T[], rand: () => number): T[] => {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1));
+    [out[i], out[j]] = [out[j] as T, out[i] as T];
+  }
+  return out;
+};
+
+/** n-1 random cuts in [0, total] → n non-negative integers summing to total. */
+const partition = (total: number, n: number, rand: () => number): number[] => {
+  const cuts = Array.from({ length: n - 1 }, () => Math.floor(rand() * (total + 1))).sort(
+    (a, b) => a - b,
+  );
+  const parts: number[] = [];
+  let prev = 0;
+  for (const cut of [...cuts, total]) {
+    parts.push(cut - prev);
+    prev = cut;
+  }
+  return parts;
+};
+
+/** Same split, participants reshuffled — the permutation-invariance probe. */
+const permuted = (split: SplitSpec, rand: () => number): SplitSpec => {
+  switch (split.type) {
+    case "equal":
+      return { type: "equal", participants: shuffled(split.participants, rand) };
+    case "percent":
+      return { type: "percent", participants: shuffled(split.participants, rand) };
+    case "shares":
+      return { type: "shares", participants: shuffled(split.participants, rand) };
+    case "exact":
+      return { type: "exact", participants: shuffled(split.participants, rand) };
+  }
+};
+
+const expectCanonicalInvariants = (
+  shares: ShareAllocation[],
+  amount: number,
+  n: number,
+): void => {
+  expect(sum(shares)).toBe(amount);
+  expect(shares).toHaveLength(n);
+  for (const s of shares) {
+    expect(Number.isSafeInteger(s.share_cents)).toBe(true);
+    expect(s.share_cents).toBeGreaterThanOrEqual(0);
+  }
+  const ids = shares.map((s) => s.user_id.toLowerCase());
+  expect(ids).toEqual([...ids].sort());
+};
+
+describe("property: computeShares (seeded sweep × all four split types)", () => {
+  it("exact-sum, canonical order, determinism, permutation-invariance over 150 randomized cases each", () => {
+    const rand = mulberry32(0x9151);
+    for (let run = 0; run < 150; run += 1) {
+      const amount = 1 + Math.floor(rand() * 10_000_000);
+      const n = 1 + Math.floor(rand() * USER_POOL.length);
+      const users = shuffled(USER_POOL, rand).slice(0, n);
+      const bpParts = partition(10_000, n, rand);
+      const exactParts = partition(amount, n, rand);
+      const cases: SplitSpec[] = [
+        { type: "equal", participants: users },
+        {
+          type: "percent",
+          participants: users.map((u, i) => ({ user_id: u, percent_bp: bpParts[i] as number })),
+        },
+        {
+          type: "shares",
+          participants: users.map((u) => ({ user_id: u, weight: 1 + Math.floor(rand() * 20) })),
+        },
+        {
+          type: "exact",
+          participants: users.map((u, i) => ({ user_id: u, share_cents: exactParts[i] as number })),
+        },
+      ];
+      for (const split of cases) {
+        const shares = computeShares(amount, split);
+        expectCanonicalInvariants(shares, amount, n);
+        // Determinism: identical inputs ⇒ identical output.
+        expect(computeShares(amount, split)).toEqual(shares);
+        // Permutation-invariance: shuffled participant order ⇒ IDENTICAL
+        // shares, same rows, same order.
+        expect(computeShares(amount, permuted(split, rand))).toEqual(shares);
+      }
+    }
+  });
+
+  it("equal split: the +1 remainder cents land on the FIRST r users in canonical order (sweep)", () => {
+    const rand = mulberry32(0xe9a1);
+    for (let run = 0; run < 100; run += 1) {
+      const amount = 1 + Math.floor(rand() * 1_000_000);
+      const n = 1 + Math.floor(rand() * USER_POOL.length);
+      const users = shuffled(USER_POOL, rand).slice(0, n);
+      const shares = computeShares(amount, { type: "equal", participants: users });
+      const base = Math.floor(amount / n);
+      const r = amount - base * n;
+      shares.forEach((share, index) => {
+        expect(share.share_cents).toBe(index < r ? base + 1 : base);
+      });
+    }
+  });
+});
+
+describe("property: allocateProportional (base-allocation twin)", () => {
+  it("exact-sum + determinism + permutation-invariance over randomized weight vectors", () => {
+    const rand = mulberry32(0xa110);
+    for (let run = 0; run < 150; run += 1) {
+      const total = Math.floor(rand() * 10_000_000);
+      const n = 1 + Math.floor(rand() * USER_POOL.length);
+      const users = shuffled(USER_POOL, rand).slice(0, n);
+      // Zero weights are legal here; guarantee at least one positive.
+      const weights = users.map((u, i) => ({
+        user_id: u,
+        weight: i === 0 ? 1 + Math.floor(rand() * 50) : Math.floor(rand() * 50),
+      }));
+      const shares = allocateProportional(total, weights);
+      expectCanonicalInvariants(shares, total, n);
+      expect(allocateProportional(total, weights)).toEqual(shares);
+      expect(allocateProportional(total, shuffled(weights, rand))).toEqual(shares);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Endpoint descriptors + wire documents (money spec §3.1/§3.2; contracts §3.6)
+// ---------------------------------------------------------------------------
+
+describe("money endpoint descriptors (§3.1 mirror)", () => {
+  it("mirror the §3.1 routes exactly (E1–E5, B1, S1–S3, Q1–Q3, G1–G2, fx)", () => {
+    expect(Object.values(moneyEndpoints).map((d) => `${d.method} ${d.path}`)).toEqual([
+      "POST /trips/:tripId/expenses",
+      "GET /trips/:tripId/expenses",
+      "GET /trips/:tripId/expenses/:expenseId",
+      "PATCH /trips/:tripId/expenses/:expenseId",
+      "DELETE /trips/:tripId/expenses/:expenseId",
+      "GET /trips/:tripId/balances",
+      "POST /trips/:tripId/settlements",
+      "GET /trips/:tripId/settlements",
+      "DELETE /trips/:tripId/settlements/:settlementId",
+      "POST /trips/:tripId/settle-requests",
+      "GET /trips/:tripId/settle-requests/:requestId",
+      "DELETE /trips/:tripId/settle-requests/:requestId",
+      "GET /trips/:tripId/budgets",
+      "PUT /trips/:tripId/budgets/:category",
+      "GET /fx/rate",
+    ]);
+  });
+
+  it("descriptor keys are unique (offline-queue + query-key addressing)", () => {
+    const keys = Object.values(moneyEndpoints).map((d) => descriptorKey(d));
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("budget :category segment: all six categories AND the `total` pseudo-path parse; junk rejected", () => {
+    for (const seg of [
+      "lodging",
+      "transport",
+      "food",
+      "activities",
+      "shopping",
+      "other",
+      "total",
+    ]) {
+      expect(BudgetCategorySegmentSchema.safeParse(seg).success).toBe(true);
+    }
+    expect(BudgetCategorySegmentSchema.safeParse("overall").success).toBe(false);
+    expect(BudgetCategorySegmentSchema.safeParse("").success).toBe(false);
+  });
+
+  it("expense list query: limit coerced + capped, member must be a Uuid, dates ISO", () => {
+    const good = ExpenseListQuerySchema.parse({
+      cursor: "abc",
+      limit: "25",
+      category: "food",
+      member: U(1),
+      from: "2026-08-01",
+      to: "2026-08-31",
+    });
+    expect(good.limit).toBe(25);
+    expect(ExpenseListQuerySchema.parse({})).toEqual({});
+    expect(ExpenseListQuerySchema.safeParse({ limit: "999" }).success).toBe(false);
+    expect(ExpenseListQuerySchema.safeParse({ member: "sean" }).success).toBe(false);
+    expect(ExpenseListQuerySchema.safeParse({ from: "08/01/2026" }).success).toBe(false);
+  });
+
+  it("fx rate document: rate is a decimal STRING — a float rate fails (Law #2)", () => {
+    const base = { base: "USD", quote: "VND", as_of: "2026-08-25" };
+    expect(FxRateReadSchema.safeParse({ ...base, rate: "24512.5" }).success).toBe(true);
+    expect(FxRateReadSchema.safeParse({ ...base, rate: "0.00004079" }).success).toBe(true);
+    expect(FxRateReadSchema.safeParse({ ...base, rate: 24512.5 }).success).toBe(false);
+    expect(FxRateReadSchema.safeParse({ ...base, rate: "0" }).success).toBe(false);
+    expect(
+      FxRateReadSchema.safeParse({ base: "usd", quote: "VND", as_of: "2026-08-25", rate: "1.5" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("balances document: signed member nets parse; float nets and non-positive transfers fail", () => {
+    const doc = {
+      currency: "USD",
+      members: [
+        { user_id: U(1), net_cents: -450 },
+        { user_id: U(2), net_cents: 450 },
+      ],
+      pairwise: [{ trip_id: U(9), user_id: U(1), counterparty_id: U(2), net_cents: -450 }],
+      simplified: [{ from_user_id: U(1), to_user_id: U(2), amount_cents: 450 }],
+    };
+    expect(BalancesReadSchema.safeParse(doc).success).toBe(true);
+    expect(
+      BalancesReadSchema.safeParse({
+        ...doc,
+        members: [{ user_id: U(1), net_cents: 4.5 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      BalancesReadSchema.safeParse({
+        ...doc,
+        simplified: [{ from_user_id: U(1), to_user_id: U(2), amount_cents: 0 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("budgets document: full-taxonomy fixture parses; float/negative caps fail", () => {
+    const item = {
+      category: "food",
+      cap_cents: 50000,
+      ai_estimate_cents: null,
+      ai_estimated_at: null,
+      currency: "USD",
+      spent_cents: 12345,
+    };
+    const doc = {
+      items: [item],
+      total: { cap_cents: null, spent_cents: 12345, ai_estimate_cents: null },
+    };
+    expect(BudgetsReadSchema.safeParse(doc).success).toBe(true);
+    expect(
+      BudgetsReadSchema.safeParse({ ...doc, items: [{ ...item, cap_cents: 500.5 }] }).success,
+    ).toBe(false);
+    expect(
+      BudgetsReadSchema.safeParse({ ...doc, items: [{ ...item, spent_cents: -1 }] }).success,
     ).toBe(false);
   });
 });

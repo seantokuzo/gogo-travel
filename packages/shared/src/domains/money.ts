@@ -7,7 +7,14 @@
  * math with exact rational remainder comparison, never floating point.
  */
 import { z } from "zod";
-import { ExpenseCategorySchema, RequestStatusSchema, SettlementMethodSchema } from "../enums.js";
+import type { EndpointDescriptor } from "../api/descriptor.js";
+import { CursorQuerySchema, NoContentSchema, paginatedSchema } from "../api/envelope.js";
+import {
+  EXPENSE_CATEGORIES,
+  ExpenseCategorySchema,
+  RequestStatusSchema,
+  SettlementMethodSchema,
+} from "../enums.js";
 import {
   CentsSchema,
   CurrencyCodeSchema,
@@ -16,6 +23,7 @@ import {
   PositiveCentsSchema,
   UuidSchema,
 } from "../scalars.js";
+import { UserProfileSchema } from "./user.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -640,3 +648,258 @@ export function simplifyDebts(members: readonly MemberNet[]): SettlementTransfer
       canonicalCompare(a.to_user_id, b.to_user_id),
   );
 }
+
+// ---------------------------------------------------------------------------
+// List queries + read documents (money spec §3.2) — T-9.1 / MON-1
+// ---------------------------------------------------------------------------
+
+/**
+ * E2 query (money spec §3.2): standard cursor round-trip + coerced,
+ * server-capped `limit` (envelope §3.5 convention) + filters. `member`
+ * matches payer OR share-holder; `from`/`to` bound `spent_at`.
+ */
+export const ExpenseListQuerySchema = CursorQuerySchema.extend({
+  category: ExpenseCategorySchema.optional(),
+  member: UuidSchema.optional(),
+  from: ISODateSchema.optional(),
+  to: ISODateSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+export type ExpenseListQuery = z.infer<typeof ExpenseListQuerySchema>;
+
+/** S2 query: `cursor?`, `limit?` only (money spec §3.2). */
+export const SettlementListQuerySchema = CursorQuerySchema.extend({
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+export type SettlementListQuery = z.infer<typeof SettlementListQuerySchema>;
+
+/**
+ * B1 response document (money spec §3.2): member nets are explicitly SIGNED
+ * (+ = is owed; Σ = 0 server-enforced), `pairwise` is one `Balance` row per
+ * unordered pair with zero-net pairs omitted, and `simplified` is always
+ * returned — the pairwise/simplified toggle is client-side (R-money-10).
+ */
+export const BalancesReadSchema = z.object({
+  /** Trip base currency. */
+  currency: CurrencyCodeSchema,
+  members: z.array(z.object({ user_id: UuidSchema, net_cents: z.int() })),
+  pairwise: z.array(BalanceSchema),
+  simplified: z.array(
+    z.object({
+      from_user_id: UuidSchema,
+      to_user_id: UuidSchema,
+      amount_cents: PositiveCentsSchema,
+    }),
+  ),
+});
+export type BalancesRead = z.infer<typeof BalancesReadSchema>;
+
+/**
+ * Q2 response: the request plus the requester's `UserProfile` — display
+ * name, avatar, payment handles; deliberately member-visible and deliberately
+ * NOTHING more (R-money-17 minimum disclosure).
+ */
+export const SettleRequestDetailSchema = SettleRequestSchema.extend({
+  requester: UserProfileSchema,
+});
+export type SettleRequestDetail = z.infer<typeof SettleRequestDetailSchema>;
+
+/**
+ * G1 item: one row per `expense_category` — absent DB rows are synthesized
+ * with nulls so the client always renders the full taxonomy (R-money-20);
+ * `spent_cents` is computed on read (Σ effective base per category).
+ */
+export const BudgetItemReadSchema = z.object({
+  category: ExpenseCategorySchema,
+  cap_cents: CentsSchema.nullable(),
+  ai_estimate_cents: CentsSchema.nullable(),
+  ai_estimated_at: ISODateTimeSchema.nullable(),
+  currency: CurrencyCodeSchema,
+  spent_cents: CentsSchema,
+});
+export type BudgetItemRead = z.infer<typeof BudgetItemReadSchema>;
+
+/** G1 response: full-taxonomy items + the optional overall trip cap block. */
+export const BudgetsReadSchema = z.object({
+  items: z.array(BudgetItemReadSchema),
+  total: z.object({
+    cap_cents: CentsSchema.nullable(),
+    spent_cents: CentsSchema,
+    ai_estimate_cents: CentsSchema.nullable(),
+  }),
+});
+export type BudgetsRead = z.infer<typeof BudgetsReadSchema>;
+
+/** G2 body: `null` clears the cap, preserving any AI estimate (R-money-20). */
+export const BudgetPutSchema = z.object({
+  cap_cents: CentsSchema.nullable(),
+});
+export type BudgetPut = z.infer<typeof BudgetPutSchema>;
+
+/**
+ * G2's `:category` path segment: a real `expense_category` OR the `total`
+ * pseudo-category — the overall trip cap rides the same verb/path
+ * (R-money-20, resolved Gate 2). Derived from the canonical tuple so the
+ * two can never drift.
+ */
+export const BudgetCategorySegmentSchema = z.enum([...EXPENSE_CATEGORIES, "total"] as const);
+export type BudgetCategorySegment = z.infer<typeof BudgetCategorySegmentSchema>;
+
+/**
+ * `GET /fx/rate` (P-9 ruling ③, 2026-08-25): keyless Frankfurter v2 behind a
+ * thin server proxy with a per-day cache — the client fetches OUR endpoint,
+ * no key anywhere; provider-swappable seam (P-10 §3.7 reuses it). The rate
+ * crosses the wire as a decimal STRING (`FxRate` — Law #2), ready to be
+ * captured verbatim into `expenses.fx_rate` at entry (R-money-6).
+ */
+export const FxRateQuerySchema = z.object({
+  base: CurrencyCodeSchema,
+  quote: CurrencyCodeSchema,
+});
+export type FxRateQuery = z.infer<typeof FxRateQuerySchema>;
+
+export const FxRateReadSchema = z.object({
+  base: CurrencyCodeSchema,
+  quote: CurrencyCodeSchema,
+  rate: FxRateSchema,
+  /** The provider's rate date (day-cache granularity). */
+  as_of: ISODateSchema,
+});
+export type FxRateRead = z.infer<typeof FxRateReadSchema>;
+
+// ---------------------------------------------------------------------------
+// Endpoint descriptors (money spec §3.1; contracts spec §3.6)
+// ---------------------------------------------------------------------------
+
+const tripIdParams = z.object({ tripId: UuidSchema });
+const expenseParams = z.object({ tripId: UuidSchema, expenseId: UuidSchema });
+const settlementParams = z.object({ tripId: UuidSchema, settlementId: UuidSchema });
+const requestParams = z.object({ tripId: UuidSchema, requestId: UuidSchema });
+const budgetParams = z.object({ tripId: UuidSchema, category: BudgetCategorySegmentSchema });
+
+/**
+ * Machine-readable mirror of the §3.1 money routes (MON-2..MON-6 implement
+ * them; the FX proxy is T-9.4's). All trip-scoped routes run behind
+ * `requireAuth` + the membership gate — a non-member's 404 is
+ * indistinguishable from an absent trip (R-money-25); write-role rules are
+ * §3.8's, server-enforced. The A1 AI-estimate descriptor deliberately lands
+ * with MON-7 (P-10 platform), not here.
+ */
+export const moneyEndpoints = {
+  /** E1: expense + resolved shares, atomic (R-money-1/2). 201. */
+  createExpense: {
+    method: "POST",
+    path: "/trips/:tripId/expenses",
+    params: tripIdParams,
+    body: ExpenseCreateSchema,
+    response: ExpenseSchema,
+  },
+  /** E2: newest first (`spent_at DESC, created_at DESC`). */
+  listExpenses: {
+    method: "GET",
+    path: "/trips/:tripId/expenses",
+    params: tripIdParams,
+    query: ExpenseListQuerySchema,
+    response: paginatedSchema(ExpenseSchema),
+  },
+  /** E3: detail + shares. */
+  getExpense: {
+    method: "GET",
+    path: "/trips/:tripId/expenses/:expenseId",
+    params: expenseParams,
+    response: ExpenseSchema,
+  },
+  /** E4: coupling rule in `ExpenseUpdate`; accepted shares REPLACE the set. */
+  updateExpense: {
+    method: "PATCH",
+    path: "/trips/:tripId/expenses/:expenseId",
+    params: expenseParams,
+    body: ExpenseUpdateSchema,
+    response: ExpenseSchema,
+  },
+  /** E5: SOFT delete — audit trail stays (R-money-27). 204. */
+  deleteExpense: {
+    method: "DELETE",
+    path: "/trips/:tripId/expenses/:expenseId",
+    params: expenseParams,
+    response: NoContentSchema,
+  },
+  /** B1: computed on read; both pairwise and simplified, always. */
+  getBalances: {
+    method: "GET",
+    path: "/trips/:tripId/balances",
+    params: tripIdParams,
+    response: BalancesReadSchema,
+  },
+  /** S1: record-only ledger entry; party-only (R-money-12). 201. */
+  createSettlement: {
+    method: "POST",
+    path: "/trips/:tripId/settlements",
+    params: tripIdParams,
+    body: SettlementCreateSchema,
+    response: SettlementSchema,
+  },
+  /** S2: `settled_at DESC`. */
+  listSettlements: {
+    method: "GET",
+    path: "/trips/:tripId/settlements",
+    params: tripIdParams,
+    query: SettlementListQuerySchema,
+    response: paginatedSchema(SettlementSchema),
+  },
+  /** S3: recorder-only ≤ 24 h hard delete; linked request reopens (R-money-15). 204. */
+  deleteSettlement: {
+    method: "DELETE",
+    path: "/trips/:tripId/settlements/:settlementId",
+    params: settlementParams,
+    response: NoContentSchema,
+  },
+  /** Q1: creditor-only; amount defaults to the live pairwise debt (R-money-16). 201. */
+  createSettleRequest: {
+    method: "POST",
+    path: "/trips/:tripId/settle-requests",
+    params: tripIdParams,
+    body: SettleRequestCreateSchema,
+    response: SettleRequestSchema,
+  },
+  /** Q2: deep-link data; R-money-17 minimum disclosure. */
+  getSettleRequest: {
+    method: "GET",
+    path: "/trips/:tripId/settle-requests/:requestId",
+    params: requestParams,
+    response: SettleRequestDetailSchema,
+  },
+  /** Q3: soft cancel (`status = 'cancelled'`) — the link keeps rendering. 204. */
+  cancelSettleRequest: {
+    method: "DELETE",
+    path: "/trips/:tripId/settle-requests/:requestId",
+    params: requestParams,
+    response: NoContentSchema,
+  },
+  /** G1: full-taxonomy rows + computed spend + total block. */
+  getBudgets: {
+    method: "GET",
+    path: "/trips/:tripId/budgets",
+    params: tripIdParams,
+    response: BudgetsReadSchema,
+  },
+  /**
+   * G2: upsert a category cap — or the overall trip cap via the `total`
+   * pseudo-category segment. Returns the recomputed G1 document (uniform
+   * across real categories and `total`, which has no `budgets` row).
+   */
+  putBudget: {
+    method: "PUT",
+    path: "/trips/:tripId/budgets/:category",
+    params: budgetParams,
+    body: BudgetPutSchema,
+    response: BudgetsReadSchema,
+  },
+  /** Ruling ③ FX proxy (T-9.4 implements) — global, not trip-scoped. */
+  getFxRate: {
+    method: "GET",
+    path: "/fx/rate",
+    query: FxRateQuerySchema,
+    response: FxRateReadSchema,
+  },
+} as const satisfies Record<string, EndpointDescriptor>;
