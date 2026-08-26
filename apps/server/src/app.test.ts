@@ -4,9 +4,12 @@ import { describe, expect, it } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
 import type { AuthRouterDeps } from "./auth/routes.js";
 import type { BookingsRouterDeps } from "./bookings/routes.js";
+import type { BudgetsRouterDeps } from "./budgets/routes.js";
 import type { DbClient } from "./db/create-user.js";
+import type { FxRouterDeps } from "./fx/routes.js";
 import type { ItineraryRouterDeps } from "./itinerary/routes.js";
 import type { PlacesRouterDeps } from "./places/routes.js";
+import type { SettlementsRouterDeps } from "./settlements/routes.js";
 import type { TravelLegsRouterDeps } from "./travel-legs/routes.js";
 import type { TripsRouterDeps } from "./trips/routes.js";
 import type { UsersRouterDeps } from "./users/routes.js";
@@ -128,6 +131,50 @@ describe("createApp wiring guard", () => {
     let error: unknown;
     try {
       createApp({ travelLegs: {} as TravelLegsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the settlements router is mounted without auth deps", () => {
+    // Same pairing rule (T-9.3/T-9.4): balances, settlements AND
+    // settle-requests are Auth: Required behind the trip-membership gate
+    // (R-money-25) — a money surface must never be silently unguarded.
+    let error: unknown;
+    try {
+      createApp({ settlements: {} as SettlementsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the budgets router is mounted without auth deps", () => {
+    // Same pairing rule (T-9.4): G1/G2 are Auth: Required behind the
+    // trip-membership gate (R-money-25/26).
+    let error: unknown;
+    try {
+      createApp({ budgets: {} as BudgetsRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the fx router is mounted without auth deps", () => {
+    // The descriptor's JSDoc pin (T-9.1 R1 security): GET /fx/rate must
+    // never be an unauthenticated open proxy — fx-without-auth is a wiring
+    // bug exactly like every trip-scoped surface.
+    let error: unknown;
+    try {
+      createApp({ fx: {} as FxRouterDeps });
     } catch (e) {
       error = e;
     }
