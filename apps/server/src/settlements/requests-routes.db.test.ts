@@ -445,6 +445,62 @@ describe.skipIf(!dockerAvailable)("T-9.4 settle-requests routes (integration)", 
     expect(detail.settlement_id).toBeNull();
   });
 
+  it("Q2 [R1 blocking]: PARTIAL settle-through discriminates the debt-only resolved rule — status 'settled' with resolved FALSE", async () => {
+    // The reviewer's surviving mutant: `resolved = status !== 'open' || debt <= 0`
+    // agreed with the pinned rule everywhere the suite previously looked.
+    // [I-9] (a linked settlement may carry ANY amount) makes the
+    // discriminating state reachable: settle 1000 of a 3000 debt THROUGH the
+    // request → status flips 'settled' but 2000 remains outstanding, so the
+    // debt-only [I-1] rule must read resolved FALSE while the status-OR
+    // mutant reads true.
+    const creditor = await seedUserWithToken();
+    const debtor = await seedUserWithToken();
+    const trip = await createTripVia(creditor.accessToken);
+    await addMember(trip.id, debtor.userId, "editor");
+    await seedDebt(trip.id, creditor.userId, debtor.userId, 3000);
+
+    const created = SettleRequestSchema.parse(
+      await (
+        await postRequest(trip.id, creditor.accessToken, { from_user_id: debtor.userId })
+      ).json(),
+    );
+    expect(created.amount_cents).toBe(3000);
+
+    const settle = await postSettlement(trip.id, debtor.accessToken, {
+      from_user_id: debtor.userId,
+      to_user_id: creditor.userId,
+      amount_cents: 1000, // partial — [I-9]: no amount constraint on a linked settlement
+      currency: "USD",
+      method: "venmo",
+      request_id: created.id,
+    });
+    expect(settle.status).toBe(201);
+
+    const detail = SettleRequestDetailSchema.parse(
+      await (await getRequest(trip.id, created.id, creditor.accessToken)).json(),
+    );
+    expect(detail.status).toBe("settled");
+    expect(detail.settlement_id).not.toBeNull();
+    expect(detail.resolved).toBe(false); // 2000 still outstanding — debt-only rule
+  });
+
+  it("Q1 [I-2]: an explicit amount BELOW the outstanding debt is taken verbatim, not defaulted", async () => {
+    const creditor = await seedUserWithToken();
+    const debtor = await seedUserWithToken();
+    const trip = await createTripVia(creditor.accessToken);
+    await addMember(trip.id, debtor.userId, "editor");
+    await seedDebt(trip.id, creditor.userId, debtor.userId, 4321);
+
+    const res = await postRequest(trip.id, creditor.accessToken, {
+      from_user_id: debtor.userId,
+      amount_cents: 1000,
+    });
+    expect(res.status).toBe(201);
+    const body = SettleRequestSchema.parse(await res.json());
+    expect(body.amount_cents).toBe(1000); // explicit wins over the 4321 default
+    expect(body.resolved).toBe(false); // debt outstanding — [I-1]
+  });
+
   it("Q2: a settlement recorded THROUGH the request reads status 'settled' + settlement_id (R-money-18)", async () => {
     const creditor = await seedUserWithToken();
     const debtor = await seedUserWithToken();

@@ -50,6 +50,11 @@ describe("rateNumberToDecimalString (Law #2 rendering)", () => {
     expect(rateNumberToDecimalString(3.0)).toBe("3");
     expect(rateNumberToDecimalString(0.00000041)).toBe("0.00000041");
     expect(rateNumberToDecimalString(0.12345678)).toBe("0.12345678");
+    // >8 fraction digits round at the 8th (the toFixed(8) boundary — R1
+    // advisory: a toFixed(10) mutant emitted "0.1234567890", which the shared
+    // FxRateSchema rejects; this pin makes that mutant RED here, not just
+    // null-at-the-schema).
+    expect(rateNumberToDecimalString(0.123456789)).toBe("0.12345679");
   });
 
   it("rejects non-positive, non-finite, and schema-overflowing values", () => {

@@ -413,6 +413,10 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
       await getBudgets("not-a-uuid", owner.accessToken),
       await putBudget(trip.id, "food", stranger.accessToken, { cap_cents: 1 }),
       await putBudget(NONEXISTENT_UUID, "food", owner.accessToken, { cap_cents: 1 }),
+      // R1 advisory pin: the unknown-category 400 sits AFTER the gate — a
+      // stranger probing an invalid category on a REAL trip must get the same
+      // byte-identical 404, never the distinguishable category door.
+      await putBudget(trip.id, "souvenirs", stranger.accessToken, { cap_cents: 1 }),
     ]);
   });
 
