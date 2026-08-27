@@ -25,6 +25,7 @@ import { apiClient, ApiRequestError } from "@/auth";
 import { localTodayISO } from "@/navigation/trip-defaults";
 
 import { CREATED_INVITE_ID, CREATED_INVITE_URL, TEST_INVITE_ID, TEST_TRIP_ID } from "./ids";
+import { emptyBalancesRead, emptyBudgetsRead } from "./money-fixtures";
 import { TEST_USER } from "./session-fixtures";
 
 /** Day arithmetic on ISO dates (UTC math — no tz drift for day offsets). */
@@ -313,6 +314,12 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
         // without retry noise; real pin sets ride `overrides`.
         case "GET /trips/:tripId/saved-places":
           return Promise.resolve({ items: [], nextCursor: null });
+        // Money tab (T-9.5) — same empty-universe posture; real money
+        // universes ride `overrides` (money-fixtures.ts).
+        case "GET /trips/:tripId/balances":
+          return Promise.resolve(emptyBalancesRead());
+        case "GET /trips/:tripId/budgets":
+          return Promise.resolve(emptyBudgetsRead());
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:

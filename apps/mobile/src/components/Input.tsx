@@ -30,6 +30,14 @@ export interface InputProps {
   keyboardType?: KeyboardTypeOptions;
   autoComplete?: TextInputProps["autoComplete"];
   returnKeyType?: ReturnKeyTypeOptions;
+  /**
+   * Commit seam for inline-edit fields (T-9.5 budget caps): fires when
+   * editing ends — blur AND submit both land here (RN TextInput semantics),
+   * so one handler covers keyboard-done and tap-away.
+   */
+  onEndEditing?(): void;
+  /** RN passthrough — `false` blocks input (e.g. while a commit is in flight). */
+  editable?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -79,6 +87,8 @@ export function Input({
   keyboardType,
   autoComplete,
   returnKeyType,
+  onEndEditing,
+  editable,
   testID,
 }: InputProps) {
   const { theme } = useTheme();
@@ -112,6 +122,8 @@ export function Input({
           keyboardType={keyboardType}
           autoComplete={autoComplete}
           returnKeyType={returnKeyType}
+          onEndEditing={onEndEditing}
+          editable={editable}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           accessibilityLabel={label}
