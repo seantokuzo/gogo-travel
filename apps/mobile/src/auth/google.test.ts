@@ -20,12 +20,17 @@ jest.mock("expo-crypto", () => ({
   getRandomBytes: (n: number) => new Uint8Array(n).fill(0xab),
 }));
 
+/** Only the slice of the provider config this test asserts on. */
+type GoogleAuthConfig = { extraParams?: Record<string, string> };
+
 // Per-file override of the global stub (jest.setup) so the config the hook
-// hands the provider is observable.
-const mockUseIdTokenAuthRequest = jest.fn(() => [null, null, jest.fn()]);
+// hands the provider is observable. The param is typed so `mock.calls[0][0]`
+// carries it — an untyped `jest.fn()` records `[]` and typecheck rejects the
+// index access even though jest is happy at runtime.
+const mockUseIdTokenAuthRequest = jest.fn((_config: GoogleAuthConfig) => [null, null, jest.fn()]);
 jest.mock("expo-auth-session/providers/google", () => ({
   __esModule: true,
-  useIdTokenAuthRequest: (...args: unknown[]) => mockUseIdTokenAuthRequest(...args),
+  useIdTokenAuthRequest: (config: GoogleAuthConfig) => mockUseIdTokenAuthRequest(config),
 }));
 
 describe("useGoogleSignIn nonce supply", () => {
@@ -36,13 +41,11 @@ describe("useGoogleSignIn nonce supply", () => {
     await renderHook(() => useGoogleSignIn());
 
     expect(mockUseIdTokenAuthRequest).toHaveBeenCalled();
-    const config = mockUseIdTokenAuthRequest.mock.calls[0]?.[0] as {
-      extraParams?: Record<string, string>;
-    };
+    const config = mockUseIdTokenAuthRequest.mock.calls[0]?.[0];
     // The discriminating assertion: without our supply this is `undefined`,
     // because the provider only mints a nonce on the IdToken/web path.
-    expect(config.extraParams?.nonce).toEqual(expect.any(String));
-    expect(config.extraParams?.nonce).toHaveLength(64); // 32 bytes, hex
+    expect(config?.extraParams?.nonce).toEqual(expect.any(String));
+    expect(config?.extraParams?.nonce).toHaveLength(64); // 32 bytes, hex
   });
 });
 
