@@ -43,7 +43,12 @@ const noop = (): void => undefined;
 // Structural views of the auth-session hook result (kept in sync with
 // `@/auth/google`) so this route never imports expo-auth-session directly.
 type GoogleResult = { type: string; params?: Record<string, string> };
-type GoogleRequestLike = { nonce?: string } | null | undefined;
+// `extraParams.nonce` is where the raw nonce actually lives on native — see
+// the nonce note in `@/auth/google`. Typing only `nonce` here still compiled
+// (structurally assignable to the builder's wider param), which is part of why
+// the missing-nonce bug was invisible.
+type GoogleRequestLike =
+  { nonce?: string; extraParams?: Record<string, string> } | null | undefined;
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
