@@ -4,11 +4,11 @@
     "slug": "gogo-travel",
     "version": "0.0.1",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/gogo_logo-mint.png",
     "scheme": "gogo",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/images/gogo_logo-mint.png",
       "bundleIdentifier": "app.gogotravel",
       "associatedDomains": ["applinks:links.gogotravel.example"]
     },
@@ -49,9 +49,9 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "backgroundColor": "#c5f8d9",
+          "image": "./assets/images/gogo_logo-mint.png",
+          "imageWidth": 220
         }
       ],
       "expo-font",
