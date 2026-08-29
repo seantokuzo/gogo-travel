@@ -9,10 +9,8 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.anonymous.gogo-travel",
-      "associatedDomains": [
-        "applinks:links.gogotravel.example"
-      ]
+      "bundleIdentifier": "app.gogotravel",
+      "associatedDomains": ["applinks:links.gogotravel.example"]
     },
     "android": {
       "adaptiveIcon": {
@@ -26,10 +24,7 @@
         {
           "action": "VIEW",
           "autoVerify": true,
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
+          "category": ["BROWSABLE", "DEFAULT"],
           "data": [
             {
               "scheme": "https",
