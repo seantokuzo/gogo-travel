@@ -138,7 +138,14 @@ export default function SignInScreen() {
         await useSessionStore.getState().applySignIn(response);
         // Authenticated: the root gate takes over navigation. Leave `busy` set
         // so the spinner holds until this screen unmounts.
-      } catch {
+      } catch (err) {
+        // B-6 (device QA 2026-08-29): this was a bare `catch`, so a network
+        // failure, a malformed payload and a session-store failure all
+        // rendered as one identical banner. That is correct for the USER —
+        // internals never belong in the UI — but it also destroyed the only
+        // signal a device QA session gets, and it made B-5 read as an OAuth
+        // bug for two full rounds. Keep the generic message; keep the cause.
+        if (__DEV__) console.warn(`[auth] ${provider} sign-in failed:`, err);
         setError(GENERIC_ERROR);
         setBusy(null);
       }

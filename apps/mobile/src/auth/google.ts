@@ -96,7 +96,21 @@ export function buildGoogleSignInRequest(
   // native. Read both, instance field first — if a future provider version
   // starts minting its own on native, that is the value actually sent.
   const rawNonce = request?.nonce ?? request?.extraParams?.nonce;
-  if (!idToken || !rawNonce) return null;
+  if (!idToken || !rawNonce) {
+    // B-6, one level down: a silent `null` is as opaque as a swallowed error.
+    // The caller can only report "missing google id token", which is a LIE
+    // half the time — a missing nonce lands here too and reads identically.
+    // That exact ambiguity sent us chasing the wrong half of this function.
+    if (__DEV__) {
+      console.warn(
+        `[auth] google payload incomplete — idToken=${Boolean(idToken)} ` +
+          `rawNonce=${Boolean(rawNonce)} (request.nonce=${Boolean(request?.nonce)}, ` +
+          `extraParams.nonce=${Boolean(request?.extraParams?.nonce)}) ` +
+          `responseParams=${JSON.stringify(Object.keys(response.params ?? {}))}`,
+      );
+    }
+    return null;
+  }
 
   return {
     id_token: idToken,

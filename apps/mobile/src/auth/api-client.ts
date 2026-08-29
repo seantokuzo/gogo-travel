@@ -183,11 +183,23 @@ export function createApiClient(config: ApiClientConfig): MobileApiClient {
         body: bodyInit,
         signal: abort.signal,
       });
-    } catch {
+    } catch (err) {
       // Never surface the transport error verbatim — it can echo the URL.
       // Aborts (timeout cap or external cancel) land here too: a transient
       // transport failure either way (TanStack ignores rejections from its
       // own cancelled signal).
+      //
+      // B-6 (device QA 2026-08-29): sanitizing is right for the UI and for
+      // production, but it also erased the ONE clue that mattered — the host
+      // the phone actually dialed. `network request failed` is identical
+      // whether the server is down, the URL is wrong, or the request was
+      // cancelled, and that ambiguity cost two debugging rounds while the app
+      // was quietly calling `localhost` (B-5). Dev keeps the cause; the thrown
+      // error is unchanged, so production behaviour and every caller's
+      // handling stay exactly as before.
+      if (__DEV__) {
+        console.warn(`[api] transport failure: ${descriptor.method} ${url}`, err);
+      }
       throw new ApiRequestError(0, "NETWORK", "network request failed");
     } finally {
       abort.cleanup();
