@@ -25,7 +25,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — PHASE QA + F-055..F-062 FLIPS PENDING pk token + QA unpark)
+### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — pk token LANDED 2026-08-29; PHASE QA + F-055..F-062 FLIPS now RUNNABLE, device-gated on Sean)
 
 - **Scope** (PLANNING § P-8): @rnmapbox/maps themed map, 3 pin families +
   clustering + day filter, place sheet/detail w/ spine data + dormant fresh
@@ -476,6 +476,55 @@ ultra` available on merged diff. Full narrative: QUEUE Recently-done
   - the QUEUE obligations row: settlements mount · page-size hoist ·
     lock-chain doc sync · budgets trips-first order) ∥ T-9.5 (money tab
     shell + balances segment, mobile) — server∥mobile disjoint, worktrees.
+- **ENV + DEVICE RIG FULLY GREEN 2026-08-29 — supersedes the BLOCKED(creds)
+  status below.** Sean walked the env setup; everything signed-in is now
+  unblocked. Landmines found and fixed (do not re-derive):
+  - **Neon DB was EMPTY** — the URL connected fine (pooled endpoint,
+    `sslmode=require&channel_binding=require`, PG 18.6) but migrations had
+    never run. `pnpm --filter @gogo/server db:migrate` → 30 public tables +
+    `drizzle.__drizzle_migrations`. A green connection probe is NOT proof of
+    a migrated schema — check `information_schema.tables`.
+  - **`AUTH_ES256_PRIVATE_KEY` had been pasted without its PEM armor**
+    (184 ch, zero newlines = the bare base64 DER body) → `createPrivateKey`
+    fails `DECODER routines::unsupported`. Canonical form is the WHOLE PEM as
+    a `\n`-escaped single line in double quotes, ~241 ch. Node's
+    `--env-file` expands `\n` to real newlines itself, and `pem()` in
+    `auth/wire.ts` normalizes the other case — either survives.
+  - **Auth env is ALL-OR-NOTHING across 8 vars and a PARTIAL set THROWS at
+    boot** — it does NOT fall back to health-only (`buildAuthDepsFromEnv`).
+    The 4 Apple vars carry deliberate THROWAWAYS (real P-256 key + 32-byte
+    AES) so the gate clears for QA; Apple code exchange fails by design until
+    the real portal setup at P-14. `ios.usesAppleSignIn` deliberately NOT
+    added — the entitlement needs a real App ID with the capability.
+  - **Bundle id `com.anonymous.gogo-travel` → `app.gogotravel`** (PR #33,
+    036dac9) — Sean bought `gogotravel.app`. The AASA drift guard
+    (`link-config-audit.test.ts:69`) caught the stale artifact in CI, exactly
+    as designed. `app.json` `associatedDomains` still points at the
+    `links.gogotravel.example` placeholder — now that the real domain is
+    owned, the P-14 `LINK_DOMAIN` swap is unblocked early.
+  - **`expo-auth-session@57.0.5` builds its native Google redirect as
+    `${bundleId}:/oauthredirect`, NOT the reversed client id**
+    (`build/providers/Google.js:145`), and prebuild already registers the
+    bundle id as a `CFBundleURLScheme` — so a bundle-id rename needs zero
+    `CFBundleURLTypes` work. Verified in `node_modules`, not training data.
+  - **Verification evidence (config-level; the tap is Sean's):** Google
+    authorize probe ACCEPTED `app.gogotravel:/oauthredirect` (302 → sign-in)
+    and REJECTED `com.anonymous.gogo-travel:/oauthredirect` (302 →
+    `/signin/oauth/error`, `authError` decodes to `redirect_uri_mismatch`) —
+    a discriminating control, not a one-sided pass. Unsigned-JWT POST to
+    `/api/auth/google` → **401 UNAUTHENTICATED, not 500**, proving jose
+    fetched Google's JWKS and the whole verifier chain executes. Metro's
+    served bundle (12.7 MB, `/.expo/.virtual-metro-entry.bundle?platform=ios`
+    — NOT `/index.bundle`, which 404s under expo-router 57) contains all
+    three `EXPO_PUBLIC_*` values inlined and no trace of the old bundle id.
+  - **Mapbox pk token landed in BOTH envs** (`MAPBOX_ACCESS_TOKEN` server +
+    `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` mobile) — the boot warning is gone.
+    **The P-8 "pk token deferred to phase QA" park is RESOLVED**, unblocking
+    F-055..F-062 map QA.
+  - Rig now: LAN `192.168.1.69` (was `.23`), server `:3000` auth-mounted +
+    Neon-backed, Metro `:8081` `--clear`, app installed + launched as
+    `app.gogotravel`. `.env.example` rewritten against `src/env.ts` (it had
+    only ever documented `DATABASE_URL`).
 - **DEVICE-QA RIG LIVE 2026-08-24 (Sean unparked QA — backlogged P-5..P-8
   device pass):** dev client compiled for Sean's iPhone 15 Pro
   (`DerivedData-device`, arm64, RNMBX baked ×967, signed 4B8499Z59P, main @
