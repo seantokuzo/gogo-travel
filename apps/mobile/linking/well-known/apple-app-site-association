@@ -3,7 +3,7 @@
   "applinks": {
     "details": [
       {
-        "appIDs": ["TEAMID_PLACEHOLDER.com.anonymous.gogo-travel"],
+        "appIDs": ["TEAMID_PLACEHOLDER.app.gogotravel"],
         "components": [
           { "/": "/invite/*", "comment": "invite links -> /(trips)/join/[token] (R-nav-11)" },
           { "/": "/t/*", "comment": "trip + settle-request links -> [tripId] surfaces (R-nav-13/15)" }
