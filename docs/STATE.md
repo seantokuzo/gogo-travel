@@ -476,6 +476,32 @@ ultra` available on merged diff. Full narrative: QUEUE Recently-done
   - the QUEUE obligations row: settlements mount · page-size hoist ·
     lock-chain doc sync · budgets trips-first order) ∥ T-9.5 (money tab
     shell + balances segment, mobile) — server∥mobile disjoint, worktrees.
+- **GOOGLE SIGN-IN WORKS ON DEVICE 2026-08-29** — first real authenticated
+  session on hardware. Evidence: `[req] POST /api/auth/google -> 200 (853ms)`
+  in the dev server log, Neon shows `users 1 / auth_sessions 1 /
+refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
+  order matters, because fixing them out of order looks like no progress:
+  1. **B-4 (fixed, PR #35)** — `expo-auth-session` never mints a nonce on
+     native, so our payload builder bailed and the app never called the
+     server at all. See the nonce note in `apps/mobile/src/auth/google.ts`.
+  2. **B-5 (OPEN, P0, QUEUE row)** — `resolveApiBaseUrl()` fell through to
+     `http://localhost:3000`, so the phone called ITSELF. Google sign-in was
+     fully working by then — valid `id_token` in hand — and the POST just
+     went nowhere. Breaks EVERY device→server call. Worked around with a
+     hardcoded `EXPO_PUBLIC_API_URL` in the gitignored `apps/mobile/.env`;
+     that override MUST come out when B-5 lands (it dies on a DHCP change).
+  3. **B-6 (OPEN, P1, QUEUE row)** — a bare `catch` in `sign-in.tsx:141`
+     discarded every real error behind one generic banner, which is why #2
+     read as an OAuth problem for two rounds.
+  - **Method note worth keeping:** the miss that cost the most was verifying
+    reachability by curling the server FROM THE MAC. That proved the server
+    was up; it proved nothing about what the phone was dialing. For any
+    device-side network failure, log the resolved base URL on the DEVICE
+    first — it is one line and it is the whole answer.
+  - Observability gap closed the same day: `apps/server/src/http/dev-request-log.ts`
+    (PR #36) — the server previously emitted ONE log line total, so "rejected"
+    and "never arrived" were indistinguishable. `no-console` never blocked
+    this; the root eslint config allows `warn`/`error`.
 - **ENV + DEVICE RIG FULLY GREEN 2026-08-29 — supersedes the BLOCKED(creds)
   status below.** Sean walked the env setup; everything signed-in is now
   unblocked. Landmines found and fixed (do not re-derive):

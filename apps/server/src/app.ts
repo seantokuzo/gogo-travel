@@ -15,6 +15,7 @@ import { createTripsRouter, type TripsRouterDeps } from "./trips/routes.js";
 import { createUsersRouter, type UsersRouterDeps } from "./users/routes.js";
 import { BODY_LIMIT_MAX_BYTES } from "./config.js";
 import { createErrorHandler, requestIdMiddleware } from "./http/app-middleware.js";
+import { createDevRequestLog } from "./http/dev-request-log.js";
 import { createRequireAuth } from "./http/require-auth.js";
 import { apiError, type RequestVars } from "./http/errors.js";
 
@@ -44,6 +45,14 @@ export const PUBLIC_ALLOWLIST: ReadonlySet<string> = new Set([
 ]);
 
 export interface CreateAppOptions {
+  /**
+   * Mount the development request log (`http/dev-request-log.ts`). Passed in
+   * rather than read here so `loadEnv()` stays the only `process.env` reader
+   * (`.claude/rules/server.md`). `src/index.ts` sets it from
+   * `NODE_ENV === "development"`; tests and production leave it off, so their
+   * output is unchanged.
+   */
+  devRequestLog?: boolean;
   /**
    * Auth router dependencies (T-5.2+). Absent = the auth surface is not
    * mounted (health-only boot — dev/tests); prod wiring (src/index.ts)
@@ -130,6 +139,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   // errors serialized by the one `onError`. Promoted from the AU-3 sub-router
   // so every future domain router inherits them (§3.4/§3.6.4).
   app.use("*", requestIdMiddleware);
+  // Dev only, and deliberately BEFORE the auth guard so a 401 still prints —
+  // "rejected at the door" and "never arrived" must be distinguishable.
+  if (options.devRequestLog) app.use("*", createDevRequestLog(logger ?? console));
   app.onError(createErrorHandler(logger ?? console));
 
   if (options.auth) {
