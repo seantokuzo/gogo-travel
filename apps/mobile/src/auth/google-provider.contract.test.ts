@@ -103,7 +103,10 @@ describe("REAL provider, native default flow (the B-4 facts)", () => {
     // Falsification: a library version that sanitizes reserved OIDC params
     // out of extraParams (or adopts them into the instance field) reds this
     // — exactly the upgrade that would silently break google.ts's supply.
-    const ourNonce = "ab".repeat(32); // what randomNonceHex() yields under a 0xab byte fill
+    // Arbitrary 64-char hex — the shape google.ts's randomNonceHex() supplies
+    // via extraParams (its value here is caller-chosen, not derived from this
+    // file's 0xcd-filled crypto mock: extraParams bypass the entropy path).
+    const ourNonce = "ab".repeat(32);
     const request = await loadRealRequest(() =>
       RealGoogle.useIdTokenAuthRequest({
         iosClientId: IOS_CLIENT_ID,
