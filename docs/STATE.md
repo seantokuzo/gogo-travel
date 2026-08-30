@@ -25,135 +25,91 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### DEVICE QA SESSION 2026-08-29 — handoff
+### QA WRAP SESSION 2026-08-30 — device-QA branch merged, polish shipped, S-3 testing overhaul launched
 
-#### Where things actually are
+#### Outcomes (all merged to main, full 5-lane pipeline + independent fix verification + fresh judge, each)
 
-**Branch `qa/device-integration`** (pushed, no PR yet) carries everything from
-this session: B-4 (Google nonce), B-6 (dev error surfacing), the dev request
-log, the B-8 transport grace + migration 0001, `scripts/seed-qa-places.mjs`,
-QUEUE rows B-5..B-13, and three ledger flips.
+- **PR #37 MERGED d4f7637** (qa/device-integration): B-4 Google nonce, B-6 dev error
+  surfacing, dev-only request log, B-8 TEMPORARY 12h transport grace + migration 0001,
+  seed-qa-places script, 3 ledger flips (F-023/F-044/F-051; **F-043 NOT flipped** —
+  criteria 1–2 untested). Round 1: 4 blocking (ADR-002 status enum + 3 mutation-proven
+  test gaps: B-8 boundary unpinned both sides, request-log mount wiring zero tests,
+  google contract pinned by comments only — the B-4 mock-infidelity class) / 11
+  advisory → 5-commit fix leg → verifier EXECUTED every deductive kill-chain to red in
+  an isolated worktree (the fixer couldn't — live Metro/tsx-watch on the tree) →
+  VERIFIED-CLEAN → judge merge/high. #35/#36 auto-resolved merged (branches contained).
+  Escalation banner (sensitive+blocking) note-not-stop per precedent; `/code-review
+ultra` remains available to Sean on the merged diff.
+- **PR #39 MERGED 8b1ee89** (B-5, P0): `resolveApiBaseUrl` tier 3 derives the Metro
+  host from `NativeModules.SourceCode.scriptURL`; `localhost` is now the
+  simulator-terminal fallback ONLY; `file://` (release) refused at the `^https?://`
+  anchor. ALL-5-LANES-SHIP round 1 (0 blocking / 3 advisory); same-round `@`-userinfo
+  hardening fa90229 (guard-parse/fetch-parse agreement by construction);
+  VERIFIED-CLEAN; judge merge/high. Follow-ups → QUEUE "B-5 follow-ups" row.
+- **PR #40 MERGED dfaba92** (B-10..B-13 polish batch, 4 atomic commits + 2 fix-leg):
+  B-10 DateField/TimeField screen-anchored modal picker + contextual seeding (value >
+  context > today; flight arrival seeds from departure) — deliberate Modal-not-DS-Sheet,
+  rationale in the DateField.tsx header (nested sheet stacks + sheet-tax), token-styled,
+  DS dismissal grammar kept; B-11 day-header `+` add affordance (flat row array
+  untouched — resolveDrop indices stable); B-12 derived check-in/check-out checkpoint
+  indicators, render-only BY DATAFLOW (F-051 c2); B-13 peer Ideas/Cancelled bins,
+  hide-when-empty, cancelled reachable via bin (F-043 c3, pinned end-to-end). Two
+  pre-existing pins AMENDED and proven EQUIVALENT-OR-STRONGER (15 executed mutation
+  probes; the old pins' exact regressions still red). Fix leg: spec synced to the
+  Sean-ruled surfaces (R-itin-12/15/31, §2.3/2.6/2.9 — the spec had begun contradicting
+  shipped behavior, a Law #4 revert hazard) + 4 caller seed pins + ISODate brand. One
+  pushback UPHELD by the verifier (trip-settings seed pin unwritable — unrepresentable
+  state). Judge merge/high. Mobile now 149 suites.
+- **PR #38 OPEN — S-3 testing-overhaul strategy** (docs-only: ADR-006 _Proposed_ +
+  `.specs/testing/testing-overhaul.spec.md`). **Held for Sean's read** — merging locks
+  the ADR (doc-homes append-only), and it carries three Sean questions with parkable
+  defaults recorded: B-7 ruling (suite pins it `it.fails` either way), diagnostics
+  entry placement (deeplink-entry until ruled), generated-vs-committed test env keys
+  (rec: generated). **W1 DISPATCHED 2026-08-30 from the branch spec** (T-S3.1 faithful
+  env + boot-shape suite ∥ T-S3.2 mock-fidelity contracts, isolated worktrees) — the
+  four-layer direction was Sean-mandated up front; no pending question affects W1.
 
-Open PRs from earlier, now SUPERSEDED by that branch's contents — decide
-whether to close or merge them first, do not double-apply:
+#### The rig — Sean's steps, in order
 
-| PR  | What                                       | State                                                         |
-| --- | ------------------------------------------ | ------------------------------------------------------------- |
-| #32 | T-9.4 settle-requests + budgets + FX proxy | mid-review-loop, untouched all session                        |
-| #35 | B-4 Google nonce                           | CI green, never reviewed (auth path — wants the 5-lane panel) |
-| #36 | dev request log                            | CI was running at last check                                  |
+1. **Kill + reopen the app** — Metro now serves merged main; B-5/B-6/B-10..13 reach
+   the device as JS-only changes (no rebuild).
+2. Verify sign-in + any server call. **THEN** delete `EXPO_PUBLIC_API_URL` from the
+   gitignored `apps/mobile/.env` and restart Metro — tier 3 derives the host from the
+   dev server now; the DHCP-fragile hardcode is retired.
+3. Server/Neon/Docker unchanged; migration 0001 was already applied to Neon during
+   the 2026-08-29 session.
 
-⚠️ **`qa/device-integration` was never put through the review pipeline.** It
-touches `**/auth/**` and a migration — both PLANNING-designated sensitive
-paths. It should not merge to main on this session's evidence alone.
+#### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
-#### The rig (Sean's iPhone, live)
+- **F-043 criteria 1–2 (still untested; do NOT flip on less):**
+  1. "create one booking per category" — `car_rental`, `moped_rental`, `activity`,
+     `other` have never been created (flight/lodging/restaurant/train exist). Also
+     untested: invalid detail shape → 400; price requires currency.
+  2. category change on update rejected; instants denormalize from details.
+     (Criterion 3 was evidenced 2026-08-29 — cancelled "Imperial Hotel Tokyo".)
+- **B-10 one-tap check** (PR #40 correctness advisory): open a picker whose seed
+  pre-highlights the wanted day (flight arrival after entering departure) and tap that
+  highlighted day ONCE — does it commit? iOS inline pickers fire change only on VALUE
+  change; if the tap no-ops we add a Done affordance. Recovery cue exists (field still
+  reads "Select date").
+- **Polish golden paths:** B-10 both date fields open full-width + seeded · B-11 add
+  via the day header on a POPULATED day · B-12 stay shows check-in/check-out
+  indicators that tap through to booking detail · B-13 bins hidden when empty,
+  cancelled reachable by expanding Cancelled.
 
-- Server `:3000` (`pnpm --filter @gogo/server dev`), Metro `:8081`, LAN
-  `192.168.1.69`, Neon migrated (2 migrations), Docker up.
-- Bundle id `app.gogotravel`; app installed and signed in as
-  `seantokuzo@gmail.com`. Trip **"Spring in Kyoto"**
-  `1933d1bf-9bee-4519-9c69-05c8c2b28363`, 6 bookings, 5 itinerary items.
-- `apps/mobile/.env` carries a HARDCODED `EXPO_PUBLIC_API_URL=http://192.168.1.69:3000`.
-  That is the **B-5 workaround** and it dies on any DHCP change. Remove it
-  when B-5 lands.
+#### Still-true landmines carried forward
 
-#### Ledger: 3 flipped, 1 deliberately NOT
-
-`F-023`, `F-044`, `F-051` → `passes: true` with evidence, append-only verified.
-
-**`F-043` was NOT flipped and must not be flipped without more testing.** Sean
-reported "pass", but he was answering criterion 3 only — that is all this
-session asked him for. Criteria 1 and 2 are untested:
-
-- **1** — "create one booking per category": only 5 of 8 categories exist
-  (flight, lodging, restaurant, train). Missing `car_rental`, `moped_rental`,
-  `activity`, `other`. Also untested: invalid detail shape → 400, price
-  requires currency.
-- **2** — category change on update rejected; instants denormalize from
-  details.
-- **3** — ✅ well evidenced: cancelled "Imperial Hotel Tokyo" holds 0
-  itinerary_items while its booking row survives.
-
-This is the session's repeated failure mode, so it is worth stating plainly:
-**ask the ledger's exact criteria, never a paraphrase.** An earlier "Chunk 2"
-was improvised and mapped onto no complete ledger entry, which wasted a round.
-
-#### Two parallel workstreams Sean approved
-
-Both in **isolated worktrees** (`isolation: "worktree"`). Non-negotiable: a
-build agent must NEVER share the working tree while device QA is live — this
-session caused a phantom "returning-user bug" by switching branches under a
-running Metro, then misdiagnosed the result. Metro and `tsx watch` serve the
-TREE, so a checkout is a silent deploy.
-
-### Stream A — client polish (B-10..B-13)
-
-All `apps/mobile`. Sean's device-QA gripes, root causes already located:
-
-- **B-10 (P1)** — `DateField` renders an iOS `display="inline"` picker inside
-  a half-width parent (`new.tsx:318` `datesRow` > `dateField`), so the
-  right-hand calendar overflows the screen and half the days are untappable.
-  Plus it defaults to `new Date()` (`DateField.tsx:44`) instead of a
-  contextual date, and flight arrival should default to the entered
-  departure. Recurred on the lodging flow → fix in `DateField`, not per-caller.
-- **B-11 (P2)** — the "Add to this day" row renders only for EMPTY days, so a
-  populated day has no add affordance in list view.
-- **B-12 (P2)** — lodging shows as an all-day block with no check-in/check-out
-  times. Sean wants derived ~15-min indicator blocks at the real times, KEEPING
-  the all-day span. They must stay **ephemeral** — F-051 criterion 2 requires
-  exactly ONE itinerary row for a multi-night stay, so materializing them
-  breaks a ledger criterion that is now flipped `true`.
-- **B-13 (P2)** — Ideas/Cancelled bins render when empty and Cancelled borrows
-  the Ideas box. Hide a bin at zero count; never hide cancelled bookings
-  themselves (F-043 criterion 3).
-
-### Stream B — the testing overhaul
-
-**This is NOT mostly backend.** Sean assumed it was; it is roughly half mobile,
-so the two streams are not cleanly separated. Overlap risk is small but real:
-Stream B touches `apps/mobile/src/auth/*` tests and **`jest.setup.js`**, while
-Stream A touches components. `jest.setup.js` is the one file that could
-genuinely collide — assign it to Stream B only.
-
-Evidence base: **five bugs this session, none catchable by the 1418 existing
-unit tests.** Each needs a different layer:
-
-| Bug           | Why every unit test missed it                                        | Layer owed                                                                                          |
-| ------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| B-4 nonce     | the mock asserted a request shape iOS never produces                 | **mock fidelity**: import the REAL library, assert the shape our mock claims                        |
-| B-5 localhost | nothing ever exercised URL resolution on a device                    | **device smoke**: a few legs that must run on hardware — start with "what base URL did we resolve?" |
-| B-7 deadlock  | every suite seeds fixtures first, so nobody runs the first-user path | **fresh-database suite**: empty DB, no fixtures, first-run flows                                    |
-| B-8 timezone  | every fixture uses one timezone                                      | **hostile fixtures**: date-line flight, multi-zone trip, zero-decimal currency, empty states        |
-
-Recommended shape: write the **strategy as an ADR first** (it is a testing
-decision, not a code change), then build. Do not start by writing more unit
-tests — they demonstrably would not have caught a single one of these.
-
-#### Known-wrong data on the device
-
-Every booking created so far carries instants offset by the real timezone
-(B-8). "LAX => NRT" stores a 2h49m duration for an ~11h flight. Re-enter them
-after B-9 (airport table + IANA tz) rather than trusting itinerary ordering or
-leave-by math against them.
-
-#### Session self-assessment (process, not code)
-
-Four avoidable errors, all worth guarding against next time:
-
-1. **Switched branches under live QA** twice, then diagnosed the resulting
-   regression as a new bug with a plausible-sounding story. The tell was there
-   — the identical error string from the original B-4 symptom.
-2. **Paraphrased ledger criteria** instead of reading them, then nearly flipped
-   entries on the paraphrase.
-3. **Blamed the user** for the date-line flight — filed it as "user entered an
-   inverted range" before asking what the booking was. Sean corrected it; the
-   original mis-filing is deliberately preserved in the B-8 row.
-4. **Claimed verification from the wrong side** — proved the server was
-   reachable by curling from the Mac, which said nothing about what the phone
-   was dialing. Three `EADDRINUSE` orphans also produced 200s from a zombie
-   process while logging nothing.
-
+- **Device data is known-wrong (B-8 class):** every booking entered before the tz fix
+  carries instants offset by the real timezone ("LAX => NRT" stores 2h49m for an ~11h
+  flight). Re-enter after B-9 (airport table + IANA tz); don't trust itinerary
+  ordering or leave-by math against them. The 12h grace + migration 0001 are
+  TEMPORARY and revert TOGETHER when B-9 lands (that revert is the B-8 row's DoD).
+- **B-7 (P0) is BLOCKED on a Sean spec ruling** (Autonomy Contract #1/#6): text-only
+  destination vs self-seeding first search — options in the QUEUE row.
+  `seed-qa-places.mjs` remains the QA workaround (now `--force`-guarded +
+  owner-scoped).
+- **Ask the ledger's exact criteria, never a paraphrase** (the 2026-08-29 session's
+  repeated failure mode — deliberately preserved here).
 
 ### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — pk token LANDED 2026-08-29; PHASE QA + F-055..F-062 FLIPS now RUNNABLE, device-gated on Sean)
 
