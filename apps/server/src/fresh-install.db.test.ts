@@ -276,6 +276,26 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(await countRows("place_ingest_regions")).toBe(0);
   });
 
+  it("[B-7 evidence] a coordinate-less trip create is rejected with a clean 400 today — retires with the escape pin", async () => {
+    // Companion to the escape pin below (its ruling-A arm): `it.fails`
+    // passes on ANY throw, so without this pin a 500-class regression on the
+    // coordinate-less create path would hide inside the disjunction. Today
+    // the shared create schema requires destination coordinates, so the
+    // boundary validator rejects this exact probe with a clean 400 —
+    // never a 5xx. Falsification: break the create path (or loosen the
+    // schema) and this reds while the `it.fails` stays green — that split is
+    // the point. Retired together with the escape pin by B-7's fix PR
+    // (under ruling A this becomes the 201 arm; under ruling B the 400 may
+    // stay by design).
+    const create = await postJson("/api/trips", {
+      name: "First Trip",
+      destination_name: "Lisbon, Portugal",
+      start_date: "2026-09-01",
+      end_date: "2026-09-08",
+    });
+    expect(create.status).toBe(400);
+  });
+
   it.fails(
     "[B-7] a first user can escape the cold-start deadlock: text-only search self-seeds (ruling B) OR text-only trip create is accepted (ruling A)",
     async () => {

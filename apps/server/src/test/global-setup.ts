@@ -84,42 +84,60 @@ export default async function setup(project: TestProject): Promise<() => Promise
     .start();
 
   const adminUri = container.getConnectionUri();
-  const admin = postgres(adminUri, { max: 1, onnotice: () => undefined });
   try {
-    await admin.unsafe(`CREATE DATABASE "${TEMPLATE_DB_NAME}"`);
-
-    // Migrate ONCE into the template; every clone inherits the full schema
-    // plus the drizzle journal (so an in-suite `migrate()` over a clone is a
-    // provable no-op — db/constraints.test.ts pins that idempotence).
-    const templateUrl = new URL(adminUri);
-    templateUrl.pathname = `/${TEMPLATE_DB_NAME}`;
-    const templateClient = postgres(templateUrl.toString(), {
-      max: 1,
-      onnotice: () => undefined,
-    });
+    const admin = postgres(adminUri, { max: 1, onnotice: () => undefined });
     try {
-      await migrate(drizzle({ client: templateClient }), {
-        migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
+      await admin.unsafe(`CREATE DATABASE "${TEMPLATE_DB_NAME}"`);
+
+      // Migrate ONCE into the template; every clone inherits the full schema
+      // plus the drizzle journal (so an in-suite `migrate()` over a clone is
+      // a provable no-op — db/constraints.test.ts pins that idempotence).
+      // WATCH MODE: "once" means once per vitest PROCESS — editing `drizzle/`
+      // mid-watch leaves reruns cloning a STALE template; restart the watcher
+      // to pick up a new migration. One-shot `vitest run` and CI always get a
+      // fresh container, so they are unaffected.
+      const templateUrl = new URL(adminUri);
+      templateUrl.pathname = `/${TEMPLATE_DB_NAME}`;
+      const templateClient = postgres(templateUrl.toString(), {
+        max: 1,
+        onnotice: () => undefined,
       });
+      try {
+        await migrate(drizzle({ client: templateClient }), {
+          migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
+        });
+      } finally {
+        // `CREATE DATABASE … TEMPLATE` requires the template to have zero
+        // active connections — release ours before any suite can clone.
+        await templateClient.end();
+      }
+
+      // Belt and braces: no session may ever connect to the template again,
+      // so a stray connection can never wedge a clone mid-run. `CREATE
+      // DATABASE … TEMPLATE` still works — it copies files, does not connect.
+      await admin.unsafe(
+        `UPDATE pg_database SET datallowconn = false WHERE datname = '${TEMPLATE_DB_NAME}'`,
+      );
     } finally {
-      // `CREATE DATABASE … TEMPLATE` requires the template to have zero
-      // active connections — release ours before any suite can clone.
-      await templateClient.end();
+      await admin.end();
     }
 
-    // Belt and braces: no session may ever connect to the template again, so
-    // a stray connection can never wedge a clone mid-run. `CREATE DATABASE …
-    // TEMPLATE` still works — it copies files, it does not connect.
-    await admin.unsafe(
-      `UPDATE pg_database SET datallowconn = false WHERE datname = '${TEMPLATE_DB_NAME}'`,
-    );
-  } finally {
-    await admin.end();
+    project.provide("dbAvailable", true);
+    project.provide("dbAdminUri", adminUri);
+    project.provide("dbTemplateName", TEMPLATE_DB_NAME);
+  } catch (error) {
+    // A red setup (e.g. a broken migration) must not leak the container: the
+    // teardown closure below is never handed to vitest if we throw, and on
+    // TESTCONTAINERS_RYUK_DISABLED rigs (colima/podman) nothing else reaps
+    // it. Stop it, then surface the ORIGINAL error — a failed stop must not
+    // mask the failure that matters.
+    try {
+      await container.stop();
+    } catch {
+      // deliberately swallowed: the setup error below is the story
+    }
+    throw error;
   }
-
-  project.provide("dbAvailable", true);
-  project.provide("dbAdminUri", adminUri);
-  project.provide("dbTemplateName", TEMPLATE_DB_NAME);
 
   return async () => {
     await container.stop();
