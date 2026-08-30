@@ -217,7 +217,12 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   `apps/server/src/test/global-setup.ts` (new),
   `apps/server/src/test/suite-db.ts` (new),
   `apps/server/src/test/provided-context.d.ts` (new),
-  `apps/server/src/fresh-install.db.test.ts` (new), and the mechanical
+  `apps/server/src/test/suite-db-isolation-a.db.test.ts` +
+  `suite-db-isolation-b.db.test.ts` + `suite-db-isolation.shared.ts`
+  (landed addition, PR #44 — permanent falsification probes proving
+  cross-suite template-clone isolation; recorded here because this
+  owns-list is the collision-analysis source of truth and must match the
+  tree), `apps/server/src/fresh-install.db.test.ts` (new), and the mechanical
   conversion of the DB suites **EXCEPT** any suite with an in-flight PR
   touching it at dispatch time (check open PRs for `expenses/`,
   `settlements/`, `settle-requests/` test files — T-9 W3/W4; excluded
@@ -265,6 +270,13 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 - **Files (owns):** `apps/mobile/src/app/(auth)/diagnostics.tsx` (new),
   `apps/mobile/src/features/dev/diagnostics/` (new: legs, runner, panel),
   colocated leg unit tests (new).
+  **Sanctioned production touches (landed, PR #43 — recorded so a future
+  auditor reads them as sanctioned, not drift):**
+  `apps/mobile/src/auth/config.ts` (`explainApiBaseUrl` pure helper +
+  `resolveApiBaseUrl` delegation onto it — the tier decision became
+  reportable without behavior change), `apps/mobile/src/auth/api-client.ts`
+  (dev-warn path-template change, from PR #43's R1), and the route-audit
+  allowlist entry for the diagnostics route.
 - **Must NOT touch:** `apps/mobile/src/app/(auth)/sign-in.tsx` (the entry
   link is rider #3 — the "qa-owned" reason dissolved d4f7637; the guard
   stays to keep T-S3.5's file set disjoint), `_layout.tsx`, any Stream-A
@@ -281,8 +293,8 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 | Wave | Parallel tasks (isolated worktrees) | Why safe |
 | --- | --- | --- |
 | W1 | T-S3.1 ∥ T-S3.2 — **MERGED** (PR #41 0643621 ∥ PR #42 aaf0742, full pipeline) | Disjoint: server+scripts+root dotfiles vs mobile jest surface. |
-| W2 | T-S3.3 ∥ T-S3.5 | Disjoint: server test infra vs new mobile dev-feature files. |
-| W3 | T-S3.4 (solo) | Touches all three workspaces — runs alone, after the others merge. |
+| W2 | T-S3.3 ∥ T-S3.5 — **MERGED** (PR #44 b903017 ∥ PR #43 3754a4e, full pipeline, judge merge/high) | Disjoint: server test infra vs new mobile dev-feature files. |
+| W3 | T-S3.4 (solo) — **dispatched 2026-08-30** | Touches all three workspaces — runs alone, after the others merge. |
 
 ### Collision matrix (checked 2026-08-30 against `git diff --name-only origin/main qa/device-integration` and QUEUE)
 
