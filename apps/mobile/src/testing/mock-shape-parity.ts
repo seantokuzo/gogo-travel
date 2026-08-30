@@ -20,6 +20,19 @@
  *   real types (list ⊆ library at typecheck), and `jest.setup.js` seals
  *   stub === list at runtime via `assertStubKeysExact` (throws at mock-factory
  *   time, so every consumer suite reds loudly on drift in either direction).
+ *   The seal calls themselves are pinned by
+ *   src/testing/mock-shape-parity.contract.test.ts (a jest.setup refactor
+ *   that drops them cannot pass silently).
+ *
+ * THE MECHANISM'S FLOOR (stated honestly — R1 correctness/tests): jest.fn
+ * surfaces are NAME-pinned only. Default RESOLUTIONS are literal-pinned here
+ * where the real return type is concrete (`mapboxDefaultResolutions`, the
+ * location/network state literals), but jest.fn call SIGNATURES (parameter
+ * lists, listener contracts) and any-typed returns (cluster collections) are
+ * BELOW this floor: a library that changes a listener contract while keeping
+ * the method name reds nothing here. Behavior-level fidelity needs a contract
+ * suite (the google provider has one); typed handle factories are recorded
+ * follow-up hardening.
  *
  * Falsification (R-test-7): change any literal below to a value the installed
  * library doesn't ship — e.g. `PermissionStatus.GRANTED: "allowed"`, or
@@ -161,6 +174,22 @@ export const locationPositionKyoto = {
   timestamp: 0,
 } satisfies Awaited<ReturnType<typeof Location.getCurrentPositionAsync>>;
 
+// Field-combination invariants (R1 correctness): the fields typecheck
+// INDEPENDENTLY, so `status: "granted"` + `granted: false` — a state the real
+// library never produces — stays typecheck-green. Pin the combination at
+// module load; a violation throws here and reds every suite that requires a
+// sealed stub. Falsification: flip `granted` in either literal → every
+// consumer suite RED at import.
+for (const response of [locationPermissionUndetermined, locationPermissionGranted]) {
+  if (response.granted !== (response.status === "granted")) {
+    throw new Error(
+      `[mock-shape-parity] permission literal is internally inconsistent: ` +
+        `granted=${String(response.granted)} with status="${response.status}" — ` +
+        `the real expo-modules-core PermissionResponse never produces this combination.`,
+    );
+  }
+}
+
 /** Every name the location stub exports must exist on the real module. */
 export const locationStubExports = [
   "PermissionStatus",
@@ -199,6 +228,24 @@ export const networkStateOffline = {
   isConnected: false,
   isInternetReachable: false,
 } satisfies NetworkStateWire;
+
+// Field-combination invariant (R1 correctness — same class as the permission
+// pin above): expo-network documents `isConnected` as false iff type is
+// NONE/UNKNOWN, and internet reachability implies a connection. Falsification:
+// set `isConnected: true` (or `isInternetReachable: true`) on the NONE state
+// → every consumer suite RED at import.
+if (
+  networkStateOffline.isConnected !==
+    (networkStateOffline.type !== "NONE" && networkStateOffline.type !== "UNKNOWN") ||
+  (networkStateOffline.isInternetReachable && !networkStateOffline.isConnected)
+) {
+  throw new Error(
+    `[mock-shape-parity] network state literal is internally inconsistent: ` +
+      `type="${networkStateOffline.type}" isConnected=${String(networkStateOffline.isConnected)} ` +
+      `isInternetReachable=${String(networkStateOffline.isInternetReachable)} — the real ` +
+      `expo-network never produces this combination.`,
+  );
+}
 
 /** The stub's `addNetworkStateListener` subscription shape. */
 export type NetworkSubscriptionStub = { remove: () => void };
@@ -263,6 +310,27 @@ export const mapboxShapeSourceHandleMethods = [
   "getClusterLeaves",
   "getClusterChildren",
 ] as const satisfies readonly (keyof Mapbox.ShapeSource)[];
+
+/**
+ * Default resolutions for the mapbox jest.fns whose REAL return types are
+ * concrete (R1 hardening — lifts these above the name-only floor): a library
+ * version that reshapes one of these returns reds typecheck. Cluster
+ * collections stay inline in jest.setup.js — the real methods return
+ * `Promise<any>`, so a `satisfies` there would pin nothing (see the floor
+ * note in the header). Falsification: change `getClusterExpansionZoom` to a
+ * string, or `getPacks` to a non-array → typecheck RED.
+ */
+export const mapboxDefaultResolutions = {
+  setAccessToken: null,
+  getPacks: [],
+  getPack: undefined,
+  getClusterExpansionZoom: 12,
+} satisfies {
+  setAccessToken: Awaited<ReturnType<typeof Mapbox.setAccessToken>>;
+  getPacks: Awaited<ReturnType<(typeof Mapbox.offlineManager)["getPacks"]>>;
+  getPack: Awaited<ReturnType<(typeof Mapbox.offlineManager)["getPack"]>>;
+  getClusterExpansionZoom: Awaited<ReturnType<Mapbox.ShapeSource["getClusterExpansionZoom"]>>;
+};
 
 /**
  * Every REAL-NAME export of the mapbox stub must exist on the real module

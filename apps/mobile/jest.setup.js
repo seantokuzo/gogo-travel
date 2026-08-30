@@ -34,13 +34,14 @@ jest.mock(
  *
  * Contract: src/testing/mock-shape-parity.ts (`appleAuthEnums` pins every
  * enum member name + value to the installed package; `appleAuthStubExports`
- * pins the export names).
+ * pins the export names, sealed below at mock-build time; seal survival is
+ * pinned by src/testing/mock-shape-parity.contract.test.ts).
  */
 jest.mock("expo-apple-authentication", () => {
   const React = require("react");
   const { Pressable } = require("react-native");
   const shapes = require("./src/testing/mock-shape-parity");
-  return {
+  const moduleExports = {
     __esModule: true,
     AppleAuthenticationButton: ({ onPress, testID }) =>
       React.createElement(Pressable, { onPress, testID, accessibilityRole: "button" }),
@@ -50,12 +51,20 @@ jest.mock("expo-apple-authentication", () => {
       throw new Error("signInAsync not stubbed");
     }),
   };
+  shapes.assertStubKeysExact(
+    "expo-apple-authentication module",
+    Object.keys(moduleExports).filter((k) => k !== "__esModule"),
+    shapes.appleAuthStubExports,
+  );
+  return moduleExports;
 });
 
 /**
  * Contract: src/auth/google-provider.contract.test.ts — imports the REAL
- * `expo-auth-session/providers/google` (only expo-crypto/expo-application
- * native primitives mocked) and pins the facts this stub's shape relies on:
+ * `expo-auth-session/providers/google` (only expo-crypto native primitives
+ * mocked; expo-application loads real — the contract passes an explicit
+ * redirectUri so `applicationId` is never read) and pins the facts this
+ * stub's shape relies on:
  * the loaded native request resolves to the Code flow, never mints an
  * instance `nonce` (the B-4 fact), and carries OUR `extraParams.nonce` into
  * the authorize URL. That suite also pins THIS stub: `request` must stay
@@ -172,7 +181,7 @@ jest.mock("@rnmapbox/maps", () => {
   const { View } = require("react-native");
   const shapes = require("./src/testing/mock-shape-parity");
 
-  const setAccessToken = jest.fn(async () => null);
+  const setAccessToken = jest.fn(async () => shapes.mapboxDefaultResolutions.setAccessToken);
   // T-8.7 coordination: the map screen feature-detects setTelemetryEnabled —
   // the mock carries it so the detect exercises the call path under jest.
   const setTelemetryEnabled = jest.fn();
@@ -189,8 +198,8 @@ jest.mock("@rnmapbox/maps", () => {
    */
   const offlineManager = {
     createPack: jest.fn(async () => undefined),
-    getPacks: jest.fn(async () => []),
-    getPack: jest.fn(async () => undefined),
+    getPacks: jest.fn(async () => [...shapes.mapboxDefaultResolutions.getPacks]),
+    getPack: jest.fn(async () => shapes.mapboxDefaultResolutions.getPack),
     deletePack: jest.fn(async () => undefined),
     invalidatePack: jest.fn(async () => undefined),
     subscribe: jest.fn(async () => undefined),
@@ -205,13 +214,22 @@ jest.mock("@rnmapbox/maps", () => {
     zoomTo: jest.fn(),
   };
   const shapeSourceHandle = {
-    getClusterExpansionZoom: jest.fn(async () => 12),
+    getClusterExpansionZoom: jest.fn(
+      async () => shapes.mapboxDefaultResolutions.getClusterExpansionZoom,
+    ),
+    // Cluster collections: the real methods return Promise<any>, so these
+    // literals stay inline — a parity `satisfies` would pin nothing (the
+    // name-only floor; see mock-shape-parity.ts header).
     getClusterLeaves: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
     getClusterChildren: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
   };
   // Runtime seals: stub surface === type-checked contract, both directions
   // (typecheck pins the lists to the real library; this pins the objects to
-  // the lists). Throws at mock-build time → every consumer suite reds loudly.
+  // the lists). NAME-level only — jest.fn signatures are below this floor
+  // (mock-shape-parity.ts header states the boundary); default resolutions
+  // with concrete real return types come typed from mapboxDefaultResolutions.
+  // Throws at mock-build time → every consumer suite reds loudly. Seal
+  // survival is pinned by src/testing/mock-shape-parity.contract.test.ts.
   shapes.assertStubKeysExact(
     "@rnmapbox/maps offlineManager",
     Object.keys(offlineManager),
