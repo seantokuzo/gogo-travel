@@ -73,10 +73,15 @@ export async function runBaseUrlLeg(deps: BaseUrlLegDeps): Promise<LegResult> {
     };
   }
   const device = deps.isDevice();
+  // Set-but-blank rendered distinctly (PR #43 R1): legs 1 and 3 must agree
+  // about the exact EXPO_PUBLIC_API_URL="" quoting mistake in one screenshot.
+  const explicitEnv = resolution.inputs.explicitEnv;
+  const explicitEnvLine =
+    explicitEnv === null ? "(unset)" : explicitEnv.trim() === "" ? "(set but blank)" : explicitEnv;
   const evidence = [
     `url: ${resolution.url}`,
     `tier: ${resolution.tier} (${resolution.source})`,
-    `EXPO_PUBLIC_API_URL: ${resolution.inputs.explicitEnv ?? "(unset)"}`,
+    `EXPO_PUBLIC_API_URL: ${explicitEnvLine}`,
     `expoConfig.hostUri: ${resolution.inputs.hostUri ?? "(empty)"}`,
     `SourceCode.scriptURL: ${resolution.inputs.scriptURL ?? "(none)"}`,
     `runtime: ${device ? "physical device" : "simulator"}`,
@@ -137,8 +142,9 @@ export async function runHealthLeg(deps: HealthLegDeps): Promise<LegResult> {
   const timeoutMs = deps.timeoutMs ?? HEALTH_TIMEOUT_MS;
   const abort = new AbortController();
   // Cleared in `finally` — a live timer is an open handle under jest
-  // (mobile.md landmine) and a stray abort on device.
-  const timer = setTimeout(() => abort.abort(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+  // (mobile.md landmine) and a stray abort on device. No abort reason: RN's
+  // real fetch ignores it (the catch derives the timeout from signal.aborted).
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
   const started = deps.now();
   try {
     const res = await deps.fetchFn(url, { signal: abort.signal });
@@ -165,10 +171,24 @@ export async function runHealthLeg(deps: HealthLegDeps): Promise<LegResult> {
       : { status: "fail", summary: `unhealthy response (status ${res.status})`, evidence };
   } catch (err) {
     const latency = deps.now() - started;
+    // Timeout is detected from OUR signal, not the rejection's shape (PR #43
+    // R1 correctness): RN's real fetch (vendored whatwg-fetch) rejects aborts
+    // with its own DOMException("Aborted","AbortError") and IGNORES
+    // AbortSignal.reason — a pin reading the reason back would be fixture
+    // fiction (the B-4 mock-fidelity class). The only aborter here is our
+    // timer, so signal.aborted ⇔ timeout, deterministically on device.
+    const timedOut = abort.signal.aborted;
     return {
       status: "fail",
-      summary: "round-trip failed — exact cause below",
-      evidence: [`GET ${url}`, `after: ${latency}ms`, describeError(err)].join("\n"),
+      summary: timedOut
+        ? `no response within ${timeoutMs}ms — request aborted`
+        : "round-trip failed — exact cause below",
+      evidence: [
+        `GET ${url}`,
+        `after: ${latency}ms`,
+        ...(timedOut ? [`timeout after ${timeoutMs}ms`] : []),
+        describeError(err),
+      ].join("\n"),
     };
   } finally {
     clearTimeout(timer);

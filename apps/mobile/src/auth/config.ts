@@ -133,8 +133,11 @@ export function explainApiBaseUrl(): ApiBaseUrlResolution {
   const explicit = process.env.EXPO_PUBLIC_API_URL;
   const hostUri = Constants.expoConfig?.hostUri ?? null;
   const scriptURL = readScriptURL();
+  // TRULY raw (PR #43 R1): a set-but-blank var stays "" here — normalizing it
+  // to null made leg 1 say "(unset)" while leg 3 said "SET BUT BLANK" in the
+  // same screenshot. The tier logic below applies its own emptiness rule.
   const inputs = {
-    explicitEnv: explicit !== undefined && explicit.length > 0 ? explicit : null,
+    explicitEnv: explicit ?? null,
     hostUri,
     scriptURL,
   };

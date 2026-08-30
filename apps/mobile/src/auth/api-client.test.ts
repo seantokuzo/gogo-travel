@@ -2,7 +2,7 @@
  * API client (T-5.7) — descriptor-driven requests + refresh-on-401 rotation.
  * fetch is injected; the shared `@gogo/shared` descriptors drive URL/verb/parse.
  */
-import { authEndpoints, userEndpoints, type User } from "@gogo/shared";
+import { authEndpoints, inviteEndpoints, userEndpoints, type User } from "@gogo/shared";
 
 import {
   ApiRequestError,
@@ -140,7 +140,7 @@ describe("B-6 dev cause surfacing on transport failure (PR #37 R1)", () => {
     jest.restoreAllMocks();
   });
 
-  it("dev arm: warns with the method and the URL the phone actually dialed", async () => {
+  it("dev arm: warns with the method, the base URL the phone dialed, and the path TEMPLATE", async () => {
     const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     const { client, fetchImpl } = setup();
     fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
@@ -151,11 +151,44 @@ describe("B-6 dev cause surfacing on transport failure (PR #37 R1)", () => {
     });
 
     // The one clue B-5 cost two debugging rounds to recover: WHICH host the
-    // request went to. Reverting B-6 (deleting the __DEV__ warn) goes red here.
+    // request went to. Reverting B-6 (deleting the __DEV__ warn) goes red
+    // here. Base + template (PR #43 R1): the host and route shape carry the
+    // full diagnostic value; interpolated params never enter the warn.
     const calls = apiWarnCalls(warnSpy);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[0]).toContain("GET");
-    expect(calls[0]?.[0]).toContain("http://host:3000/api/users/me");
+    expect(calls[0]?.[0]).toContain("http://host:3000/api");
+    expect(calls[0]?.[0]).toContain("/users/me");
+  });
+
+  it("dev arm NEVER warns an interpolated path param — invite tokens stay out of the dev surface (PR #43 R1)", async () => {
+    // The warn feeds the diagnostics panel's copyable evidence via the
+    // console tap; an invite token is the join capability (R-trips-16).
+    // Falsification: revert the warn to interpolate `url` → the token
+    // assertion below goes red.
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
+    const token = "sekrit-invite-token-abc123";
+
+    await expect(
+      client.request(inviteEndpoints.previewInvite, { params: { token } }),
+    ).rejects.toMatchObject({ status: 0, code: "NETWORK" });
+
+    // Control arm: the token WAS in the URL the transport dialed — the
+    // redaction below is the warn's doing, not a dead request path.
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `http://host:3000/api/invites/${token}`,
+      expect.anything(),
+    );
+
+    const calls = apiWarnCalls(warnSpy);
+    expect(calls).toHaveLength(1);
+    const warned = calls[0]?.[0] as string;
+    expect(warned).not.toContain(token);
+    // The template (host + route shape) is still fully present.
+    expect(warned).toContain("http://host:3000/api");
+    expect(warned).toContain("/invites/:token");
   });
 
   it("prod arm (__DEV__ false): NO warn — and the control: the same failure still throws the sanitized error", async () => {

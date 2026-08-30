@@ -197,8 +197,18 @@ export function createApiClient(config: ApiClientConfig): MobileApiClient {
       // was quietly calling `localhost` (B-5). Dev keeps the cause; the thrown
       // error is unchanged, so production behaviour and every caller's
       // handling stay exactly as before.
+      //
+      // Base URL + path TEMPLATE, never the interpolated URL (PR #43 R1
+      // security): path params carry capabilities (`/invites/:token` — the
+      // invite token IS the join credential), and this warn feeds the
+      // diagnostics panel's copyable evidence via the dev console tap. The
+      // template keeps 100% of the B-5 diagnostic value (host + route shape);
+      // query strings are dropped with the same reasoning.
       if (__DEV__) {
-        console.warn(`[api] transport failure: ${descriptor.method} ${url}`, err);
+        console.warn(
+          `[api] transport failure: ${descriptor.method} ${config.baseUrl} · ${descriptor.path}`,
+          err,
+        );
       }
       throw new ApiRequestError(0, "NETWORK", "network request failed");
     } finally {

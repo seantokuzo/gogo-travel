@@ -106,6 +106,22 @@ describe("explainApiBaseUrl (tier provenance — the B-5 evidence surface)", () 
     expect(explainApiBaseUrl()).toMatchObject({ tier: 3, source: "metro-script-url" });
   });
 
+  it("set-but-blank env is captured RAW ('' — not normalized to null) while the tier falls through (PR #43 R1)", () => {
+    // Falsification: restore the old `length > 0 ? explicit : null`
+    // normalization → the explicitEnv pin below reds. Leg 1 and leg 3 must
+    // agree about EXPO_PUBLIC_API_URL="" in the same screenshot.
+    setHostUri("192.168.1.50:8081");
+    setScriptUrl(null);
+    process.env.EXPO_PUBLIC_API_URL = "";
+
+    expect(explainApiBaseUrl()).toEqual({
+      url: "http://192.168.1.50:3000/api",
+      tier: 2,
+      source: "expo-config-host-uri",
+      inputs: { explicitEnv: "", hostUri: "192.168.1.50:8081", scriptURL: null },
+    });
+  });
+
   it("tier 3 file:// refusal keeps the RAW scriptURL in evidence while tier 4 fires", () => {
     // A release-shaped embedded bundle: the panel must show WHY tier 3
     // declined (the file:// URL is right there) — not just "localhost".

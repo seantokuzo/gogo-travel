@@ -106,6 +106,19 @@ describe("leg 1 — base URL + tier provenance (B-5)", () => {
     );
   });
 
+  it("renders set-but-blank env distinctly — agreeing with leg 3 in the same screenshot (PR #43 R1)", async () => {
+    // Falsification: render explicitEnv "" as "(unset)" (the old shape) → red.
+    const result = await runBaseUrlLeg({
+      explain: () =>
+        makeResolution({
+          inputs: { explicitEnv: "", hostUri: null, scriptURL: "http://192.168.1.69:8081/x" },
+        }),
+      isDevice: () => false,
+    });
+    expect(result.evidence).toContain("EXPO_PUBLIC_API_URL: (set but blank)");
+    expect(result.evidence).not.toContain("(unset)");
+  });
+
   it("a throwing resolver fails WITH the thrown cause (never a blank row)", async () => {
     const result = await runBaseUrlLeg({
       explain: () => {
@@ -177,21 +190,28 @@ describe("leg 2 — /health round-trip", () => {
     expect(result.evidence).toContain("GET http://192.168.1.69:3000/api/health");
   });
 
-  it("aborts a hung request at the timeout and reports the timeout as the cause", async () => {
+  it("aborts a hung request at the timeout and names the timeout DETERMINISTICALLY (not from the rejection)", async () => {
+    // Fixture mirrors RN's REAL vendored whatwg-fetch (PR #43 R1): it rejects
+    // aborts with its OWN AbortError and IGNORES AbortSignal.reason — so the
+    // "timeout after Nms" line below can only come from the leg's own
+    // signal.aborted branch. Falsification: drop that branch in runHealthLeg
+    // → red (the fixture no longer hands the code its expected string).
     const result = await runHealthLeg({
       baseUrl: () => "http://10.0.0.9:3000/api",
       fetchFn: (_input, init) =>
         new Promise((_resolve, reject) => {
-          // Fixture transport honors the abort signal like real fetch does.
           init?.signal?.addEventListener("abort", () =>
-            reject((init.signal as AbortSignal).reason ?? new Error("aborted")),
+            reject(Object.assign(new Error("Aborted"), { name: "AbortError" })),
           );
         }),
       now: () => Date.now(),
       timeoutMs: 30,
     });
     expect(result.status).toBe("fail");
+    expect(result.summary).toContain("no response within 30ms");
     expect(result.evidence).toContain("timeout after 30ms");
+    // The raw transport rejection still rides along (exact-cause discipline).
+    expect(result.evidence).toContain("AbortError: Aborted");
   });
 
   it("a throwing baseUrl resolver fails with that cause (unresolvable ≠ unreachable)", async () => {
@@ -255,6 +275,7 @@ describe("leg 3 — EXPO_PUBLIC_* inlining (names only)", () => {
       else process.env.EXPO_PUBLIC_API_URL = prev;
     }
   });
+
 });
 
 describe("leg 4 — Google auth-request shape (B-4)", () => {
