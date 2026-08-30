@@ -276,6 +276,29 @@ describe("leg 3 — EXPO_PUBLIC_* inlining (names only)", () => {
     }
   });
 
+  it("THE REAL BLANK DETECTOR (PR #43 R1 blocker): EXPO_PUBLIC_API_URL='' fails the leg through the REAL reader", async () => {
+    // The panel's ONLY leg-3 fail condition is the .env quoting mistake — so
+    // its detection must be pinned against the REAL readExpoPublicEnv, not a
+    // hand-built fixture entry. Falsification: hardcode `blank: false` in
+    // readExpoPublicEnv → both arms below red (the fixture-driven FAIL-arm
+    // test above stayed green through exactly that mutation).
+    const prev = process.env.EXPO_PUBLIC_API_URL;
+    try {
+      for (const blankValue of ["", " "]) {
+        process.env.EXPO_PUBLIC_API_URL = blankValue;
+        const entry = readExpoPublicEnv().find((e) => e.name === "EXPO_PUBLIC_API_URL");
+        expect(entry).toEqual({ name: "EXPO_PUBLIC_API_URL", present: true, blank: true });
+
+        const result = await runEnvLeg({ read: readExpoPublicEnv });
+        expect(result.status).toBe("fail");
+        expect(result.summary).toContain("EXPO_PUBLIC_API_URL");
+        expect(result.evidence).toContain("EXPO_PUBLIC_API_URL: SET BUT BLANK");
+      }
+    } finally {
+      if (prev === undefined) delete process.env.EXPO_PUBLIC_API_URL;
+      else process.env.EXPO_PUBLIC_API_URL = prev;
+    }
+  });
 });
 
 describe("leg 4 — Google auth-request shape (B-4)", () => {

@@ -19,7 +19,7 @@ import { resetTabMemory } from "@/navigation/tab-memory";
 import { renderApp } from "@/test-utils/render-app";
 import { seedUnauthenticated } from "@/test-utils/session-fixtures";
 
-import { resetConsoleTapForTests } from "./console-tap";
+import { resetConsoleTapForTests } from "@/features/dev/diagnostics/console-tap";
 
 jest.mock("expo-secure-store", () => {
   const map = new Map<string, string>();
