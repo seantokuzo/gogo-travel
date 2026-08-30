@@ -78,7 +78,12 @@ function resolveMetroHost(): string | null {
   const sourceCode = (NativeModules as { SourceCode?: SourceCodeModule | null }).SourceCode;
   const scriptURL = sourceCode?.getConstants?.().scriptURL ?? sourceCode?.scriptURL;
   if (typeof scriptURL !== "string") return null;
-  const match = /^https?:\/\/([^:/]+)/.exec(scriptURL);
+  // `@` is excluded so a userinfo-bearing URL (`http://a@evil.com`) can never
+  // smuggle its real host past the capture: the guard's host parse and
+  // fetch's host parse would otherwise disagree about which side of the `@`
+  // is the host (R1 security finding). The capture stops at the userinfo
+  // boundary, so only the pre-`@` segment can ever be derived.
+  const match = /^https?:\/\/([^:/@]+)/.exec(scriptURL);
   return match?.[1] ?? null;
 }
 

@@ -172,6 +172,24 @@ describe("resolveApiBaseUrl", () => {
       expect(resolveApiBaseUrl()).toBe("http://192.168.1.69:3000/api");
     });
 
+    it("tier 3 stops the host capture at userinfo: a `@`-bearing scriptURL can never smuggle its real host — with control arm", () => {
+      // R1 security finding: with `[^:/]+` the capture kept the whole
+      // `192.168.1.1@evil.com`, assertSecureBaseUrl's own parse ALSO kept the
+      // `@` (the /^192\.168\./ prefix matched), yet fetch would read the host
+      // as evil.com — guard and fetch disagreeing about the same URL. The
+      // capture now stops at `@`, so only the pre-`@` segment derives.
+      setHostUri(null);
+      setScriptUrl("http://192.168.1.1@evil.com:8081/index.bundle?platform=ios");
+      expect(resolveApiBaseUrl()).toBe("http://192.168.1.1:3000/api");
+
+      // Control arm: evil.com as the GENUINE host flows through this same
+      // harness (jest runs __DEV__-true, so the transport guard permits it) —
+      // proving an evil.com-hosted result was expressible, and the pin above
+      // refusing to produce one is the capture's doing, not a dead source.
+      setScriptUrl("http://evil.com:8081/index.bundle?platform=ios");
+      expect(resolveApiBaseUrl()).toBe("http://evil.com:3000/api");
+    });
+
     it("tier 4: localhost is the terminal fallback ONLY when every dev-host source is empty — with control arm", () => {
       setHostUri(null);
       setScriptUrl(null);
