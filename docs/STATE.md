@@ -65,9 +65,11 @@ ultra` remains available to Sean on the merged diff.
   the ADR (doc-homes append-only), and it carries three Sean questions with parkable
   defaults recorded: B-7 ruling (suite pins it `it.fails` either way), diagnostics
   entry placement (deeplink-entry until ruled), generated-vs-committed test env keys
-  (rec: generated). **W1 DISPATCHED 2026-08-30 from the branch spec** (T-S3.1 faithful
-  env + boot-shape suite ∥ T-S3.2 mock-fidelity contracts, isolated worktrees) — the
-  four-layer direction was Sean-mandated up front; no pending question affects W1.
+  (rec: generated). **W1 ✅ MERGED 2026-08-30 — T-S3.1 (PR #41, 0643621: faithful env +
+  boot-shape suite) ∥ T-S3.2 (PR #42, aaf0742: mock-fidelity contracts — found a real
+  mock fiction at rest, StyleURL v11-vs-v10). Server 62 suites / 857; mobile 151 / 1468.
+  W2 DISPATCHED: T-S3.3 shared-PG fresh-DB (server) ∥ T-S3.5 device-smoke diagnostics
+  panel (mobile). Narratives: QUEUE Recently-done rows.
 
 #### The rig — Sean's steps, in order
 
