@@ -26,7 +26,10 @@
  * DATABASE_URL resolution: `--database-url <url>` flag → existing `.env.test`
  * value (preserved across --force regens) → `DATABASE_URL` in the calling
  * env → a commented placeholder (authed boot then throws until you set one —
- * all-or-nothing requires it).
+ * all-or-nothing requires it). PREFER the env var (or the preserved file
+ * value) over the flag: argv lands in shell history and is visible to every
+ * local process via `ps` while the script runs — an env var is neither. The
+ * flag stays for one-shot throwaway rigs.
  *
  *   node scripts/gen-test-env.mjs             # create (refuses to overwrite)
  *   node scripts/gen-test-env.mjs --force     # regen keys, keep DATABASE_URL
@@ -35,7 +38,7 @@
  * Law #1 posture: this script logs variable NAMES only, never values.
  */
 import { generateKeyPairSync, randomBytes } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -103,6 +106,9 @@ const lines = [
 ];
 
 writeFileSync(envTestPath, lines.join("\n"), { mode: 0o600 });
+// `mode` applies only when the file is CREATED — a --force overwrite keeps the
+// old mode, making the "(mode 600)" log a lie on that path (R1 finding).
+chmodSync(envTestPath, 0o600);
 
 console.warn(`wrote apps/server/.env.test (mode 600) with throwaway values for:`);
 console.warn("  NODE_ENV, AUTH_ES256_PRIVATE_KEY, AUTH_ES256_KID, APPLE_CLIENT_ID,");

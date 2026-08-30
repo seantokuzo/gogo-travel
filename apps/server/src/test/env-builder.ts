@@ -9,7 +9,7 @@
  * nothing here may ever be committed as a value (Law #1): consumers get fresh
  * material per call.
  *
- * Consumers: the boot-shape suite (`src/test/boot-shape.test.ts`), and
+ * Consumers: the boot-shape suite (`src/boot-shape.test.ts`), and
  * T-S3.3's fresh-install suite (builds authed deps from this env). The live
  * dev-rig twin is `scripts/gen-test-env.mjs`, which writes the same shape to
  * a gitignored `apps/server/.env.test`.

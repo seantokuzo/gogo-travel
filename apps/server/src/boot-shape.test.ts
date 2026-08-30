@@ -27,13 +27,14 @@
  */
 import { spawn } from "node:child_process";
 import { createPrivateKey } from "node:crypto";
+import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createApp } from "../app.js";
-import { buildAuthDepsFromEnv } from "../auth/wire.js";
-import { closeDb } from "../db/index.js";
-import { loadEnv } from "../env.js";
-import { AUTH_ENV_VAR_NAMES, makeFullAuthTestEnv, TEST_AUTH_KID } from "./env-builder.js";
+import { createApp } from "./app.js";
+import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { closeDb } from "./db/index.js";
+import { loadEnv } from "./env.js";
+import { AUTH_ENV_VAR_NAMES, makeFullAuthTestEnv, TEST_AUTH_KID } from "./test/env-builder.js";
 
 /**
  * Never connected: the db pool is constructed lazily and nothing in this
@@ -176,6 +177,22 @@ describe("boot shape: key-material forms (landmine pin — DECODER::unsupported)
     expect(refresh.status).toBe(400);
   });
 
+  it("builder style discriminator: 'env-file' folds PEMs to literal-\\n single lines; 'pem' keeps real newlines", async () => {
+    // Kills the fold()→identity mutation R1 found surviving 20/20 green:
+    // without these pins an identity fold makes the literal-\n arm above
+    // exercise the same real-newline shape as the pem arm — vacuously green.
+    // Falsification: fold() returning its input (or folding both styles) →
+    // RED here.
+    const escaped = await makeFullAuthTestEnv({ style: "env-file" });
+    const plain = await makeFullAuthTestEnv();
+    for (const key of ["AUTH_ES256_PRIVATE_KEY", "APPLE_PRIVATE_KEY"] as const) {
+      expect(escaped.vars[key]).toContain("\\n");
+      expect(escaped.vars[key]).not.toContain("\n");
+      expect(plain.vars[key]).toContain("\n");
+      expect(plain.vars[key]).not.toContain("\\n");
+    }
+  });
+
   it("armor-less AUTH_ES256_PRIVATE_KEY (bare base64 DER) fails the boot LOUDLY, leaking no material", async () => {
     // The QA-rig landmine: pasting the key without PEM armor. pem() only
     // normalizes `\n` escapes — it cannot invent armor, so boot must throw,
@@ -236,7 +253,7 @@ describe("boot shape: key-material forms (landmine pin — DECODER::unsupported)
 // (1h) — the process is killed long before either touches the network.
 // ---------------------------------------------------------------------------
 
-const SERVER_DIR = fileURLToPath(new URL("../../", import.meta.url));
+const SERVER_DIR = fileURLToPath(new URL("../", import.meta.url));
 const BANNER_RE = /listening on http:\/\/localhost:\d+/;
 const BOOT_TIMEOUT_MS = 25_000;
 const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
@@ -301,9 +318,39 @@ function bootCompositionRoot(env: Record<string, string>): Promise<CompositionRo
   });
 }
 
-/** Ephemeral-ish port per boot arm; loadEnv rejects PORT=0 (min 1). */
-function randomPort(): string {
-  return String(23_000 + Math.floor(Math.random() * 2_000));
+/**
+ * OS-assigned free port (bind 0, read, release). loadEnv rejects PORT=0
+ * (min 1), so the child can't self-assign — we probe on its behalf.
+ */
+function freePort(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      probe.close(() => {
+        if (address !== null && typeof address === "object") resolve(String(address.port));
+        else reject(new Error("port probe returned no address"));
+      });
+    });
+  });
+}
+
+const PORT_ATTEMPTS = 3;
+
+/**
+ * Boot a banner-expected arm on a probed-free port, with a bounded retry if
+ * another process races us into the probe→bind window (R1 finding: a raw
+ * random port could collide with a live dev server → bannerless child →
+ * misleading false RED).
+ */
+async function bootOnFreePort(env: Record<string, string>): Promise<CompositionRootBoot> {
+  let last: CompositionRootBoot | undefined;
+  for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt++) {
+    last = await bootCompositionRoot({ ...env, PORT: await freePort() });
+    if (last.sawBanner || !last.stderr.includes("EADDRINUSE")) return last;
+  }
+  return last!;
 }
 
 describe("composition root (src/index.ts) boot shapes — subprocess", () => {
@@ -332,11 +379,7 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
       // Falsification: any wire/createApp regression that breaks the full
       // authed boot (e.g. an eagerly-connecting dep) → no banner → RED.
       const { vars } = await makeFullAuthTestEnv({ databaseUrl: FAKE_DB_URL });
-      const boot = await bootCompositionRoot({
-        NODE_ENV: "production",
-        PORT: randomPort(),
-        ...vars,
-      });
+      const boot = await bootOnFreePort({ NODE_ENV: "production", ...vars });
       expect(boot.sawBanner).toBe(true);
       expect(boot.stderr).not.toContain("health-only");
     },
@@ -372,10 +415,7 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
       // Control for the production-refusal arm: same empty env, NODE_ENV
       // flipped → banners up. Falsification: the health-only path breaking
       // (no banner) or its warning disappearing (silent degrade) → RED.
-      const boot = await bootCompositionRoot({
-        NODE_ENV: "development",
-        PORT: randomPort(),
-      });
+      const boot = await bootOnFreePort({ NODE_ENV: "development" });
       expect(boot.sawBanner).toBe(true);
       expect(boot.stderr).toContain("auth env not configured");
       expect(boot.stderr).toContain("health-only");
