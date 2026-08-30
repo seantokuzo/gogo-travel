@@ -17,6 +17,7 @@ import {
 
 import {
   buildGridDays,
+  CHECKPOINT_BLOCK_MINUTES,
   DEFAULT_BLOCK_MINUTES,
   initialDayIndex,
   MINUTES_PER_DAY,
@@ -113,7 +114,7 @@ describe("buildGridDays", () => {
     expect(maxAllDayCount).toBe(1);
   });
 
-  it("renders spanning lodging as lane segments across covered columns, never blocks (R-itin-31)", () => {
+  it("renders spanning lodging as lane segments across covered columns, never a full-height band (R-itin-31)", () => {
     const lodging = makeItineraryItem({
       id: ITEM_LODGING_ID,
       kind: "booking",
@@ -126,14 +127,108 @@ describe("buildGridDays", () => {
     });
     const { days, laneCount } = buildGridDays(TRIP, [lodging], bookingsMap());
     expect(laneCount).toBe(1);
-    // Despite carrying check-in/check-out times, it never becomes a block.
-    expect(days.flatMap((d) => d.blocks)).toHaveLength(0);
+    // B-12 amended the pre-B-12 "no blocks at all" pin: the timed grid now
+    // carries EXACTLY the two ~15-min checkpoint indicators (suite below) —
+    // still never a full-height 15:00→11:00 band.
+    expect(days.flatMap((d) => d.blocks).map((b) => b.checkpoint)).toEqual([
+      "check-in",
+      "check-out",
+    ]);
     const segments = days.map((d) => d.spans[0]);
     expect(segments.map((seg) => seg?.isStart)).toEqual([true, false, false]);
     expect(segments.map((seg) => seg?.isEnd)).toEqual([false, false, true]);
     expect(segments.every((seg) => seg?.title === "Park Hyatt Tokyo")).toBe(true);
     expect(segments.every((seg) => seg?.bookingId === BOOKING_LODGING_ID)).toBe(true);
     expect(segments.every((seg) => seg?.lane === 0)).toBe(true);
+  });
+
+  describe("spanning-lodging checkpoint indicators (B-12 — ephemeral derived UI)", () => {
+    const lodging = () =>
+      makeItineraryItem({
+        id: ITEM_LODGING_ID,
+        kind: "booking",
+        booking_id: BOOKING_LODGING_ID,
+        title: null,
+        day: TRIP_START,
+        end_day: TRIP_END,
+        start_time: "15:00",
+        end_time: "11:00",
+      });
+
+    it("derives ~15-min indicators at the real check-in/check-out times from the ONE row", () => {
+      // ONE itinerary row in (F-051 criterion 2 — the DB shape) …
+      const { days } = buildGridDays(TRIP, [lodging()], bookingsMap());
+      // … projects to a check-in block on `day` and a check-out block on
+      // `end_day`, both ephemeral render data carrying the SAME item/booking
+      // identity (they route to the same booking detail as the span).
+      expect(days[0]?.blocks).toEqual([
+        expect.objectContaining({
+          itemId: ITEM_LODGING_ID,
+          bookingId: BOOKING_LODGING_ID,
+          checkpoint: "check-in",
+          startMinutes: 15 * 60,
+          endMinutes: 15 * 60 + CHECKPOINT_BLOCK_MINUTES,
+          plusOne: false,
+        }),
+      ]);
+      expect(days[2]?.blocks).toEqual([
+        expect.objectContaining({
+          itemId: ITEM_LODGING_ID,
+          bookingId: BOOKING_LODGING_ID,
+          checkpoint: "check-out",
+          startMinutes: 11 * 60,
+          endMinutes: 11 * 60 + CHECKPOINT_BLOCK_MINUTES,
+        }),
+      ]);
+      // The night between shows nothing on the timed grid (§2.6 spirit).
+      expect(days[1]?.blocks).toHaveLength(0);
+    });
+
+    it("skips an edge whose time is unset — no invented times", () => {
+      const untimedCheckout = { ...lodging(), end_time: null };
+      const { days } = buildGridDays(TRIP, [untimedCheckout], bookingsMap());
+      expect(days[0]?.blocks.map((b) => b.checkpoint)).toEqual(["check-in"]);
+      expect(days[2]?.blocks).toHaveLength(0);
+    });
+
+    it("joins the side-by-side split but neither carries nor causes the overlap badge", () => {
+      // A real activity square over the 15:00 check-in.
+      const activity = makeItineraryItem({
+        id: "act-1",
+        day: TRIP_START,
+        start_time: "14:30",
+        end_time: "16:00",
+      });
+      const { days } = buildGridDays(TRIP, [lodging(), activity], bookingsMap());
+      const blocks = days[0]?.blocks ?? [];
+      expect(blocks).toHaveLength(2);
+      // Split so nothing is occluded (R-itin-15 geometry)…
+      expect(blocks.map((b) => b.columns)).toEqual([2, 2]);
+      // …but the WARNING stays item-vs-item: the ephemeral indicator must
+      // not flag the real activity (a spanning lodging collides with
+      // nothing), and never flags itself.
+      expect(blocks.every((b) => b.overlapping === false)).toBe(true);
+    });
+
+    it("real-vs-real overlap still badges with an indicator present (control arm)", () => {
+      const a = makeItineraryItem({
+        id: "ov-a",
+        day: TRIP_START,
+        start_time: "14:00",
+        end_time: "16:00",
+      });
+      const b = makeItineraryItem({
+        id: "ov-b",
+        day: TRIP_START,
+        start_time: "15:30",
+        end_time: "17:00",
+      });
+      const { days } = buildGridDays(TRIP, [lodging(), a, b], bookingsMap());
+      const byId = new Map(days[0]?.blocks.map((block) => [block.itemId, block]));
+      expect(byId.get("ov-a")?.overlapping).toBe(true);
+      expect(byId.get("ov-b")?.overlapping).toBe(true);
+      expect(byId.get(ITEM_LODGING_ID)?.overlapping).toBe(false);
+    });
   });
 
   it("stacks overlapping spans into distinct lanes", () => {
