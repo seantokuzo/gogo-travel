@@ -10,10 +10,6 @@
  * library never produces on iOS — which is exactly why the outage shipped.
  */
 import { renderHook } from "@testing-library/react-native";
-// The REAL library class — deliberately NOT the globally-stubbed
-// `expo-auth-session/providers/google` module (a different module id, so the
-// stub below never intercepts it). The contract test constructs it directly.
-import { AuthRequest, ResponseType } from "expo-auth-session";
 
 import { buildGoogleSignInRequest, useGoogleSignIn } from "./google";
 
@@ -78,36 +74,11 @@ describe("useGoogleSignIn nonce supply", () => {
   });
 });
 
-describe("REAL expo-auth-session AuthRequest contract (PR #37 R1 — the B-4 mock-infidelity class)", () => {
-  it("native Code flow: no instance nonce; OUR extraParams nonce survives into the authorize URL", async () => {
-    // The previous outage shipped because tests pinned a hand-written mock
-    // shape the library never produces on iOS. This arm pins the real class:
-    // a lib upgrade that sanitizes reserved OIDC params out of extraParams
-    // (or starts minting its own nonce on Code) goes red HERE, not on device.
-    const ourNonce = "ab".repeat(32); // exactly what randomNonceHex() yields under the 0xab mock
-    const request = new AuthRequest({
-      clientId: "test-client-id",
-      redirectUri: "com.gogo.travel:/oauthredirect",
-      responseType: ResponseType.Code,
-      scopes: ["openid", "profile", "email"],
-      extraParams: { nonce: ourNonce },
-    });
-
-    // The base class stores NO nonce field on the Code path (build/
-    // AuthRequest.js constructor — providers/Google mints one only under
-    // ResponseType.IdToken), so the builder's `request?.nonce` arm is
-    // undefined on native and the extraParams fallback is load-bearing.
-    expect((request as { nonce?: string }).nonce).toBeUndefined();
-    expect(request.extraParams.nonce).toBe(ourNonce);
-
-    // AuthRequest.js iterates extraParams into the URL params bag —
-    // the nonce must reach the authorize URL Google echoes into the token.
-    const url = await request.makeAuthUrlAsync({
-      authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
-    });
-    expect(url).toContain(`nonce=${ourNonce}`);
-  });
-});
+// The REAL-library contract arms (PR #37 R1's real-AuthRequest test) moved to
+// src/auth/google-provider.contract.test.ts (T-S3.2 — one contract home per
+// library). That suite drives the real provider HOOKS end-to-end and pins the
+// same facts, strictly stronger: no-instance-nonce + extraParams-nonce-in-URL
+// on the native Code flow, plus the responseType resolution itself.
 
 describe("buildGoogleSignInRequest", () => {
   const success = { type: "success", params: { id_token: "google-id-token" } };
