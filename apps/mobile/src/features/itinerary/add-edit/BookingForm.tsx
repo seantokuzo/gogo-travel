@@ -360,6 +360,20 @@ export function BookingForm({
               date: "",
               time: "",
             };
+            // B-10b/c contextual picker seeds: an empty date opens on the
+            // paired datetime field's entered date (flight arrival ← its
+            // departure, check-out ← check-in, …) else the trip's start —
+            // never on today. Empty times seed from the sibling's time
+            // (arrival is nearly always departure's day, near its time).
+            const siblingField = CATEGORY_FIELDS[category].find(
+              (candidate) => candidate.kind === "datetime" && candidate.key !== field.key,
+            );
+            const sibling =
+              siblingField !== undefined
+                ? (details[siblingField.key] as DateTimeValue | undefined)
+                : undefined;
+            const contextDate =
+              sibling !== undefined && sibling.date !== "" ? sibling.date : trip.start_date;
             const error = fieldErrors[field.key];
             return (
               <View key={field.key}>
@@ -368,6 +382,7 @@ export function BookingForm({
                     <DateField
                       label={`${field.label} date`}
                       value={value.date}
+                      contextDate={contextDate}
                       onSelect={(date) => setDetailField(field.key, { ...value, date })}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-date`}
                     />
@@ -376,6 +391,7 @@ export function BookingForm({
                     <TimeField
                       label={`${field.label} time`}
                       value={value.time}
+                      contextTime={sibling?.time ?? ""}
                       onSelect={(time) => setDetailField(field.key, { ...value, time })}
                       onClear={() => setDetailField(field.key, { ...value, time: "" })}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-time`}

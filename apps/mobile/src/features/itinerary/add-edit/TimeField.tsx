@@ -6,6 +6,11 @@
  * is correct by construction. Optional times get a Clear affordance
  * (`{testID}-clear`) — schedule/add flows treat "" as all-day/absent.
  *
+ * B-10c: an unset field used to open the spinner at 12:00 regardless of
+ * context. `contextTime` mirrors DateField's `contextDate` — a flight's
+ * arrival seeds from its entered departure time — falling back to noon.
+ * Seed only: the picked value is untouched.
+ *
  * testIDs mirror DateField's derivation: row `{testID}`, revealed picker
  * `{testID}-picker`, error `{testID}-error`, clear `{testID}-clear`.
  */
@@ -22,6 +27,8 @@ export interface TimeFieldProps {
   /** Wall `HH:MM`, or `""` when unset. */
   value: ISOTime | "";
   onSelect(value: ISOTime): void;
+  /** B-10c: where the spinner OPENS when `value` is empty. Noon when absent/"". */
+  contextTime?: ISOTime | "";
   /** Present ⇒ the field is clearable (optional time semantics). */
   onClear?(): void;
   /** Error state — replaces the helper slot, danger border (Input parity). */
@@ -34,6 +41,13 @@ export interface TimeFieldProps {
 export function timeToPickerDate(value: ISOTime | ""): Date {
   const [h, m] = value === "" ? [12, 0] : value.split(":").map(Number);
   return new Date(2000, 0, 1, h ?? 12, m ?? 0);
+}
+
+/** B-10c seed resolution: value wins; else the context time; else noon. */
+export function timePickerSeed(value: ISOTime | "", contextTime?: ISOTime | ""): Date {
+  if (value !== "") return timeToPickerDate(value);
+  if (contextTime !== undefined && contextTime !== "") return timeToPickerDate(contextTime);
+  return timeToPickerDate("");
 }
 
 /** Local Date → wall `HH:MM` (device-clock components — no tz math). */
@@ -62,7 +76,15 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function TimeField({ label, value, onSelect, onClear, error, testID }: TimeFieldProps) {
+export function TimeField({
+  label,
+  value,
+  onSelect,
+  contextTime,
+  onClear,
+  error,
+  testID,
+}: TimeFieldProps) {
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
@@ -103,7 +125,7 @@ export function TimeField({ label, value, onSelect, onClear, error, testID }: Ti
       {open ? (
         <DateTimePicker
           testID={`${testID}-picker`}
-          value={timeToPickerDate(value)}
+          value={timePickerSeed(value, contextTime)}
           mode="time"
           display={Platform.OS === "ios" ? "spinner" : "default"}
           onValueChange={(_event, date) => {

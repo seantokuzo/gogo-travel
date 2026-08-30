@@ -212,6 +212,7 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
       <ScheduleSheet
         tripId={trip.id}
         booking={scheduleTarget}
+        contextDay={trip.start_date}
         onClose={() => setScheduleTarget(null)}
       />
     </View>

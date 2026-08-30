@@ -519,6 +519,7 @@ export default function TripSettingsScreen() {
                   <DateField
                     label="Start date"
                     value={startDate}
+                    contextDate={endDate}
                     onSelect={setStartDate}
                     testID="trip-settings-input-dates-start"
                   />
@@ -527,6 +528,7 @@ export default function TripSettingsScreen() {
                   <DateField
                     label="End date"
                     value={endDate}
+                    contextDate={startDate}
                     onSelect={setEndDate}
                     error={endError}
                     testID="trip-settings-input-dates-end"

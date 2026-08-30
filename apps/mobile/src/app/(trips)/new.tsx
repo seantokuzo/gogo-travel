@@ -320,6 +320,9 @@ export default function TripNewScreen() {
                 <DateField
                   label="Start date"
                   value={startDate}
+                  // B-10b: an empty side of the range opens on its sibling,
+                  // not on today — a far-future trip needs no month paging.
+                  contextDate={endDate}
                   onSelect={(value) => {
                     setStartDate(value);
                     if (fieldErrors.start_date) {
@@ -334,6 +337,7 @@ export default function TripNewScreen() {
                 <DateField
                   label="End date"
                   value={endDate}
+                  contextDate={startDate}
                   onSelect={(value) => {
                     setEndDate(value);
                     if (fieldErrors.end_date) {
