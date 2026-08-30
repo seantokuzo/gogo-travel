@@ -68,8 +68,10 @@ ultra` remains available to Sean on the merged diff.
   (rec: generated). **W1 ✅ MERGED 2026-08-30 — T-S3.1 (PR #41, 0643621: faithful env +
   boot-shape suite) ∥ T-S3.2 (PR #42, aaf0742: mock-fidelity contracts — found a real
   mock fiction at rest, StyleURL v11-vs-v10). Server 62 suites / 857; mobile 151 / 1468.
-  W2 DISPATCHED: T-S3.3 shared-PG fresh-DB (server) ∥ T-S3.5 device-smoke diagnostics
-  panel (mobile). Narratives: QUEUE Recently-done rows.
+  W2 ✅ MERGED 2026-08-30 — T-S3.5 (PR #43,
+  3754a4e: gogo://diagnostics panel) ∥ T-S3.3 (PR #44, b903017: shared-PG container —
+  Testcontainers P1 RETIRED, server 126s→21s; 65 files / 868). W3 DISPATCHED: T-S3.4
+  hostile fixtures (final task). Narratives: QUEUE Recently-done rows.
 
 #### The rig — Sean's steps, in order
 
@@ -498,10 +500,10 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   `avatar_key`→server-signed-read-URL security note into the P-12 wire;
   notification-priming onboarding step → P-6 push seam. F-024/F-025 land
   partially, verify fully at P-12.
-- **Testcontainers contention (QUEUE P1, LIVE cross-phase):** 9+ DB suites boot
-  Postgres in parallel → port-bind timeout + WEDGES the Docker daemon. Workaround:
-  server suite `--no-file-parallelism`; real fix = shared globalSetup container.
-  Hits every future DB-suite task.
+- **Testcontainers contention — RESOLVED 2026-08-30 (PR #44, T-S3.3):** the shared
+  globalSetup container + template clones replaced 20+ per-suite boots; `--no-file-parallelism`
+  retired; plain `vitest run` is safe and ~6× faster. Watch-mode caveat: the template
+  migrates once per process — restart the watcher after editing `drizzle/`.
 - Review-mode: local 5-lane pipeline + fresh impartial judge is the standard gate;
   `/code-review ultra` optional (2 free left), substitutable by a deep local
   self-review when Sean waives it.
