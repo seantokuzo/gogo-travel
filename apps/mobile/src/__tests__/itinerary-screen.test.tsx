@@ -182,6 +182,20 @@ describe("day sections (R-itin-1)", () => {
     });
   });
 
+  it("a POPULATED day's header carries the `+` add affordance prefilled with its date (B-11)", async () => {
+    await renderItinerary();
+    // TRIP_START is populated in the default universe (flight + lodging
+    // check-in + Walk Shibuya) — exactly the day that used to be add-locked
+    // in list view (the R-itin-1 slim row only exists on empty days).
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    expect(screen.queryByTestId(`itinerary-day-add-${TRIP_START}`)).toBeNull();
+    await fireEvent.press(screen.getByTestId(`itinerary-day-header-add-${TRIP_START}`));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/item/new",
+      params: { tripId: TEST_TRIP_ID, day: TRIP_START },
+    });
+  });
+
   it("booking-derived cards render the parent's title and status badge (R-itin-8)", async () => {
     await renderItinerary();
     await screen.findByText("UA 837 SFO→NRT");
@@ -321,6 +335,10 @@ describe("add entry points (T-7.6 / IT-7, R-itin-18) + viewer gating (R-ib-24)",
     // Day 2 is empty in the default universe — editors get its add row.
     expect(screen.queryByTestId(`itinerary-day-add-${TRIP_DAY_2}`)).toBeNull();
     expect(screen.getByTestId(`itinerary-day-header-${TRIP_DAY_2}`)).toBeOnTheScreen();
+    // B-11 header `+` is a write affordance too — the editor arm of the
+    // populated-day test above is this assertion's control (same testID,
+    // present there, pressable, routes).
+    expect(screen.queryByTestId(`itinerary-day-header-add-${TRIP_START}`)).toBeNull();
   });
 });
 
