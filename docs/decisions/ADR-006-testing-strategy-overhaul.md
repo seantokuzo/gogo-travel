@@ -54,8 +54,11 @@ blind to, plus a faithful env strategy underneath them:
    logic — and asserts the exact facts our mock claims (e.g. instantiate the
    real `GoogleAuthRequest`; assert nonce absent under `ResponseType.Code`,
    present under `IdToken`). A mock drifting from its library goes RED.
-   Each global stub in `jest.setup.js` carries a pointer to its contract
-   suite; a stub with no contract suite is a review finding.
+   Contract suites are named `<lib>.contract.test.ts`, co-located; the
+   `.test.ts` tail is LOAD-BEARING — jest's testMatch is what picks the
+   suite up, so a `.contract.ts` file would exist, pass pointer review, and
+   never run. Each global stub in `jest.setup.js` carries a pointer to its
+   contract suite; a stub with no contract suite is a review finding.
 
 2. **Device smoke (in-app diagnostics panel).** A committed, `__DEV__`-gated
    diagnostics route, reachable UNAUTHED (base-URL resolution matters exactly
@@ -85,9 +88,14 @@ blind to, plus a faithful env strategy underneath them:
 **Env strategy.** One canonical full-auth test env: an in-memory builder
 (`makeFullAuthTestEnv()` — jose-generated P-256 PKCS#8 PEM, 32-byte AES key,
 fixed fake client ids) used by a new **boot-shape suite** that runs
-loadEnv → `buildAuthDepsFromEnv` → `createApp` in the FULL authed shape
-(including the \n-escaped-PEM env-file form and the
-production-refuses-health-only guard), locally and in CI. For the live dev
+loadEnv → `buildAuthDepsFromEnv` → `createApp` in the FULL authed shape,
+locally and in CI — covering BOTH env-file PEM arrival shapes and the
+production-refuses-health-only guard. The env-file fact (empirically
+settled twice, char-code probes; PR #41's round-1 blocker was an inverted
+"verified" stamp on exactly this): node `--env-file` EXPANDS `\n` to a real
+newline inside **double-quoted** values; single-quoted and unquoted values
+keep the literal two characters, which is what `pem()` normalization in
+`wire.ts` exists for. For the live dev
 rig, `scripts/gen-test-env.mjs` writes a **gitignored** `apps/server/.env.test`
 with the same throwaway material — the pattern the QA rig already proved.
 Throwaway keys are **generated, never committed**: they guard nothing, but

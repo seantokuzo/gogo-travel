@@ -74,14 +74,17 @@ class, awaits `getAuthRequestConfigAsync()`, and asserts: no nonce under the
 code flow (the B-4 fact), nonce present under `IdToken`, and
 `extraParams.nonce` carried through (our fix's premise). Use
 `jest.requireActual`, mocking only native primitives (`expo-crypto` random
-bytes etc.). Cheap second front: a type-parity module asserting each
+bytes etc.). Filename grammar: `<lib>.contract.test.ts`, co-located; the
+`.test.ts` tail is LOAD-BEARING (jest testMatch pickup — a `.contract.ts`
+file would exist, pass pointer review, and never run). Cheap second front:
+a type-parity module asserting each
 `jest.setup.js` stub's shape `satisfies` a `Pick` of the real package's
 types, so typecheck catches shape drift in the location/network/mapbox stubs.
 
 ### 3.2 Device smoke
 
 New unauthed-reachable route `(auth)/diagnostics` (file-based — no
-`_layout.tsx` edit; sibling of the qa-owned `sign-in.tsx`, which is NOT
+`_layout.tsx` edit; sibling of `sign-in.tsx`, which is NOT
 edited). Legs v1, self-running on mount ("run again" button; testIDs per
 navigation.spec §2.7):
 
@@ -97,7 +100,9 @@ navigation.spec §2.7):
 Entry: on-device deeplink `gogo://diagnostics` (the SpringBoard prompt is
 tappable on a physical device — the no-tap constraint is about *automation*)
 or the dev-client launcher URL field. A `__DEV__` footer link on sign-in is
-a **post-qa-merge rider** (file owned by `qa/device-integration`).
+rider #3 (§5) — originally gated on `qa/device-integration`, which merged
+to main (d4f7637), so it is plain dispatchable; it stays outside T-S3.5's
+file set to keep the wave disjoint.
 Protocol: run at every dev-client rebuild and before any device-behavior
 ledger flip; evidence = screenshot or copied panel text (Law #7).
 
@@ -127,27 +132,34 @@ Consumers are NEW test files only: mobile `form-model.hostile.test.ts`
 (`it.fails` — the real NRT→LAX flight produces inverted instants today; this
 is B-8's executable repro and its client fix's acceptance harness), shared
 schema/money hostile suites, and a minimal pure server consumer (import-only
-use of qa-owned source files; grace-window-sensitive pins marked, since the
-B-8 12h transport grace on `qa/device-integration` shifts semantics when it
-merges).
+use of `bookings/service.ts`; grace-window-sensitive pins marked — the B-8
+12h transport grace is on main since the qa merge (d4f7637) and its removal
+is B-9's definition of done, so those pins flip again with B-9).
 
 ### 3.5 Env faithfulness
 
 `makeFullAuthTestEnv()` in-memory builder (jose `generateKeyPair` → PKCS#8
 PEM, `randomBytes(32)` base64 AES, fixed fake client ids) + boot-shape suite:
 full-shape `buildAuthDepsFromEnv` non-null, partial-shape throws naming vars,
-\n-escaped PEM normalization through `loadEnv` on an env-file-shaped source,
+both env-file PEM arrival shapes through `loadEnv` — the SETTLED fact
+(char-code probes, twice; PR #41 R1 blocker was an inverted "verified" stamp
+on it): node `--env-file` expands `\n` to a real newline inside
+double-quoted values, while single-quoted/unquoted values keep the literal
+two characters (the case `wire.ts` `pem()` normalizes),
 `createApp` mounts `/auth` with the built deps, and the
 production-never-boots-health-only guard pinned at logic level (the
-composition root `index.ts` itself is qa-owned; extracting a testable
-`boot()` is a post-qa-merge rider). `scripts/gen-test-env.mjs` writes the
+composition root `index.ts` stays untouched — extracting a testable
+`boot()` is rider #2, §5). `scripts/gen-test-env.mjs` writes the
 same material to gitignored `apps/server/.env.test` for the live rig +
 `pnpm --filter @gogo/server dev:testenv`.
 
 ## 4. Tasks
 
-> One task = one commit/PR. Branch names `S-3/T-S3.N-slug`. File-ownership
-> sets are exclusive within a wave. Acceptance criteria all inherit R-test-7
+> One task = one commit/PR. Branch names `S-3/<slug>` with the task id as a
+> `[T-S3.N]` tag in PR titles and commit subjects (the W1 practice, and it
+> satisfies CLAUDE.md's `S-N/slug` grammar — the earlier `S-3/T-S3.N-slug`
+> form was never used). File-ownership sets are exclusive within a wave.
+> Acceptance criteria all inherit R-test-7
 > (falsification stated; mutation-verify blocking pins) and the root gate
 > (`pnpm lint && pnpm typecheck && pnpm test && pnpm build`).
 
@@ -159,13 +171,21 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   (new), `apps/server/package.json` (add `dev:testenv` script),
   `.gitignore` (add `.env.test`), `.env.example` (document the generator).
 - **Reads, must NOT edit:** `apps/server/src/env.ts`,
-  `apps/server/src/auth/wire.ts`, `apps/server/src/index.ts` (qa-owned).
+  `apps/server/src/auth/wire.ts`, `apps/server/src/index.ts` (rider #2
+  target; the original "qa-owned" reason dissolved with the d4f7637 merge —
+  T-S3.1 shipped without touching it).
 - **Acceptance:** boot-shape suite green in CI with generated throwaways
   (no secrets, no accounts); partial-env test red if the all-or-nothing
   gate is removed (mutation-verified); `gen-test-env.mjs` output boots the
   dev server fully authed (`dev:testenv`, manual evidence pasted in PR);
   no PEM/key material in the diff.
 - **Depends on:** —.
+- **Landed note (PR #41, merged 0643621):** env-builder shipped at
+  `src/test/env-builder.ts`, which needed a `src/test/**` build exclude to
+  stay out of `dist/`. Guidance for future non-`.test.ts` test files: the
+  repo's existing `*.test-util.ts` suffix (see `http/idor-404.test-util.ts`)
+  avoids both the dist-emit hazard and the extra directory — prefer it
+  unless the directory is earning its keep.
 
 ### T-S3.2 — Mock-fidelity contract suites (mobile)
 
@@ -176,6 +196,12 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   `apps/mobile/src/testing/mock-shape-parity.ts` (new, type-level).
 - **Must NOT touch:** `apps/mobile/src/auth/google.ts` / `google.test.ts` /
   `api-client.ts` (qa-owned); any component file (Stream A).
+  **DISSOLVED (2026-08-30):** the qa-owned guard died before any W1 branch
+  cut — `qa/device-integration` merged to main (d4f7637) first. PR #42's
+  relocation of the real-AuthRequest contract test out of `google.test.ts`
+  into `google-provider.contract.test.ts` was sanctioned and audited
+  lossless. Do not treat the dead constraint as live in future collision
+  analysis; the Stream-A component guard still stands.
 - **Acceptance:** contract suite RED when the google stub claims a native
   nonce (mutation-verified by flipping the stub); real-library assertions
   match `Google.js:66-70`/`125-139` behavior; every `jest.setup.js` stub
@@ -192,12 +218,16 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   `apps/server/src/test/suite-db.ts` (new),
   `apps/server/src/test/provided-context.d.ts` (new),
   `apps/server/src/fresh-install.db.test.ts` (new), and the mechanical
-  conversion of the DB suites **EXCEPT**
-  `apps/server/src/bookings/routes.db.test.ts` (qa-owned — keeps its
-  per-file container, converts in a post-qa-merge rider) and any suite with
-  an in-flight money PR touching it at dispatch time (check open PRs for
-  `expenses/`, `settlements/`, `settle-requests/` test files — T-9 W3/W4;
-  excluded suites coexist on per-file containers and get riders).
+  conversion of the DB suites **EXCEPT** any suite with an in-flight PR
+  touching it at dispatch time (check open PRs for `expenses/`,
+  `settlements/`, `settle-requests/` test files — T-9 W3/W4; excluded
+  suites coexist on per-file containers and get riders).
+  **DISSOLVED (2026-08-30):** the original
+  `apps/server/src/bookings/routes.db.test.ts` exclusion was "qa-owned" —
+  that reason died when `qa/device-integration` merged to main (d4f7637).
+  Including the bookings suite in the conversion is now a plain
+  dispatch-time call under the same in-flight-PR check as every other
+  suite.
 - **Acceptance:** `pnpm --filter @gogo/server test` green **without**
   `--no-file-parallelism`; exactly one container observed during the run
   (evidence in PR); wall-time before/after reported; fresh-install suite
@@ -217,10 +247,10 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   `packages/shared/package.json` (add `./testing` subpath),
   `apps/mobile/src/features/itinerary/add-edit/form-model.hostile.test.ts`
   (new), `packages/shared/src/domains/booking.hostile.test.ts` (new),
-  one minimal pure server consumer (new file; imports qa-owned source
-  read-only; grace-sensitive pins labeled).
+  one minimal pure server consumer (new file; imports `bookings/service.ts`
+  read-only; grace-sensitive pins labeled — see §3.4).
 - **Must NOT touch:** `form-model.ts` itself, any existing test file, any
-  qa-owned or Stream-A file.
+  Stream-A file.
 - **Acceptance:** fixtures platform-agnostic (R-shared-9 — lint/build
   proves it); self-test pins the eastbound wall-clock-inversion invariant;
   `form-model.hostile.test.ts` carries the B-8 repro as `it.fails` with the
@@ -235,8 +265,9 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 - **Files (owns):** `apps/mobile/src/app/(auth)/diagnostics.tsx` (new),
   `apps/mobile/src/features/dev/diagnostics/` (new: legs, runner, panel),
   colocated leg unit tests (new).
-- **Must NOT touch:** `apps/mobile/src/app/(auth)/sign-in.tsx` (qa-owned —
-  the entry link is a post-qa-merge rider), `_layout.tsx`, any Stream-A
+- **Must NOT touch:** `apps/mobile/src/app/(auth)/sign-in.tsx` (the entry
+  link is rider #3 — the "qa-owned" reason dissolved d4f7637; the guard
+  stays to keep T-S3.5's file set disjoint), `_layout.tsx`, any Stream-A
   component.
 - **Acceptance:** all six §3.2 legs render PASS/FAIL + copyable evidence;
   route content is `__DEV__`-only (release renders nothing); legs 1/2/3/5
@@ -249,7 +280,7 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 
 | Wave | Parallel tasks (isolated worktrees) | Why safe |
 | --- | --- | --- |
-| W1 | T-S3.1 ∥ T-S3.2 | Disjoint: server+scripts+root dotfiles vs mobile jest surface. |
+| W1 | T-S3.1 ∥ T-S3.2 — **MERGED** (PR #41 0643621 ∥ PR #42 aaf0742, full pipeline) | Disjoint: server+scripts+root dotfiles vs mobile jest surface. |
 | W2 | T-S3.3 ∥ T-S3.5 | Disjoint: server test infra vs new mobile dev-feature files. |
 | W3 | T-S3.4 (solo) | Touches all three workspaces — runs alone, after the others merge. |
 
@@ -257,16 +288,19 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 
 | Other stream | Their files | Our exposure | Mitigation |
 | --- | --- | --- | --- |
-| `qa/device-integration` (in flight, unreviewed) | `apps/mobile/src/auth/{google.ts,google.test.ts,api-client.ts}`, `app/(auth)/sign-in.tsx`, `apps/server/src/{index.ts,app.ts,bookings/service.ts,bookings/routes.db.test.ts,http/dev-request-log.*}`, migration 0001 | T-S3.2 (auth tests), T-S3.3 (bookings db suite), T-S3.1 (index.ts), T-S3.5 (sign-in entry link) | New files only in auth; bookings suite excluded from conversion (rider); index.ts read-only (`boot()` extraction = rider); sign-in link = rider. |
+| `qa/device-integration` — **DISSOLVED: merged to main d4f7637 before any W1 branch cut** | `apps/mobile/src/auth/{google.ts,google.test.ts,api-client.ts}`, `app/(auth)/sign-in.tsx`, `apps/server/src/{index.ts,app.ts,bookings/service.ts,bookings/routes.db.test.ts,http/dev-request-log.*}`, migration 0001 | ~~T-S3.2 (auth tests), T-S3.3 (bookings db suite), T-S3.1 (index.ts), T-S3.5 (sign-in entry link)~~ none — guard dead | Row kept for the record only; the riders below became plain dispatchable follow-ups. |
 | Stream A polish (B-10..B-13) | `DateField.tsx`, itinerary day-list/grid, bookings list bins | None | No task touches components. `jest.setup.js` is Stream-B-exclusive (STATE ruling) — Stream A must not edit it. |
 | P-9 money W3/W4 (T-9.4/T-9.5 dispatched; T-9.6/T-9.7 queued) | server money src + tests; mobile money screens | T-S3.3's conversion of `expenses/`/`settlements/` db suites; T-S3.4's shared `package.json` export | Conversion list finalized at T-S3.3 dispatch against open PRs (exclude + rider if in flight); T-S3.4 runs W3 solo and rebases on merged main. |
 
-### Riders (owed after `qa/device-integration` merges — record as QUEUE rows at dispatch)
+### Riders (were gated on the qa merge — that landed d4f7637, so all are dispatchable now; record as QUEUE rows at dispatch)
 
-1. Convert `bookings/routes.db.test.ts` to the shared container.
+1. Convert `bookings/routes.db.test.ts` to the shared container — now a
+   T-S3.3 dispatch-time call (see the dissolved note in §T-S3.3).
 2. Extract a testable `boot()` from `index.ts`; boot-shape suite drives it.
 3. `__DEV__` diagnostics link in the sign-in footer.
-4. Align `google.test.ts`'s file-local mock with the contract suite's facts.
+4. Align `google.test.ts`'s file-local mock with the contract suite's facts
+   (partially superseded: PR #42 already relocated the real-AuthRequest
+   contract test into `google-provider.contract.test.ts`, audited lossless).
 
 ## 6. Parked options & open questions for Sean
 
@@ -288,8 +322,8 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 1. **B-7 ruling** (existing escalation, QUEUE P0): text-only destination vs
    self-seeding first search. The fresh-install suite pins the circularity
    either way (`it.fails` now; flips with your ruling's fix).
-2. **Diagnostics entry:** deeplink-only until the qa branch merges, then a
-   sign-in footer link (recommended) — or do you want a launcher-visible
-   entry sooner?
+2. **Diagnostics entry:** deeplink-only for v1, then the sign-in footer
+   link as rider #3 (recommended; no longer gated — qa merged d4f7637) — or
+   do you want a launcher-visible entry sooner?
 3. **Generated `.env.test`** (recommended, Law #1-clean) vs committing
    throwaway keys — confirm the generator approach.
