@@ -477,3 +477,41 @@ describe("dirty dismissal (R-tripui-8, nav §2.6 form-modal rule)", () => {
     expect(screen.getByTestId("trip-new-input-name").props.value).toBe("K");
   });
 });
+
+/**
+ * PR #40 R1 (tests lane): the trip-new sibling seed chains (`contextDate=
+ * {startDate}` / `{endDate}` in new.tsx) were unpinned — severing them left
+ * the suite green while an empty range side reverted to opening on today
+ * (the exact B-10 complaint). Seeds asserted through the picker wrapper's
+ * public `date` ms translation; the picked 2027 dates are not today, so
+ * each pin goes red when its seed prop is dropped.
+ */
+describe("range sibling picker seeds (B-10 seed-chain pins)", () => {
+  it("the empty END side opens on the entered start date, not today", async () => {
+    await renderScreen();
+    // Control arm: nothing entered yet — the end picker opens on today.
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-end"));
+    const unseeded = new Date(
+      screen.getByTestId("trip-new-input-dates-end-picker").props.date as number,
+    );
+    expect(unseeded.toDateString()).toBe(new Date().toDateString());
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-end-sheet-close"));
+
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-end"));
+    expect(screen.getByTestId("trip-new-input-dates-end-picker").props.date).toBe(
+      new Date(2027, 4, 1, 12).getTime(),
+    );
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-end-sheet-close"));
+  });
+
+  it("the empty START side opens on the entered end date (the mirror chain)", async () => {
+    await renderScreen();
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-start"));
+    expect(screen.getByTestId("trip-new-input-dates-start-picker").props.date).toBe(
+      new Date(2027, 4, 8, 12).getTime(),
+    );
+    await fireEvent.press(screen.getByTestId("trip-new-input-dates-start-sheet-close"));
+  });
+});

@@ -744,3 +744,18 @@ it("flight arrival seeds from the entered departure — trip start before that (
     screen.getByTestId("itinerary-item-new-input-arrives-at-time-picker").props.date,
   ).toBe(new Date(2000, 0, 1, 17, 5).getTime());
 });
+
+/**
+ * PR #40 R1 (tests lane): the ItemForm Day seed chain (`contextDay=
+ * {trip.start_date}` at item/new.tsx) was unpinned — severing it left the
+ * suite green while the Day picker silently reverted to opening on today.
+ * Red when that prop is removed: TRIP_START (2027-03-01) is not today.
+ */
+it("custom item Day picker seeds from the trip start when no day is prefilled (B-10 seed-chain pin)", async () => {
+  await renderScreen({ category: "custom" });
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+  expect(screen.getByTestId("itinerary-item-new-input-day-picker").props.date).toBe(
+    new Date(2027, 2, 1, 12).getTime(),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day-sheet-close"));
+});

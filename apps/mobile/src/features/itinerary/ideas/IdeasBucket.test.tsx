@@ -376,3 +376,27 @@ it("viewers get no write affordances (R-ib-24)", async () => {
   expect(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`)).toBeOnTheScreen();
   expect(screen.queryByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`)).toBeNull();
 });
+
+/**
+ * PR #40 R1 (tests lane): the ScheduleSheet Day seed chain (IdeasBucket's
+ * `contextDay={trip.start_date}` → ScheduleForm → DateField) was unpinned —
+ * severing it left the suite green while the Add-to-day picker reverted to
+ * opening on today. Red when any link of that chain is dropped: TRIP_START
+ * (2027-03-01) is not today.
+ */
+it("the schedule sheet's Day picker seeds from the trip start (B-10 seed-chain pin)", async () => {
+  await renderBucket({ api: { bookings: [...defaultBookings(), ideaBooking()] } });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day-picker").props.date,
+  ).toBe(new Date(2027, 2, 1, 12).getTime());
+  // Close the picker card, then the sheet, draining its exit (SHEET TAX).
+  await fireEvent.press(
+    screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});

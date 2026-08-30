@@ -15,7 +15,12 @@
  * `itinerary-ideas-schedule-sheet`, `…-input-day`, `…-input-start-time`,
  * `…-input-end-time`, `…-button-confirm`, `…-error`.
  */
-import { ScheduleBookingInputSchema, type Booking, type ScheduleBookingInput } from "@gogo/shared";
+import {
+  ScheduleBookingInputSchema,
+  type Booking,
+  type ISODate,
+  type ScheduleBookingInput,
+} from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
@@ -31,7 +36,7 @@ export interface ScheduleSheetProps {
   /** Non-null ⇒ presented for this booking. */
   booking: Booking | null;
   /** B-10b: seeds the Day picker (trip start) so it never opens on today. */
-  contextDay?: string;
+  contextDay?: ISODate;
   onClose(): void;
 }
 
@@ -47,7 +52,7 @@ interface ScheduleFormProps {
   pending: boolean;
   error: string | null;
   /** B-10b: passed through to the Day DateField's picker seed. */
-  contextDay: string | undefined;
+  contextDay: ISODate | undefined;
   onDismissError(): void;
   onConfirm(input: ScheduleBookingInput): void;
 }
