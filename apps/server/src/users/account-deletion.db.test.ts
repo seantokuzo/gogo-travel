@@ -13,16 +13,10 @@
  * local Docker-less run skips with a loud banner. The only network is the local
  * container (Law #5) — the Apple revoker is a fake that records its calls.
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from "vitest";
 import type { TripMemberRole } from "@gogo/shared/enums";
 import { createApp } from "../app.js";
 import { RATE_LIMITS } from "../config.js";
@@ -38,38 +32,12 @@ import { generateInviteToken } from "../trips/invite-token.js";
 import { deleteAccount, OwnerTransferRequiredError } from "./account-deletion.js";
 import type { CashtagChecker } from "./cashtag.js";
 import type { UsersRouterDeps } from "./routes.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-5.6 ACCOUNT DELETION SUITE SKIPPED         ║\n" +
-      "║  DELETE /users/me: soft-delete + PII scrub, sole-owner 409,       ║\n" +
-      "║  session/push revoke, Apple token revocation (auth-users spec     ║\n" +
-      "║  §3.4.2, R-user-9) were NOT verified. Start Docker and re-run     ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-5.6 account deletion suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-5.6 account deletion suite " +
-        "could not verify auth-users spec §3.4.2 (R-user-9). A skip here is NOT " +
-        "a pass. Provision Docker or a Postgres service container.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -81,8 +49,7 @@ interface Envelope {
 }
 
 describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let authDeps: AuthRouterDeps;
@@ -106,13 +73,8 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
   const cashtagChecker: CashtagChecker = { check: () => Promise.resolve("ok") };
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
-    await migrate(db, { migrationsFolder });
+    suiteDb = await createSuiteDb("users_account_deletion");
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -144,8 +106,7 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   afterEach(() => {

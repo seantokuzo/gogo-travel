@@ -13,83 +13,45 @@
  * gate; the turbo `test` task disables its cache (turbo.json) so a local skip
  * can never be replayed as a cached green.
  */
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import type { BookingDetails } from "@gogo/shared/domains/booking";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq, sql } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { createUserWithEntitlements } from "./create-user.js";
 import * as schema from "./schema/index.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — DB-1 CONSTRAINT SUITE SKIPPED               ║\n" +
-      "║  The schema/migration invariants (R-db-1…R-db-22) were NOT        ║\n" +
-      "║  verified. Start Docker and re-run `pnpm --filter @gogo/server    ║\n" +
-      "║  test` before treating this branch as green.                      ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-// CI must verify DB-1 for real. A Docker-less CI run is a HARD FAILURE, never
-// a skip — otherwise a green run is indistinguishable from "never ran". The
-// turbo `test` task also disables caching (turbo.json cache:false) so a local
-// skip can't be replayed as a cached pass. Locally (no CI) we skip with the
-// loud banner above and let the rest of the gate run.
-if (!dockerAvailable && process.env.CI) {
-  it("DB-1 constraint suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the DB-1 constraint suite could " +
-        "not verify R-db-1…R-db-22. A skip here is NOT a pass. Provision Docker " +
-        "or a Postgres service container and re-run.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 // Container boot (+ first-time image pull) is slow; DB roundtrips are not.
 const BOOT_TIMEOUT_MS = 240_000;
 
 describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
 
   beforeAll(async () => {
-    // 60s startup budget — concurrent DB suites can exceed the default 10s
-    // port-bind wait in the full gate (T-5.2 round-1 flake).
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    // R-db-12 baseline: the initial migration applies cleanly to a blank DB.
+    suiteDb = await createSuiteDb("db_constraints");
+    db = suiteDb.db;
+    // R-db-12 baseline (migrations apply cleanly to a blank DB) moved to the
+    // shared-container global setup: the template migration IS that blank-DB
+    // application, and it failing fails the whole run (T-S3.3).
+    // R-db-12 idempotence stays HERE: the clone carries the template's drizzle
+    // journal, so migrate() over it must be a no-op, never an error (a broken
+    // hash-journal would throw) — twice, to also cover repeat runs.
     const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
     await migrate(db, { migrationsFolder });
-    // R-db-12 idempotence: a second migrate() over an already-migrated DB is a
-    // no-op, never an error (a broken hash-journal would throw here).
     await migrate(db, { migrationsFolder });
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   // ---------------------------------------------------------------------

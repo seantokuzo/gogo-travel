@@ -12,16 +12,10 @@
  * FAILURE; a local Docker-less run skips with a loud banner. No network beyond
  * the local container (Law #5).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq, sql } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair, jwtVerify, SignJWT } from "jose";
-import postgres from "postgres";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from "vitest";
 import {
   AuthTokensSchema,
   AuthSessionInfoSchema,
@@ -35,45 +29,18 @@ import * as schema from "../db/schema/index.js";
 import { sha256Hex } from "./crypto.js";
 import type { AuthRouterDeps } from "./routes.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "./token-issuer.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-5.3 TOKEN LIFECYCLE SUITE SKIPPED         ║\n" +
-      "║  /auth/refresh rotation + reuse-theft family revocation,          ║\n" +
-      "║  /auth/logout, and session list/revoke (auth-users spec §3.4.1,   ║\n" +
-      "║  R-auth-10..13) were NOT verified. Start Docker and re-run        ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-5.3 token lifecycle suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-5.3 token lifecycle suite " +
-        "could not verify auth-users spec §3.4.1 (R-auth-10..13). A skip here " +
-        "is NOT a pass. Provision Docker or a Postgres service container.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
 
 describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let signer: AccessTokenSigner;
@@ -81,13 +48,8 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
   const warnings: string[] = [];
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
-    await migrate(db, { migrationsFolder });
+    suiteDb = await createSuiteDb("auth_tokens_routes");
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     accessPublicKey = signerPair.publicKey;
@@ -113,8 +75,7 @@ describe.skipIf(!dockerAvailable)("T-5.3 token routes (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   afterEach(() => {

@@ -12,57 +12,28 @@
  * Driver: postgres-js on ephemeral testcontainers Postgres — Docker-less CI is
  * a HARD FAILURE; a local Docker-less run skips with a loud banner (Law #5).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { AuthTokensSchema } from "@gogo/shared/domains/auth";
 import { RATE_LIMITS } from "../config.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
-import * as schema from "../db/schema/index.js";
+import type * as schema from "../db/schema/index.js";
 import { createApp } from "../app.js";
 import { InMemoryRateLimitStore } from "./rate-limit.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — auth RATE-LIMIT WIRING SUITE SKIPPED        ║\n" +
-      "║  §3.6.3 (R-auth-14) surface wiring was NOT verified. Start        ║\n" +
-      "║  Docker and re-run before treating this green.                   ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("rate-limit wiring suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the auth rate-limit wiring suite " +
-        "could not verify auth-users §3.6.3 / R-auth-14. A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 
 describe.skipIf(!dockerAvailable)("auth rate-limit wiring (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let signer: AccessTokenSigner;
@@ -72,14 +43,8 @@ describe.skipIf(!dockerAvailable)("auth rate-limit wiring (integration)", () => 
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("http_rate_limit");
+    db = suiteDb.db;
 
     const pair = await generateKeyPair("ES256");
     signer = { privateKey: pair.privateKey, kid: "gogo-es256-test" };
@@ -109,8 +74,7 @@ describe.skipIf(!dockerAvailable)("auth rate-limit wiring (integration)", () => 
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   const appleBody = () =>
