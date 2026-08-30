@@ -6,7 +6,14 @@
  */
 export { createApiClient, ApiRequestError, REQUEST_TIMEOUT_MS } from "./api-client";
 export type { ApiClientBridge, ApiClientConfig, MobileApiClient, RequestOptions } from "./api-client";
-export { resolveApiBaseUrl, googleClientIds, isGoogleConfigured, DEV_SERVER_PORT } from "./config";
+export {
+  resolveApiBaseUrl,
+  explainApiBaseUrl,
+  googleClientIds,
+  isGoogleConfigured,
+  DEV_SERVER_PORT,
+} from "./config";
+export type { ApiBaseUrlResolution, ApiBaseUrlSource } from "./config";
 export { secureTokenStorage } from "./secure-storage";
 export type { SecureTokenStorage } from "./secure-storage";
 export {

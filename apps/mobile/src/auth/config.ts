@@ -74,10 +74,16 @@ type SourceCodeModule = {
  * to spare a deep Flow-file import (and its throw on `scriptURL: null`,
  * which is exactly what the jest preset's `SourceCode` mock returns).
  */
-function resolveMetroHost(): string | null {
+/** Raw `SourceCode.scriptURL` (both native-arch shapes), or null when absent. */
+function readScriptURL(): string | null {
   const sourceCode = (NativeModules as { SourceCode?: SourceCodeModule | null }).SourceCode;
   const scriptURL = sourceCode?.getConstants?.().scriptURL ?? sourceCode?.scriptURL;
-  if (typeof scriptURL !== "string") return null;
+  return typeof scriptURL === "string" ? scriptURL : null;
+}
+
+function resolveMetroHost(): string | null {
+  const scriptURL = readScriptURL();
+  if (scriptURL === null) return null;
   // `@` is excluded so a userinfo-bearing URL (`http://a@evil.com`) can never
   // smuggle its real host past the capture: the guard's host parse and
   // fetch's host parse would otherwise disagree about which side of the `@`
@@ -85,6 +91,94 @@ function resolveMetroHost(): string | null {
   // boundary, so only the pre-`@` segment can ever be derived.
   const match = /^https?:\/\/([^:/@]+)/.exec(scriptURL);
   return match?.[1] ?? null;
+}
+
+/** Which resolution tier produced the base URL (T-S3.5 device-smoke leg 1). */
+export type ApiBaseUrlSource =
+  | "explicit-env"
+  | "expo-config-host-uri"
+  | "metro-script-url"
+  | "localhost-fallback";
+
+/**
+ * The resolved base URL plus its provenance — which tier fired, and the raw
+ * inputs every tier read. Evidence surface for the `__DEV__` diagnostics
+ * panel (R-test-2): B-5 cost two debugging rounds because nobody could SEE
+ * which tier a device resolved. None of these values is a secret (module
+ * header: the base URL is public by design; hostUri/scriptURL are the Metro
+ * dev host the bundle itself came from).
+ */
+export interface ApiBaseUrlResolution {
+  /** Identical to `resolveApiBaseUrl()`'s return — same tiers, same guard. */
+  url: string;
+  /** 1-based tier number (doc-comment on `resolveApiBaseUrl`). */
+  tier: 1 | 2 | 3 | 4;
+  source: ApiBaseUrlSource;
+  /** Raw inputs as read, before any tier logic touched them. */
+  inputs: {
+    explicitEnv: string | null;
+    hostUri: string | null;
+    scriptURL: string | null;
+  };
+}
+
+/**
+ * `resolveApiBaseUrl` with the tier decision made visible. This IS the
+ * resolver — `resolveApiBaseUrl` delegates here, so the provenance this
+ * reports can never diverge from the URL the app actually uses (a separate
+ * "explainer" re-implementing the tiers would be the B-5 class all over
+ * again: two copies of the truth, one of them wrong on hardware).
+ */
+export function explainApiBaseUrl(): ApiBaseUrlResolution {
+  const explicit = process.env.EXPO_PUBLIC_API_URL;
+  const hostUri = Constants.expoConfig?.hostUri ?? null;
+  const scriptURL = readScriptURL();
+  // TRULY raw (PR #43 R1): a set-but-blank var stays "" here — normalizing it
+  // to null made leg 1 say "(unset)" while leg 3 said "SET BUT BLANK" in the
+  // same screenshot. The tier logic below applies its own emptiness rule.
+  const inputs = {
+    explicitEnv: explicit ?? null,
+    hostUri,
+    scriptURL,
+  };
+
+  if (explicit && explicit.length > 0) {
+    return {
+      url: assertSecureBaseUrl(withApiSuffix(explicit)),
+      tier: 1,
+      source: "explicit-env",
+      inputs,
+    };
+  }
+
+  if (hostUri) {
+    const host = hostUri.split(":")[0];
+    if (host) {
+      return {
+        url: assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+        tier: 2,
+        source: "expo-config-host-uri",
+        inputs,
+      };
+    }
+  }
+
+  const metroHost = resolveMetroHost();
+  if (metroHost) {
+    return {
+      url: assertSecureBaseUrl(`http://${metroHost}:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+      tier: 3,
+      source: "metro-script-url",
+      inputs,
+    };
+  }
+
+  return {
+    url: assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+    tier: 4,
+    source: "localhost-fallback",
+    inputs,
+  };
 }
 
 /**
@@ -102,21 +196,7 @@ function resolveMetroHost(): string | null {
  *    the terminal tier and nothing device-shaped may land on it.
  */
 export function resolveApiBaseUrl(): string {
-  const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit && explicit.length > 0) return assertSecureBaseUrl(withApiSuffix(explicit));
-
-  const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const host = hostUri.split(":")[0];
-    if (host) return assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
-  }
-
-  const metroHost = resolveMetroHost();
-  if (metroHost) {
-    return assertSecureBaseUrl(`http://${metroHost}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
-  }
-
-  return assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`);
+  return explainApiBaseUrl().url;
 }
 
 /**
