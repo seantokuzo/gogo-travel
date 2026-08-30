@@ -14,12 +14,17 @@
  *
  * The schema forbids tagging them: `places_custom_source_id_ck` enforces
  * `(source = 'custom') = (source_id IS NULL)`, so a custom row CANNOT carry a
- * marker in source_id. --remove therefore matches on source='custom' plus the
- * exact name list below. Caveat that follows from that: if you hand-create a
- * custom place named exactly 'Tokyo', --remove would delete it too.
+ * marker in source_id. --remove therefore matches on source='custom', the
+ * exact name list below, AND `created_by` in the SAME owner selection the
+ * insert path uses (--user <email>, else every user) — never other accounts'
+ * rows. Caveat that follows: if a resolved owner hand-created a custom place
+ * named exactly 'Tokyo', --remove would delete it too.
  *
- *   node scripts/seed-qa-places.mjs            # insert (idempotent)
- *   node scripts/seed-qa-places.mjs --remove   # delete every qa-seed row
+ * Deletes are guarded: --remove prints the target DB host (host only — never
+ * the URL or credentials) and refuses to run without an explicit --force.
+ *
+ *   node scripts/seed-qa-places.mjs                    # insert (idempotent)
+ *   node scripts/seed-qa-places.mjs --remove --force   # delete qa-seed rows
  *
  * Requires DATABASE_URL. Run via `node --env-file-if-exists=apps/server/.env`.
  * This is a DEVELOPMENT convenience — it is not wired into any app code path,
@@ -58,8 +63,6 @@ const PLACES = [
   ["Cape Town", -33.9249, 18.4241, "locality"],
 ];
 
-const slug = (name) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
 const url = process.env.DATABASE_URL;
 if (!url) {
   console.error("DATABASE_URL is not set — run with --env-file-if-exists=apps/server/.env");
@@ -68,21 +71,42 @@ if (!url) {
 
 const sql = postgres(url, { ssl: "require", max: 1, idle_timeout: 5 });
 
+/**
+ * `places_custom_created_by_ck` requires an owner for custom rows, and search
+ * only returns a custom place to its creator (search-query.ts:158:
+ * `source <> 'custom' or created_by = userId`). So rows are seeded to real
+ * users — pass --user <email> for a specific one, else every user. --remove
+ * resolves owners through this SAME selection so it can only delete rows the
+ * insert path could have created.
+ */
+async function resolveOwners() {
+  const emailArg = process.argv.indexOf("--user");
+  return emailArg !== -1 && process.argv[emailArg + 1]
+    ? await sql`select id, email from users where email = ${process.argv[emailArg + 1]}`
+    : await sql`select id, email from users order by created_at asc`;
+}
+
 try {
   if (process.argv.includes("--remove")) {
-    const removed =
-      await sql`delete from places where source = 'custom' and name = any(${NAMES()}) returning id`;
-    console.log(`removed ${removed.length} qa-seed place(s)`);
+    // Deletes are destructive and DATABASE_URL alone decides WHICH database
+    // eats them — surface the target host (host only, never the URL or its
+    // credentials) and refuse to proceed without an explicit --force.
+    console.warn(`--remove targets database host: ${new URL(url).hostname}`);
+    if (!process.argv.includes("--force")) {
+      console.error(
+        "refusing to delete without --force — check the host above, then re-run with --force",
+      );
+      process.exitCode = 1;
+    } else {
+      const owners = await resolveOwners();
+      if (owners.length === 0) throw new Error("no matching user — nothing to remove");
+      const removed = await sql`
+        delete from places where source = 'custom' and name = any(${NAMES()})
+          and created_by = any(${owners.map((o) => o.id)}) returning id`;
+      console.warn(`removed ${removed.length} qa-seed place(s)`);
+    }
   } else {
-    // `places_custom_created_by_ck` requires an owner for custom rows, and
-    // search only returns a custom place to its creator (search-query.ts:158:
-    // `source <> 'custom' or created_by = userId`). So these are seeded to a
-    // real user — pass --user <email> for a specific one, else the sole user.
-    const emailArg = process.argv.indexOf("--user");
-    const owners =
-      emailArg !== -1 && process.argv[emailArg + 1]
-        ? await sql`select id, email from users where email = ${process.argv[emailArg + 1]}`
-        : await sql`select id, email from users order by created_at asc`;
+    const owners = await resolveOwners();
     if (owners.length === 0) throw new Error("no user to own the seeded places — sign in first");
 
     // Seed for EVERY user by default: a custom place is only visible to its
@@ -101,11 +125,11 @@ try {
           values ('custom', null, ${name}, ${lat}, ${lng}, ${category}, ${owner.id})`;
         inserted += 1;
       }
-      console.log(`seeded for ${owner.email}`);
+      console.warn(`seeded for ${owner.email}`);
     }
     const [{ n }] =
       await sql`select count(*)::int as n from places where source = 'custom' and name = any(${NAMES()})`;
-    console.log(`inserted ${inserted} new; ${n} qa-seed place(s) total`);
+    console.warn(`inserted ${inserted} new; ${n} qa-seed place(s) total`);
   }
 } catch (err) {
   console.error("seed failed:", err.message);
