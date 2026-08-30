@@ -11,9 +11,20 @@
  * - untimed item      → all-day chip (R-itin-16)
  * - spanning lodging  → lane segments across covered day columns, labeled at
  *                       the check-in/check-out edges — NEVER a full-height
- *                       band (R-itin-31, §2.6)
+ *                       band (R-itin-31, §2.6) — PLUS two small derived
+ *                       checkpoint indicator blocks on the timed grid at the
+ *                       real check-in/check-out times (B-12, Sean-specified)
  * - other spans       → one block on `day` clipped at midnight + "+1" tail
  *                       (§2.6 cross-midnight rule)
+ *
+ * B-12 checkpoint indicators are EPHEMERAL, DERIVED UI ONLY: projected here
+ * at render time from the ONE spanning itinerary row, never persisted and
+ * never itinerary rows themselves (F-051 criterion 2 — the DB holds exactly
+ * one row for a multi-night stay). They join the R-itin-15 side-by-side
+ * split so nothing is occluded, but the overlap warning badge stays an
+ * item-vs-item signal: an indicator neither carries nor causes it (the
+ * conflicts model has always said a spanning lodging collides with
+ * nothing). They route to the same booking detail as the span.
  *
  * Day columns reuse `buildDaySet` (trip range ∪ item render days — sparse
  * outside the range, the T-7.4 precedent). All date/time math is tz-free
@@ -24,11 +35,13 @@ import type { Booking, BookingStatus, ISODate, ItineraryItem } from "@gogo/share
 import type { IconName } from "@/components";
 
 import { buildDaySet, projectItem } from "../model";
-import { assignOverlapColumns, type ColumnAssignment } from "./layout";
+import { assignOverlapColumns, spansDirectlyOverlap, type ColumnAssignment } from "./layout";
 
 export const MINUTES_PER_DAY = 24 * 60;
 /** Render duration for a timed item with no `end_time` (§2.5 is silent — 1h). */
 export const DEFAULT_BLOCK_MINUTES = 60;
+/** B-12: derived check-in/check-out indicators render "~15-min-item" sized. */
+export const CHECKPOINT_BLOCK_MINUTES = 15;
 
 // ---------------------------------------------------------------------------
 // Time helpers (pure, tz-free)
@@ -82,6 +95,12 @@ export interface GridTimedBlock extends GridEntryMeta, ColumnAssignment {
   endMinutes: number;
   /** §2.6 "+1" tail — the block continues onto the next wall date. */
   plusOne: boolean;
+  /**
+   * B-12: non-null ⇒ a derived spanning-lodging checkpoint indicator (the
+   * list-mode `DayEntry.checkpoint` vocabulary) — ephemeral render-only UI,
+   * never an itinerary row. Null on every real timed item's block.
+   */
+  checkpoint: "check-in" | "check-out" | null;
 }
 
 export interface GridAllDayChip extends GridEntryMeta {
@@ -120,6 +139,7 @@ interface RawBlock extends GridEntryMeta {
   startMinutes: number;
   endMinutes: number;
   plusOne: boolean;
+  checkpoint: "check-in" | "check-out" | null;
 }
 
 interface RawSpan {
@@ -156,6 +176,28 @@ export function buildGridDays(
       rawSpans.push({ meta, startDay: item.day, endDay: item.end_day });
       renderDays.add(item.day);
       renderDays.add(item.end_day);
+      // B-12: derive the two ~15-min checkpoint indicators on the timed
+      // grid — check-in at `start_time` on `day`, check-out at `end_time`
+      // on `end_day`. Ephemeral projections of the SAME single row (F-051
+      // criterion 2), skipped per edge when its time is unset.
+      const checkpoints = [
+        { day: item.day, time: item.start_time, checkpoint: "check-in" as const },
+        { day: item.end_day, time: item.end_time, checkpoint: "check-out" as const },
+      ];
+      for (const edge of checkpoints) {
+        if (edge.time === null) continue;
+        const startMinutes = parseISOTime(edge.time);
+        const indicator: RawBlock = {
+          ...meta,
+          startMinutes,
+          endMinutes: Math.min(startMinutes + CHECKPOINT_BLOCK_MINUTES, MINUTES_PER_DAY),
+          plusOne: false,
+          checkpoint: edge.checkpoint,
+        };
+        const bucket = blocksByDay.get(edge.day);
+        if (bucket === undefined) blocksByDay.set(edge.day, [indicator]);
+        else bucket.push(indicator);
+      }
       continue;
     }
 
@@ -180,7 +222,13 @@ export function buildGridDays(
       // Wire-invalid end<start never leaves the server; floor defensively.
       endMinutes = Math.max(parseISOTime(item.end_time), startMinutes);
     }
-    const block: RawBlock = { ...meta, startMinutes, endMinutes, plusOne: first.plusOne };
+    const block: RawBlock = {
+      ...meta,
+      startMinutes,
+      endMinutes,
+      plusOne: first.plusOne,
+      checkpoint: null,
+    };
     const bucket = blocksByDay.get(item.day);
     if (bucket === undefined) blocksByDay.set(item.day, [block]);
     else bucket.push(block);
@@ -231,12 +279,25 @@ export function buildGridDays(
     maxAllDayCount = Math.max(maxAllDayCount, chips.length);
   }
 
-  const days: GridDay[] = dates.map((date) => ({
-    date,
-    blocks: assignOverlapColumns(blocksByDay.get(date) ?? []),
-    allDay: allDayByDay.get(date) ?? [],
-    spans: spansByDay.get(date) ?? [],
-  }));
+  const days: GridDay[] = dates.map((date) => {
+    const blocks = assignOverlapColumns(blocksByDay.get(date) ?? []);
+    // B-12: checkpoint indicators take part in the column split above (so
+    // nothing is ever occluded, R-itin-15) but the WARNING badge is re-derived
+    // over real items only — ephemeral derived UI neither carries nor causes
+    // it (a spanning lodging "collides with nothing").
+    const real = blocks.filter((block) => block.checkpoint === null);
+    for (const block of blocks) {
+      block.overlapping =
+        block.checkpoint === null &&
+        real.some((other) => other !== block && spansDirectlyOverlap(other, block));
+    }
+    return {
+      date,
+      blocks,
+      allDay: allDayByDay.get(date) ?? [],
+      spans: spansByDay.get(date) ?? [],
+    };
+  });
 
   return { days, laneCount: laneEnds.length, maxAllDayCount };
 }

@@ -50,6 +50,11 @@ export interface ItemFormProps {
    * the edited row's own `place_id` wins.
    */
   prefillPlace?: { id: string; name: string };
+  /**
+   * B-10b: seeds the Day picker when no day is set — the host passes the
+   * trip's start date so an April-2027 trip doesn't open on today.
+   */
+  contextDay?: ISODate;
   onDirty(): void;
   onSaved(): void;
 }
@@ -69,6 +74,7 @@ export function ItemForm({
   prefillDay,
   prefillTime,
   prefillPlace,
+  contextDay,
   onDirty,
   onSaved,
 }: ItemFormProps) {
@@ -233,6 +239,7 @@ export function ItemForm({
       <DateField
         label="Day"
         value={day}
+        contextDate={contextDay}
         onSelect={touch(setDay)}
         error={fieldErrors["day"] || undefined}
         testID="itinerary-item-new-input-day"

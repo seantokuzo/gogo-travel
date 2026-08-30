@@ -357,6 +357,10 @@ export default function ItineraryScreen() {
           onReorder={handleReorder}
           onOpenEntry={openEntry}
           onAddToDay={(date) => openAdd(date)}
+          // B-11: every day header carries a `+` (populated days had no add
+          // affordance in list view). Write affordance ⇒ viewer-gated the
+          // onSortDay way.
+          onHeaderAdd={editor ? (date) => openAdd(date) : undefined}
           onOpenLeg={setOpenLeg}
           // R-ib-24: sorting issues a day-order PUT — viewers never see the
           // affordance, and it hides while a PUT is already in flight (the

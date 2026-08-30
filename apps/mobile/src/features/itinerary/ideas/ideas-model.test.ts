@@ -1,10 +1,12 @@
 /**
  * Ideas-bucket model pins (T-7.6 / IT-5 — R-itin-10..12 pure halves):
  * zero-item membership (client R-ib-10), category grouping in tuple order
- * with `updated_at DESC` inside a group, the needs-a-day flag, cancelled
- * row placement behind the toggle, and Law #2 integer-cents price text.
+ * with `updated_at DESC` inside a group, the needs-a-day flag, the B-13
+ * two-peer-bin row split (Ideas rows never carry cancelled; cancelled get
+ * their own flat row list), and Law #2 integer-cents price text.
  */
 import {
+  buildCancelledRows,
   buildIdeasGroups,
   buildIdeasRows,
   formatIdeaPrice,
@@ -67,20 +69,30 @@ describe("buildIdeasGroups (§2.3 grouping)", () => {
   });
 });
 
-describe("buildIdeasRows (flattened render list)", () => {
-  it("appends cancelled rows only when the toggle is on", () => {
+describe("buildIdeasRows / buildCancelledRows (B-13 two-peer-bin split)", () => {
+  it("Ideas rows are the unscheduled groups only — never a cancelled card", () => {
     const idea = makeBooking({ id: BOOKING_IDEA_ID, status: "idea" });
+    const rows = buildIdeasRows(buildIdeasGroups([idea]));
+    expect(rows.map((row) => row.type)).toEqual(["group", "card"]);
+    expect(rows.some((row) => row.type === "card" && row.cancelled)).toBe(false);
+  });
+
+  it("Cancelled rows are flat cancelled cards — no group label (the bin header names them)", () => {
     const cancelled = makeBooking({ id: BOOKING_FLIGHT_ID, status: "cancelled" });
-    const groups = buildIdeasGroups([idea]);
+    const rows = buildCancelledRows([cancelled]);
+    expect(rows).toEqual([
+      {
+        type: "card",
+        key: BOOKING_FLIGHT_ID,
+        card: { booking: cancelled, needsDay: false },
+        cancelled: true,
+      },
+    ]);
+  });
 
-    const hidden = buildIdeasRows(groups, [cancelled], false);
-    expect(hidden.some((row) => row.type === "card" && row.cancelled)).toBe(false);
-
-    const shown = buildIdeasRows(groups, [cancelled], true);
-    const cancelledRows = shown.filter((row) => row.type === "card" && row.cancelled);
-    expect(cancelledRows).toHaveLength(1);
-    // Cancelled land at the foot, after every live group.
-    expect(shown[shown.length - 1]).toMatchObject({ type: "card", cancelled: true });
+  it("empty inputs yield empty row lists — the bins hide on empty, they never render blanks", () => {
+    expect(buildIdeasRows(buildIdeasGroups([]))).toEqual([]);
+    expect(buildCancelledRows([])).toEqual([]);
   });
 });
 

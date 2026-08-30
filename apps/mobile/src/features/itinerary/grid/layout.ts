@@ -39,6 +39,16 @@ function effectiveEnd(span: TimedSpan): number {
 }
 
 /**
+ * Direct-intersection predicate (strict, on effective ends) — the exact rule
+ * the badge loop below uses, exported so the grid model can RE-derive badge
+ * flags over a subset (B-12: ephemeral checkpoint indicators join the column
+ * split but must neither carry nor cause the R-itin-15 warning).
+ */
+export function spansDirectlyOverlap(a: TimedSpan, b: TimedSpan): boolean {
+  return a.startMinutes < effectiveEnd(b) && b.startMinutes < effectiveEnd(a);
+}
+
+/**
  * Assigns side-by-side columns to a single day's timed blocks. Returns a new
  * array in the INPUT order with `{column, columns, overlapping}` attached.
  */
@@ -98,7 +108,7 @@ export function assignOverlapColumns<T extends TimedSpan>(
     for (let j = i + 1; j < blocks.length; j += 1) {
       const b = blocks[j];
       if (b === undefined) continue;
-      if (a.startMinutes < effectiveEnd(b) && b.startMinutes < effectiveEnd(a)) {
+      if (spansDirectlyOverlap(a, b)) {
         const ai = assignments[i];
         const bj = assignments[j];
         if (ai !== undefined) ai.overlapping = true;

@@ -56,6 +56,7 @@ export type { IdeasBucketProps } from "./ideas/IdeasBucket";
 export { ScheduleSheet } from "./ideas/ScheduleSheet";
 export type { ScheduleSheetProps } from "./ideas/ScheduleSheet";
 export {
+  buildCancelledRows,
   buildIdeasGroups,
   buildIdeasRows,
   CATEGORY_GROUP_LABELS,

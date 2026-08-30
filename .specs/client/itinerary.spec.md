@@ -73,9 +73,15 @@
   with the status badge advancing `idea → planned`.
 - **R-itin-12**: WHEN a `planned`/`booked` booking is timeless (in the
   bucket) THE SYSTEM SHALL flag it "needs a day" — visually distinct from
-  `idea` cards; WHEN `cancelled` bookings exist THE SYSTEM SHALL hide them
-  from the bucket by default behind a "Show cancelled" toggle (their only
-  surface — they are off-calendar by invariant).
+  `idea` cards; WHEN `cancelled` bookings exist THE SYSTEM SHALL render a
+  collapsible "Cancelled" bin as a PEER of the Ideas bin — same shape,
+  count Badge, collapsed by default — whose expansion is the show-cancelled
+  affordance (their only surface — they are off-calendar by invariant): a
+  cancelled booking stays reachable there, keeping its row and expense
+  links (ledger F-043 criterion 3). Each bin SHALL render ONLY when it has
+  contents — an empty bin hides entirely, never an empty box. (Amended per
+  QUEUE B-13, Sean's ruling 2026-08-29 — replaces the earlier "Show
+  cancelled" foot toggle inside the Ideas container.)
 
 ### Calendar-grid view (the differentiator)
 
@@ -89,7 +95,11 @@
   action, the pattern HN users explicitly ask for — competitors § call #4).
 - **R-itin-15**: WHEN two or more blocks overlap in time THE SYSTEM SHALL
   render them side-by-side (never occluded) with an overlap Badge on each —
-  overlaps are surfaced, never hidden or rejected (API R-ib-17).
+  overlaps are surfaced, never hidden or rejected (API R-ib-17). The Badge
+  is an item-vs-item signal: derived checkpoint indicators (R-itin-31,
+  §2.6) join the side-by-side split but SHALL neither carry nor cause it —
+  ephemeral render-only UI collides with nothing (QUEUE B-12,
+  Sean-specified 2026-08-29).
 - **R-itin-16**: WHEN a day has untimed items THE SYSTEM SHALL render them
   as compact chips in an all-day lane pinned above that day's column.
 - **R-itin-17**: WHEN grid mode opens THE SYSTEM SHALL land on the trip's
@@ -194,7 +204,13 @@
   in list mode as synthesized check-in and check-out point rows on their
   respective days (derived from the single spanning item — no extra data
   rows); nights between render nothing in the list. (Resolved 2026-07-09,
-  Gate 2)
+  Gate 2) Grid mode SHALL additionally draw two small derived checkpoint
+  indicator blocks (~15-minute size) on the timed grid at the real
+  check-in/check-out times when set — ephemeral render-only projections of
+  the SAME single row, never persisted and never itinerary rows (ledger
+  F-051 criterion 2: exactly one DB row per multi-night stay), exempt from
+  the R-itin-15 overlap Badge, routing to the same `booking-detail` as the
+  lane. (Amended per QUEUE B-12, Sean-specified 2026-08-29)
 - **R-itin-32 (deeplink party size):** WHEN a deeplink-out URL takes a
   traveler count THE SYSTEM SHALL default it to the trip's current member
   count and offer an inline, per-search editable adults field in the add
@@ -251,14 +267,19 @@ rows, Sheet for pickers/modes) — zero new primitives.
   day (API §3.4); optimistic with rollback (R-itin-2). Midpoint math is not
   the client's problem — the PUT reassigns the day.
 
-### 2.3 Ideas bucket
+### 2.3 Ideas / Cancelled bins
 
-Collapsible section pinned above day one. Header: "Ideas" + count Badge +
-chevron. Cards grouped by category; each shows title, category icon, status
+Two PEER collapsible bins pinned above day one, each rendered ONLY when it
+has contents — an empty bin hides entirely (QUEUE B-13, Sean's ruling
+2026-08-29). Ideas bin header: "Ideas" + unscheduled-count Badge + chevron.
+Cards grouped by category; each shows title, category icon, status
 Badge (`idea`, or "needs a day" flag per R-itin-12), price if known, and an
 "Add to day" button (R-itin-11 — the guaranteed scheduling path; drag from
-bucket into a day is an enhancement, not the contract). "Show cancelled"
-toggle at the section foot (R-itin-12). Card press → `booking-detail`.
+bucket into a day is an enhancement, not the contract). Cancelled bin
+header: "Cancelled" + count Badge + chevron; expanding it is the
+show-cancelled affordance (R-itin-12) — flat cancelled cards (no group
+labels; the bin header names them), never schedulable. Card press →
+`booking-detail` in both bins.
 
 ### 2.4 Add flows per category
 
@@ -306,6 +327,14 @@ schema §3.3.10):
   lane (R-itin-16's strip), spanning across its covered day columns and
   labeled at the check-in/check-out edges ("Park Hyatt Tokyo") — never a
   full-height band, never occluding timed blocks.
+- **Grid checkpoint indicators (QUEUE B-12, Sean-specified 2026-08-29):**
+  in addition to the lane, two small derived indicator blocks (~15-minute
+  size; dashed, captioned "Check-in"/"Check-out") render on the timed grid
+  at the real check-in/check-out times when set. Ephemeral render-only
+  projections of the same single row — never persisted, never itinerary
+  rows (ledger F-051 criterion 2 holds: exactly one DB row). They join the
+  R-itin-15 side-by-side split but are exempt from its overlap Badge, and
+  route to the same `booking-detail` as the lane.
 - **List mode:** the client synthesizes **check-in and check-out point
   rows** from the spanning item — a check-in row on the `day` date and a
   check-out row on the `end_day` date, each with time and category icon;
@@ -371,6 +400,7 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | FAB | `itinerary-fab-add` |
 | Add-sheet option | `itinerary-add-option-{category\|place-visit\|custom}` |
 | Day add row (empty day) | `itinerary-day-add-{date}` |
+| Day-header add button (every day, editors — B-11) | `itinerary-day-header-add-{date}` |
 | Day jump strip item | `itinerary-day-jump-{date}` |
 | Item card | `itinerary-list-item-{itemId}` (nav §2.7 example) |
 | Travel-time chip | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key) |
@@ -380,11 +410,15 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Ideas section toggle | `itinerary-ideas-toggle` |
 | Ideas card | `itinerary-ideas-item-{bookingId}` |
 | Ideas "Add to day" | `itinerary-ideas-schedule-{bookingId}` |
-| Show-cancelled toggle | `itinerary-ideas-show-cancelled` |
+| Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`) | `itinerary-cancelled-toggle` |
+| Cancelled bin list | `itinerary-cancelled-list` |
+| Cancelled card | `itinerary-cancelled-item-{bookingId}` |
 | Grid item block | `itinerary-grid-item-{itemId}` |
+| Grid checkpoint indicator (B-12, derived) | `itinerary-grid-item-{itemId}-check-in` / `-check-out` |
 | Grid empty slot | `itinerary-grid-slot-{date}-{HH}` |
 | Grid all-day chip | `itinerary-grid-allday-{itemId}` |
 | Form inputs | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …) |
+| Date/time field derivations (every DateField/TimeField, B-10) | `{fieldTestID}-picker`, `-error`, `-clear` (time); iOS date-picker modal card `{fieldTestID}-sheet` with `-sheet-close` / `-sheet-scrim` |
 | Form status segment | `itinerary-item-new-segment-status-{status}` |
 | Form place attach | `itinerary-item-new-button-place` |
 | Form save | `itinerary-item-new-button-save` |

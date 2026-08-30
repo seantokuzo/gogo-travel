@@ -3,12 +3,15 @@
  * hooks (network mocked by descriptor):
  *
  *  - hidden when empty (R-itin-10) — zero unscheduled AND zero cancelled;
+ *  - B-13: Ideas and Cancelled are PEER BINS, each rendered only when it
+ *    has contents — an empty bin hides entirely, and a cancelled booking
+ *    stays reachable through the Cancelled bin (F-043 criterion 3);
  *  - collapsed entry with count Badge; expanded → grouped cards; idea badge
  *    vs "Needs a day" flag (R-itin-12); price caption (Law #2 text);
  *  - "Add to day" → day/time Sheet → the schedule wire body re-parsed with
  *    ScheduleBookingInputSchema (falsifiable pin), sheet closes on success;
  *  - failure surfaces the sheet's ErrorBanner and keeps it open;
- *  - cancelled hidden behind the foot toggle, never schedulable;
+ *  - cancelled never schedulable;
  *  - viewer sees no write affordances (R-ib-24).
  *
  * SHEET TAX (STATE "T-7.8 landmine"): every path that exits the sheet
@@ -99,6 +102,7 @@ afterEach(async () => {
 it("hidden when empty (R-itin-10): everything scheduled, nothing cancelled", async () => {
   await renderBucket(); // default universe: both bookings have items
   expect(screen.queryByTestId("itinerary-ideas")).toBeNull();
+  expect(screen.queryByTestId("itinerary-cancelled")).toBeNull();
 });
 
 it("collapsed entry shows the unscheduled count; expanding lists grouped cards with the R-itin-12 flags", async () => {
@@ -316,7 +320,7 @@ it("the sheet chrome is pending-gated: dismissing mid-mutation cannot drop the h
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
 
-it("cancelled bookings hide behind the foot toggle and never offer scheduling (R-itin-12)", async () => {
+it("cancelled bookings live in their own PEER bin — collapsed by default, never schedulable (B-13, R-itin-12)", async () => {
   const cancelled = makeBooking({
     id: CANCELLED_ID,
     category: "flight",
@@ -327,22 +331,39 @@ it("cancelled bookings hide behind the foot toggle and never offer scheduling (R
     api: { bookings: [...defaultBookings(), ideaBooking()], cancelled: [cancelled] },
   });
 
+  // Both bins have contents ⇒ both render, as peers of the same shape.
   await screen.findByTestId("itinerary-ideas");
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
-  expect(screen.queryByTestId(`itinerary-ideas-item-${CANCELLED_ID}`)).toBeNull();
+  await screen.findByTestId("itinerary-cancelled");
 
-  await fireEvent.press(screen.getByTestId("itinerary-ideas-show-cancelled"));
-  expect(screen.getByTestId(`itinerary-ideas-item-${CANCELLED_ID}`)).toBeOnTheScreen();
-  // Group header + card badge both read "Cancelled".
+  // The Ideas bin holds NO cancelled card anywhere — expanded included.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  expect(screen.queryByTestId(`itinerary-cancelled-item-${CANCELLED_ID}`)).toBeNull();
+
+  // Expanding the Cancelled bin IS the show-cancelled affordance (the
+  // collapsed default above is this assertion's control arm).
+  await fireEvent.press(screen.getByTestId("itinerary-cancelled-toggle"));
+  expect(screen.getByTestId(`itinerary-cancelled-item-${CANCELLED_ID}`)).toBeOnTheScreen();
+  // Bin title + card badge both read "Cancelled".
   expect(screen.getAllByText("Cancelled")).toHaveLength(2);
   expect(screen.queryByTestId(`itinerary-ideas-schedule-${CANCELLED_ID}`)).toBeNull();
 });
 
-it("a cancelled-only trip still grows the entry (their ONLY surface)", async () => {
+it("a cancelled-only trip grows ONLY the Cancelled bin — no empty Ideas box (B-13's exact repro)", async () => {
   const cancelled = makeBooking({ id: CANCELLED_ID, status: "cancelled" });
   await renderBucket({ api: { cancelled: [cancelled] } }); // default universe: all scheduled
+  // Pre-B-13 this surfaced the Ideas container with a "0" badge — the bug.
+  await screen.findByTestId("itinerary-cancelled");
+  expect(screen.queryByTestId("itinerary-ideas")).toBeNull();
+  expect(screen.getByText("1")).toBeOnTheScreen(); // the Cancelled bin's count
+  // Still reachable (F-043 criterion 3): expand → the card is there.
+  await fireEvent.press(screen.getByTestId("itinerary-cancelled-toggle"));
+  expect(screen.getByTestId(`itinerary-cancelled-item-${CANCELLED_ID}`)).toBeOnTheScreen();
+});
+
+it("an ideas-only trip grows ONLY the Ideas bin (the mirror arm)", async () => {
+  await renderBucket({ api: { bookings: [...defaultBookings(), ideaBooking()] } });
   await screen.findByTestId("itinerary-ideas");
-  expect(screen.getByText("0")).toBeOnTheScreen(); // count = unscheduled only
+  expect(screen.queryByTestId("itinerary-cancelled")).toBeNull();
 });
 
 it("viewers get no write affordances (R-ib-24)", async () => {
@@ -354,4 +375,28 @@ it("viewers get no write affordances (R-ib-24)", async () => {
   await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
   expect(screen.getByTestId(`itinerary-ideas-item-${BOOKING_IDEA_ID}`)).toBeOnTheScreen();
   expect(screen.queryByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`)).toBeNull();
+});
+
+/**
+ * PR #40 R1 (tests lane): the ScheduleSheet Day seed chain (IdeasBucket's
+ * `contextDay={trip.start_date}` → ScheduleForm → DateField) was unpinned —
+ * severing it left the suite green while the Add-to-day picker reverted to
+ * opening on today. Red when any link of that chain is dropped: TRIP_START
+ * (2027-03-01) is not today.
+ */
+it("the schedule sheet's Day picker seeds from the trip start (B-10 seed-chain pin)", async () => {
+  await renderBucket({ api: { bookings: [...defaultBookings(), ideaBooking()] } });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day-picker").props.date,
+  ).toBe(new Date(2027, 2, 1, 12).getTime());
+  // Close the picker card, then the sheet, draining its exit (SHEET TAX).
+  await fireEvent.press(
+    screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });

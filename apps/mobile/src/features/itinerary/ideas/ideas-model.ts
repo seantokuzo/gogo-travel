@@ -98,16 +98,18 @@ export function formatIdeaPrice(priceCents: number, currency: string): string {
   return `${currency} ${centsToMoneyText(priceCents, currency)}`;
 }
 
-/** The flat row list the bucket's FlatList renders (groups flattened). */
+/** The flat row list a bin's FlatList renders (groups flattened). */
 export type IdeasRow =
   | { type: "group"; key: string; label: string }
   | { type: "card"; key: string; card: IdeaCard; cancelled: boolean };
 
-export function buildIdeasRows(
-  groups: readonly IdeasGroup[],
-  cancelled: readonly Booking[],
-  showCancelled: boolean,
-): IdeasRow[] {
+/**
+ * B-13: the Ideas BIN's rows — unscheduled groups only. Cancelled bookings
+ * moved out to their own peer bin (`buildCancelledRows`); the pre-B-13
+ * shape appended them here behind a foot toggle, which made showing
+ * cancelled surface the Ideas box with zero ideas in it.
+ */
+export function buildIdeasRows(groups: readonly IdeasGroup[]): IdeasRow[] {
   const rows: IdeasRow[] = [];
   for (const group of groups) {
     rows.push({
@@ -119,16 +121,19 @@ export function buildIdeasRows(
       rows.push({ type: "card", key: card.booking.id, card, cancelled: false });
     }
   }
-  if (showCancelled && cancelled.length > 0) {
-    rows.push({ type: "group", key: "group-cancelled", label: "Cancelled" });
-    for (const booking of cancelled) {
-      rows.push({
-        type: "card",
-        key: booking.id,
-        card: { booking, needsDay: false },
-        cancelled: true,
-      });
-    }
-  }
   return rows;
+}
+
+/**
+ * B-13: the Cancelled BIN's rows — flat cancelled cards, no group label
+ * (the bin's own header already says "Cancelled"). Same row vocabulary as
+ * the Ideas bin: the two bins are peers of the same shape.
+ */
+export function buildCancelledRows(cancelled: readonly Booking[]): IdeasRow[] {
+  return cancelled.map((booking) => ({
+    type: "card",
+    key: booking.id,
+    card: { booking, needsDay: false },
+    cancelled: true,
+  }));
 }

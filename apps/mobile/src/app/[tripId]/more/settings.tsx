@@ -515,10 +515,18 @@ export default function TripSettingsScreen() {
                 ) : null}
               </View>
               <View style={s.dateRow} testID="trip-settings-input-dates">
+                {/* B-10b sibling seeds are DEFENSIVE here, not behavioral:
+                    both values initialize from the trip (dates are
+                    schema-required, no clear affordance), and a set value
+                    always beats context (pickerSeedDate) — so the seed is
+                    unreachable today and deliberately UNPINNED (a pin that
+                    can't go red is vacuous, mobile.md). Kept for caller-seam
+                    uniformity; it goes live if dates ever become clearable. */}
                 <View style={s.dateField}>
                   <DateField
                     label="Start date"
                     value={startDate}
+                    contextDate={endDate}
                     onSelect={setStartDate}
                     testID="trip-settings-input-dates-start"
                   />
@@ -527,6 +535,7 @@ export default function TripSettingsScreen() {
                   <DateField
                     label="End date"
                     value={endDate}
+                    contextDate={startDate}
                     onSelect={setEndDate}
                     error={endError}
                     testID="trip-settings-input-dates-end"

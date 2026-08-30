@@ -15,7 +15,12 @@
  * `itinerary-ideas-schedule-sheet`, `…-input-day`, `…-input-start-time`,
  * `…-input-end-time`, `…-button-confirm`, `…-error`.
  */
-import { ScheduleBookingInputSchema, type Booking, type ScheduleBookingInput } from "@gogo/shared";
+import {
+  ScheduleBookingInputSchema,
+  type Booking,
+  type ISODate,
+  type ScheduleBookingInput,
+} from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
@@ -30,6 +35,8 @@ export interface ScheduleSheetProps {
   tripId: string;
   /** Non-null ⇒ presented for this booking. */
   booking: Booking | null;
+  /** B-10b: seeds the Day picker (trip start) so it never opens on today. */
+  contextDay?: ISODate;
   onClose(): void;
 }
 
@@ -44,6 +51,8 @@ const useStyles = createStyles((t) =>
 interface ScheduleFormProps {
   pending: boolean;
   error: string | null;
+  /** B-10b: passed through to the Day DateField's picker seed. */
+  contextDay: ISODate | undefined;
   onDismissError(): void;
   onConfirm(input: ScheduleBookingInput): void;
 }
@@ -54,7 +63,7 @@ interface ScheduleFormProps {
  * sheet (see `ScheduleSheet`) — the form must not own state the sheet needs
  * in order to gate its own dismissal.
  */
-function ScheduleForm({ pending, error, onDismissError, onConfirm }: ScheduleFormProps) {
+function ScheduleForm({ pending, error, contextDay, onDismissError, onConfirm }: ScheduleFormProps) {
   const s = useStyles();
   const [day, setDay] = useState<string>("");
   const [startTime, setStartTime] = useState<string>("");
@@ -88,6 +97,7 @@ function ScheduleForm({ pending, error, onDismissError, onConfirm }: ScheduleFor
       <DateField
         label="Day"
         value={day}
+        contextDate={contextDay ?? ""}
         onSelect={setDay}
         testID="itinerary-ideas-schedule-input-day"
       />
@@ -123,7 +133,7 @@ function ScheduleForm({ pending, error, onDismissError, onConfirm }: ScheduleFor
   );
 }
 
-export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) {
+export function ScheduleSheet({ tripId, booking, contextDay, onClose }: ScheduleSheetProps) {
   const [error, setError] = useState<string | null>(null);
 
   const schedule = useScheduleBooking(tripId, {
@@ -178,6 +188,7 @@ export function ScheduleSheet({ tripId, booking, onClose }: ScheduleSheetProps) 
           key={booking.id}
           pending={schedule.isPending}
           error={error}
+          contextDay={contextDay}
           onDismissError={() => setError(null)}
           onConfirm={(input) => {
             setError(null);
