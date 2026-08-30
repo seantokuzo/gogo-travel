@@ -12,16 +12,10 @@
  * run is a HARD FAILURE; a local Docker-less run skips with a loud banner. No
  * network beyond the local container (Law #5).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { generateKeyPair } from "jose";
-import postgres from "postgres";
 import { Hono } from "hono";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import type { TripMemberRole } from "@gogo/shared/enums";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
@@ -30,35 +24,12 @@ import { requestIdMiddleware, createErrorHandler } from "./app-middleware.js";
 import type { RequestVars } from "./errors.js";
 import { createRequireAuth } from "./require-auth.js";
 import { createRequireTripMember, tripContextOf } from "./require-trip-member.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — requireTripMember AUTHZ SUITE SKIPPED       ║\n" +
-      "║  The 404-indistinguishable authz fixture (auth-users §3.6.4,      ║\n" +
-      "║  R-authz-2/3) was NOT verified. Start Docker and re-run           ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("requireTripMember suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the requireTripMember authz suite " +
-        "could not verify auth-users §3.6.4 / R-authz-2/3. A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const NONEXISTENT_TRIP = "99999999-9999-4999-8999-999999999999";
@@ -73,8 +44,7 @@ function withoutRequestId(body: Envelope): Omit<Envelope["error"], "requestId"> 
 }
 
 describe.skipIf(!dockerAvailable)("requireTripMember (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: Hono<RequestVars>;
   let signer: AccessTokenSigner;
@@ -83,14 +53,8 @@ describe.skipIf(!dockerAvailable)("requireTripMember (integration)", () => {
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("http_require_trip_member");
+    db = suiteDb.db;
 
     const pair = await generateKeyPair("ES256");
     signer = { privateKey: pair.privateKey, kid: "gogo-es256-test" };
@@ -116,8 +80,7 @@ describe.skipIf(!dockerAvailable)("requireTripMember (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   /** Seed a user and mint a live access token for them. */
