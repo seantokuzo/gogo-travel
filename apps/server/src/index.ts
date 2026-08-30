@@ -81,7 +81,10 @@ if (authDeps) {
   };
   travelLegs.startStalenessJob();
 }
-const app = createApp(appOptions);
+// Dev-only request log — the only `NODE_ENV` read for it, so `createApp`
+// itself stays env-free (health-only boots get it too, which is exactly when
+// "did the request even arrive?" is hardest to answer).
+const app = createApp({ ...appOptions, devRequestLog: env.NODE_ENV === "development" });
 
 serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   // eslint-disable-next-line no-console -- boot banner is the one allowed log

@@ -124,6 +124,61 @@ describe("createApiClient — request building", () => {
   });
 });
 
+describe("B-6 dev cause surfacing on transport failure (PR #37 R1)", () => {
+  // jest-expo runs with __DEV__ true; the prod arm flips the global for one
+  // test and restores it — api-client reads __DEV__ at request time, not at
+  // module load, so the flip takes effect without a re-import.
+  const devGlobal = globalThis as unknown as { __DEV__: boolean };
+  const originalDev = devGlobal.__DEV__;
+  const apiWarnCalls = (spy: jest.SpyInstance) =>
+    spy.mock.calls.filter(
+      (call) => typeof call[0] === "string" && (call[0] as string).startsWith("[api] "),
+    );
+
+  afterEach(() => {
+    devGlobal.__DEV__ = originalDev;
+    jest.restoreAllMocks();
+  });
+
+  it("dev arm: warns with the method and the URL the phone actually dialed", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(client.request(userEndpoints.getMe, {})).rejects.toMatchObject({
+      status: 0,
+      code: "NETWORK",
+    });
+
+    // The one clue B-5 cost two debugging rounds to recover: WHICH host the
+    // request went to. Reverting B-6 (deleting the __DEV__ warn) goes red here.
+    const calls = apiWarnCalls(warnSpy);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toContain("GET");
+    expect(calls[0]?.[0]).toContain("http://host:3000/api/users/me");
+  });
+
+  it("prod arm (__DEV__ false): NO warn — and the control: the same failure still throws the sanitized error", async () => {
+    devGlobal.__DEV__ = false;
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED http://host:3000/api/users/me"));
+
+    // Control arm for the negative assertion below (vacuous-pin taxonomy,
+    // mobile.md): the identical failure DOES reach the caller as the
+    // sanitized ApiRequestError, so this path demonstrably executed — the
+    // absence of a warn is the __DEV__ gate, not a dead test.
+    const err = await client.request(userEndpoints.getMe, {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect((err as ApiRequestError).code).toBe("NETWORK");
+    expect((err as ApiRequestError).message).not.toContain("host:3000");
+
+    // The dev arm above is the ungated control proving this spy setup
+    // captures the [api] line when the gate is open.
+    expect(apiWarnCalls(warnSpy)).toHaveLength(0);
+  });
+});
+
 describe("createApiClient — refresh-on-401 rotation", () => {
   it("refreshes once and retries the request on a 401", async () => {
     const { client, fetchImpl, onTokensRefreshed } = setup();

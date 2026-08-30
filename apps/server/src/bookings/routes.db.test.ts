@@ -298,10 +298,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       .orderBy(schema.itineraryItems.day, schema.itineraryItems.sortOrder);
 
   const dbBooking = async (bookingId: string) => {
-    const [row] = await db
-      .select()
-      .from(schema.bookings)
-      .where(eq(schema.bookings.id, bookingId));
+    const [row] = await db.select().from(schema.bookings).where(eq(schema.bookings.id, bookingId));
     return row;
   };
 
@@ -560,6 +557,123 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(((await patch.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
+  it("B-8 grace: a date-line flight (7h apparent inversion) is ACCEPTED; >12h is not; the grace does NOT leak to other categories", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // The real shape that blocked device QA: Tokyo 17:00 JST -> LAX 10:00 PDT
+    // is a legitimate ~9h eastbound flight, but the client stamps `Z` on both
+    // wall times (form-model.ts:205), so it arrives as a 7h inversion. Inside
+    // the 12h transport grace (migration 0001) it must now be accepted.
+    const dateLine = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "NRT-LAX",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T10:00:00Z",
+      },
+    });
+    expect(dateLine.status).toBe(201);
+
+    // Beyond the window the rule still bites — the grace is bounded, not off.
+    const tooFar = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "Impossible",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T03:00:00Z",
+      },
+    });
+    expect(tooFar.status).toBe(400);
+    expect(((await tooFar.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Scoping is the point: lodging has ONE location, so an inverted stay is a
+    // genuine error and must NOT inherit the transport grace.
+    const lodging = await postBooking(trip.id, editor.accessToken, {
+      category: "lodging",
+      title: "Backwards stay",
+      details: {
+        category: "lodging",
+        check_in: "2027-04-24T15:00:00Z",
+        check_out: "2027-04-24T14:00:00Z",
+      },
+    });
+    expect(lodging.status).toBe(400);
+    expect(((await lodging.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("B-8 boundary (PR #37 R1): flight inverted 11h59m → 201 real insert; 12h01m → 400 from the mirror, never a 23514 500", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // ACCEPT EDGE, against the REAL constraint: 11h59m sits just inside the
+    // 12h window, so the row must actually insert (`bookings_time_order_ck`
+    // accepts it). Tightening the DB grace without touching the mirror turns
+    // this arm into a 23514 → 500 — red, not silently green.
+    const justInside = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "11h59m inverted",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T05:01:00Z",
+      },
+    });
+    expect(justInside.status).toBe(201);
+
+    // REJECT EDGE, from the service MIRROR: 12h01m must answer 400
+    // VALIDATION_FAILED. If the mirror's grace drifts wider than the
+    // constraint (12h → 13h in service.ts), this request passes the mirror,
+    // trips the constraint, and 500s — the exact service↔DB lockstep drift
+    // the "KEEP IN LOCKSTEP" comment could only ask for; this arm enforces.
+    const justOutside = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "12h01m inverted",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T04:59:00Z",
+      },
+    });
+    expect(justOutside.status).toBe(400);
+    expect(((await justOutside.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
+  it("B-8 grace-set membership (PR #37 R1): inverted train ≤12h → 201; car_rental inverted 1h → 400 (deliberately excluded)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // ACCEPT SIDE: train is the OTHER graced category. An 8h-inverted train
+    // must insert for real — removing "train" from the service set answers
+    // 400 here, removing it from the constraint alone answers 500; either
+    // de-lockstep goes red.
+    const train = await postBooking(trip.id, editor.accessToken, {
+      category: "train",
+      title: "Cross-zone rail",
+      details: {
+        category: "train",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T09:00:00Z",
+      },
+    });
+    expect(train.status).toBe(201);
+
+    // REJECT SIDE: car_rental is deliberately EXCLUDED from the grace (B-9 —
+    // a one-way drop-off can cross zones but stays a hard error). A 1h
+    // inversion must 400 from the mirror; adding car_rental to the service
+    // set alone would pass the mirror and 500 on the unchanged constraint.
+    const rental = await postBooking(trip.id, editor.accessToken, {
+      category: "car_rental",
+      title: "1h inverted rental",
+      details: {
+        category: "car_rental",
+        pickup_at: "2027-04-24T10:00:00Z",
+        dropoff_at: "2027-04-24T09:00:00Z",
+      },
+    });
+    expect(rental.status).toBe(400);
+    expect(((await rental.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
   it("POST: viewer 403 (R-ib-24 server-enforced)", async () => {
     const { viewer, trip } = await seedCollabTrip();
     const res = await postBooking(trip.id, viewer.accessToken, {
@@ -703,9 +817,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
         category: "flight",
         title,
         status: "planned",
-        ...(departs
-          ? { details: { category: "flight", departs_at: departs } }
-          : {}),
+        ...(departs ? { details: { category: "flight", departs_at: departs } } : {}),
       });
     const sep3 = await mk("Sep 3", "2026-09-03T10:00:00+09:00");
     const sep1 = await mk("Sep 1", "2026-09-01T10:00:00+09:00");
@@ -727,14 +839,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       cursor = body.nextCursor;
       if (cursor === null) break;
     }
-    expect(walked).toEqual([
-      apollo.id,
-      sep1.id,
-      sep3.id,
-      sep5.id,
-      timelessNew.id,
-      timelessOld.id,
-    ]);
+    expect(walked).toEqual([apollo.id, sep1.id, sep3.id, sep5.id, timelessNew.id, timelessOld.id]);
 
     // Malformed cursor falls back to page 1 (opaque token, no 400 door).
     const malformed = PaginatedBookingsSchema.parse(
@@ -838,7 +943,12 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     ]);
     await expectIndistinguishable404s([
       await scheduleBooking(trip.id, booking.id, stranger.accessToken, JSON.parse(scheduleBody)),
-      await scheduleBooking(NONEXISTENT_UUID, booking.id, stranger.accessToken, JSON.parse(scheduleBody)),
+      await scheduleBooking(
+        NONEXISTENT_UUID,
+        booking.id,
+        stranger.accessToken,
+        JSON.parse(scheduleBody),
+      ),
     ]);
   });
 
@@ -908,10 +1018,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       await postBooking(trip.id, editor.accessToken, withPlace(NONEXISTENT_UUID)),
     ]);
     // Neither refused write left a booking row behind.
-    const rows = await db
-      .select()
-      .from(schema.bookings)
-      .where(eq(schema.bookings.tripId, trip.id));
+    const rows = await db.select().from(schema.bookings).where(eq(schema.bookings.tripId, trip.id));
     expect(rows.filter((r) => r.placeId === victimPlace.id)).toHaveLength(0);
   });
 
@@ -1397,9 +1504,9 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     // §3.3 "untimed → appended" — the schedule path owns untimed placement,
     // auto-items always carry their derived start_time).
     const untimed = await mkIdea("untimed");
-    expect(
-      (await scheduleBooking(trip.id, untimed.id, editor.accessToken, { day })).status,
-    ).toBe(201);
+    expect((await scheduleBooking(trip.id, untimed.id, editor.accessToken, { day })).status).toBe(
+      201,
+    );
     expect((await dbItems(untimed.id))[0]?.sortOrder).toBe(3072);
   });
 
@@ -1467,8 +1574,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     // Same-value rewrite is NOT a location change — no marks.
     dirtyCalls.length = 0;
     expect(
-      (await patchBooking(trip.id, booking.id, editor.accessToken, { place_id: place.id }))
-        .status,
+      (await patchBooking(trip.id, booking.id, editor.accessToken, { place_id: place.id })).status,
     ).toBe(200);
     expect(dirtyCalls).toHaveLength(0);
   });

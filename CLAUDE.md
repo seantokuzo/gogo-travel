@@ -33,6 +33,8 @@ splitting, photos pinned to places, deeplink-first integrations.
    own code.
 8. **The feature ledger is append-only truth.** `passes` booleans flip only
    after verified testing. Removing or editing ledger entries is forbidden.
+   Preserve the file's existing JSON escape style when flipping — an emitter
+   re-encode defeats the append-only eyeball audit.
 
 ## Autonomy Contract
 
@@ -87,7 +89,7 @@ research → ADR if non-obvious.
 - Atomic commits — `type(scope): description` (`feat`, `fix`, `refactor`,
   `docs`, `test`, `chore`).
 - Branch naming — `P-N/T-M-slug` for tasks, `B-N/slug` for bugs, `S-N/slug`
-  for spikes.
+  for spikes, `qa/<slug>` for multi-bug QA integration branches.
 - Merge style `--merge` (never squash/rebase). CI green before merge unless
   labeled `expected-ci-fail`.
 
