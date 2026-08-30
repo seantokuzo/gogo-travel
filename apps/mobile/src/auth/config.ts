@@ -8,6 +8,7 @@
  * secret ever lives in this module.
  */
 import Constants from "expo-constants";
+import { NativeModules } from "react-native";
 
 /** apps/server dev port (server `env.ts` `PORT` default). */
 export const DEV_SERVER_PORT = 3000;
@@ -50,12 +51,50 @@ export function assertSecureBaseUrl(url: string, dev: boolean = __DEV__): string
 }
 
 /**
+ * Narrow view of the `SourceCode` native module (RN 0.86
+ * `Libraries/NativeModules/specs/NativeSourceCode`): new-arch/TurboModule
+ * exposes `getConstants().scriptURL`; the legacy bridge hoists constants onto
+ * the module object as `.scriptURL`. Both are covered.
+ */
+type SourceCodeModule = {
+  getConstants?: () => { scriptURL?: string | null };
+  scriptURL?: string | null;
+};
+
+/**
+ * The host the bundle itself was served from — i.e. the Metro dev server
+ * (B-5). In a dev build `SourceCode.scriptURL` is ALWAYS the Metro URL
+ * (`http://<host>:8081/index.bundle?...`), even in a dev-client build where
+ * `Constants.expoConfig.hostUri` is empty. In a release build the bundle is
+ * embedded, `scriptURL` is `file://...`, the `https?` match fails, and this
+ * returns `null` — an embedded bundle has no dev host to offer.
+ *
+ * Same extraction RN's own `getDevServer()` performs
+ * (`Libraries/Core/Devtools/getDevServer.js`); read here via `NativeModules`
+ * to spare a deep Flow-file import (and its throw on `scriptURL: null`,
+ * which is exactly what the jest preset's `SourceCode` mock returns).
+ */
+function resolveMetroHost(): string | null {
+  const sourceCode = (NativeModules as { SourceCode?: SourceCodeModule | null }).SourceCode;
+  const scriptURL = sourceCode?.getConstants?.().scriptURL ?? sourceCode?.scriptURL;
+  if (typeof scriptURL !== "string") return null;
+  const match = /^https?:\/\/([^:/]+)/.exec(scriptURL);
+  return match?.[1] ?? null;
+}
+
+/**
  * Resolve the API base URL (always normalized to end in `/api`). Priority:
  * 1. `EXPO_PUBLIC_API_URL` — explicit override (staging/prod/tunnel).
  * 2. Derived from the Metro dev host (`Constants.expoConfig.hostUri` =
  *    `<lan-ip>:8081`) → `http://<lan-ip>:3000/api`, so a physical device on
- *    the same LAN reaches the dev server with zero config.
- * 3. `http://localhost:3000/api` — simulator fallback (no dev host).
+ *    the same LAN reaches the dev server with zero config (Expo Go path).
+ * 3. Derived from the bundle's own source URL (`SourceCode.scriptURL`) —
+ *    dev-client builds, where `hostUri` is EMPTY and tier 2 never fires
+ *    (B-5: the fall-through to `localhost` made a physical device call
+ *    itself; every device→server call died as "network request failed").
+ * 4. `http://localhost:3000/api` — the SIMULATOR's fallback (loopback IS the
+ *    dev box there). Never correct for a physical device, which is why it is
+ *    the terminal tier and nothing device-shaped may land on it.
  */
 export function resolveApiBaseUrl(): string {
   const explicit = process.env.EXPO_PUBLIC_API_URL;
@@ -66,6 +105,12 @@ export function resolveApiBaseUrl(): string {
     const host = hostUri.split(":")[0];
     if (host) return assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
   }
+
+  const metroHost = resolveMetroHost();
+  if (metroHost) {
+    return assertSecureBaseUrl(`http://${metroHost}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
+  }
+
   return assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`);
 }
 
