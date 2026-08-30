@@ -8,12 +8,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 
 import { requestIdMiddleware } from "./app-middleware.js";
-import {
-  createDevRequestLog,
-  redactPath,
-  redactQuery,
-  type LogSink,
-} from "./dev-request-log.js";
+import { createDevRequestLog, redactPath, redactQuery, type LogSink } from "./dev-request-log.js";
 import type { RequestVars } from "./errors.js";
 
 const UUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
@@ -59,6 +54,8 @@ describe("createDevRequestLog", () => {
     app.get("/api/boom", (c) =>
       c.json({ error: { code: "UNAUTHENTICATED", message: "nope" } }, 401),
     );
+    // The degrade case: a non-2xx whose body is NOT the JSON envelope.
+    app.get("/api/plain", (c) => c.text("nope", 404));
     return app;
   };
 
@@ -135,6 +132,23 @@ describe("createDevRequestLog", () => {
 
     const line = sink.warn.mock.calls[0]?.[0] as string;
     expect(line).toContain("VALIDATION_FAILED — the category's primary end time precedes");
+  });
+
+  it("degrades on a NON-JSON non-2xx: bare status, no code, body intact (PR #37 R1 — errorCodeOf must swallow the parse)", async () => {
+    const sink = { warn: vi.fn<(message: string) => void>() };
+    const res = await build(sink).request("/api/plain");
+
+    // The client's body is untouched — the middleware only ever reads a clone.
+    expect(res.status).toBe(404);
+    await expect(res.text()).resolves.toBe("nope");
+
+    // The line still prints, status followed DIRECTLY by the duration paren —
+    // no error code appended. Without errorCodeOf's try/catch, `.json()` on a
+    // text body throws AFTER next(), onError turns this served 404 into a 500
+    // and no [req] line survives; the control for "code present" is the
+    // envelope-401 test above.
+    const line = sink.warn.mock.calls[0]?.[0] as string;
+    expect(line).toContain("[req] GET /api/plain -> 404 (");
   });
 
   it("never writes a capability token into the log", async () => {

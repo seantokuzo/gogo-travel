@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
 import type { AuthRouterDeps } from "./auth/routes.js";
 import type { BookingsRouterDeps } from "./bookings/routes.js";
@@ -134,6 +134,73 @@ describe("createApp wiring guard", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain("auth");
     expect((error as Error).message).toContain("requireAuth");
+  });
+});
+
+describe("devRequestLog wiring (PR #37 R1 — off by default, mounted BEFORE the auth guard)", () => {
+  /**
+   * Real authed app with a SPY warn sink — the exact seam `createApp` hands
+   * `createDevRequestLog` (`options.auth.logger`), so these arms observe the
+   * middleware through the wiring under test, not a re-built lookalike.
+   * `requireAuth` shares the sink (it warns `[auth] …` on rejections), so
+   * every assertion filters on the `[req] ` prefix.
+   */
+  async function buildAuthedApp(options: { devRequestLog?: boolean } = {}) {
+    const warn = vi.fn<(message: string) => void>();
+    const pair = await generateKeyPair("ES256");
+    const authDeps: AuthRouterDeps = {
+      db: {} as DbClient,
+      verifier: {
+        appleJwks: createLocalJWKSet({ keys: [] }),
+        googleJwks: createLocalJWKSet({ keys: [] }),
+        appleAudience: "com.gogo.travel",
+        googleAudiences: ["gid.apps.example"],
+      },
+      signer: { privateKey: pair.privateKey, kid: "test-kid" },
+      accessVerify: { publicKey: pair.publicKey },
+      appleExchange: { exchange: () => Promise.reject(new Error("unused in this test")) },
+      appleCredentialsKey: Buffer.alloc(32, 7),
+      logger: { warn },
+    };
+    const testApp = createApp({
+      auth: authDeps,
+      ...(options.devRequestLog !== undefined ? { devRequestLog: options.devRequestLog } : {}),
+    });
+    const reqLines = () =>
+      warn.mock.calls
+        .map((call) => call[0])
+        .filter((line): line is string => typeof line === "string" && line.startsWith("[req] "));
+    return { testApp, reqLines };
+  }
+
+  it("default options: a handled request produces NO [req] line (the log is opt-in, not always-on)", async () => {
+    const { testApp, reqLines } = await buildAuthedApp();
+    const res = await testApp.request("/api/health");
+    expect(res.status).toBe(200);
+    // The negative arm — its control is the test below: the SAME app shape
+    // with devRequestLog:true DOES capture a [req] line through this spy, so
+    // an `if (options.devRequestLog)` → `if (true)` mutation turns this red.
+    expect(reqLines()).toEqual([]);
+  });
+
+  it("devRequestLog:true: a handled request prints one [req] line through the injected logger", async () => {
+    const { testApp, reqLines } = await buildAuthedApp({ devRequestLog: true });
+    const res = await testApp.request("/api/health");
+    expect(res.status).toBe(200);
+    expect(reqLines()).toHaveLength(1);
+    expect(reqLines()[0]).toContain("[req] GET /api/health -> 200");
+  });
+
+  it("devRequestLog:true: a request the auth guard rejects with 401 STILL prints (mount-before-auth ordering)", async () => {
+    const { testApp, reqLines } = await buildAuthedApp({ devRequestLog: true });
+    // Non-allowlisted path, no bearer → requireAuth answers the uniform 401.
+    // "Rejected at the door" vs "never arrived" must stay distinguishable
+    // (app.ts mounts the log BEFORE the guard for exactly this): moving the
+    // mount after requireAuth silences this line and the arm goes red.
+    const res = await testApp.request("/api/trips");
+    expect(res.status).toBe(401);
+    expect(reqLines()).toHaveLength(1);
+    expect(reqLines()[0]).toContain("[req] GET /api/trips -> 401 UNAUTHENTICATED");
   });
 });
 
