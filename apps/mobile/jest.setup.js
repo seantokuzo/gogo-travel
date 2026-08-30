@@ -4,8 +4,19 @@
  * `setupFiles`, so this file must NOT be listed there or it would clobber
  * the preset's RN mocks).
  *
+ * MOCK-FIDELITY CONTRACT (T-S3.2, R-test-1 — ADR-006 layer 1): every global
+ * stub below carries a "Contract:" pointer to the suite or module that pins
+ * its claims against the REAL library. Hand-rolled stubs source their shapes
+ * from `src/testing/mock-shape-parity.ts` (typecheck pins those shapes to the
+ * installed package's types) and/or a `*.contract.test.ts` suite that
+ * exercises the real library. A stub with no contract pointer is a review
+ * finding. B-4 is why: a stub shape the library never produces let every
+ * downstream test verify fiction.
+ *
  * Safe-area: PageHeader/TabNav/Sheet read insets; the package's sanctioned
  * jest mock provides deterministic zero insets without a provider wrapper.
+ * Contract: library-owned — the mock ships inside react-native-safe-area-context
+ * itself, versioned with the code it mocks; its fidelity is the package's own.
  */
 jest.mock(
   "react-native-safe-area-context",
@@ -20,28 +31,58 @@ jest.mock(
  * device. The button stub forwards its testID + onPress so E2E-style flows
  * still reach it. Tests that exercise the real flows (apple.test/google.test)
  * declare their own file-local jest.mock, which overrides these.
+ *
+ * Contract: src/testing/mock-shape-parity.ts (`appleAuthEnums` pins every
+ * enum member name + value to the installed package; `appleAuthStubExports`
+ * pins the export names, sealed below at mock-build time; seal survival is
+ * pinned by src/testing/mock-shape-parity.contract.test.ts).
  */
 jest.mock("expo-apple-authentication", () => {
   const React = require("react");
   const { Pressable } = require("react-native");
-  return {
+  const shapes = require("./src/testing/mock-shape-parity");
+  const moduleExports = {
     __esModule: true,
     AppleAuthenticationButton: ({ onPress, testID }) =>
       React.createElement(Pressable, { onPress, testID, accessibilityRole: "button" }),
-    AppleAuthenticationButtonType: { SIGN_IN: 0, CONTINUE: 1, SIGN_UP: 2 },
-    AppleAuthenticationButtonStyle: { WHITE: 0, WHITE_OUTLINE: 1, BLACK: 2 },
-    AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
+    ...shapes.appleAuthEnums,
     isAvailableAsync: jest.fn(async () => true),
     signInAsync: jest.fn(async () => {
       throw new Error("signInAsync not stubbed");
     }),
   };
+  shapes.assertStubKeysExact(
+    "expo-apple-authentication module",
+    Object.keys(moduleExports).filter((k) => k !== "__esModule"),
+    shapes.appleAuthStubExports,
+  );
+  return moduleExports;
 });
 
-jest.mock("expo-auth-session/providers/google", () => ({
-  __esModule: true,
-  useIdTokenAuthRequest: () => [null, null, jest.fn(async () => ({ type: "dismiss" }))],
-}));
+/**
+ * Contract: src/auth/google-provider.contract.test.ts — imports the REAL
+ * `expo-auth-session/providers/google` (only expo-crypto native primitives
+ * mocked; expo-application loads real — the contract passes an explicit
+ * redirectUri so `applicationId` is never read) and pins the facts this
+ * stub's shape relies on:
+ * the loaded native request resolves to the Code flow, never mints an
+ * instance `nonce` (the B-4 fact), and carries OUR `extraParams.nonce` into
+ * the authorize URL. That suite also pins THIS stub: `request` must stay
+ * `null` (the unloaded state — the only universally-true native state); a
+ * fabricated loaded request here goes RED there. Shape parity
+ * (`googlePromptDismissResult`, tuple type): src/testing/mock-shape-parity.ts.
+ */
+jest.mock("expo-auth-session/providers/google", () => {
+  const shapes = require("./src/testing/mock-shape-parity");
+  return {
+    __esModule: true,
+    useIdTokenAuthRequest: () => [
+      null,
+      null,
+      jest.fn(async () => ({ ...shapes.googlePromptDismissResult })),
+    ],
+  };
+});
 
 /**
  * Gesture/animation runtime (T-7.4 — the itinerary drag list rides
@@ -52,6 +93,9 @@ jest.mock("expo-auth-session/providers/google", () => ({
  * the mock must be registered FIRST), and reanimated's setUpTests installs
  * its official mock + matchers. Without these the drag list's native
  * imports fault under jest (same class as the auth stubs above).
+ *
+ * Contract: library-owned — all three mocks ship inside their packages and
+ * version with them; their fidelity is the packages' own.
  */
 require("react-native-gesture-handler/jestSetup");
 jest.mock("react-native-worklets", () => require("react-native-worklets/lib/module/mock"));
@@ -83,36 +127,29 @@ require("react-native-reanimated").setUpTests();
  * in their own beforeEach. Only FOREGROUND APIs exist here — a test
  * reaching for a background API should fault loudly (P-8 foreground-only
  * lock).
+ *
+ * Contract: src/testing/mock-shape-parity.ts (`locationEnums`,
+ * `locationPermissionUndetermined`/`locationPermissionGranted`,
+ * `locationPositionKyoto`, `locationStubExports` — each shape typechecked
+ * against the installed package). Responses are spread per call so no suite
+ * can mutate another's copy.
  */
 jest.mock("expo-location", () => {
+  const shapes = require("./src/testing/mock-shape-parity");
   const getForegroundPermissionsAsync = jest.fn(async () => ({
-    status: "undetermined",
-    granted: false,
-    canAskAgain: true,
-    expires: "never",
+    ...shapes.locationPermissionUndetermined,
   }));
   const requestForegroundPermissionsAsync = jest.fn(async () => ({
-    status: "granted",
-    granted: true,
-    canAskAgain: true,
-    expires: "never",
+    ...shapes.locationPermissionGranted,
   }));
   const getCurrentPositionAsync = jest.fn(async () => ({
-    coords: {
-      latitude: 35.0116,
-      longitude: 135.7681,
-      altitude: null,
-      accuracy: 5,
-      altitudeAccuracy: null,
-      heading: null,
-      speed: null,
-    },
-    timestamp: 0,
+    ...shapes.locationPositionKyoto,
+    coords: { ...shapes.locationPositionKyoto.coords },
   }));
-  return {
+  const moduleExports = {
     __esModule: true,
-    PermissionStatus: { GRANTED: "granted", UNDETERMINED: "undetermined", DENIED: "denied" },
-    Accuracy: { Lowest: 1, Low: 2, Balanced: 3, High: 4, Highest: 5, BestForNavigation: 6 },
+    PermissionStatus: { ...shapes.locationEnums.PermissionStatus },
+    Accuracy: { ...shapes.locationEnums.Accuracy },
     getForegroundPermissionsAsync,
     requestForegroundPermissionsAsync,
     getCurrentPositionAsync,
@@ -122,13 +159,29 @@ jest.mock("expo-location", () => {
       getCurrentPositionAsync,
     },
   };
+  shapes.assertStubKeysExact(
+    "expo-location module",
+    Object.keys(moduleExports).filter((k) => !["__esModule", "__mock"].includes(k)),
+    shapes.locationStubExports,
+  );
+  return moduleExports;
 });
 
+/**
+ * Contract: src/testing/mock-shape-parity.ts (`mapboxStyleUrls` — REAL 10.3.5
+ * values; `mapboxOfflineManagerMethods`/`mapboxCameraHandleMethods`/
+ * `mapboxShapeSourceHandleMethods` pin each surface to the real types, and
+ * the `assertStubKeysExact` seals below pin these stub objects to those
+ * lists at mock-build time; `mapboxStubExports` pins the module's export
+ * names). T-S3.2 fidelity fix: the previous stub claimed
+ * `light-v11`/`dark-v11` StyleURLs the installed library never contained.
+ */
 jest.mock("@rnmapbox/maps", () => {
   const React = require("react");
   const { View } = require("react-native");
+  const shapes = require("./src/testing/mock-shape-parity");
 
-  const setAccessToken = jest.fn(async () => null);
+  const setAccessToken = jest.fn(async () => shapes.mapboxDefaultResolutions.setAccessToken);
   // T-8.7 coordination: the map screen feature-detects setTelemetryEnabled —
   // the mock carries it so the detect exercises the call path under jest.
   const setTelemetryEnabled = jest.fn();
@@ -145,8 +198,8 @@ jest.mock("@rnmapbox/maps", () => {
    */
   const offlineManager = {
     createPack: jest.fn(async () => undefined),
-    getPacks: jest.fn(async () => []),
-    getPack: jest.fn(async () => undefined),
+    getPacks: jest.fn(async () => [...shapes.mapboxDefaultResolutions.getPacks]),
+    getPack: jest.fn(async () => shapes.mapboxDefaultResolutions.getPack),
     deletePack: jest.fn(async () => undefined),
     invalidatePack: jest.fn(async () => undefined),
     subscribe: jest.fn(async () => undefined),
@@ -161,10 +214,37 @@ jest.mock("@rnmapbox/maps", () => {
     zoomTo: jest.fn(),
   };
   const shapeSourceHandle = {
-    getClusterExpansionZoom: jest.fn(async () => 12),
+    getClusterExpansionZoom: jest.fn(
+      async () => shapes.mapboxDefaultResolutions.getClusterExpansionZoom,
+    ),
+    // Cluster collections: the real methods return Promise<any>, so these
+    // literals stay inline — a parity `satisfies` would pin nothing (the
+    // name-only floor; see mock-shape-parity.ts header).
     getClusterLeaves: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
     getClusterChildren: jest.fn(async () => ({ type: "FeatureCollection", features: [] })),
   };
+  // Runtime seals: stub surface === type-checked contract, both directions
+  // (typecheck pins the lists to the real library; this pins the objects to
+  // the lists). NAME-level only — jest.fn signatures are below this floor
+  // (mock-shape-parity.ts header states the boundary); default resolutions
+  // with concrete real return types come typed from mapboxDefaultResolutions.
+  // Throws at mock-build time → every consumer suite reds loudly. Seal
+  // survival is pinned by src/testing/mock-shape-parity.contract.test.ts.
+  shapes.assertStubKeysExact(
+    "@rnmapbox/maps offlineManager",
+    Object.keys(offlineManager),
+    shapes.mapboxOfflineManagerMethods,
+  );
+  shapes.assertStubKeysExact(
+    "@rnmapbox/maps Camera handle",
+    Object.keys(cameraHandle),
+    shapes.mapboxCameraHandleMethods,
+  );
+  shapes.assertStubKeysExact(
+    "@rnmapbox/maps ShapeSource handle",
+    Object.keys(shapeSourceHandle),
+    shapes.mapboxShapeSourceHandleMethods,
+  );
 
   const hostView = (displayName, handle, { remapStyle = false } = {}) => {
     const Component = React.forwardRef((props, ref) => {
@@ -190,7 +270,7 @@ jest.mock("@rnmapbox/maps", () => {
   const MarkerView = hostView("MarkerView");
   const LocationPuck = hostView("LocationPuck");
 
-  return {
+  const moduleExports = {
     __esModule: true,
     default: { setAccessToken, setTelemetryEnabled },
     setAccessToken,
@@ -204,10 +284,7 @@ jest.mock("@rnmapbox/maps", () => {
     LineLayer,
     MarkerView,
     LocationPuck,
-    StyleURL: {
-      Light: "mapbox://styles/mapbox/light-v11",
-      Dark: "mapbox://styles/mapbox/dark-v11",
-    },
+    StyleURL: { ...shapes.mapboxStyleUrls },
     __mock: {
       setAccessToken,
       setTelemetryEnabled,
@@ -216,6 +293,12 @@ jest.mock("@rnmapbox/maps", () => {
       offlineManager,
     },
   };
+  shapes.assertStubKeysExact(
+    "@rnmapbox/maps module",
+    Object.keys(moduleExports).filter((k) => !["__esModule", "default", "__mock"].includes(k)),
+    shapes.mapboxStubExports,
+  );
+  return moduleExports;
 });
 
 /**
@@ -225,29 +308,26 @@ jest.mock("@rnmapbox/maps", () => {
  * Suites steer via `jest.requireMock("expo-network").__mock` and drive the
  * deferred-retry path by invoking listeners captured in
  * `addNetworkStateListener.mock.calls`.
+ *
+ * Contract: src/testing/mock-shape-parity.ts (`networkEnums`,
+ * `networkStateOffline`, `networkStubExports` — typechecked against the
+ * installed package).
  */
 jest.mock("expo-network", () => {
-  const getNetworkStateAsync = jest.fn(async () => ({
-    type: "NONE",
-    isConnected: false,
-    isInternetReachable: false,
-  }));
+  const shapes = require("./src/testing/mock-shape-parity");
+  const getNetworkStateAsync = jest.fn(async () => ({ ...shapes.networkStateOffline }));
   const addNetworkStateListener = jest.fn(() => ({ remove: jest.fn() }));
-  return {
+  const moduleExports = {
     __esModule: true,
-    NetworkStateType: {
-      NONE: "NONE",
-      UNKNOWN: "UNKNOWN",
-      CELLULAR: "CELLULAR",
-      WIFI: "WIFI",
-      BLUETOOTH: "BLUETOOTH",
-      ETHERNET: "ETHERNET",
-      WIMAX: "WIMAX",
-      VPN: "VPN",
-      OTHER: "OTHER",
-    },
+    NetworkStateType: { ...shapes.networkEnums.NetworkStateType },
     getNetworkStateAsync,
     addNetworkStateListener,
     __mock: { getNetworkStateAsync, addNetworkStateListener },
   };
+  shapes.assertStubKeysExact(
+    "expo-network module",
+    Object.keys(moduleExports).filter((k) => !["__esModule", "__mock"].includes(k)),
+    shapes.networkStubExports,
+  );
+  return moduleExports;
 });
