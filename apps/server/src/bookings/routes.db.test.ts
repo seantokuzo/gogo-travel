@@ -560,6 +560,52 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(((await patch.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
+  it("B-8 grace: a date-line flight (7h apparent inversion) is ACCEPTED; >12h is not; the grace does NOT leak to other categories", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // The real shape that blocked device QA: Tokyo 17:00 JST -> LAX 10:00 PDT
+    // is a legitimate ~9h eastbound flight, but the client stamps `Z` on both
+    // wall times (form-model.ts:205), so it arrives as a 7h inversion. Inside
+    // the 12h transport grace (migration 0001) it must now be accepted.
+    const dateLine = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "NRT-LAX",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T10:00:00Z",
+      },
+    });
+    expect(dateLine.status).toBe(201);
+
+    // Beyond the window the rule still bites — the grace is bounded, not off.
+    const tooFar = await postBooking(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "Impossible",
+      details: {
+        category: "flight",
+        departs_at: "2027-04-24T17:00:00Z",
+        arrives_at: "2027-04-24T03:00:00Z",
+      },
+    });
+    expect(tooFar.status).toBe(400);
+    expect(((await tooFar.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Scoping is the point: lodging has ONE location, so an inverted stay is a
+    // genuine error and must NOT inherit the transport grace.
+    const lodging = await postBooking(trip.id, editor.accessToken, {
+      category: "lodging",
+      title: "Backwards stay",
+      details: {
+        category: "lodging",
+        check_in: "2027-04-24T15:00:00Z",
+        check_out: "2027-04-24T14:00:00Z",
+      },
+    });
+    expect(lodging.status).toBe(400);
+    expect(((await lodging.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+  });
+
   it("POST: viewer 403 (R-ib-24 server-enforced)", async () => {
     const { viewer, trip } = await seedCollabTrip();
     const res = await postBooking(trip.id, viewer.accessToken, {

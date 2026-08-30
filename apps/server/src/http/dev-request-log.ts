@@ -59,8 +59,32 @@ export function redactQuery(search: string): string {
 async function errorCodeOf(res: Response): Promise<string | undefined> {
   try {
     const body: unknown = await res.clone().json();
-    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
-    return typeof code === "string" ? code : undefined;
+    const err = (body as { error?: { code?: unknown; details?: unknown } } | null)?.error;
+    const code = err?.code;
+    if (typeof code !== "string") return undefined;
+
+    // For a validation failure the code alone is useless — "VALIDATION_FAILED"
+    // is the same line whether one field or ten are wrong. Append the failing
+    // field NAMES, which are schema identifiers, never user data. The values
+    // stay unread (Law #1): a rejected booking body can carry anything.
+    const fieldErrors = (err?.details as { fieldErrors?: Record<string, unknown> } | undefined)
+      ?.fieldErrors;
+    if (fieldErrors && typeof fieldErrors === "object") {
+      const fields = Object.keys(fieldErrors);
+      if (fields.length > 0) return `${code} [${fields.join(",")}]`;
+    }
+
+    // DOMAIN rejections carry no `fieldErrors` — they key details by rule
+    // (`{ details: "end before start" }`), so the branch above finds nothing
+    // and the line degrades to a bare code, which is what made a booking 400
+    // undiagnosable. The envelope `message` is developer-authored and is
+    // ALREADY sent to the client over the wire, so echoing it into a local
+    // dev log is strictly less exposure than the response itself.
+    const message = (err as { message?: unknown } | undefined)?.message;
+    if (typeof message === "string" && message.length > 0) {
+      return `${code} — ${message.slice(0, 160)}`;
+    }
+    return code;
   } catch {
     return undefined;
   }

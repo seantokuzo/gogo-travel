@@ -78,6 +78,65 @@ describe("createDevRequestLog", () => {
     expect(sink.warn.mock.calls[0]?.[0]).toContain("-> 401 UNAUTHENTICATED");
   });
 
+  it("names the failing fields on a validation error (names only, never values)", async () => {
+    const sink = { warn: vi.fn<(message: string) => void>() };
+    const app = new Hono<RequestVars>();
+    app.use("*", requestIdMiddleware);
+    app.use("*", createDevRequestLog(sink));
+    app.post("/api/trips/:id/bookings", (c) =>
+      c.json(
+        {
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "request body failed validation",
+            details: {
+              formErrors: [],
+              fieldErrors: {
+                starts_at: ["Invalid input"],
+                confirmation_code: ["Too long"],
+              },
+            },
+          },
+        },
+        400,
+      ),
+    );
+    await app.request("/api/trips/abc/bookings", { method: "POST" });
+
+    const line = sink.warn.mock.calls[0]?.[0] as string;
+    // The whole point: "VALIDATION_FAILED" alone is identical whether one
+    // field or ten are wrong, which is what made a device 400 undiagnosable.
+    expect(line).toContain("VALIDATION_FAILED [starts_at,confirmation_code]");
+    // Field NAMES are schema identifiers; the offending VALUES must not leak.
+    expect(line).not.toContain("Invalid input");
+    expect(line).not.toContain("Too long");
+  });
+
+  it("falls back to the envelope message for a DOMAIN rejection (no fieldErrors)", async () => {
+    const sink = { warn: vi.fn<(message: string) => void>() };
+    const app = new Hono<RequestVars>();
+    app.use("*", requestIdMiddleware);
+    app.use("*", createDevRequestLog(sink));
+    app.post("/api/trips/:id/bookings", (c) =>
+      c.json(
+        {
+          error: {
+            code: "VALIDATION_FAILED",
+            message: "the category's primary end time precedes its start time",
+            // Domain errors key details by RULE, not by field — this is the
+            // exact shape that made a real booking 400 undiagnosable.
+            details: { details: "end before start" },
+          },
+        },
+        400,
+      ),
+    );
+    await app.request("/api/trips/abc/bookings", { method: "POST" });
+
+    const line = sink.warn.mock.calls[0]?.[0] as string;
+    expect(line).toContain("VALIDATION_FAILED — the category's primary end time precedes");
+  });
+
   it("never writes a capability token into the log", async () => {
     const sink = { warn: vi.fn<(message: string) => void>() };
     const token = "Zx9_kQ2mNpLr4TvW8yBc";
