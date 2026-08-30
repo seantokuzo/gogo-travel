@@ -159,10 +159,15 @@ describe("boot shape: EMPTY auth env → health-only (no auth surface, no guard)
 });
 
 describe("boot shape: key-material forms (landmine pin — DECODER::unsupported)", () => {
-  it("env-file-shaped \\n-escaped PEMs boot the full authed shape (wire pem() arm)", async () => {
-    // Node --env-file passes quoted `\n` through UNEXPANDED (verified node
-    // 24.12), so this is exactly what `.env.test` delivers. Falsification:
-    // remove the `pem()` normalization in wire.ts → importPKCS8 rejects → RED.
+  it("literal-\\n \\n-escaped PEMs (CI-secret / env-UI channel shape) boot the full authed shape (wire pem() arm)", async () => {
+    // Delivery-fact note (PR #41 R1 corrected an inverted claim here): node
+    // --env-file EXPANDS `\n` inside double-quoted values (char-code-verified,
+    // node 24.12), so a generated .env.test delivers REAL-newline PEMs — the
+    // "pem" style covered above. THIS arm pins the other delivery class:
+    // channels that hand the backslash-n over literally (CI secret stores,
+    // hosting env-var UIs, raw exports, single-quoted/unquoted env entries).
+    // Falsification: remove the `pem()` normalization in wire.ts →
+    // importPKCS8 rejects → RED.
     const deps = await buildFullAuthDeps("env-file");
     expect(deps).not.toBeNull();
     const app = createApp({ auth: deps! });

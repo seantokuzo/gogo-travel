@@ -15,8 +15,13 @@
  * (`buildAuthDepsFromEnv`, src/auth/wire.ts) with fresh P-256 PKCS#8 keys and
  * a 32-byte AES key, plus DATABASE_URL (see resolution order below). PEMs are
  * written `\n`-escaped in double quotes — the `.env.example`-documented form.
- * Node's `--env-file` does NOT expand `\n` (verified node 24.12); the wire
- * `pem()` normalizer handles it, and the boot-shape suite pins that arm.
+ * Node's `--env-file` EXPANDS `\n` inside double-quoted values
+ * (char-code-verified, node 24.12; PR #41 R1 corrected the inverted claim
+ * here), so the booted server receives REAL-newline PEMs — the boot-shape
+ * suite's "pem" style. Channels that deliver the backslash-n literally (CI
+ * secret stores, hosting env-var UIs, raw exports, single-quoted/unquoted
+ * entries) are normalized by the wire `pem()` arm, which the boot-shape
+ * suite's "env-file" style pins separately.
  *
  * DATABASE_URL resolution: `--database-url <url>` flag → existing `.env.test`
  * value (preserved across --force regens) → `DATABASE_URL` in the calling
@@ -83,8 +88,9 @@ const lines = [
     : "# Authed boot REQUIRES a database url (all-or-nothing gate) — set one:\n" +
       "# DATABASE_URL=postgresql://user:password@localhost:5432/gogo_dev",
   "",
-  "# The 8 all-or-nothing auth vars (src/auth/wire.ts). PEMs are \\n-escaped;",
-  "# node --env-file does NOT expand them — the server normalizes (wire pem()).",
+  "# The 8 all-or-nothing auth vars (src/auth/wire.ts). PEMs are \\n-escaped in",
+  "# double quotes; node --env-file EXPANDS \\n there, so the server receives",
+  "# real-newline PEMs. (Literal-\\n channels are covered by the wire pem() arm.)",
   `AUTH_ES256_PRIVATE_KEY="${throwawayPkcs8Escaped()}"`,
   "AUTH_ES256_KID=testenv-kid-1",
   "APPLE_CLIENT_ID=com.gogo.travel.testenv",

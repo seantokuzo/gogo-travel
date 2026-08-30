@@ -50,12 +50,16 @@ export const TEST_APPLE_KEY_ID = "S3TESTKEY1";
 export interface MakeFullAuthTestEnvOptions {
   /**
    * How the PEM values are folded:
-   * - `"pem"` (default): real newlines — the shell-export / CI-secret shape.
-   * - `"env-file"`: `\n`-escaped single lines, the `.env.example`-documented
-   *   form. Node's `--env-file` passes quoted `\n` through UNEXPANDED
-   *   (verified on node 24.12), so this is byte-for-byte what
-   *   `--env-file-if-exists=.env.test` delivers to `loadEnv` — the arm the
-   *   wire.ts `pem()` normalizer exists for.
+   * - `"pem"` (default): real newlines. This is ALSO what a generated
+   *   `.env.test` delivers: node `--env-file` EXPANDS `\n` inside
+   *   double-quoted values (char-code-verified on node 24.12; PR #41 R1
+   *   corrected the inverted claim here — single-quoted/unquoted stay
+   *   literal), so the double-quoted PEMs arrive with real newlines.
+   * - `"env-file"`: `\n`-escaped single lines — the `.env.example`-documented
+   *   AUTHORING form as delivered by channels that pass the backslash-n
+   *   LITERALLY (CI secret stores, hosting env-var UIs, raw shell exports,
+   *   single-quoted/unquoted env entries) — the arm the wire.ts `pem()`
+   *   normalizer exists for.
    */
   style?: "pem" | "env-file";
   /**
