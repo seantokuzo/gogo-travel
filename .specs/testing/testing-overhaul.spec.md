@@ -128,10 +128,19 @@ data + builders, R-shared-9 clean): NRT→LAX eastbound (arrival wall-clock <
 departure wall-clock, instants correctly ordered — the exact B-8 trap),
 westbound cross-midnight, 3-zone trip, JPY/KRW zero-decimal amounts, DST
 boundary day, empty-state shapes. Self-test asserts the fixtures' invariants.
+Filename grammar (mirrors §3.1's contract line): consumer suites are
+`<subject>.hostile.test.ts` — the `.test.ts` tail is LOAD-BEARING
+(test-runner pickup); the pack `packages/shared/src/testing/hostile.ts`
+itself is NOT a test.
 Consumers are NEW test files only: mobile `form-model.hostile.test.ts`
 (`it.fails` — the real NRT→LAX flight produces inverted instants today; this
-is B-8's executable repro and its client fix's acceptance harness), shared
-schema/money hostile suites, and a minimal pure server consumer (import-only
+is B-8's executable repro and its client fix's acceptance harness), the
+shared consumers (as shipped, PR #45's documented disposition, merged
+65a8ac1 — the owns-list is the authority: money pins FOLDED into
+`booking.hostile.test.ts` alongside the schema pins, plus the pack
+self-test and the mobile suite; a dedicated `config/money.hostile.test.ts`
+stands recorded as an optional cheap follow-up), and a minimal pure server
+consumer (import-only
 use of `bookings/service.ts`; grace-window-sensitive pins marked — the B-8
 12h transport grace is on main since the qa merge (d4f7637) and its removal
 is B-9's definition of done, so those pins flip again with B-9).
@@ -294,7 +303,11 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 | --- | --- | --- |
 | W1 | T-S3.1 ∥ T-S3.2 — **MERGED** (PR #41 0643621 ∥ PR #42 aaf0742, full pipeline) | Disjoint: server+scripts+root dotfiles vs mobile jest surface. |
 | W2 | T-S3.3 ∥ T-S3.5 — **MERGED** (PR #44 b903017 ∥ PR #43 3754a4e, full pipeline, judge merge/high) | Disjoint: server test infra vs new mobile dev-feature files. |
-| W3 | T-S3.4 (solo) — **dispatched 2026-08-30** | Touches all three workspaces — runs alone, after the others merge. |
+| W3 | T-S3.4 (solo) — **MERGED** (PR #45, 65a8ac1) | Touches all three workspaces — ran alone, after the others merged. |
+
+**S-3 BUILD COMPLETE (2026-08-30):** all five tasks T-S3.1..T-S3.5 are on
+main (PRs #41–#45, full pipeline each). ADR-006 remains **Proposed**
+pending Sean's read of this PR.
 
 ### Collision matrix (checked 2026-08-30 against `git diff --name-only origin/main qa/device-integration` and QUEUE)
 
