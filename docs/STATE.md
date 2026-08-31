@@ -70,8 +70,10 @@ ultra` remains available to Sean on the merged diff.
   mock fiction at rest, StyleURL v11-vs-v10). Server 62 suites / 857; mobile 151 / 1468.
   W2 ✅ MERGED 2026-08-30 — T-S3.5 (PR #43,
   3754a4e: gogo://diagnostics panel) ∥ T-S3.3 (PR #44, b903017: shared-PG container —
-  Testcontainers P1 RETIRED, server 126s→21s; 65 files / 868). W3 DISPATCHED: T-S3.4
-  hostile fixtures (final task). Narratives: QUEUE Recently-done rows.
+  Testcontainers P1 RETIRED, server 126s→21s; 65 files / 868). W3 ✅ MERGED 2026-08-30 — T-S3.4 (PR #45,
+  65a8ac1: hostile fixtures — Sean's real NRT→LAX flight is now a library fixture; the
+  AKL→PPT class is documented STILL-UNENTERABLE until B-9). **S-3 BUILD COMPLETE: all
+  five tasks on main. Remaining: Sean reads PR #38 → merge locks ADR-006.** Narratives: QUEUE Recently-done rows.
 
 #### The rig — Sean's steps, in order
 
