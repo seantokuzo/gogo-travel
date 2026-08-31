@@ -180,6 +180,12 @@ describe("[B-8 evidence] current behavior pinned exactly — GREEN means B-8 is 
     state["check_in"] = { date: wallDate(ci), time: wallTime(ci) };
     state["check_out"] = { date: wallDate(co), time: wallTime(co) };
     const built = buildDetails("lodging", state);
+    // Asserted BEFORE the type guard (R1 fix): without this, a buildDetails
+    // regression that rejects lodging datetimes would early-return with zero
+    // assertions executed — green with nothing pinned, breaking this pin's
+    // "GREEN means B-8 still open" contract for the lodging arm.
+    expect(built.errors).toEqual({});
+    expect(built.details).not.toBeNull();
     if (built.details === null || built.details.category !== "lodging") return;
     const derived = deriveBookingInstants(built.details);
     expect(instantMs(derived.ends_at ?? "") - instantMs(derived.starts_at ?? "")).toBe(
