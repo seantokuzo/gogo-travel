@@ -38,11 +38,17 @@
  * mutation marks BOTH the old and new days of moved items (dirty-days
  * contract), so an invalidated leg's days are always in the batch.
  *
- * LOCK ORDER (global, EXTENDED here — never reorder): users → trip_members
- * → invites → bookings → itinerary_items → **travel_legs**. This module's
- * write transaction touches ONLY `travel_legs` (reads run before it, plain,
- * un-locked) — it can never deadlock against the booking/itinerary service
- * chains, and races are tolerated instead of locked out: an item deleted
+ * LOCK ORDER (this module's segment of the global chain — canonical full
+ * chain: expenses/service.ts module doc, synced T-9.4; the chain now leads
+ * with **trips** and tails through expenses/settlements/budgets): … →
+ * itinerary_items → **travel_legs** → …. This module's write transaction
+ * touches ONLY `travel_legs` (reads run before it, plain, un-locked) — it
+ * can never deadlock against the booking/itinerary service chains via
+ * explicit locks, and ⚠️ the implicit-lock audit (PR #30 R1 landmine: RI
+ * `FOR KEY SHARE` on referenced parents) holds too: leg upserts key-share
+ * only `itinerary_items` rows, whose deleting transactions this module
+ * already tolerates by design (FK error → requeue, below). Races are
+ * tolerated instead of locked out: an item deleted
  * between read and write fires the legs FK (23503). The batch's days are
  * then RE-ENQUEUED once through the `requeue` marker (they ride the normal
  * debounce and coalesce with the deleting mutation's own post-commit marks

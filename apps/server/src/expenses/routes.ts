@@ -46,6 +46,7 @@ import { and, eq, exists, gte, isNull, lte, or, sql, type SQL } from "drizzle-or
 import { Hono } from "hono";
 import { moneyEndpoints, type Expense } from "@gogo/shared/domains/money";
 import type { Paginated } from "@gogo/shared/api/envelope";
+import { EXPENSES_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
@@ -74,14 +75,6 @@ import { toExpenseWire } from "./serialize.js";
 export interface ExpensesRouterDeps {
   db: DbClient;
 }
-
-/**
- * House default (the `*_PAGE_SIZE_DEFAULT` family). Local to this module —
- * `config.ts` sits outside T-9.2's file-ownership set (W2 runs two
- * engineers in parallel worktrees); fold into `config.ts` at the next
- * single-owner touch.
- */
-const EXPENSES_PAGE_SIZE_DEFAULT = 50;
 
 export function createExpensesRouter(deps: ExpensesRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
