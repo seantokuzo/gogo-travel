@@ -37,9 +37,11 @@ parallelism this has wedged the local Docker daemon, and the documented
 workaround (`--no-file-parallelism`) serializes the whole server suite.
 
 Constraints: no metered LLM anywhere (Law #5, ADR-003), no new paid services
-or accounts (Autonomy Contract #3), no tap automation on the sim/device rig
-(memory: sim-QA toolkit — the in-app QA-driver pattern is the proven
-approach), verification is evidence (Law #7).
+or accounts (Autonomy Contract #3), verification is evidence (Law #7). (An
+earlier draft also listed "no tap automation on the sim/device rig" —
+superseded 2026-09-04: AXe tap automation is proven working on the sim, and
+drove the B-14 deeplink QA matrix autonomously. The in-app QA-driver pattern
+remains the proven approach this ADR builds on.)
 
 ## Decision
 
@@ -134,10 +136,18 @@ Build order and file ownership: `.specs/testing/testing-overhaul.spec.md`.
    table is the whole case: ~3,000 green tests, zero catches. Coverage
    metrics would have read excellent throughout.
 2. **Adopt a tap-automation E2E framework (Maestro / Detox).** Parked, not
-   adopted. $0 OSS, but the rig has a no-tap-automation history (TCC hangs,
-   SpringBoard prompt stacking — sim-QA toolkit memory), it is a heavy new
-   dependency surface, and the in-app QA-driver pattern already works. Revisit
-   at pre-launch Android verification if the smoke panel proves insufficient.
+   adopted. $0 OSS. (An earlier draft rested this partly on a
+   no-tap-automation rig history — TCC hangs, SpringBoard prompt stacking;
+   superseded 2026-09-04: AXe tap automation is proven working on the sim
+   and drove the B-14 deeplink QA matrix autonomously.) The rejection
+   within S-3's scope stands on the remaining grounds: it is a heavy new
+   dependency surface, and the in-app QA-driver pattern already works.
+   Revisit at pre-launch Android verification if the smoke panel proves
+   insufficient. That revisit came early: the E2E lane is being decided
+   separately (research spike complete 2026-09-06; Maestro recommended —
+   official Expo E2E path, free CLI, deeplink cold-start support; Detox
+   disqualified: supported RN range 0.77–0.84 vs our 0.86.2) and will land
+   as its own ADR (ADR-007) pending Sean's sign-off.
 3. **Device farm SaaS (AWS Device Farm, BrowserStack).** Parked — billed
    service, Autonomy Contract trigger #3. Recorded as an option for Sean if
    multi-device coverage becomes a launch requirement.
@@ -170,7 +180,8 @@ Build order and file ownership: `.specs/testing/testing-overhaul.spec.md`.
   library upgrade can red them for behavior changes that don't affect us.
   (That is also the point — the red is information the mock would swallow.)
 - The device-smoke layer still requires a human to open the panel and read
-  it (no tap automation) — it is smoke, not regression coverage.
+  it (no tap-automation lane adopted here — that is the ADR-007 question) —
+  it is smoke, not regression coverage.
 - The fresh-database and hostile-fixture suites lengthen the server test
   wall-time slightly (offset — likely more than offset — by the shared
   container).
@@ -190,5 +201,5 @@ Build order and file ownership: `.specs/testing/testing-overhaul.spec.md`.
 - Quality bar: `.claude/rules/mobile.md` (vacuous-pin taxonomy),
   `.claude/rules/server.md`, `.claude/rules/ci.md`
 - Constraints: ADR-003 (no LLM/cron in CI), CLAUDE.md Laws #5/#7
-- Device constraints: memory `gogo-sim-qa-toolkit` (no tap automation;
-  in-app QA-driver pattern)
+- Device constraints: memory `gogo-sim-qa-toolkit` (in-app QA-driver
+  pattern; AXe tap automation proven 2026-09-04 — B-14 deeplink matrix)

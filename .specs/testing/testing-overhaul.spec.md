@@ -8,7 +8,8 @@
 > `docs/QUEUE.md` rows B-5..B-9 + the Testcontainers P1 row,
 > `.claude/rules/mobile.md` (vacuous-pin taxonomy = the quality bar),
 > `.claude/rules/server.md`, `.claude/rules/ci.md`, memory
-> `gogo-sim-qa-toolkit` (no tap automation; in-app QA-driver pattern).
+> `gogo-sim-qa-toolkit` (in-app QA-driver pattern; AXe tap automation
+> proven 2026-09-04 — B-14 deeplink matrix).
 
 ---
 
@@ -98,9 +99,9 @@ navigation.spec §2.7):
 6. Last surfaced auth-error cause (B-6's dev surface, read back).
 
 Entry: on-device deeplink `gogo://diagnostics` (the SpringBoard prompt is
-tappable on a physical device — the no-tap constraint is about *automation*)
-or the dev-client launcher URL field. A `__DEV__` footer link on sign-in is
-rider #3 (§5) — originally gated on `qa/device-integration`, which merged
+tappable on a physical device; on the sim, AXe tap automation — proven
+2026-09-04 — can drive it) or the dev-client launcher URL field. A
+`__DEV__` footer link on sign-in is rider #3 (§5) — originally gated on `qa/device-integration`, which merged
 to main (d4f7637), so it is plain dispatchable; it stays outside T-S3.5's
 file set to keep the wave disjoint.
 Protocol: run at every dev-client rebuild and before any device-behavior
@@ -332,9 +333,13 @@ pending Sean's read of this PR.
 **Parked (need your call; none adopted — Autonomy Contract #3 / ADR-006):**
 
 - **Tap-automation framework (Maestro or Detox).** $0 OSS; would turn the
-  smoke panel into true device E2E. Cost: heavy new dependency, native build
-  integration, and this rig's history of automation hangs. Revisit at
-  pre-launch Android pass.
+  smoke panel into true device E2E. Cost: heavy new dependency and native
+  build integration. (An earlier draft also cited this rig's history of
+  automation hangs; superseded 2026-09-04 — AXe tap automation proven on
+  the sim, B-14 deeplink matrix.) Being decided separately: research spike
+  complete 2026-09-06; Maestro recommended (official Expo E2E path, free
+  CLI, deeplink cold-start support; Detox disqualified: supported RN range
+  0.77–0.84 vs our 0.86.2) — landing as ADR-007 pending Sean's sign-off.
 - **Device farm SaaS (AWS Device Farm / BrowserStack).** Billed; only worth
   it if multi-device matrix coverage becomes a launch requirement.
 - **MSW (or similar) for mobile network-layer tests.** $0 OSS dependency;
