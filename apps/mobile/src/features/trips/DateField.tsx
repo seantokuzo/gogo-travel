@@ -11,12 +11,9 @@
  * width (~320pt), so rendering it in the pressed field's own column
  * overflowed the screen edge whenever the field was half-width (trip-new's
  * `datesRow`) — half the day cells were untappable. The picker now presents
- * in a bottom MODAL CARD anchored to the SCREEN, never to the field's
- * column. Deliberately a plain RN `Modal` (native `fade`, no JS animation
- * timers), NOT the DS Sheet: the Sheet's ~duration.base Animated exit would
- * tax every date-picking suite with an act-drain (the "SHEET TAX" landmine),
- * and DateField already renders INSIDE a Sheet (ScheduleSheet) where nesting
- * the DS component would stack two scrim/gesture systems. Android keeps its
+ * in the shared `PickerCard` — a bottom MODAL CARD anchored to the SCREEN,
+ * never to the field's column (extracted for TimeField, B-15b; the card
+ * carries the plain-Modal-not-DS-Sheet rationale). Android keeps its
  * self-anchoring native dialog — it never had the overflow.
  *
  * EMPTY-VALUE SEED (B-10b): an unset field used to open on TODAY, which for
@@ -43,18 +40,16 @@
  * testIDs (nav §2.7 rule-4 derivation from the field's base): the row is
  * `{testID}`, the revealed picker `{testID}-picker`, the error text
  * `{testID}-error` (mirrors the DS Input's derived error id so the form's
- * assertions stay uniform); the iOS modal card is `{testID}-sheet` with
- * `{testID}-sheet-done` (commit) and `{testID}-sheet-close` /
- * `{testID}-sheet-scrim` (cancel) affordances.
+ * assertions stay uniform); the iOS modal card ids ({testID}-sheet,
+ * -sheet-done, -sheet-close, -sheet-scrim) derive inside PickerCard.
  */
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISODate } from "@gogo/shared";
-import { createStyles, useTheme } from "@gogo/tokens/react";
+import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
-import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText, Icon } from "@/components";
+import { AppText, PickerCard } from "@/components";
 
 import { formatFieldDate } from "./sections";
 
@@ -115,51 +110,6 @@ const useStyles = createStyles((t) =>
     fieldOpen: { borderColor: t.color.border.focus },
     fieldError: { borderColor: t.color.status.danger.border },
     errorText: { color: t.color.status.danger.fg },
-    // B-10a modal card — screen-anchored bottom card, full usable width, so
-    // the inline calendar's intrinsic ~320pt always fits on-screen.
-    modalRoot: { flex: 1, justifyContent: "flex-end" },
-    modalScrim: {
-      position: "absolute",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: t.color.bg.scrim,
-    },
-    modalCard: {
-      backgroundColor: t.color.bg.surfaceRaised,
-      borderTopLeftRadius: t.radius.xl,
-      borderTopRightRadius: t.radius.xl,
-      paddingHorizontal: t.space[4],
-      paddingTop: t.space[3],
-      ...t.elevation[3],
-    },
-    modalHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingBottom: t.space[2],
-    },
-    modalClose: {
-      minWidth: 32,
-      minHeight: 32,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: t.radius.full,
-      backgroundColor: t.color.bg.inset,
-    },
-    // B-15a: Done + close cluster on the header's trailing edge.
-    modalActions: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: t.space[3],
-    },
-    modalDone: {
-      minHeight: 32,
-      justifyContent: "center",
-      paddingHorizontal: t.space[2],
-    },
-    modalDoneText: { color: t.color.text.accent },
   }),
 );
 
@@ -171,9 +121,7 @@ export function DateField({
   error,
   testID,
 }: DateFieldProps) {
-  const { theme } = useTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
   const close = () => setOpen(false);
@@ -216,56 +164,15 @@ export function DateField({
           {value === "" ? "Select date" : formatFieldDate(value)}
         </AppText>
       </Pressable>
-      {Platform.OS === "ios" ? (
-        <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
-          <View style={s.modalRoot}>
-            <Pressable
-              style={s.modalScrim}
-              onPress={close}
-              accessibilityLabel={`Dismiss ${label} picker`}
-              testID={`${testID}-sheet-scrim`}
-            />
-            <View
-              style={[s.modalCard, { paddingBottom: insets.bottom + theme.space[4] }]}
-              accessibilityViewIsModal
-              testID={`${testID}-sheet`}
-            >
-              <View style={s.modalHeader}>
-                <AppText role="subheading" accessibilityRole="header">
-                  {label}
-                </AppText>
-                <View style={s.modalActions}>
-                  <Pressable
-                    onPress={confirmDisplayed}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Done, use displayed ${label}`}
-                    hitSlop={theme.hitSlop.sm}
-                    style={s.modalDone}
-                    testID={`${testID}-sheet-done`}
-                  >
-                    <AppText role="subheading" style={s.modalDoneText}>
-                      Done
-                    </AppText>
-                  </Pressable>
-                  <Pressable
-                    onPress={close}
-                    accessibilityRole="button"
-                    accessibilityLabel="Close"
-                    hitSlop={theme.hitSlop.sm}
-                    style={s.modalClose}
-                    testID={`${testID}-sheet-close`}
-                  >
-                    <Icon name="close" size={18} color={theme.color.text.secondary} />
-                  </Pressable>
-                </View>
-              </View>
-              {picker}
-            </View>
-          </View>
-        </Modal>
-      ) : (
-        picker
-      )}
+      <PickerCard
+        label={label}
+        visible={open}
+        onDone={confirmDisplayed}
+        onClose={close}
+        testID={testID}
+      >
+        {picker}
+      </PickerCard>
       {hasError ? (
         <AppText
           role="caption"

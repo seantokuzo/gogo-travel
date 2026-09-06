@@ -26,6 +26,8 @@ export { ListItem } from "./ListItem";
 export type { ListItemProps } from "./ListItem";
 export { PageHeader } from "./PageHeader";
 export type { PageHeaderAction, PageHeaderProps } from "./PageHeader";
+export { PickerCard } from "./PickerCard";
+export type { PickerCardProps } from "./PickerCard";
 export { SegmentedControl } from "./SegmentedControl";
 export type { SegmentedControlProps } from "./SegmentedControl";
 export { Sheet } from "./Sheet";

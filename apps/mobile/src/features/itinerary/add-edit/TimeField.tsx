@@ -11,8 +11,20 @@
  * arrival seeds from its entered departure time — falling back to noon.
  * Seed only: the picked value is untouched.
  *
+ * PRESENTATION (B-15b): the iOS spinner's fixed intrinsic width overflowed
+ * the right screen edge in half-width form rows (itinerary item forms —
+ * device QA 2026-09-06), the same failure the inline calendar had in B-10a.
+ * The picker now presents in the shared `PickerCard` bottom modal (screen-
+ * anchored; extracted from DateField — the PR #40 conventions lane predicted
+ * this second consumer). Commit semantics are UNCHANGED: a spinner change
+ * still commits & closes through `onValueChange`; the card's Done commits
+ * the DISPLAYED (seeded) time — B-15a parity, since iOS fires only on
+ * change and a context-seeded time was otherwise uncommittable.
+ *
  * testIDs mirror DateField's derivation: row `{testID}`, revealed picker
- * `{testID}-picker`, error `{testID}-error`, clear `{testID}-clear`.
+ * `{testID}-picker`, error `{testID}-error`, clear `{testID}-clear`; the
+ * iOS card ids ({testID}-sheet, -sheet-done, -sheet-close, -sheet-scrim)
+ * derive inside PickerCard.
  */
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISOTime } from "@gogo/shared";
@@ -20,7 +32,7 @@ import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText } from "@/components";
+import { AppText, PickerCard } from "@/components";
 
 export interface TimeFieldProps {
   label: string;
@@ -88,6 +100,28 @@ export function TimeField({
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
+  const close = () => setOpen(false);
+  // B-15a parity: commit the DISPLAYED time. A spun change commits & closes
+  // through `onValueChange` before Done is reachable, so the displayed time
+  // is always the seed (value > context > noon).
+  const confirmDisplayed = () => {
+    onSelect(pickerDateToTime(timePickerSeed(value, contextTime)));
+    setOpen(false);
+  };
+
+  const picker = open ? (
+    <DateTimePicker
+      testID={`${testID}-picker`}
+      value={timePickerSeed(value, contextTime)}
+      mode="time"
+      display={Platform.OS === "ios" ? "spinner" : "default"}
+      onValueChange={(_event, date) => {
+        onSelect(pickerDateToTime(date));
+        setOpen(false);
+      }}
+      onDismiss={close}
+    />
+  ) : null;
 
   return (
     <View style={s.container}>
@@ -122,19 +156,15 @@ export function TimeField({
           {value === "" ? "Select time" : value}
         </AppText>
       </Pressable>
-      {open ? (
-        <DateTimePicker
-          testID={`${testID}-picker`}
-          value={timePickerSeed(value, contextTime)}
-          mode="time"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          onValueChange={(_event, date) => {
-            onSelect(pickerDateToTime(date));
-            setOpen(false);
-          }}
-          onDismiss={() => setOpen(false)}
-        />
-      ) : null}
+      <PickerCard
+        label={label}
+        visible={open}
+        onDone={confirmDisplayed}
+        onClose={close}
+        testID={testID}
+      >
+        {picker}
+      </PickerCard>
       {hasError ? (
         <AppText
           role="caption"
