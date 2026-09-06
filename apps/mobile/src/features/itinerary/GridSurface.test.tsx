@@ -121,6 +121,10 @@ describe("GridSurface", () => {
     expect(
       screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
     ).toHaveTextContent("Drop off");
+    // R1: the a11y label carries the discriminator on the grid surface too.
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_PICKUP_ID}`).props.accessibilityLabel,
+    ).toBe("Toyota Rent a Car Pickup");
     // CONTROL: a non-derived booking block renders no caption element.
     expect(screen.getByTestId(`itinerary-grid-item-${ITEM_A_ID}`)).toBeOnTheScreen();
     expect(screen.queryByTestId(`itinerary-grid-item-${ITEM_A_ID}-subtext`)).toBeNull();

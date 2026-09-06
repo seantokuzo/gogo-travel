@@ -222,6 +222,22 @@ describe("B-18 — rental pickup/drop-off subtext (§3.3 dual-point derivation)"
     if (pickupItem === undefined) throw new Error("fixture missing rental items");
     expect(projectItem(pickupItem, new Map())[0]?.subtext).toBeNull();
   });
+
+  it("keys off the PARENT booking id, never a wall-time scan: a flight-parented row at the rental edge's exact walls gets no caption (R1)", () => {
+    // Same day + start_time as the rental's pickup edge, but parented to the
+    // FLIGHT booking — with the rental PRESENT in the map. A scan-all-
+    // bookings-for-wall-time-match implementation captions this row
+    // "Pickup"; the id-keyed one reads the flight's details and yields null.
+    const flightAtPickupWalls = makeItineraryItem({
+      id: "aaaaaab1-aaaa-4aaa-8aaa-aaaaaaaaaab1",
+      kind: "booking",
+      booking_id: BOOKING_FLIGHT_ID,
+      title: null,
+      day: TRIP_START,
+      start_time: "09:00",
+    });
+    expect(projectItem(flightAtPickupWalls, rentalMap())[0]?.subtext).toBeNull();
+  });
 });
 
 describe("statusBadgeTone (R-itin-8)", () => {

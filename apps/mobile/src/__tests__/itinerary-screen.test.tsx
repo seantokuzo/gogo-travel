@@ -231,6 +231,11 @@ describe("B-18 — rental pickup/drop-off captions (list view)", () => {
       screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
     ).toHaveTextContent("Drop off");
     expect(screen.getAllByText("Toyota Rent a Car")).toHaveLength(2);
+    // R1: the a11y label carries the discriminator too — VoiceOver must not
+    // announce two identical "Toyota Rent a Car" rows.
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}`).props.accessibilityLabel,
+    ).toBe("Toyota Rent a Car Pickup");
     // CONTROL: the flight row is booking-derived but NOT a dual-point
     // derivation — no caption element at all.
     expect(screen.getByTestId(`itinerary-list-item-${ITEM_A_ID}`)).toBeTruthy();

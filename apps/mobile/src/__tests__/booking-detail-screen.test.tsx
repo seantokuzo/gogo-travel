@@ -645,7 +645,13 @@ describe("states", () => {
 
     try {
       expect(patch).toHaveBeenCalledTimes(1);
+      // R1: the PRESSED transition button rides the loop too — it stays
+      // rendered mid-flight (the cache is untouched until the PATCH lands),
+      // and it is the only pin on the transitions row's `disabled={busy}`.
+      // Without it a second "Mark X" tap is swallowed by applyStatus's busy
+      // early-return with zero visual feedback.
       for (const id of [
+        "booking-detail-button-status-planned",
         "booking-detail-button-edit",
         "booking-detail-button-cancel",
         "booking-detail-button-delete",
