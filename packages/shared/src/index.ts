@@ -24,6 +24,7 @@ export * from "./domains/entitlement.js";
 export * from "./domains/trip.js";
 export * from "./domains/member.js";
 export * from "./domains/place.js";
+export * from "./domains/airport.js";
 export * from "./domains/booking.js";
 export * from "./domains/itinerary.js";
 export * from "./domains/travel-leg.js";
