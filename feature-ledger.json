@@ -774,7 +774,10 @@
         "Category change attempt on update is rejected; starts_at/ends_at denormalize from details times",
         "Walk the status machine idea->planned->booked and ->cancelled: illegal transitions rejected; cancelled booking drops off the calendar but keeps its row and expense links (visible under show-cancelled)"
       ],
-      "passes": false
+      "passes": true,
+    "verified_on": "2026-09-06",
+    "verified_by": "Sean device QA (iPhone 15 Pro dev client, main incl. PRs #37-#46)",
+    "evidence": "Criteria 1-2 verified 2026-09-06 via the QA run-sheet report: one booking created per category incl. car_rental, moped_rental, activity, other (flight/lodging/restaurant/train pre-existing); invalid detail shape rejected 400; price requires currency; category change on update rejected with instants denormalizing from details. Criterion 3 evidenced 2026-08-29: cancelled lodging Imperial Hotel Tokyo holds 0 itinerary_items while its booking row and expense links survive, visible under show-cancelled."
     },
     {
       "id": "F-044",
