@@ -254,6 +254,19 @@ describe("spanning lodging (R-itin-31)", () => {
     expect(screen.getByText("Check-out")).toBeTruthy();
   });
 
+  it("check-in and check-out rows carry DISTINCT a11y labels (B-23, the B-18 join)", async () => {
+    await renderItinerary();
+    const checkIn = await screen.findByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-in`);
+    const checkOut = screen.getByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-out`);
+    // The card's container label suppresses the Badge subtree, so without the
+    // checkpoint joining the label both rows announce the bare booking title
+    // — a VoiceOver user can't tell arrival from departure. The grid already
+    // joins it (GridDayColumn labelSuffix); this pins list parity.
+    expect(checkIn.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-in");
+    expect(checkOut.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-out");
+    expect(checkIn.props.accessibilityLabel).not.toBe(checkOut.props.accessibilityLabel);
+  });
+
   it("both synthesized rows route to the SAME booking detail", async () => {
     await renderItinerary();
     const checkIn = await screen.findByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-in`);
