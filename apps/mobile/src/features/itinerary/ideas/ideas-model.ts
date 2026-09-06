@@ -8,9 +8,14 @@
  */
 import {
   BOOKING_CATEGORIES,
+  bookingPrimaryTimes,
   centsToMoneyText,
+  wallDate,
+  wallTime,
   type Booking,
   type BookingCategory,
+  type ISODate,
+  type ISOTime,
   type ItineraryItem,
 } from "@gogo/shared";
 
@@ -136,4 +141,41 @@ export function buildCancelledRows(cancelled: readonly Booking[]): IdeasRow[] {
     card: { booking, needsDay: false },
     cancelled: true,
   }));
+}
+
+/** The ScheduleSheet's initial picker values — `""` = the field starts unset. */
+export interface SchedulePrefill {
+  day: ISODate | "";
+  startTime: ISOTime | "";
+  endTime: ISOTime | "";
+}
+
+/**
+ * B-16 (device QA 2026-09-06): an idea that already carries date/times must
+ * open the Add-to-day sheet with them as the pickers' VALUES — not just the
+ * B-10b picker seeds — so the user isn't forced to re-enter what the card
+ * already knows. Wall components are sliced from the details' LOCAL strings
+ * (shared `wallDate`/`wallTime`, §3.3 — no tz math), the same derivation
+ * I-2 uses, so the sheet shows where the card would actually land.
+ *
+ * Shape rules:
+ *  - nothing carried ⇒ all empty (the pre-B-16 behavior, kept as-is);
+ *  - the day anchors on the primary START, falling back to the end when only
+ *    the end is known (each side is independent — R-ib-4 posture);
+ *  - an end on a DIFFERENT wall-date is dropped: the sheet's single-day
+ *    `end_time` can't carry it, and prefilling it would render an overnight
+ *    span as inverted times. A same-wall-date inversion (the date-line
+ *    class) prefills as carried — the form's existing inversion rule, not
+ *    this projection, is what governs submittability.
+ */
+export function schedulePrefill(booking: Booking): SchedulePrefill {
+  const { start, end } = bookingPrimaryTimes(booking.details);
+  const anchor = start ?? end;
+  if (anchor === null) return { day: "", startTime: "", endTime: "" };
+  const day = wallDate(anchor);
+  return {
+    day,
+    startTime: start !== null ? wallTime(start) : "",
+    endTime: end !== null && wallDate(end) === day ? wallTime(end) : "",
+  };
 }

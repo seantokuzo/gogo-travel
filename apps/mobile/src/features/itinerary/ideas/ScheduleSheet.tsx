@@ -10,6 +10,14 @@
  * `loading`-blocked + re-entrance-guarded, and a success closes exactly
  * once via the hook-level seam (never per-call callbacks).
  *
+ * B-16 prefill: a booking that already carries date/times opens with them
+ * as the pickers' VALUES (`schedulePrefill` — wall components of the
+ * details' local strings), so nothing known is re-entered. NOTE the same
+ * QA run's error half: for exactly those known-times bookings the wire
+ * contract REJECTS `POST …/schedule` (R-ib-8 — calendar presence is
+ * automatic), so their confirm dead-ends in the ErrorBanner until the
+ * queued ideas-status rework (§3.2 status actions) reroutes it.
+ *
  * testIDs extend the §2.9 ideas family (the sheet's internals are not in
  * the inventory — flagged for the §2.7/§2.9 spec-sync batch):
  * `itinerary-ideas-schedule-sheet`, `…-input-day`, `…-input-start-time`,
@@ -30,6 +38,7 @@ import { useScheduleBooking } from "@/data";
 import { DateField } from "@/features/trips";
 
 import { TimeField } from "../add-edit/TimeField";
+import { schedulePrefill, type SchedulePrefill } from "./ideas-model";
 
 export interface ScheduleSheetProps {
   tripId: string;
@@ -53,6 +62,13 @@ interface ScheduleFormProps {
   error: string | null;
   /** B-10b: passed through to the Day DateField's picker seed. */
   contextDay: ISODate | undefined;
+  /**
+   * B-16: the pickers' INITIAL VALUES, from the booking's carried date/times
+   * (`schedulePrefill`) — all-`""` when the idea knows nothing. Initial-only
+   * by design: the form remounts per booking (`key` on the call site), so
+   * these seed `useState` and the user keeps full control afterwards.
+   */
+  prefill: SchedulePrefill;
   onDismissError(): void;
   onConfirm(input: ScheduleBookingInput): void;
 }
@@ -63,11 +79,18 @@ interface ScheduleFormProps {
  * sheet (see `ScheduleSheet`) — the form must not own state the sheet needs
  * in order to gate its own dismissal.
  */
-function ScheduleForm({ pending, error, contextDay, onDismissError, onConfirm }: ScheduleFormProps) {
+function ScheduleForm({
+  pending,
+  error,
+  contextDay,
+  prefill,
+  onDismissError,
+  onConfirm,
+}: ScheduleFormProps) {
   const s = useStyles();
-  const [day, setDay] = useState<string>("");
-  const [startTime, setStartTime] = useState<string>("");
-  const [endTime, setEndTime] = useState<string>("");
+  const [day, setDay] = useState<string>(prefill.day);
+  const [startTime, setStartTime] = useState<string>(prefill.startTime);
+  const [endTime, setEndTime] = useState<string>(prefill.endTime);
 
   const timesInverted = startTime !== "" && endTime !== "" && endTime < startTime;
 
@@ -184,11 +207,13 @@ export function ScheduleSheet({ tripId, booking, contextDay, onClose }: Schedule
     >
       {booking !== null ? (
         <ScheduleForm
-          // Remount per booking so field state starts clean (host pattern).
+          // Remount per booking so field state starts clean (host pattern);
+          // the remount is also what applies each booking's B-16 prefill.
           key={booking.id}
           pending={schedule.isPending}
           error={error}
           contextDay={contextDay}
+          prefill={schedulePrefill(booking)}
           onDismissError={() => setError(null)}
           onConfirm={(input) => {
             setError(null);

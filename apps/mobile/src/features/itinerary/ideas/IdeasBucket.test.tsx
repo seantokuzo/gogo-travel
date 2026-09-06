@@ -20,6 +20,7 @@
 import { ScheduleBookingInputSchema, type Booking, type BookingWithItems } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
+import { ApiRequestError } from "@/auth";
 import { IdeasBucket } from "@/features/itinerary";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -38,6 +39,7 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
 const CANCELLED_ID = "fffffff1-ffff-4fff-8fff-fffffffffff1";
 const PLANNED_TIMELESS_ID = "fffffff2-ffff-4fff-8fff-fffffffffff2";
+const WITH_TIMES_IDEA_ID = "fffffff4-ffff-4fff-8fff-fffffffffff4";
 
 const mockOpenBooking = jest.fn();
 
@@ -50,6 +52,30 @@ function ideaBooking(overrides?: Partial<Booking>): Booking {
     starts_at: null,
     price_cents: 3200,
     currency: "USD",
+    ...overrides,
+  });
+}
+
+/**
+ * B-16 card class (Sean device QA 2026-09-06): an `idea` that already CARRIES
+ * date/times in its details. I-1 pins ideas to zero itinerary items, so it
+ * sits in the bucket like any other idea — but its derived `starts_at` is
+ * known, which R-ib-8's third arm makes fatal to `POST …/schedule`.
+ * Instants are wire-faithful: the UTC denormalization of the +09:00 locals.
+ */
+function ideaWithTimes(overrides?: Partial<Booking>): Booking {
+  return makeBooking({
+    id: WITH_TIMES_IDEA_ID,
+    category: "activity",
+    status: "idea",
+    title: "Sumo tournament",
+    details: {
+      category: "activity",
+      starts_at: "2027-03-02T14:30:00+09:00",
+      ends_at: "2027-03-02T16:00:00+09:00",
+    },
+    starts_at: "2027-03-02T05:30:00.000Z",
+    ends_at: "2027-03-02T07:00:00.000Z",
     ...overrides,
   });
 }
@@ -397,6 +423,209 @@ it("the schedule sheet's Day picker seeds from the trip start (B-10 seed-chain p
   await fireEvent.press(
     screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"),
   );
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
+ * B-16 PREFILL (Sean device QA 2026-09-06): an idea that already carries
+ * date/times opens the schedule sheet with them as the pickers' VALUES —
+ * the field rows themselves display the carried wall date/times and the
+ * confirm is immediately tappable. NOT the B-10b seed (where the picker
+ * merely OPENS); severing the seed chain leaves the field reading "Select
+ * date", which is exactly the pre-fix red of this pin. Wall values come
+ * from the details' local strings (§3.3 — no tz math), the same derivation
+ * I-2 would use, so what the user confirms is where the card would land.
+ */
+it("B-16 prefill: an idea that carries date/times opens the sheet with them as the pickers' VALUES, confirm tappable", async () => {
+  await renderBucket({ api: { bookings: [...defaultBookings(), ideaWithTimes()] } });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+
+  // VALUES, not seeds: the rows read back their set value (DateField /
+  // TimeField expose `${label}, ${value}` once a value exists)…
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, 2027-03-02");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-start-time").props.accessibilityLabel,
+  ).toBe("Start time (optional), 14:30");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-end-time").props.accessibilityLabel,
+  ).toBe("End time (optional), 16:00");
+  // …visibly — no placeholder anywhere in the sheet…
+  expect(screen.getByText("14:30")).toBeOnTheScreen();
+  expect(screen.getByText("16:00")).toBeOnTheScreen();
+  expect(screen.queryByText("Select date")).toBeNull();
+  expect(screen.queryByText("Select time")).toBeNull();
+  // …and "user taps Add": nothing to re-enter, confirm is live.
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).not.toBeDisabled();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
+ * Control arm: an idea with NO carried times keeps today's behavior — empty
+ * fields (placeholders showing), confirm disabled until a day is picked.
+ * Discriminates prefill-from-carried-times from "prefill everything":
+ * a regression that stuffs values into every card turns THIS red.
+ */
+it("B-16 prefill control: an idea without carried times still opens empty, confirm disabled", async () => {
+  await renderBucket({ api: { bookings: [...defaultBookings(), ideaBooking()] } });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, select date");
+  expect(screen.getByText("Select date")).toBeOnTheScreen();
+  expect(screen.getAllByText("Select time")).toHaveLength(2);
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
+ * PR #48 R1 (tests lane): per-booking prefill FRESHNESS. The mechanism that
+ * applies each booking's prefill is the `key={booking.id}` remount — deleting
+ * it left the suite green because freshness was double-guarded by the
+ * null-unmount on close (booking → null unmounts the form, so a fresh mount
+ * follows either way). Unpinned, a sheet-exit polish that retains the last
+ * booking through the exit would let one card's day/times survive into the
+ * next card's form — one tap then schedules booking B onto booking A's day,
+ * silently, no red anywhere.
+ *
+ * Two legs, one render, the two fixtures fully distinct:
+ *  - close → reopen (the user-reachable path): fresh state through the
+ *    null-unmount — guards the retention scenario above end-to-end;
+ *  - direct target switch WITHOUT passing through null (Sumo's sheet open,
+ *    press TeamLab's row button): the one transition where the `key` is the
+ *    ONLY guard — React reuses the same-type/same-position form instance
+ *    unless the key changes, so THIS leg is what turns red when the key is
+ *    deleted (mutation-verified). Unreachable by touch today (rows sit
+ *    behind the open sheet) but it is the render-level contract the future
+ *    polish relies on, pinned at the level where it can actually fail.
+ */
+it("B-16 prefill freshness: state never leaks across bookings — close/reopen AND a direct target switch both start clean (key remount pin)", async () => {
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaBooking(), ideaWithTimes()] },
+  });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+
+  // Leg 1a: the with-times idea opens prefilled…
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+  expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, 2027-03-02");
+
+  // …close (drain the exit — SHEET TAX)…
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+
+  // Leg 1b: …and the timeless idea reopens EMPTY — nothing carried over.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  expect(screen.getByText('Add "TeamLab Planets" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
+
+  // Leg 2: switch targets while the sheet is OPEN (no null pass-through).
+  // Without the per-booking key this reuses the mounted form — TeamLab's
+  // empty fields would show under Sumo's title, the exact cross-booking
+  // leak class — so these assertions are the pin's discriminating arm.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+  expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, 2027-03-02");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-start-time").props.accessibilityLabel,
+  ).toBe("Start time (optional), 14:30");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-end-time").props.accessibilityLabel,
+  ).toBe("End time (optional), 16:00");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).not.toBeDisabled();
+
+  // And back the other way: with-times → timeless, still no leak.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
+ * B-16 ROOT-CAUSE REPRO (Sean device QA 2026-09-06: "entering a date in the
+ * Add-to-day modal and pressing the button errors"). The erroring cards are
+ * ideas that already CARRY date/times: their derived `starts_at` is known,
+ * and the schedule endpoint's wire contract rejects known-times bookings
+ * outright — R-ib-8: "WHEN the booking has known times THE SYSTEM SHALL
+ * reject VALIDATION_FAILED (its calendar presence is automatic, R-ib-5)";
+ * implemented at apps/server/src/bookings/service.ts `scheduleBooking`
+ * (`current.startsAt !== null` → 400, before the body is even consulted).
+ *
+ * This test localizes the failure: the responder mirrors that server arm
+ * verbatim and ASSERTS the client's body was a schema-valid
+ * ScheduleBookingInput — so the error is NOT client validation and NOT wire
+ * shape; it is the server's semantic rejection of this booking's state. The
+ * client fix is the queued ideas-status rework (§3.2 status actions), not a
+ * different request body — nothing this sheet can send makes the call legal.
+ */
+it("B-16 repro: 'Add to day' on an idea that carries date/times is rejected by the wire contract (R-ib-8) and surfaces the ErrorBanner", async () => {
+  const scheduleBodies: unknown[] = [];
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaWithTimes()] },
+    overrides: {
+      "POST /trips/:tripId/bookings/:bookingId/schedule": (input) => {
+        scheduleBodies.push(input.body);
+        // Contract-faithful: the fixture booking's starts_at is known, so
+        // the real server answers 400 VALIDATION_FAILED, always.
+        return Promise.reject(
+          new ApiRequestError(
+            400,
+            "VALIDATION_FAILED",
+            "booking has known times — its calendar presence is automatic",
+            { starts_at: "known" },
+          ),
+        );
+      },
+    },
+  });
+
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+
+  // Sean's exact gesture: enter a day (even the booking's OWN day) and press.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
+  await fireEvent(screen.getByTestId("itinerary-ideas-schedule-input-day-picker"), "onChange", {
+    nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
+  });
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+
+  await waitFor(() => expect(scheduleBodies).toHaveLength(1));
+  // NOT client validation, NOT wire shape: the body the client sent is a
+  // valid ScheduleBookingInput — the rejection is about the BOOKING's state.
+  expect(ScheduleBookingInputSchema.safeParse(scheduleBodies[0]).success).toBe(true);
+
+  // What Sean saw: the sheet's generic failure banner, flow dead-ended.
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
+  // Rollback (hook-owned): the card is back in the bucket, unchanged.
+  expect(screen.getByTestId(`itinerary-ideas-item-${WITH_TIMES_IDEA_ID}`)).toBeOnTheScreen();
+
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
