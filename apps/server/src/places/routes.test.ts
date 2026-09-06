@@ -27,6 +27,15 @@ describe("fkViolationTable (23503 walker, both driver shapes)", () => {
     expect(fkViolationTable(test)).toBe("itinerary_items");
   });
 
+  it("accepts 23001 — PG 18 reclassified ON DELETE RESTRICT (prod Neon 18.6) [B-24]", () => {
+    const prod = driverError({ code: "23001", table: "saved_places" });
+    expect(fkViolationTable(prod)).toBe("saved_places");
+    const test = driverError({ code: "23001", table_name: "itinerary_items" });
+    expect(fkViolationTable(test)).toBe("itinerary_items");
+    // Field-less 23001 still answers "unknown" (409, never a 500).
+    expect(fkViolationTable(driverError({ code: "23001" }))).toBe("unknown");
+  });
+
   it("prefers `table_name` when both are present, and walks a Drizzle cause chain", () => {
     const inner = driverError({
       code: "23503",

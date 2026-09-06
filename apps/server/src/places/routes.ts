@@ -39,6 +39,7 @@ import {
   RATE_LIMITS,
 } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import { decodeKeysetCursor, encodeKeysetCursor } from "../http/keyset-cursor.js";
@@ -88,8 +89,9 @@ export interface PlacesRouterDeps {
 const DELETE_RESTRICT_TABLES = new Set(["saved_places", "itinerary_items", "tour_guide_bundles"]);
 
 /**
- * Postgres foreign_key_violation (23503), possibly wrapped — walk `cause`
- * (the sign-in 23505 walker's shape). Returns the referencing table.
+ * Postgres FK violation (23503, or 23001 — PG 18's RESTRICT reclassification,
+ * see `db/pg-errors.ts` [B-24]), possibly wrapped — walk `cause` (the sign-in
+ * 23505 walker's shape). Returns the referencing table.
  *
  * 🔴 DRIVER TRAP (round-1 blocking #1, the Neon-parity family): postgres-js
  * — the TEST driver — exposes the wire field as `table_name`; pg-protocol's
@@ -102,7 +104,7 @@ export function fkViolationTable(error: unknown): string | null {
   let current: unknown = error;
   while (current instanceof Error) {
     const candidate = current as { code?: unknown; table_name?: unknown; table?: unknown };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       if (typeof candidate.table_name === "string") return candidate.table_name;
       if (typeof candidate.table === "string") return candidate.table;
       return "unknown";

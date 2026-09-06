@@ -38,6 +38,7 @@ import type { Paginated } from "@gogo/shared/api/envelope";
 import { placeEndpoints, type SavedPlaceWithPlace } from "@gogo/shared/domains/place";
 import { SAVED_PLACES_PAGE_SIZE_DEFAULT } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import {
@@ -73,7 +74,10 @@ export const SAVED_PLACES_PLACE_FK = "saved_places_place_id_places_id_fk";
  * `cause` for Drizzle-wrapped shapes; the predicates below are exported so
  * unit tests can pin the prod shape no container ever produces.
  */
-function violationConstraint(error: unknown, code: "23503" | "23505"): string | null {
+function violationConstraint(
+  error: unknown,
+  matchesCode: (code: unknown) => boolean,
+): string | null {
   let current: unknown = error;
   while (current instanceof Error) {
     const candidate = current as {
@@ -81,7 +85,7 @@ function violationConstraint(error: unknown, code: "23503" | "23505"): string | 
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === code) {
+    if (matchesCode(candidate.code)) {
       if (typeof candidate.constraint_name === "string") return candidate.constraint_name;
       if (typeof candidate.constraint === "string") return candidate.constraint;
       return null;
@@ -94,14 +98,14 @@ function violationConstraint(error: unknown, code: "23503" | "23505"): string | 
 /** Duplicate `(trip_id, place_id)` → the R-places-16 409. Constraint-PRECISE:
  * any other unique violation on this path is a bug and stays loud. */
 export function isSavedPlaceDuplicate(error: unknown): boolean {
-  return violationConstraint(error, "23505") === SAVED_PLACES_TRIP_PLACE_UQ;
+  return violationConstraint(error, (code) => code === "23505") === SAVED_PLACES_TRIP_PLACE_UQ;
 }
 
 /** The check→insert race residue (place hard-deleted in the window) → the
  * canonical 404. Constraint-PRECISE: the trip FK is gate-proven and the
  * creator FK is auth-proven — those stay loud if they ever fire. */
 export function isSavedPlacePlaceFkViolation(error: unknown): boolean {
-  return violationConstraint(error, "23503") === SAVED_PLACES_PLACE_FK;
+  return violationConstraint(error, isFkViolationCode) === SAVED_PLACES_PLACE_FK;
 }
 
 export function createSavedPlacesRouter(deps: SavedPlacesRouterDeps): Hono<RequestVars> {

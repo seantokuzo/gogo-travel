@@ -72,6 +72,7 @@
 import type { ExpenseCreate, ExpenseShare, ExpenseUpdate } from "@gogo/shared/domains/money";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { isFxPairConsistent } from "./fx.js";
@@ -131,7 +132,7 @@ export function isExpenseBookingFkViolation(error: unknown): boolean {
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       const constraint =
         typeof candidate.constraint_name === "string"
           ? candidate.constraint_name

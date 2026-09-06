@@ -86,6 +86,14 @@ describe("isSavedPlacePlaceFkViolation (23503 race residue → the canonical 404
     expect(isSavedPlacePlaceFkViolation(new Error("Failed query", { cause: inner }))).toBe(true);
   });
 
+  it("accepts 23001 — PG 18's RESTRICT reclassification (one-home inheritance) [B-24]", () => {
+    expect(
+      isSavedPlacePlaceFkViolation(
+        driverError({ code: "23001", constraint: SAVED_PLACES_PLACE_FK }),
+      ),
+    ).toBe(true);
+  });
+
   it("is constraint-PRECISE: the gate-proven trip FK stays loud (false)", () => {
     expect(
       isSavedPlacePlaceFkViolation(
