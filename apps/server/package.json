@@ -35,6 +35,7 @@
     "@types/ws": "8.18.1",
     "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
+    "geo-tz": "8.1.8",
     "tsx": "4.23.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
