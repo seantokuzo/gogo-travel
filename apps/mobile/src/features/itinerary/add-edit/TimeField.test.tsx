@@ -14,6 +14,7 @@
  * the Done seeded-commit (B-15a parity).
  */
 import { fireEvent, screen } from "@testing-library/react-native";
+import { Keyboard } from "react-native";
 
 import { renderWithTheme } from "@/test-utils/render";
 
@@ -128,5 +129,38 @@ describe("TimeField iOS presentation in the shared PickerCard (B-15b)", () => {
     );
     expect(screen.queryByTestId("t-sheet")).toBeNull();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * B-15c — see the DateField suite's twin describe for the mechanism note
+ * (Keyboard.dismiss == blurTextInput(currentlyFocused); real keyboard
+ * teardown gets device eyes).
+ */
+describe("opening the picker dismisses the keyboard (B-15c)", () => {
+  const onSelect = jest.fn();
+  let dismissSpy: jest.SpyInstance;
+  beforeEach(() => {
+    dismissSpy = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    dismissSpy.mockRestore();
+    onSelect.mockReset();
+  });
+
+  // Kill-mutation: drop `if (!open) Keyboard.dismiss()` in TimeField's row
+  // handler → red. Control arms: no call on render; no second call when the
+  // same press toggles the picker closed.
+  it("row press that OPENS calls Keyboard.dismiss; the closing toggle does not", async () => {
+    await renderWithTheme(
+      <TimeField label="Start time" value="" onSelect={onSelect} testID="t" />,
+    );
+    expect(dismissSpy).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByTestId("t"));
+    expect(dismissSpy).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(screen.getByTestId("t"));
+    expect(dismissSpy).toHaveBeenCalledTimes(1);
   });
 });

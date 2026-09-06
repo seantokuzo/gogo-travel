@@ -30,7 +30,7 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISOTime } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 
 import { AppText, PickerCard } from "@/components";
 
@@ -147,7 +147,15 @@ export function TimeField({
       </View>
       <Pressable
         testID={testID}
-        onPress={() => setOpen((prev) => !prev)}
+        onPress={() => {
+          // B-15c: opening a picker over an armed keyboard left typing
+          // routed into the previously-focused input (device QA 2026-09-06).
+          // Keyboard.dismiss() BLURS the focused TextInput (its RN
+          // implementation is TextInputState.blurTextInput(currentlyFocused)),
+          // so one call covers both halves: keyboard down + focus cleared.
+          if (!open) Keyboard.dismiss();
+          setOpen(!open);
+        }}
         accessibilityRole="button"
         accessibilityLabel={value === "" ? `${label}, select time` : `${label}, ${value}`}
         style={[s.field, open && s.fieldOpen, hasError && s.fieldError]}

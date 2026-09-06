@@ -16,6 +16,7 @@
  *    picked).
  */
 import { fireEvent, screen } from "@testing-library/react-native";
+import { Keyboard } from "react-native";
 
 import { renderWithTheme } from "@/test-utils/render";
 
@@ -218,5 +219,43 @@ describe("DateField Done commits the displayed day (B-15a)", () => {
     });
     expect(onSelect).toHaveBeenCalledWith("2027-04-25");
     expect(screen.queryByTestId("f-sheet")).toBeNull();
+  });
+});
+
+/**
+ * B-15c — opening the picker over an armed keyboard must dismiss it (device
+ * QA 2026-09-06: typing kept landing in the previously-focused input). The
+ * jest-honest pin is the `Keyboard.dismiss` contract call: RN implements it
+ * as TextInputState.blurTextInput(currentlyFocusedInput), so keyboard-down
+ * AND focus-blur ride the one call; RNTL cannot arm a real focused TextInput
+ * (TextInputState is fed by native focus events), so the actual keyboard
+ * teardown gets device eyes.
+ */
+describe("opening the picker dismisses the keyboard (B-15c)", () => {
+  const onSelect = jest.fn();
+  let dismissSpy: jest.SpyInstance;
+  beforeEach(() => {
+    dismissSpy = jest.spyOn(Keyboard, "dismiss").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    dismissSpy.mockRestore();
+    onSelect.mockReset();
+  });
+
+  // Kill-mutation: drop the `if (!open) Keyboard.dismiss()` line → the first
+  // assertion goes red. Control arms: no call on mere render, and no SECOND
+  // call when the same press toggles the picker CLOSED (the call is tied to
+  // opening, not to every row tap).
+  it("row press that OPENS calls Keyboard.dismiss; the closing toggle does not", async () => {
+    await renderWithTheme(
+      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
+    );
+    expect(dismissSpy).not.toHaveBeenCalled();
+
+    await fireEvent.press(screen.getByTestId("f"));
+    expect(dismissSpy).toHaveBeenCalledTimes(1);
+
+    await fireEvent.press(screen.getByTestId("f"));
+    expect(dismissSpy).toHaveBeenCalledTimes(1);
   });
 });
