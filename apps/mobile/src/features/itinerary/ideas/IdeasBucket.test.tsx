@@ -490,6 +490,81 @@ it("B-16 prefill control: an idea without carried times still opens empty, confi
 });
 
 /**
+ * PR #48 R1 (tests lane): per-booking prefill FRESHNESS. The mechanism that
+ * applies each booking's prefill is the `key={booking.id}` remount — deleting
+ * it left the suite green because freshness was double-guarded by the
+ * null-unmount on close (booking → null unmounts the form, so a fresh mount
+ * follows either way). Unpinned, a sheet-exit polish that retains the last
+ * booking through the exit would let one card's day/times survive into the
+ * next card's form — one tap then schedules booking B onto booking A's day,
+ * silently, no red anywhere.
+ *
+ * Two legs, one render, the two fixtures fully distinct:
+ *  - close → reopen (the user-reachable path): fresh state through the
+ *    null-unmount — guards the retention scenario above end-to-end;
+ *  - direct target switch WITHOUT passing through null (Sumo's sheet open,
+ *    press TeamLab's row button): the one transition where the `key` is the
+ *    ONLY guard — React reuses the same-type/same-position form instance
+ *    unless the key changes, so THIS leg is what turns red when the key is
+ *    deleted (mutation-verified). Unreachable by touch today (rows sit
+ *    behind the open sheet) but it is the render-level contract the future
+ *    polish relies on, pinned at the level where it can actually fail.
+ */
+it("B-16 prefill freshness: state never leaks across bookings — close/reopen AND a direct target switch both start clean (key remount pin)", async () => {
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaBooking(), ideaWithTimes()] },
+  });
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+
+  // Leg 1a: the with-times idea opens prefilled…
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+  expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, 2027-03-02");
+
+  // …close (drain the exit — SHEET TAX)…
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+
+  // Leg 1b: …and the timeless idea reopens EMPTY — nothing carried over.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  expect(screen.getByText('Add "TeamLab Planets" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
+
+  // Leg 2: switch targets while the sheet is OPEN (no null pass-through).
+  // Without the per-booking key this reuses the mounted form — TeamLab's
+  // empty fields would show under Sumo's title, the exact cross-booking
+  // leak class — so these assertions are the pin's discriminating arm.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+  expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, 2027-03-02");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-start-time").props.accessibilityLabel,
+  ).toBe("Start time (optional), 14:30");
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-end-time").props.accessibilityLabel,
+  ).toBe("End time (optional), 16:00");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).not.toBeDisabled();
+
+  // And back the other way: with-times → timeless, still no leak.
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
+  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
  * B-16 ROOT-CAUSE REPRO (Sean device QA 2026-09-06: "entering a date in the
  * Add-to-day modal and pressing the button errors"). The erroring cards are
  * ideas that already CARRY date/times: their derived `starts_at` is known,
