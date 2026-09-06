@@ -55,6 +55,28 @@ describe("diffField", () => {
 });
 
 describe("PaymentHandlesSection", () => {
+  it("B-20 R1: handle caps + casing traits reach the rendered Inputs (prop pins)", async () => {
+    // jest's fireEvent.changeText bypasses native maxLength, so prop pins
+    // are the only red-capable shape for call-site literal props (round-1
+    // P7). Caps mirror the shared write schemas: 30 post-strip + 1 for the
+    // typable @/$ prefix; paypal.me has no prefix. Casing traits are the
+    // money-rail guard — iOS sentence-casing silently mangles handles.
+    spyRequest();
+    await renderWithProviders(<PaymentHandlesSection user={USER_WITH_HANDLES} />);
+    const venmo = screen.getByTestId("profile-input-venmo");
+    expect(venmo.props.maxLength).toBe(31);
+    expect(venmo.props.autoCapitalize).toBe("none");
+    expect(venmo.props.autoCorrect).toBe(false);
+    const cashtag = screen.getByTestId("profile-input-cashtag");
+    expect(cashtag.props.maxLength).toBe(31);
+    expect(cashtag.props.autoCapitalize).toBe("none");
+    expect(cashtag.props.autoCorrect).toBe(false);
+    const paypalme = screen.getByTestId("profile-input-paypalme");
+    expect(paypalme.props.maxLength).toBe(30);
+    expect(paypalme.props.autoCapitalize).toBe("none");
+    expect(paypalme.props.autoCorrect).toBe(false);
+  });
+
   it("clearing existing handles PATCHes explicit nulls (venmo + zelle pair)", async () => {
     const request = spyRequest();
     await renderWithProviders(<PaymentHandlesSection user={USER_WITH_HANDLES} />);

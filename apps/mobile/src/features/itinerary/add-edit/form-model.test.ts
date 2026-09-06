@@ -99,6 +99,30 @@ describe("buildDetails (state → wire)", () => {
     });
   });
 
+  it("B-20 R1: the IATA gate fires only on DIRTY values — an untouched stored prefill passes verbatim", () => {
+    // A pre-B-20 (or AI-capture) booking can legally store origin_iata
+    // "Narita" — the wire is optionalString(200), deliberately un-narrowed
+    // (Q2). The gate guards what the USER typed; a title-only edit must not
+    // strand the booking on a field the user never touched (round-1
+    // correctness lane; B-15 dirty-guard precedent).
+    const prefill = stateFromDetails({ category: "flight", origin_iata: "Narita" });
+    const built = buildDetails("flight", { ...prefill }, prefill);
+    expect(built.errors).toEqual({});
+    expect(built.details).toMatchObject({ origin_iata: "Narita" }); // verbatim, not NARITA
+
+    // Control: a USER-TYPED non-code (dirty — ≠ the prefill) still errors.
+    const dirty = buildDetails("flight", { ...prefill, origin_iata: "Nari" }, prefill);
+    expect(dirty.details).toBeNull();
+    expect(dirty.errors["origin_iata"]).toMatch(/3-letter/);
+
+    // Lowercase self-heal survives the prefill skip: a stored "nrt" is a
+    // REAL code — it still normalizes to "NRT" on save, never verbatim.
+    const lower = stateFromDetails({ category: "flight", origin_iata: "nrt" });
+    const healed = buildDetails("flight", { ...lower }, lower);
+    expect(healed.errors).toEqual({});
+    expect(healed.details).toMatchObject({ origin_iata: "NRT" });
+  });
+
   it("composeLocalDateTime round-trips through stateFromDetails (wall slicing)", () => {
     expect(composeLocalDateTime("2027-03-02", "14:30")).toBe("2027-03-02T14:30:00Z");
     const state = emptyFormState("activity");

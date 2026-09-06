@@ -303,10 +303,14 @@ const IATA_RE = /^[A-Z]{3}$/;
  * whole numbers; IATA fields must be exactly 3 letters (normalized
  * uppercase, so an edit-mode prefill of stored lowercase self-heals rather
  * than erroring — B-20); datetime fields need BOTH halves or NEITHER.
+ *
+ * `prefill` (edit mode: the initial state decomposed from the stored row)
+ * scopes the IATA gate to DIRTY values only — see the iata branch.
  */
 export function buildDetails(
   category: BookingCategory,
   state: DetailsFormState,
+  prefill?: DetailsFormState,
 ): BuildDetailsResult {
   const errors: Record<string, string> = {};
   const out: Record<string, unknown> = { category };
@@ -334,11 +338,26 @@ export function buildDetails(
     }
     if (field.kind === "iata") {
       const code = text.toUpperCase();
-      if (!IATA_RE.test(code)) {
-        errors[field.key] = "3-letter airport code, like NRT.";
+      if (IATA_RE.test(code)) {
+        // Real 3-letter codes always normalize — a stored lowercase "nrt"
+        // self-heals to "NRT" on its next save (B-20).
+        out[field.key] = code;
         continue;
       }
-      out[field.key] = code;
+      // B-20 R1 (correctness lane): the gate guards what the USER typed,
+      // not what the row already stored. Values like "Narita" are
+      // wire-legal (optionalString 200, deliberately un-narrowed — Q2) and
+      // reachable pre-B-20 or via AI capture — an UNTOUCHED prefill passes
+      // through VERBATIM (no case mutation of text the user never typed)
+      // so a title-only edit can't strand the booking. Only dirty values
+      // (normalized ≠ normalized prefill) hit the error.
+      const prefillValue = prefill?.[field.key];
+      const prefillText = typeof prefillValue === "string" ? prefillValue.trim() : "";
+      if (prefillText !== "" && prefillText.toUpperCase() === code) {
+        out[field.key] = text;
+        continue;
+      }
+      errors[field.key] = "3-letter airport code, like NRT.";
       continue;
     }
     out[field.key] = text;

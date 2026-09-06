@@ -129,11 +129,15 @@ export function BookingForm({
   const offline = useTripOffline(trip.id);
 
   const [title, setTitle] = useState(booking?.title ?? "");
-  const [details, setDetails] = useState<DetailsFormState>(() =>
+  // Kept alongside `details` (never updated) so buildDetails can scope its
+  // IATA gate to DIRTY values — an untouched stored prefill ("Narita",
+  // wire-legal pre-B-20/capture) must not strand a title-only edit (B-20 R1).
+  const [initialDetails] = useState<DetailsFormState>(() =>
     booking !== undefined
       ? stateFromDetails(booking.details)
       : emptyFormState(category, { day: prefillDay, time: prefillTime }),
   );
+  const [details, setDetails] = useState<DetailsFormState>(initialDetails);
   const [status, setStatus] = useState<BookingStatus>(booking?.status ?? "idea");
   const [priceText, setPriceText] = useState(
     booking !== undefined && booking.price_cents !== null
@@ -209,7 +213,7 @@ export function BookingForm({
    * a block, so it collides with nothing (conflicts.ts module doc).
    */
   const livePlacements = (() => {
-    const built = buildDetails(category, details);
+    const built = buildDetails(category, details, initialDetails);
     if (built.details === null) return [];
     return deriveAutoItems(built.details).map((placement) => ({
       ...placement,
@@ -243,7 +247,7 @@ export function BookingForm({
     const trimmedTitle = title.trim();
     if (trimmedTitle === "") errors["title"] = "Give it a name.";
 
-    const built = buildDetails(category, details);
+    const built = buildDetails(category, details, initialDetails);
     Object.assign(errors, built.errors);
 
     // Law #2: money enters as a plain-text amount, parsed with integer
