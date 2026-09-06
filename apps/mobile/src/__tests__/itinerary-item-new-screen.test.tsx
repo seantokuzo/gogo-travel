@@ -685,6 +685,89 @@ describe("discard guard copy (nav §2.6; round-2 N2)", () => {
   });
 });
 
+/**
+ * PR #49 R1 (correctness lane) — Done on an UNCHANGED picker value must not
+ * arm the §2.6 dirty guard. New with B-15a: before it, no same-value commit
+ * path existed (change-only native events), so `touch`/`setDetailField`
+ * could latch onDirty unconditionally. Scenario fixed: edit → peek at the
+ * calendar → Done → swipe-dismiss showed "Discard changes?" with zero
+ * changes. Compare-before-latch now lives at the picker call sites; the
+ * settings form is comparison-derived and was never affected.
+ */
+describe("same-value Done leaves the dirty guard unarmed (PR #49 R1)", () => {
+  // Kill-mutation: revert ItemForm's Day onSelect to `touch(setDay)` → the
+  // first dismissal is intercepted → red. Control arm in the same test: a
+  // REAL day change through the same picker still arms the guard.
+  it("edit item: peek at the prefilled Day, Done — clean; a real change arms", async () => {
+    await renderScreen({ itemId: ITEM_B_ID });
+    await screen.findByTestId("itinerary-item-new-input-title");
+
+    // Peek: open the Day picker (prefilled TRIP_START) and Done it shut.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day-sheet-done"));
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    // Control: a genuinely different day still arms.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+    await fireEvent(screen.getByTestId("itinerary-item-new-input-day-picker"), "onChange", {
+      nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
+    });
+    expect((await attemptDismiss()).prevented).toBe(true);
+    // The discard confirm actually presented (copy wording is pinned by the
+    // §2.6 copy describe above — here only the arming matters).
+    expect(screen.getByTestId("itinerary-item-new-button-cancel-confirm")).toBeOnTheScreen();
+  });
+
+  // Kill-mutation: drop either same-value guard at BookingForm's datetime
+  // call sites → the first dismissal is intercepted → red. Both halves are
+  // peeked (date AND time) so each guard is individually load-bearing.
+  it("edit booking: peek at a prefilled datetime (date + time), Done — clean; a real change arms", async () => {
+    const existing: BookingWithItems = {
+      ...makeBooking({
+        id: BOOKING_IDEA_ID,
+        category: "activity",
+        status: "idea",
+        starts_at: null,
+        title: "Kaiseki",
+        details: {
+          category: "activity",
+          venue_name: "TeamLab",
+          starts_at: "2027-03-02T14:30:00+09:00",
+        },
+      }),
+      items: [],
+    };
+    await renderScreen(
+      { bookingId: BOOKING_IDEA_ID },
+      {
+        overrides: {
+          "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        },
+      },
+    );
+    await screen.findByTestId("itinerary-item-new-input-starts-at-date");
+
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-date"));
+    await fireEvent.press(
+      screen.getByTestId("itinerary-item-new-input-starts-at-date-sheet-done"),
+    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time"));
+    await fireEvent.press(
+      screen.getByTestId("itinerary-item-new-input-starts-at-time-sheet-done"),
+    );
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    // Control: a genuinely different time still arms.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time"));
+    await fireEvent(
+      screen.getByTestId("itinerary-item-new-input-starts-at-time-picker"),
+      "onChange",
+      { nativeEvent: { timestamp: new Date(2000, 0, 1, 15, 45).getTime(), utcOffset: 0 } },
+    );
+    expect((await attemptDismiss()).prevented).toBe(true);
+  });
+});
+
 it("viewers get the read-only notice — no form, no save (R-ib-24)", async () => {
   await renderScreen({ category: "activity" }, { role: "viewer" });
   expect(screen.getByTestId("itinerary-item-new-viewer")).toBeOnTheScreen();

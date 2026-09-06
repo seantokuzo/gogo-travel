@@ -259,3 +259,56 @@ describe("opening the picker dismisses the keyboard (B-15c)", () => {
     expect(dismissSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * PR #49 R1 (correctness lane) — Done must commit the day that was DISPLAYED
+ * at open, not a recomputation at press time. With `value=""` and no
+ * context, `pickerSeedDate` falls back to `new Date()`: seeding at open but
+ * recomputing inside the Done handler lets the clock cross midnight between
+ * the two reads — open 23:59:50 showing today, press Done 00:00:05, commit
+ * TOMORROW. The seed is now CAPTURED once in the opening press and both the
+ * picker's `value` and Done read the capture.
+ */
+describe("Done commits the open-time captured seed (PR #49 R1)", () => {
+  const onSelect = jest.fn();
+  afterEach(() => {
+    onSelect.mockReset();
+    jest.useRealTimers();
+  });
+
+  // Kill-mutation: recompute `pickerSeedDate(...)` inside confirmDisplayed
+  // (the pre-R1 code) → commits 2027-06-15 → red. Control arm inside the
+  // same test: the picker's displayed `date` prop is the pre-midnight day,
+  // so the assertion discriminates commit-vs-display, not clock mocking.
+  it("across midnight, Done commits the displayed pre-midnight day", async () => {
+    jest.useFakeTimers({ now: new Date(2027, 5, 14, 23, 59, 50) });
+    await renderWithTheme(
+      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
+    );
+    await fireEvent.press(screen.getByTestId("f"));
+    // Control arm: the card is displaying June 14.
+    expect(
+      new Date(screen.getByTestId("f-picker").props.date as number).toDateString(),
+    ).toBe(new Date(2027, 5, 14).toDateString());
+
+    jest.setSystemTime(new Date(2027, 5, 15, 0, 0, 5));
+    await fireEvent.press(screen.getByTestId("f-sheet-done"));
+    expect(onSelect).toHaveBeenCalledWith("2027-06-14");
+  });
+
+  // Each OPEN recaptures — the capture must never go stale across a
+  // close/reopen (kill-mutation: capture once at mount → red).
+  it("reopening recaptures: a later open on a new day seeds the new day", async () => {
+    jest.useFakeTimers({ now: new Date(2027, 5, 14, 23, 59, 50) });
+    await renderWithTheme(
+      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
+    );
+    await fireEvent.press(screen.getByTestId("f"));
+    await fireEvent.press(screen.getByTestId("f-sheet-close"));
+
+    jest.setSystemTime(new Date(2027, 5, 15, 9, 0, 0));
+    await fireEvent.press(screen.getByTestId("f"));
+    await fireEvent.press(screen.getByTestId("f-sheet-done"));
+    expect(onSelect).toHaveBeenCalledWith("2027-06-15");
+  });
+});

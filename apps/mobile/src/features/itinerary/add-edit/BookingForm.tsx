@@ -383,7 +383,13 @@ export function BookingForm({
                       label={`${field.label} date`}
                       value={value.date}
                       contextDate={contextDate}
-                      onSelect={(date) => setDetailField(field.key, { ...value, date })}
+                      onSelect={(date) => {
+                        // PR #49 R1: Done can re-commit the UNCHANGED value
+                        // (B-15a) — a same-value commit must not arm the
+                        // dirty guard (setDetailField latches onDirty).
+                        if (date === value.date) return;
+                        setDetailField(field.key, { ...value, date });
+                      }}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-date`}
                     />
                   </View>
@@ -392,7 +398,12 @@ export function BookingForm({
                       label={`${field.label} time`}
                       value={value.time}
                       contextTime={sibling?.time ?? ""}
-                      onSelect={(time) => setDetailField(field.key, { ...value, time })}
+                      onSelect={(time) => {
+                        // PR #49 R1: same-value Done commit — see the date
+                        // field's guard above.
+                        if (time === value.time) return;
+                        setDetailField(field.key, { ...value, time });
+                      }}
                       onClear={() => setDetailField(field.key, { ...value, time: "" })}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-time`}
                     />

@@ -123,6 +123,12 @@ export function DateField({
 }: DateFieldProps) {
   const s = useStyles();
   const [open, setOpen] = useState(false);
+  // PR #49 R1 capture invariant: the seed is computed ONCE, in the press
+  // that opens, and BOTH the picker's `value` and Done read the capture.
+  // `pickerSeedDate`'s no-context fallback is `new Date()` — recomputing at
+  // Done-press would let the clock cross midnight between open and commit
+  // (23:59:50 open shows today; 00:00:05 Done would commit tomorrow).
+  const [seed, setSeed] = useState<Date>(() => pickerSeedDate(value, contextDate));
   const hasError = error !== undefined && error.length > 0;
   // Stable identity: usePickerFocus keys its claim slot on this function.
   const close = useCallback(() => setOpen(false), []);
@@ -130,17 +136,18 @@ export function DateField({
   usePickerFocus(open, close);
   // B-15a: commit the DISPLAYED day. A changed day commits & closes through
   // `onValueChange` before Done is ever reachable, so the displayed day is
-  // always the seed (value > context > today) — tapping the pre-highlighted
-  // day itself never fires natively (iOS change-only semantics).
+  // always the captured seed (value > context > today at OPEN time) —
+  // tapping the pre-highlighted day itself never fires natively (iOS
+  // change-only semantics).
   const confirmDisplayed = () => {
-    onSelect(pickerDateToISO(pickerSeedDate(value, contextDate)));
+    onSelect(pickerDateToISO(seed));
     setOpen(false);
   };
 
   const picker = open ? (
     <DateTimePicker
       testID={`${testID}-picker`}
-      value={pickerSeedDate(value, contextDate)}
+      value={seed}
       mode="date"
       display={Platform.OS === "ios" ? "inline" : "default"}
       onValueChange={(_event, date) => {
@@ -164,7 +171,12 @@ export function DateField({
           // Keyboard.dismiss() BLURS the focused TextInput (its RN
           // implementation is TextInputState.blurTextInput(currentlyFocused)),
           // so one call covers both halves: keyboard down + focus cleared.
-          if (!open) Keyboard.dismiss();
+          if (!open) {
+            Keyboard.dismiss();
+            // PR #49 R1: every open RE-captures the seed (see the invariant
+            // note above) — a stale capture would drift across reopens.
+            setSeed(pickerSeedDate(value, contextDate));
+          }
           setOpen(!open);
         }}
         accessibilityRole="button"
