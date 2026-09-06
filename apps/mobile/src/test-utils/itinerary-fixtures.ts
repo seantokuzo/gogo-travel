@@ -21,9 +21,12 @@ export const ITEM_A_ID = "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 export const ITEM_B_ID = "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
 export const ITEM_C_ID = "aaaaaaa3-aaaa-4aaa-8aaa-aaaaaaaaaaa3";
 export const ITEM_LODGING_ID = "aaaaaaa4-aaaa-4aaa-8aaa-aaaaaaaaaaa4";
+export const ITEM_RENTAL_PICKUP_ID = "aaaaaaa5-aaaa-4aaa-8aaa-aaaaaaaaaaa5";
+export const ITEM_RENTAL_DROPOFF_ID = "aaaaaaa6-aaaa-4aaa-8aaa-aaaaaaaaaaa6";
 export const BOOKING_FLIGHT_ID = "bbbbbbb1-bbbb-4bbb-8bbb-bbbbbbbbbbb1";
 export const BOOKING_LODGING_ID = "bbbbbbb2-bbbb-4bbb-8bbb-bbbbbbbbbbb2";
 export const BOOKING_IDEA_ID = "bbbbbbb3-bbbb-4bbb-8bbb-bbbbbbbbbbb3";
+export const BOOKING_RENTAL_ID = "bbbbbbb4-bbbb-4bbb-8bbb-bbbbbbbbbbb4";
 
 export function makeItineraryItem(
   overrides: Partial<ItineraryItem> & { id: string },
@@ -121,6 +124,53 @@ export function defaultBookings(): Booking[] {
       details: { category: "lodging" },
       starts_at: "2027-03-01T06:00:00.000Z",
       ends_at: "2027-03-03T02:00:00.000Z",
+    }),
+  ];
+}
+
+/**
+ * B-18 rental universe: one car rental whose §3.3 derivation produced TWO
+ * point items — pickup day 1 @ 09:00, drop-off day 2 @ 17:30 (wall values
+ * sliced from the detail ISO strings, offset dropped — no tz math).
+ */
+export function rentalBooking(overrides?: Partial<Booking>): Booking {
+  return makeBooking({
+    id: BOOKING_RENTAL_ID,
+    category: "car_rental",
+    status: "booked",
+    title: "Toyota Rent a Car",
+    details: {
+      category: "car_rental",
+      company: "Toyota Rent a Car",
+      pickup_at: "2027-03-01T09:00:00+09:00",
+      dropoff_at: "2027-03-02T17:30:00+09:00",
+    },
+    starts_at: "2027-03-01T00:00:00.000Z",
+    ends_at: "2027-03-02T08:30:00.000Z",
+    ...overrides,
+  });
+}
+
+/** The rental's two derived point rows — day/times per the §3.3 table. */
+export function rentalItems(): ItineraryItem[] {
+  return [
+    makeItineraryItem({
+      id: ITEM_RENTAL_PICKUP_ID,
+      kind: "booking",
+      booking_id: BOOKING_RENTAL_ID,
+      title: null,
+      day: TRIP_START,
+      start_time: "09:00",
+      sort_order: 512,
+    }),
+    makeItineraryItem({
+      id: ITEM_RENTAL_DROPOFF_ID,
+      kind: "booking",
+      booking_id: BOOKING_RENTAL_ID,
+      title: null,
+      day: TRIP_DAY_2,
+      start_time: "17:30",
+      sort_order: 512,
     }),
   ];
 }

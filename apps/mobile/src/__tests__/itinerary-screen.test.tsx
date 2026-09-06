@@ -28,9 +28,14 @@ import {
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
+  ITEM_A_ID,
   ITEM_B_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   itineraryApiOverrides,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -205,6 +210,31 @@ describe("day sections (R-itin-1)", () => {
     expect(screen.getAllByText("Planned")).toHaveLength(2);
     // Direct items render their own titles.
     expect(screen.getByText("Walk Shibuya")).toBeTruthy();
+  });
+});
+
+describe("B-18 — rental pickup/drop-off captions (list view)", () => {
+  it("a rental's two derived rows carry DISTINCT subtexts; non-derived rows carry none", async () => {
+    await renderItinerary({
+      api: {
+        items: [...defaultItineraryItems(), ...rentalItems()],
+        bookings: [...defaultBookings(), rentalBooking()],
+      },
+    });
+    // Both rows render the SAME bare booking title — the caption is the only
+    // row-level discriminator (the device-QA gap).
+    const pickup = await screen.findByTestId(
+      `itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}-subtext`,
+    );
+    expect(pickup).toHaveTextContent("Pickup");
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
+    ).toHaveTextContent("Drop off");
+    expect(screen.getAllByText("Toyota Rent a Car")).toHaveLength(2);
+    // CONTROL: the flight row is booking-derived but NOT a dual-point
+    // derivation — no caption element at all.
+    expect(screen.getByTestId(`itinerary-list-item-${ITEM_A_ID}`)).toBeTruthy();
+    expect(screen.queryByTestId(`itinerary-list-item-${ITEM_A_ID}-subtext`)).toBeNull();
   });
 });
 

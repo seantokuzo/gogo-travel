@@ -24,7 +24,11 @@ import {
   ITEM_B_ID,
   ITEM_C_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   makeItineraryItem,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -101,6 +105,25 @@ describe("GridSurface", () => {
       top: 600,
       height: 150,
     });
+  });
+
+  it("captions a rental's derived blocks Pickup / Drop off — and nothing else (B-18)", async () => {
+    await renderGrid({
+      items: [...defaultItineraryItems(), ...rentalItems()],
+      bookingsById: new Map(
+        [...defaultBookings(), rentalBooking()].map((b) => [b.id, b]),
+      ),
+    });
+    // Two blocks, one booking title — the caption is the discriminator.
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_PICKUP_ID}-subtext`),
+    ).toHaveTextContent("Pickup");
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
+    ).toHaveTextContent("Drop off");
+    // CONTROL: a non-derived booking block renders no caption element.
+    expect(screen.getByTestId(`itinerary-grid-item-${ITEM_A_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId(`itinerary-grid-item-${ITEM_A_ID}-subtext`)).toBeNull();
   });
 
   it("floors tiny blocks at MIN_BLOCK_HEIGHT so they stay readable/tappable", async () => {

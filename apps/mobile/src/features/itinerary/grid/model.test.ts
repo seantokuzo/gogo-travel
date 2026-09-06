@@ -7,9 +7,13 @@ import type { Booking } from "@gogo/shared";
 import {
   BOOKING_LODGING_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   defaultBookings,
   makeBooking,
   makeItineraryItem,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -104,6 +108,34 @@ describe("buildGridDays", () => {
     const item = makeItineraryItem({ id: "t-2", start_time: "09:00" });
     const { days } = buildGridDays(TRIP, [item], bookingsMap());
     expect(days[0]?.blocks[0]?.endMinutes).toBe(540 + DEFAULT_BLOCK_MINUTES);
+  });
+
+  it("carries DISTINCT pickup/drop-off subtexts on a rental's two derived blocks (B-18)", () => {
+    const { days } = buildGridDays(
+      TRIP,
+      rentalItems(),
+      bookingsMap([rentalBooking(), ...defaultBookings()]),
+    );
+    const pickup = days[0]?.blocks.find((b) => b.itemId === ITEM_RENTAL_PICKUP_ID);
+    const dropoff = days[1]?.blocks.find((b) => b.itemId === ITEM_RENTAL_DROPOFF_ID);
+    expect(pickup?.subtext).toBe("Pickup");
+    expect(dropoff?.subtext).toBe("Drop off");
+    // The shared `projectItem` enrichment is the one home for the mapping —
+    // both blocks still carry the bare (identical) booking title.
+    expect(pickup?.title).toBe(dropoff?.title);
+  });
+
+  it("CONTROL: a non-derived timed block carries no subtext (B-18)", () => {
+    const item = makeItineraryItem({
+      id: "t-1",
+      kind: "booking",
+      booking_id: defaultBookings()[0]?.id ?? "",
+      title: null,
+      start_time: "10:00",
+      end_time: "12:30",
+    });
+    const { days } = buildGridDays(TRIP, [item], bookingsMap());
+    expect(days[0]?.blocks[0]?.subtext).toBeNull();
   });
 
   it("puts untimed items in the all-day lane, not the block layer (R-itin-16)", () => {
