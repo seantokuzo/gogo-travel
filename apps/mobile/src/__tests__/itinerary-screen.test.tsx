@@ -42,7 +42,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -106,6 +106,19 @@ jest.mock("@/features/itinerary", () => ({
   ...jest.requireActual<typeof import("@/features/itinerary")>("@/features/itinerary"),
   ItineraryDayList: MockSpiedDayList,
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending timers in THIS suite: TanStack's
+ * notify batch + the test client's gcTime-0 GC (0 ms), VirtualizedList's
+ * cell batch (50 ms; the REAL drag list renders here), and the add sheet's
+ * ~200 ms exit. With real timers any of these could land in an un-act'd
+ * waitFor idle gap under CI contention (the B-2 class); under fake timers
+ * nothing fires unless advanced, and every advancement site — RNTL's
+ * fake-branch waitFor/findBy and the aliased `settleFake` (250 ms, a
+ * superset of the pending set) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 function tripFixture(overrides?: Partial<TripListItem>): TripListItem {
   return makeTrip({

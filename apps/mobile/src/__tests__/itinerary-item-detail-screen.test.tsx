@@ -29,7 +29,7 @@ import {
   TRIP_START,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -56,6 +56,17 @@ jest.mock("expo-router", () => ({
     getState: () => ({ routeNames: ["today", "itinerary", "map", "money", "more"] }),
   }),
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending in THIS suite: TanStack's notify
+ * batch + gcTime-0 GC (0 ms) and the delete ConfirmDialog's DS entrance/exit
+ * motion (~200 ms). The held-in-flight delete pins stay deferred-promise
+ * driven — a fake clock advances timers, never an unresolved promise. Every
+ * advancement site — RNTL's fake-branch waitFor/findBy and the aliased
+ * `settleFake` (250 ms, a superset) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 function tripFixture(overrides?: Partial<TripListItem>): TripListItem {
   return makeTrip({

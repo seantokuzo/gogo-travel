@@ -29,7 +29,7 @@ import {
   TRIP_START,
 } from "@/test-utils/itinerary-fixtures";
 import { renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -56,6 +56,16 @@ jest.mock("expo-router", () => ({
     getState: () => ({ routeNames: ["today", "itinerary", "map", "money", "more"] }),
   }),
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending in THIS suite: TanStack's notify
+ * batch (0 ms; the seeded clients here run gcTime Infinity, so no GC timer)
+ * and the REAL day list's VirtualizedList cell batch (50 ms). Every
+ * advancement site — RNTL's fake-branch waitFor/findBy and the aliased
+ * `settleFake` (250 ms, a superset) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 const NETWORK = () => new ApiRequestError(0, "NETWORK", "network request failed");
 const SERVER = () => new ApiRequestError(500, "UNKNOWN", "boom");
