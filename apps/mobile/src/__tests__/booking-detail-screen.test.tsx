@@ -393,12 +393,56 @@ describe("§3.2 status actions", () => {
   });
 });
 
+describe("B-17 — Cancel visibility is booked-only (Sean device-QA ruling)", () => {
+  // §3.2 permits cancel-from-idea/planned ON THE WIRE; the UI ruling
+  // supersedes for the affordance. These are RENDERING pins, not presses —
+  // an absent element can't be pressed, and pressing a disabled one is the
+  // vacuous-pin trap (mobile.md). The dialog derives its `-confirm` id from
+  // the trigger, so asserting BOTH absent proves the guarded
+  // `applyStatus("cancelled")` handler has no invocation path at all.
+  it("renders the Cancel affordance on a BOOKED booking (control)", async () => {
+    await renderDetail({ booking: flightBooking({ status: "booked" }) });
+    await screen.findByTestId("booking-detail-screen");
+    expect(screen.getByTestId("booking-detail-button-cancel")).toBeTruthy();
+  });
+
+  it("renders NO Cancel affordance for an IDEA — and no path to the cancel PATCH", async () => {
+    const patch = jest.fn((_input: Record<string, unknown>) =>
+      Promise.resolve({ ...flightBooking({ status: "cancelled" }) }),
+    );
+    await renderDetail({ booking: flightBooking({ status: "idea" }), patchBooking: patch });
+    await screen.findByTestId("booking-detail-screen");
+    expect(screen.queryByTestId("booking-detail-button-cancel")).toBeNull();
+    // The ConfirmDialog confirm — the ONLY caller of applyStatus("cancelled")
+    // — is unreachable when its trigger never renders.
+    expect(screen.queryByTestId("booking-detail-button-cancel-confirm")).toBeNull();
+    expect(patch).not.toHaveBeenCalled();
+    // NOT read-only: the idea's legal transitions still render (the absence
+    // above is the cancel gate, not a dead action row).
+    expect(screen.getByTestId("booking-detail-button-status-booked")).toBeTruthy();
+  });
+
+  it("renders NO Cancel affordance for a PLANNED booking — and no path to the cancel PATCH", async () => {
+    const patch = jest.fn((_input: Record<string, unknown>) =>
+      Promise.resolve({ ...flightBooking({ status: "cancelled" }) }),
+    );
+    await renderDetail({ booking: flightBooking({ status: "planned" }), patchBooking: patch });
+    await screen.findByTestId("booking-detail-screen");
+    expect(screen.queryByTestId("booking-detail-button-cancel")).toBeNull();
+    expect(screen.queryByTestId("booking-detail-button-cancel-confirm")).toBeNull();
+    expect(patch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("booking-detail-button-status-booked")).toBeTruthy();
+  });
+});
+
 describe("R-itin-26 — cancel / delete confirmations", () => {
   it("requires the ConfirmDialog before cancelling", async () => {
     const patch = jest.fn((_input: Record<string, unknown>) =>
       Promise.resolve({ ...flightBooking({ status: "cancelled" }) }),
     );
-    await renderDetail({ patchBooking: patch });
+    // B-17: cancel is a booked-only affordance now — the flow pins ride a
+    // booked fixture (the only status whose UI can reach the dialog).
+    await renderDetail({ booking: flightBooking({ status: "booked" }), patchBooking: patch });
 
     await fireEvent.press(await screen.findByTestId("booking-detail-button-cancel"));
     await settle();
@@ -417,7 +461,7 @@ describe("R-itin-26 — cancel / delete confirmations", () => {
     const patch = jest.fn((_input: Record<string, unknown>) =>
       Promise.resolve({ ...flightBooking({ status: "cancelled" }) }),
     );
-    await renderDetail({ patchBooking: patch });
+    await renderDetail({ booking: flightBooking({ status: "booked" }), patchBooking: patch });
     await fireEvent.press(await screen.findByTestId("booking-detail-button-cancel"));
     await settle();
     await fireEvent.press(screen.getByTestId("booking-detail-button-cancel-cancel"));
@@ -491,7 +535,7 @@ describe("R-itin-26 — cancel / delete confirmations", () => {
 
   it("surfaces a failed cancel and stays put", async () => {
     const patch = jest.fn(() => Promise.reject(new ApiRequestError(500, "UNKNOWN", "boom")));
-    await renderDetail({ patchBooking: patch });
+    await renderDetail({ booking: flightBooking({ status: "booked" }), patchBooking: patch });
     await fireEvent.press(await screen.findByTestId("booking-detail-button-cancel"));
     await settle();
     await fireEvent.press(screen.getByTestId("booking-detail-button-cancel-confirm"));
@@ -503,7 +547,12 @@ describe("R-itin-26 — cancel / delete confirmations", () => {
 
 describe("R-ib-24 — viewer read-only", () => {
   it("renders the read surface with zero write affordances for a viewer", async () => {
-    await renderDetail({ trip: tripFixture({ role: "viewer" }) });
+    // B-17: a BOOKED fixture, so the cancel-button absence below is the ROLE
+    // gate — on any other status it would be absent for a second reason.
+    await renderDetail({
+      booking: flightBooking({ status: "booked" }),
+      trip: tripFixture({ role: "viewer" }),
+    });
     await screen.findByTestId("booking-detail-screen");
     expect(screen.queryByTestId("booking-detail-button-edit")).toBeNull();
     expect(screen.queryByTestId("booking-detail-button-cancel")).toBeNull();
@@ -515,7 +564,10 @@ describe("R-ib-24 — viewer read-only", () => {
   });
 
   it("CONTROL: the identical fixture as EDITOR renders every write affordance", async () => {
-    await renderDetail({ trip: tripFixture({ role: "editor" }) });
+    await renderDetail({
+      booking: flightBooking({ status: "booked" }),
+      trip: tripFixture({ role: "editor" }),
+    });
     await screen.findByTestId("booking-detail-screen");
     expect(screen.getByTestId("booking-detail-button-edit")).toBeTruthy();
     expect(screen.getByTestId("booking-detail-button-cancel")).toBeTruthy();
@@ -583,14 +635,17 @@ describe("states", () => {
           release = resolve;
         }),
     );
-    await renderDetail({ patchBooking: patch });
+    // B-17: booked fixture — the only status that renders the Cancel button,
+    // whose pending gate this pin covers. `booked → planned` is legal, so the
+    // status-planned trigger still exists; status-booked would be a self-loop
+    // and never renders here (§3.2), hence its absence from the gate loop.
+    await renderDetail({ booking: flightBooking({ status: "booked" }), patchBooking: patch });
     await fireEvent.press(await screen.findByTestId("booking-detail-button-status-planned"));
     await settle();
 
     try {
       expect(patch).toHaveBeenCalledTimes(1);
       for (const id of [
-        "booking-detail-button-status-booked",
         "booking-detail-button-edit",
         "booking-detail-button-cancel",
         "booking-detail-button-delete",
