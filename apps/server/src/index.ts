@@ -2,9 +2,12 @@ import { serve } from "@hono/node-server";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
+import { buildBudgetsDeps } from "./budgets/wire.js";
 import { buildExpensesDeps } from "./expenses/wire.js";
+import { buildFxDeps } from "./fx/wire.js";
 import { buildItineraryDeps } from "./itinerary/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
+import { buildSettlementsDeps } from "./settlements/wire.js";
 import { buildTravelLegs } from "./travel-legs/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
 import { buildUsersDepsFromEnv } from "./users/wire.js";
@@ -75,9 +78,17 @@ if (authDeps) {
     itinerary: buildItineraryDeps(travelLegs.marker),
     // Refresh-legs endpoint (T-7.3) + the staleness sweep below.
     travelLegs: travelLegs.routerDeps,
-    // Expenses CRUD + FX validation (T-9.2 / MON-2). Settlements (T-9.3)
-    // mount with T-9.4's wiring closer — deliberately NOT pre-wired here.
+    // Expenses CRUD + FX validation (T-9.2 / MON-2).
     expenses: buildExpensesDeps(),
+    // Balances + settlements (T-9.3) AND settle-requests (T-9.4) — one dep
+    // set, two routers; mounted here by the T-9.4 wiring closer (the module
+    // shipped UNMOUNTED from W2 by ownership design).
+    settlements: buildSettlementsDeps(),
+    // Budgets G1/G2 (T-9.4 / MON-6).
+    budgets: buildBudgetsDeps(),
+    // FX proxy (T-9.4; P-9 ruling ③): keyless Frankfurter v2 behind
+    // requireAuth + a per-day cache + a per-user rate limit.
+    fx: buildFxDeps(),
   };
   travelLegs.startStalenessJob();
 }
