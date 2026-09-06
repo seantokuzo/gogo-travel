@@ -42,3 +42,26 @@ export async function settle(): Promise<void> {
     }
   });
 }
+
+/**
+ * Fake-timer twin of `settle()` (B-22 ② — the PR #52 members-screen idiom;
+ * see that suite's `jest.useFakeTimers()` header for the full mechanism).
+ * For suites running file-scope fake timers: ONE act window advancing the
+ * fake clock far enough to fire every timer these screens leave pending —
+ * TanStack's notify batch and the test client's gcTime-0 GC (both 0 ms),
+ * VirtualizedList's cell batch (50 ms), a DS Sheet exit (200 ms). Each
+ * completion can then only land HERE, act-wrapped — never in a waitFor idle
+ * gap (RNTL's fake-timer branch advances inside act too, wait-for.js:66).
+ * Anything still un-advanced at file end is discarded with the file's clock.
+ *
+ * Same ONE-HOME rationale as `settle()` above. Converted suites alias this
+ * as `settle` at the import site so their bodies stay byte-identical with
+ * the real-timer era — the swap is helper-internal by construction.
+ */
+export const FAKE_SETTLE_MS = 250;
+
+export async function settleFake(): Promise<void> {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(FAKE_SETTLE_MS);
+  });
+}

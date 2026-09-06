@@ -26,7 +26,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -36,6 +36,15 @@ jest.mock("expo-router", () => ({
   // T-7.9: the screen reads `?day=` for the booking-detail return jump.
   useLocalSearchParams: () => ({}),
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending in THIS suite: TanStack's notify
+ * batch + gcTime-0 GC (0 ms) and the REAL day list's VirtualizedList cell
+ * batch (50 ms). Every advancement site — RNTL's fake-branch waitFor/findBy
+ * and the aliased `settleFake` (250 ms, a superset) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 /** Day 1: two overlapping items listed OUT of time order (14:00 before 09:00). */
 function unsortedOverlappingDay() {
