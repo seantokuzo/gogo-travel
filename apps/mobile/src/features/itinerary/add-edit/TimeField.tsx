@@ -29,10 +29,10 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISOTime } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText, PickerCard } from "@/components";
+import { AppText, PickerCard, usePickerFocus } from "@/components";
 
 export interface TimeFieldProps {
   label: string;
@@ -100,7 +100,10 @@ export function TimeField({
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
-  const close = () => setOpen(false);
+  // Stable identity: usePickerFocus keys its claim slot on this function.
+  const close = useCallback(() => setOpen(false), []);
+  // B-15d: opening this picker closes any other open picker in the family.
+  usePickerFocus(open, close);
   // B-15a parity: commit the DISPLAYED time. A spun change commits & closes
   // through `onValueChange` before Done is reachable, so the displayed time
   // is always the seed (value > context > noon).

@@ -46,10 +46,10 @@
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISODate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText, PickerCard } from "@/components";
+import { AppText, PickerCard, usePickerFocus } from "@/components";
 
 import { formatFieldDate } from "./sections";
 
@@ -124,7 +124,10 @@ export function DateField({
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
-  const close = () => setOpen(false);
+  // Stable identity: usePickerFocus keys its claim slot on this function.
+  const close = useCallback(() => setOpen(false), []);
+  // B-15d: opening this picker closes any other open picker in the family.
+  usePickerFocus(open, close);
   // B-15a: commit the DISPLAYED day. A changed day commits & closes through
   // `onValueChange` before Done is ever reachable, so the displayed day is
   // always the seed (value > context > today) — tapping the pre-highlighted

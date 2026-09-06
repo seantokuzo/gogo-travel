@@ -36,4 +36,5 @@ export { Skeleton } from "./Skeleton";
 export type { SkeletonProps, SkeletonVariant } from "./Skeleton";
 export { TabNav } from "./TabNav";
 export type { TabNavItem, TabNavProps } from "./TabNav";
+export { usePickerFocus } from "./usePickerFocus";
 export { useReduceMotion } from "./useReduceMotion";
