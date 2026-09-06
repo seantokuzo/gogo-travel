@@ -236,6 +236,7 @@ export function ItemForm({
           value={title}
           onChangeText={touch(setTitle)}
           placeholder="e.g. Walk Shibuya"
+          maxLength={200}
           error={fieldErrors["title"] || undefined}
           testID="itinerary-item-new-input-title"
         />
@@ -291,6 +292,7 @@ export function ItemForm({
         value={notes}
         onChangeText={touch(setNotes)}
         multiline
+        maxLength={2000}
         testID="itinerary-item-new-input-notes"
       />
 

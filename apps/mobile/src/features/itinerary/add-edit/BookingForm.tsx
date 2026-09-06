@@ -31,6 +31,7 @@ import {
   BookingUpdateSchema,
   CurrencyCodeSchema,
   deriveAutoItems,
+  minorUnitDigits,
   type BookingCategory,
   type BookingCreate,
   type BookingStatus,
@@ -56,6 +57,7 @@ import {
   CREATE_STATUS_OPTIONS,
   deeplinkInputFor,
   emptyFormState,
+  fieldInputTraits,
   kebab,
   parseMoneyToCents,
   stateFromDetails,
@@ -127,11 +129,15 @@ export function BookingForm({
   const offline = useTripOffline(trip.id);
 
   const [title, setTitle] = useState(booking?.title ?? "");
-  const [details, setDetails] = useState<DetailsFormState>(() =>
+  // Kept alongside `details` (never updated) so buildDetails can scope its
+  // IATA gate to DIRTY values — an untouched stored prefill ("Narita",
+  // wire-legal pre-B-20/capture) must not strand a title-only edit (B-20 R1).
+  const [initialDetails] = useState<DetailsFormState>(() =>
     booking !== undefined
       ? stateFromDetails(booking.details)
       : emptyFormState(category, { day: prefillDay, time: prefillTime }),
   );
+  const [details, setDetails] = useState<DetailsFormState>(initialDetails);
   const [status, setStatus] = useState<BookingStatus>(booking?.status ?? "idea");
   const [priceText, setPriceText] = useState(
     booking !== undefined && booking.price_cents !== null
@@ -207,7 +213,7 @@ export function BookingForm({
    * a block, so it collides with nothing (conflicts.ts module doc).
    */
   const livePlacements = (() => {
-    const built = buildDetails(category, details);
+    const built = buildDetails(category, details, initialDetails);
     if (built.details === null) return [];
     return deriveAutoItems(built.details).map((placement) => ({
       ...placement,
@@ -241,7 +247,7 @@ export function BookingForm({
     const trimmedTitle = title.trim();
     if (trimmedTitle === "") errors["title"] = "Give it a name.";
 
-    const built = buildDetails(category, details);
+    const built = buildDetails(category, details, initialDetails);
     Object.assign(errors, built.errors);
 
     // Law #2: money enters as a plain-text amount, parsed with integer
@@ -335,6 +341,7 @@ export function BookingForm({
         value={title}
         onChangeText={touch(setTitle)}
         placeholder="e.g. Park Hyatt Tokyo"
+        maxLength={200}
         error={fieldErrors["title"] || undefined}
         testID="itinerary-item-new-input-title"
       />
@@ -433,14 +440,21 @@ export function BookingForm({
               />
             );
           }
+          // B-20: keyboard/caps/correction/length + as-you-type normalization
+          // derive from ONE traits table (form-model) — every field of a kind
+          // behaves identically.
+          const traits = fieldInputTraits(field);
           return (
             <Input
               key={field.key}
               label={field.label}
               value={typeof details[field.key] === "string" ? (details[field.key] as string) : ""}
-              onChangeText={(value) => setDetailField(field.key, value)}
+              onChangeText={(value) => setDetailField(field.key, traits.transform(value))}
               multiline={field.kind === "text" && field.multiline === true}
-              keyboardType={field.kind === "int" ? "number-pad" : field.kind === "url" ? "url" : "default"}
+              keyboardType={traits.keyboardType}
+              autoCapitalize={traits.autoCapitalize}
+              autoCorrect={traits.autoCorrect}
+              maxLength={traits.maxLength}
               error={fieldErrors[field.key] || undefined}
               testID={`itinerary-item-new-input-${kebab(field.key)}`}
             />
@@ -455,7 +469,11 @@ export function BookingForm({
             value={priceText}
             onChangeText={touch(setPriceText)}
             placeholder="89.99"
-            keyboardType="decimal-pad"
+            // B-20 (CapInput parity): a zero-decimal currency gets the plain
+            // number pad — the decimal key would only ever produce the
+            // "no decimals" parse error. minorUnitDigits is case-insensitive
+            // and defaults unknown codes to 2 (mid-edit currency text).
+            keyboardType={minorUnitDigits(currencyText) === 0 ? "number-pad" : "decimal-pad"}
             helper="Whole amount — stored as exact cents."
             error={fieldErrors["price"] || undefined}
             testID="itinerary-item-new-input-price"
@@ -465,8 +483,13 @@ export function BookingForm({
           <Input
             label="Currency"
             value={currencyText}
-            onChangeText={touch(setCurrencyText)}
+            // B-20: ISO-4217 codes are uppercase — normalize as-you-type
+            // (trip-settings precedent), keyboard hints match.
+            onChangeText={(value) => touch(setCurrencyText)(value.toUpperCase())}
             placeholder={trip.base_currency}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={3}
             error={fieldErrors["currency"] || undefined}
             testID="itinerary-item-new-input-currency"
           />
@@ -476,7 +499,14 @@ export function BookingForm({
       <Input
         label="Confirmation code"
         value={confirmation}
-        onChangeText={touch(setConfirmation)}
+        // B-20: codes are case-insensitive and shown uppercase — normalize
+        // as-you-type (mirrors the shared wire schema's uppercase-normalize).
+        // Length stays the wire cap (100): PNRs are 6 alnum but hotel/OTA
+        // confirmation numbers run longer — no format lock without a ruling.
+        onChangeText={(value) => touch(setConfirmation)(value.toUpperCase())}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        maxLength={100}
         error={fieldErrors["confirmation"] || undefined}
         testID="itinerary-item-new-input-confirmation"
       />

@@ -165,6 +165,135 @@ it("no ?category= → the 10-option step; picking flight mounts its form + partn
   expect(screen.getByTestId("itinerary-item-new-button-search-skyscanner")).toBeDisabled();
 });
 
+it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a field error", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "SFO to Tokyo");
+  // As-you-type normalization — lowercase in, uppercase rendered.
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "sfo");
+  expect(screen.getByTestId("itinerary-item-new-input-origin-iata").props.value).toBe("SFO");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-flight-number"),
+    "ua837",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-flight-number").props.value).toBe("UA837");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-confirmation"),
+    "abc123",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-confirmation").props.value).toBe("ABC123");
+
+  // Save-time IATA gate: 2 letters → FIELD error (never the generic banner),
+  // no wire call.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nr",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-destination-iata-error")).toBeOnTheScreen();
+
+  // Fixing the code clears the gate; the body carries normalized values.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nrt",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "SFO",
+    destination_iata: "NRT",
+    flight_number: "UA837",
+  });
+  expect(body.confirmation_code).toBe("ABC123");
+});
+
+it("B-20 R1: field traits reach the rendered Inputs — prop pins on the traits→Input seam", async () => {
+  // jest's fireEvent.changeText BYPASSES native maxLength (and keyboards
+  // don't exist under jest at all), so prop assertions are the only
+  // red-capable pin shape for this class — behavioral typing tests stay
+  // green with the trait wiring dead (round-1 P5/P7 probes). These pins
+  // kill P5: strip keyboardType/autoCapitalize/autoCorrect/maxLength from
+  // BookingForm's detail Input and they go red.
+  await renderScreen({ category: "flight" });
+
+  const iata = screen.getByTestId("itinerary-item-new-input-origin-iata");
+  expect(iata.props.maxLength).toBe(3);
+  expect(iata.props.autoCapitalize).toBe("characters");
+  expect(iata.props.autoCorrect).toBe(false);
+  expect(iata.props.keyboardType).toBe("default");
+
+  // Plain text detail field — the optionalString(200) wire-cap mirror.
+  expect(screen.getByTestId("itinerary-item-new-input-airline").props.maxLength).toBe(200);
+
+  // Confirmation code — the shared ConfirmationCodeSchema max(100) mirror
+  // plus its code-field casing traits (call-site literals, round-1 P7).
+  const confirmation = screen.getByTestId("itinerary-item-new-input-confirmation");
+  expect(confirmation.props.maxLength).toBe(100);
+  expect(confirmation.props.autoCapitalize).toBe("characters");
+  expect(confirmation.props.autoCorrect).toBe(false);
+});
+
+it("B-20 R1: int fields render the number pad — prop pin", async () => {
+  await renderScreen({ category: "lodging" });
+  const guests = screen.getByTestId("itinerary-item-new-input-guests");
+  expect(guests.props.keyboardType).toBe("number-pad");
+  expect(guests.props.maxLength).toBe(9);
+});
+
+it("B-20: lowercase currency normalizes as-you-type and reaches the wire uppercase", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "activity" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Kaiseki");
+  // R1 prop pin (round-1 P6 — the zero-decimal branch was invertible):
+  // 2-decimal default (trip base USD) gets the decimal pad…
+  expect(screen.getByTestId("itinerary-item-new-input-price").props.keyboardType).toBe(
+    "decimal-pad",
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-currency"), "jpy");
+  expect(screen.getByTestId("itinerary-item-new-input-currency").props.value).toBe("JPY");
+  // …and a zero-decimal currency flips it to the plain number pad (the
+  // decimal key's only product for JPY would be a parse error).
+  expect(screen.getByTestId("itinerary-item-new-input-price").props.keyboardType).toBe(
+    "number-pad",
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-price"), "1500");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  // The zero-decimal parse consulted the NORMALIZED currency — 1500 minor
+  // units, not a 100× corruption (Law #2 arm of the uppercase pin).
+  expect(body.currency).toBe("JPY");
+  expect(body.price_cents).toBe(1500);
+});
+
 it("booking create: body is a valid BookingCreate — default idea status, Law #2 cents", async () => {
   const created: unknown[] = [];
   await renderScreen(
@@ -483,6 +612,48 @@ it("booking edit: prefilled from the detail read; PATCH is a valid BookingUpdate
   // Status untouched ⇒ absent (§3.2 has no self-loops).
   expect("status" in input.body).toBe(false);
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
+});
+
+it("B-20 R1: a stored non-code IATA value never blocks a title-only edit — untouched prefill rides verbatim", async () => {
+  // Pre-B-20 / AI-capture rows can legally store origin_iata "Narita"
+  // (wire optionalString 200). The save-time gate guards what the USER
+  // typed — an untouched prefill must neither error nor mutate (round-1
+  // correctness lane). This pins the SCREEN threading: BookingForm must
+  // hand its initial state to buildDetails or the gate strands the row.
+  const patched: unknown[] = [];
+  const existing: BookingWithItems = {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Old name",
+      details: { category: "flight", origin_iata: "Narita" },
+    }),
+    items: [],
+  };
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve({ ...existing, title: "New name" });
+        },
+      },
+    },
+  );
+
+  const titleInput = await screen.findByTestId("itinerary-item-new-input-title");
+  await fireEvent.changeText(titleInput, "New name");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.title).toBe("New name");
+  expect(body.details).toMatchObject({ category: "flight", origin_iata: "Narita" });
+  expect(screen.queryByTestId("itinerary-item-new-input-origin-iata-error")).toBeNull();
 });
 
 it("place visit: CT-2 typeahead against /places/search; create body is a valid ItineraryItemCreate (R-itin-23)", async () => {

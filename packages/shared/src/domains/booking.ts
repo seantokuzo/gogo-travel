@@ -408,7 +408,21 @@ export function deriveAutoItems(details: BookingDetails): DerivedItemPlacement[]
  * input, bounded so no write surface accepts megabyte strings.
  */
 const BookingTitleSchema = z.string().trim().min(1).max(200);
-const ConfirmationCodeSchema = z.string().trim().min(1).max(100);
+/**
+ * B-20 storage hygiene: confirmation codes normalize trim + UPPERCASE at the
+ * wire (codes are case-insensitive in practice and displayed uppercase).
+ * Uppercase runs AFTER the length checks: Unicode case-folding can EXPAND
+ * UTF-16 length (ß→SS), so max(100) must measure the user's actual input —
+ * upper-before-max would 400 a stored 60×ß code at its next edit (round-1
+ * security lane). Order pinned in booking.test.ts. With length validated
+ * pre-fold, the acceptance set is identical to the pre-B-20 schema — stored
+ * lowercase codes self-heal on their next edit instead of 400ing (output is
+ * bounded ≤300 units worst case). Charset/length stay permissive (1–100):
+ * PNRs are 6 alnum but hotel/OTA confirmation numbers run longer with
+ * hyphens — the format lock is a Sean decision (B-20 questionable list),
+ * not a schema fact.
+ */
+const ConfirmationCodeSchema = z.string().trim().min(1).max(100).toUpperCase();
 
 /**
  * R-ib-11: direct-client `source` values. `email`/`share` are settable ONLY

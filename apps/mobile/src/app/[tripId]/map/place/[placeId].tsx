@@ -383,6 +383,7 @@ export default function PlaceDetailScreen() {
               onChangeText={setNoteDraft}
               placeholder="Why this place?"
               multiline
+              maxLength={2000}
               testID="place-detail-input-note"
             />
             {noteDirty ? (

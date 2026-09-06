@@ -100,4 +100,22 @@ describe("Input", () => {
     expect(field.props.returnKeyType).toBe("done");
     expect(field.props.placeholderTextColor).toBe(lightTheme.color.text.muted);
   });
+
+  it("passes through autoCapitalize/autoCorrect/maxLength (B-20 code-field props)", async () => {
+    await renderWithTheme(
+      <Input
+        label="Currency"
+        value=""
+        onChangeText={() => undefined}
+        autoCapitalize="characters"
+        autoCorrect={false}
+        maxLength={3}
+        testID="in"
+      />,
+    );
+    const field = screen.getByTestId("in");
+    expect(field.props.autoCapitalize).toBe("characters");
+    expect(field.props.autoCorrect).toBe(false);
+    expect(field.props.maxLength).toBe(3);
+  });
 });

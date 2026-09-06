@@ -72,6 +72,8 @@ export function PlacePickerField({
           if (selected !== null) onSelect(null);
         }}
         placeholder="Search places"
+        // B-20: autocorrect fights foreign place names (destination-search parity).
+        autoCorrect={false}
         helper={
           selected === null && query !== "" && !searchActive
             ? "Keep typing — search starts at 4 characters."
