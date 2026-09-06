@@ -121,6 +121,15 @@ describe("Sheet", () => {
     });
 
     it("is NOT hit-testable through the exit animation", async () => {
+      // B-21: fake timers PIN the exit window open. With real timers this
+      // test raced the real ~200ms exit — a CI starvation stall could let
+      // the exit COMPLETE mid-test (sheet unmounts → getByTestId throws) or
+      // let the still-mounted completion setState land in an un-act'd gap
+      // between the awaited act calls below (the "not wrapped in act"
+      // sighting, repro'd under SIGSTOP pulsing of the jest worker). Under
+      // fake timers the exit timer cannot fire unless advanced — and this
+      // test never advances it.
+      jest.useFakeTimers();
       const onDismiss = jest.fn();
       const view = await renderWithTheme(
         <Sheet visible onDismiss={onDismiss} testID="sheet">
@@ -168,11 +177,21 @@ describe("Sheet", () => {
     });
 
     it("guards the completion setState when unmounted mid-exit", async () => {
-      // REAL timers, and the drain deliberately happens OUTSIDE act: this is
-      // the exact escape shape (the exit timer lands after the consumer tore
+      // The exact escape shape (the exit timer lands after the consumer tore
       // the sheet down — the act-warning class that cost T-6.9/PR #14 review
-      // rounds). Unguarded, React logs "An update to Sheet ... not wrapped
-      // in act" here; the errorSpy makes that a deterministic red.
+      // rounds), determinized in B-21. FAKE timers, because with real timers
+      // this test itself raced: a ≥200ms starvation stall between the
+      // rerender and the unmount let the completion fire BEFORE the unmount,
+      // outside act while the sheet was still mounted — a legitimate
+      // setState turning the errorSpy red (the incident class). Under fake
+      // timers the completion can only fire in the drain below, strictly
+      // after teardown. The drain still deliberately happens OUTSIDE act —
+      // the completion callback executes un-act'd, and the spy proves
+      // nothing escapes. (React 19 note: a post-unmount setState is silently
+      // dropped without any act warning, so this spy discriminates the
+      // un-act'd-escape class, not the unmountedRef guard per se — true of
+      // the original real-timer version of this pin as well.)
+      jest.useFakeTimers();
       const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
       const view = await renderWithTheme(
         <Sheet visible onDismiss={() => undefined} testID="sheet">
@@ -186,10 +205,11 @@ describe("Sheet", () => {
           </Sheet>,
         ),
       );
-      // Consumer tears the sheet down before the ~200ms exit timer lands.
+      // Consumer tears the sheet down before the ~200ms exit timer lands —
+      // guaranteed now: fake time has not advanced since the exit started.
       await view.unmount();
       // Drain WITHOUT act on purpose — proving nothing escapes un-act'd.
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await jest.advanceTimersByTimeAsync(400);
       expect(errorSpy).not.toHaveBeenCalled();
       errorSpy.mockRestore();
     });
