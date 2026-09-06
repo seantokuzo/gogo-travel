@@ -115,6 +115,18 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
     entry.checkpoint === null
       ? `itinerary-list-item-${entry.itemId}`
       : `itinerary-list-item-${entry.itemId}-${entry.checkpoint}`;
+  // B-18/B-23: the row discriminator joins the label — the container label
+  // suppresses the Badge/caption subtree, so without it a lodging's check-in
+  // and check-out rows (and a rental's pickup/drop-off rows) announce the
+  // same bare title to VoiceOver. Same precedence as the grid
+  // (GridDayColumn): checkpoint first, never both — subtext is rental-only,
+  // checkpoint lodging-only.
+  const labelSuffix =
+    entry.checkpoint !== null
+      ? ` ${entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}`
+      : entry.subtext !== null
+        ? ` ${entry.subtext}`
+        : "";
   return (
     <Card
       onPress={() => onOpen(entry)}
@@ -125,9 +137,7 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
         drag();
       }}
       testID={testID}
-      // B-18: the subtext joins the label — two derived rental rows must be
-      // distinguishable to VoiceOver too, not just visually.
-      accessibilityLabel={entry.subtext === null ? entry.title : `${entry.title} ${entry.subtext}`}
+      accessibilityLabel={`${entry.title}${labelSuffix}`}
       style={s.card}
     >
       <View style={s.cardRow}>
