@@ -15,6 +15,13 @@
       "when": 1788069678904,
       "tag": "0001_brown_microchip",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788660275712,
+      "tag": "0002_lowly_venom",
+      "breakpoints": true
     }
   ]
 }

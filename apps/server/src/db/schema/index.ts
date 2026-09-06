@@ -8,6 +8,7 @@ export * from "./identity.js";
 export * from "./auth.js";
 export * from "./trips.js";
 export * from "./places.js";
+export * from "./reference.js";
 export * from "./bookings.js";
 export * from "./itinerary.js";
 export * from "./money.js";
