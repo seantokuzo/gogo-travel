@@ -87,6 +87,12 @@ interface GridEntryMeta {
   icon: IconName;
   /** `planned` = accent edge, `booked` = success edge (§2.5); null otherwise. */
   status: BookingStatus | null;
+  /**
+   * B-18: "Pickup" / "Drop off" on a rental's derived point items — computed
+   * once in `projectItem` (the shared enrichment), so list and grid can never
+   * disagree about which edge a row is. Null everywhere else.
+   */
+  subtext: string | null;
 }
 
 export interface GridTimedBlock extends GridEntryMeta, ColumnAssignment {
@@ -168,6 +174,7 @@ export function buildGridDays(
       title: first.title,
       icon: first.icon,
       status: first.status,
+      subtext: first.subtext,
     };
 
     // `projectItem` emits two entries ⟺ spanning lodging (R-itin-31): the

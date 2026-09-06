@@ -125,7 +125,9 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
         drag();
       }}
       testID={testID}
-      accessibilityLabel={entry.title}
+      // B-18: the subtext joins the label — two derived rental rows must be
+      // distinguishable to VoiceOver too, not just visually.
+      accessibilityLabel={entry.subtext === null ? entry.title : `${entry.title} ${entry.subtext}`}
       style={s.card}
     >
       <View style={s.cardRow}>
@@ -134,6 +136,17 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
           <AppText role="body" numberOfLines={1}>
             {entry.title}
           </AppText>
+          {/* B-18: "Pickup" / "Drop off" caption on a rental's derived point
+              rows — the §2.2 caption typography, same as the time line. */}
+          {entry.subtext !== null ? (
+            <AppText
+              role="caption"
+              color="secondary"
+              testID={`itinerary-list-item-${entry.itemId}-subtext`}
+            >
+              {entry.subtext}
+            </AppText>
+          ) : null}
           <AppText role="caption" color="secondary">
             {entry.timeLabel}
           </AppText>
