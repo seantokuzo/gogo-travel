@@ -17,19 +17,15 @@
  *
  * Driver: postgres-js on ephemeral testcontainers Postgres — a Docker-less
  * CI run is a HARD FAILURE; a local Docker-less run skips with a loud
- * banner. No network beyond the local container (Law #5). Run the server DB
- * suites with `--no-file-parallelism` (Testcontainers contention, QUEUE P1).
+ * banner. No network beyond the local container (Law #5). Suites run
+ * file-parallel on per-suite clones of the shared container (T-S3.3 —
+ * `--no-file-parallelism` retired).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { BudgetsReadSchema, type BudgetsRead } from "@gogo/shared/domains/money";
 import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
 import { EXPENSE_CATEGORIES, type TripMemberRole } from "@gogo/shared/enums";
@@ -44,43 +40,18 @@ import {
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
 import { createBudgetsRouter } from "./routes.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-9.4 BUDGETS SUITE SKIPPED                 ║\n" +
-      "║  G1/G2 (R-money-20: taxonomy synthesis, computed spend, cap       ║\n" +
-      "║  upsert + estimate preservation, total block) and the F-038       ║\n" +
-      "║  IDOR harness were NOT verified. Start Docker and re-run          ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-9.4 budgets suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-9.4 budgets suite could " +
-        "not verify money spec §2 G1/G2 (R-money-20, 25/26). A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
 
 describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
+  let suiteDb: SuiteDb;
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
@@ -90,14 +61,9 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("budgets_routes");
+    client = suiteDb.client;
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -120,8 +86,7 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   // ---- seeding helpers ------------------------------------------------------
