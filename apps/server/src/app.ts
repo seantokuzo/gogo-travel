@@ -7,6 +7,7 @@ import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes
 import { createExpensesRouter, type ExpensesRouterDeps } from "./expenses/routes.js";
 import { createItineraryRouter, type ItineraryRouterDeps } from "./itinerary/routes.js";
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
+import { createReferenceRouter, type ReferenceRouterDeps } from "./reference/routes.js";
 import { createSavedPlacesRouter } from "./places/saved-places-routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
@@ -82,6 +83,13 @@ export interface CreateAppOptions {
    */
   places?: PlacesRouterDeps;
   /**
+   * Transport reference surface (B-9 airports/airlines typeahead + flight-
+   * number inference). Same pairing rule: the rows are global reference
+   * data, but every route is Auth: Required (uniform surface — R-authz-1),
+   * so reference-without-auth is a wiring bug.
+   */
+  reference?: ReferenceRouterDeps;
+  /**
    * Bookings-surface dependencies (T-7.1 booking service + router). Same
    * pairing rule: every route is Auth: Required AND sits behind the
    * trip-membership gate (R-ib-24) — bookings-without-auth is a wiring bug.
@@ -118,6 +126,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.places && !options.auth) {
     throw new Error("places router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.reference && !options.auth) {
+    throw new Error("reference router requires auth deps — it must sit behind requireAuth");
   }
   if (options.bookings && !options.auth) {
     throw new Error("bookings router requires auth deps — it must sit behind requireAuth");
@@ -194,6 +205,10 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     // Saved-places CRUD (T-8.1/PL-4) rides the places dep set: same DB, and
     // every route sits behind requireAuth + the trip-membership gate.
     app.route(API_BASE, createSavedPlacesRouter({ db: options.places.db }));
+  }
+
+  if (options.reference) {
+    app.route(API_BASE, createReferenceRouter(options.reference));
   }
 
   if (options.bookings) {
