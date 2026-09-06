@@ -255,6 +255,7 @@ export default function TripNewScreen() {
               if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }));
             }}
             placeholder="Spring in Kyoto"
+            maxLength={200}
             error={fieldErrors.name}
             returnKeyType="next"
             testID="trip-new-input-name"
@@ -274,6 +275,9 @@ export default function TripNewScreen() {
                 }
               }}
               placeholder="Search cities"
+              // B-20: autocorrect fights foreign place names — the core input
+              // of a travel app's destination search.
+              autoCorrect={false}
               helper={
                 selectedPlace === null && destinationQuery !== "" && !searchActive
                   ? "Keep typing — search starts at 4 characters."

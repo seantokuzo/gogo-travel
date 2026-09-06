@@ -458,6 +458,7 @@ export default function TripSettingsScreen() {
                 label="Name"
                 value={name}
                 onChangeText={setName}
+                maxLength={200}
                 error={dirty ? nameError : undefined}
                 returnKeyType="done"
                 testID="trip-settings-input-name"
@@ -474,6 +475,9 @@ export default function TripSettingsScreen() {
                     setDestinationError(undefined);
                   }}
                   placeholder="Search cities"
+                  // B-20: autocorrect fights foreign place names (CT-2 parity
+                  // with trip-new).
+                  autoCorrect={false}
                   helper={
                     destinationEditing && !searchActive && destinationQuery !== ""
                       ? "Keep typing — search starts at 4 characters."
@@ -690,6 +694,9 @@ export default function TripSettingsScreen() {
               currencyDraft.length > 0 && !currencyValid ? "Three letters, e.g. USD" : undefined
             }
             autoComplete="off"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={3}
             testID="trip-settings-input-currency"
           />
           <Button

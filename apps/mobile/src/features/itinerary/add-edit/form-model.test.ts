@@ -18,6 +18,7 @@ import {
   composeLocalDateTime,
   deeplinkInputFor,
   emptyFormState,
+  fieldInputTraits,
   parseMoneyToCents,
   primaryStartKey,
   stateFromDetails,
@@ -33,6 +34,7 @@ describe("buildDetails (state → wire)", () => {
         if (field.kind === "datetime") state[field.key] = { date: "2027-03-02", time: "14:30" };
         else if (field.kind === "int") state[field.key] = "3";
         else if (field.kind === "url") state[field.key] = "https://example.com/x";
+        else if (field.kind === "iata") state[field.key] = "NRT";
         else if (field.kind === "enum") state[field.key] = field.options[0] ?? "";
         else state[field.key] = "Some text";
       }
@@ -73,6 +75,30 @@ describe("buildDetails (state → wire)", () => {
     expect(built.errors["guests"]).toBeDefined();
   });
 
+  it("B-20: IATA fields must be exactly 3 letters; lowercase normalizes, junk errors", () => {
+    // Lowercase self-heals (edit-mode prefill of stored lowercase must save,
+    // not strand the user on an error for text they never typed).
+    const ok = emptyFormState("flight");
+    ok["origin_iata"] = "nrt";
+    ok["destination_iata"] = "LAX";
+    const builtOk = buildDetails("flight", ok);
+    expect(builtOk.errors).toEqual({});
+    expect(builtOk.details).toMatchObject({ origin_iata: "NRT", destination_iata: "LAX" });
+
+    // Too short / not-a-code both error field-level (never the opaque
+    // generic banner), and empty stays legal (every detail field optional).
+    for (const bad of ["NR", "NRT4", "Narita"]) {
+      const state = emptyFormState("flight");
+      state["origin_iata"] = bad;
+      const built = buildDetails("flight", state);
+      expect(built.details).toBeNull();
+      expect(built.errors["origin_iata"]).toMatch(/3-letter/);
+    }
+    expect(buildDetails("flight", emptyFormState("flight")).details).toEqual({
+      category: "flight",
+    });
+  });
+
   it("composeLocalDateTime round-trips through stateFromDetails (wall slicing)", () => {
     expect(composeLocalDateTime("2027-03-02", "14:30")).toBe("2027-03-02T14:30:00Z");
     const state = emptyFormState("activity");
@@ -85,6 +111,56 @@ describe("buildDetails (state → wire)", () => {
     expect(back["starts_at"]).toEqual({ date: "2027-03-02", time: "14:30" });
     expect(back["venue_name"]).toBe("TeamLab");
     expect(back["ticket_count"]).toBe("2");
+  });
+});
+
+describe("fieldInputTraits (B-20 — one derivation for every rendered field)", () => {
+  it("iata: 3-cap, uppercase transform, characters keyboard, no autocorrect", () => {
+    const traits = fieldInputTraits({ key: "origin_iata", label: "From (IATA)", kind: "iata" });
+    expect(traits.maxLength).toBe(3);
+    expect(traits.autoCapitalize).toBe("characters");
+    expect(traits.autoCorrect).toBe(false);
+    expect(traits.transform("nrt")).toBe("NRT");
+  });
+
+  it("designator text: uppercase transform + no autocorrect ('ua837' → 'UA837')", () => {
+    const traits = fieldInputTraits({
+      key: "flight_number",
+      label: "Flight number",
+      kind: "text",
+      designator: true,
+    });
+    expect(traits.transform("ua837")).toBe("UA837");
+    expect(traits.autoCapitalize).toBe("characters");
+    expect(traits.autoCorrect).toBe(false);
+    expect(traits.maxLength).toBe(20);
+  });
+
+  it("plain text mirrors the wire caps: 200, 2000 when multiline; transform is identity", () => {
+    const plain = fieldInputTraits({ key: "airline", label: "Airline", kind: "text" });
+    expect(plain.maxLength).toBe(200);
+    expect(plain.transform("Ana")).toBe("Ana");
+    const notes = fieldInputTraits({
+      key: "description",
+      label: "Description",
+      kind: "text",
+      multiline: true,
+    });
+    expect(notes.maxLength).toBe(2000);
+  });
+
+  it("url: never capitalized or autocorrected (a 'corrected' URL is a broken URL)", () => {
+    const traits = fieldInputTraits({ key: "external_url", label: "URL", kind: "url" });
+    expect(traits.keyboardType).toBe("url");
+    expect(traits.autoCapitalize).toBe("none");
+    expect(traits.autoCorrect).toBe(false);
+    expect(traits.maxLength).toBe(2048);
+  });
+
+  it("int: number pad + the INT_RE 9-digit ceiling", () => {
+    const traits = fieldInputTraits({ key: "guests", label: "Guests", kind: "int" });
+    expect(traits.keyboardType).toBe("number-pad");
+    expect(traits.maxLength).toBe(9);
   });
 });
 

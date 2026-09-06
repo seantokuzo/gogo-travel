@@ -45,22 +45,42 @@ export type FieldValue = string | DateTimeValue;
 export type DetailsFormState = Record<string, FieldValue>;
 
 export type BookingFieldConfig =
-  | { key: string; label: string; kind: "text"; multiline?: boolean }
+  | {
+      key: string;
+      label: string;
+      kind: "text";
+      multiline?: boolean;
+      /**
+       * B-20: short uppercase code-like values (flight/train numbers, seats,
+       * coaches — "ua837" is always meant as "UA837"). Auto-uppercased
+       * as-you-type, autocorrect off. Presentation only — buildDetails does
+       * NOT validate these (formats vary by carrier).
+       */
+      designator?: boolean;
+    }
   | { key: string; label: string; kind: "int" }
   | { key: string; label: string; kind: "url" }
+  /**
+   * B-20: IATA airport code — exactly 3 letters, auto-uppercased. Save-time
+   * validation lives in buildDetails (client-side only: the SHARED schema
+   * stays max(200) until B-9's airport picker lands — narrowing the wire
+   * shape now could brick READS of already-stored non-code text, since the
+   * details schemas serve both directions; see the B-20 decision list).
+   */
+  | { key: string; label: string; kind: "iata" }
   | { key: string; label: string; kind: "datetime" }
   | { key: string; label: string; kind: "enum"; options: readonly string[] };
 
 export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingFieldConfig[]>> = {
   flight: [
     { key: "airline", label: "Airline", kind: "text" },
-    { key: "flight_number", label: "Flight number", kind: "text" },
-    { key: "origin_iata", label: "From (IATA)", kind: "text" },
-    { key: "destination_iata", label: "To (IATA)", kind: "text" },
+    { key: "flight_number", label: "Flight number", kind: "text", designator: true },
+    { key: "origin_iata", label: "From (IATA)", kind: "iata" },
+    { key: "destination_iata", label: "To (IATA)", kind: "iata" },
     { key: "departs_at", label: "Departs", kind: "datetime" },
     { key: "arrives_at", label: "Arrives", kind: "datetime" },
     { key: "cabin_class", label: "Cabin class", kind: "text" },
-    { key: "seat", label: "Seat", kind: "text" },
+    { key: "seat", label: "Seat", kind: "text", designator: true },
   ],
   lodging: [
     { key: "property_name", label: "Property name", kind: "text" },
@@ -73,13 +93,13 @@ export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingF
   ],
   train: [
     { key: "carrier", label: "Carrier", kind: "text" },
-    { key: "train_number", label: "Train number", kind: "text" },
+    { key: "train_number", label: "Train number", kind: "text", designator: true },
     { key: "origin_station", label: "From station", kind: "text" },
     { key: "destination_station", label: "To station", kind: "text" },
     { key: "departs_at", label: "Departs", kind: "datetime" },
     { key: "arrives_at", label: "Arrives", kind: "datetime" },
-    { key: "coach", label: "Coach", kind: "text" },
-    { key: "seat", label: "Seat", kind: "text" },
+    { key: "coach", label: "Coach", kind: "text", designator: true },
+    { key: "seat", label: "Seat", kind: "text", designator: true },
   ],
   car_rental: [
     { key: "company", label: "Company", kind: "text" },
@@ -129,6 +149,75 @@ export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingF
  */
 export function kebab(key: string): string {
   return key.replaceAll("_", "-");
+}
+
+// ---------------------------------------------------------------------------
+// Per-field input traits (B-20 — input UX + validation sweep)
+// ---------------------------------------------------------------------------
+
+/**
+ * RN TextInput behavior for a `CATEGORY_FIELDS` entry, derived in ONE place
+ * so every rendered field gets the same treatment. Length caps mirror the
+ * SHARED wire caps (booking.ts: `optionalString` 200 / `optionalNotes` 2000 /
+ * `optionalUrl` 2048; `INT_RE` allows 9 digits) — a cap here prevents typing
+ * past a limit the save would reject with an opaque generic error, and is
+ * never tighter than the wire.
+ */
+export interface FieldInputTraits {
+  keyboardType: "default" | "number-pad" | "url";
+  autoCapitalize?: "none" | "characters";
+  autoCorrect?: boolean;
+  maxLength: number;
+  /** As-you-type normalization — uppercase for code-like fields, else identity. */
+  transform(text: string): string;
+}
+
+const identity = (text: string): string => text;
+const upper = (text: string): string => text.toUpperCase();
+
+export function fieldInputTraits(field: BookingFieldConfig): FieldInputTraits {
+  switch (field.kind) {
+    case "iata":
+      return {
+        keyboardType: "default",
+        autoCapitalize: "characters",
+        autoCorrect: false,
+        maxLength: 3,
+        transform: upper,
+      };
+    case "int":
+      return { keyboardType: "number-pad", maxLength: 9, transform: identity };
+    case "url":
+      // iOS applies sentence-casing regardless of the URL keyboard — a
+      // capitalized/auto-"corrected" URL is a broken URL.
+      return {
+        keyboardType: "url",
+        autoCapitalize: "none",
+        autoCorrect: false,
+        maxLength: 2048,
+        transform: identity,
+      };
+    case "text":
+      if (field.designator === true) {
+        return {
+          keyboardType: "default",
+          autoCapitalize: "characters",
+          autoCorrect: false,
+          // UX bound only (designators are short); the wire cap stays 200.
+          maxLength: 20,
+          transform: upper,
+        };
+      }
+      return {
+        keyboardType: "default",
+        maxLength: field.multiline === true ? 2000 : 200,
+        transform: identity,
+      };
+    // Not rendered through Input — traits exist so the switch is total.
+    case "datetime":
+    case "enum":
+      return { keyboardType: "default", maxLength: 200, transform: identity };
+  }
 }
 
 /** The category's primary-start detail key (§3.3 table) — gap-tap prefill target. */
@@ -206,11 +295,14 @@ export function composeLocalDateTime(date: string, time: string): string {
 }
 
 const INT_RE = /^\d{1,9}$/;
+const IATA_RE = /^[A-Z]{3}$/;
 
 /**
  * Form state → the category's `BookingDetails` member. Empty fields are
  * OMITTED (every detail field is optional by design); int fields must be
- * whole numbers; datetime fields need BOTH halves or NEITHER.
+ * whole numbers; IATA fields must be exactly 3 letters (normalized
+ * uppercase, so an edit-mode prefill of stored lowercase self-heals rather
+ * than erroring — B-20); datetime fields need BOTH halves or NEITHER.
  */
 export function buildDetails(
   category: BookingCategory,
@@ -238,6 +330,15 @@ export function buildDetails(
         continue;
       }
       out[field.key] = Number(text);
+      continue;
+    }
+    if (field.kind === "iata") {
+      const code = text.toUpperCase();
+      if (!IATA_RE.test(code)) {
+        errors[field.key] = "3-letter airport code, like NRT.";
+        continue;
+      }
+      out[field.key] = code;
       continue;
     }
     out[field.key] = text;

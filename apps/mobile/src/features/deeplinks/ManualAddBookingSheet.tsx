@@ -102,6 +102,7 @@ export function ManualAddBookingSheet({
           value={title}
           onChangeText={setTitle}
           placeholder="e.g. Park Hyatt Tokyo"
+          maxLength={200}
           testID="booking-manual-add-input-title"
         />
         <Button

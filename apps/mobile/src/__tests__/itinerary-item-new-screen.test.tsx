@@ -165,6 +165,92 @@ it("no ?category= → the 10-option step; picking flight mounts its form + partn
   expect(screen.getByTestId("itinerary-item-new-button-search-skyscanner")).toBeDisabled();
 });
 
+it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a field error", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "SFO to Tokyo");
+  // As-you-type normalization — lowercase in, uppercase rendered.
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "sfo");
+  expect(screen.getByTestId("itinerary-item-new-input-origin-iata").props.value).toBe("SFO");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-flight-number"),
+    "ua837",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-flight-number").props.value).toBe("UA837");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-confirmation"),
+    "abc123",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-confirmation").props.value).toBe("ABC123");
+
+  // Save-time IATA gate: 2 letters → FIELD error (never the generic banner),
+  // no wire call.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nr",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-destination-iata-error")).toBeOnTheScreen();
+
+  // Fixing the code clears the gate; the body carries normalized values.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nrt",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "SFO",
+    destination_iata: "NRT",
+    flight_number: "UA837",
+  });
+  expect(body.confirmation_code).toBe("ABC123");
+});
+
+it("B-20: lowercase currency normalizes as-you-type and reaches the wire uppercase", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "activity" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Kaiseki");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-currency"), "jpy");
+  expect(screen.getByTestId("itinerary-item-new-input-currency").props.value).toBe("JPY");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-price"), "1500");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  // The zero-decimal parse consulted the NORMALIZED currency — 1500 minor
+  // units, not a 100× corruption (Law #2 arm of the uppercase pin).
+  expect(body.currency).toBe("JPY");
+  expect(body.price_cents).toBe(1500);
+});
+
 it("booking create: body is a valid BookingCreate — default idea status, Law #2 cents", async () => {
   const created: unknown[] = [];
   await renderScreen(
