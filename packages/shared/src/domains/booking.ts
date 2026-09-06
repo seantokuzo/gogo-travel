@@ -408,7 +408,16 @@ export function deriveAutoItems(details: BookingDetails): DerivedItemPlacement[]
  * input, bounded so no write surface accepts megabyte strings.
  */
 const BookingTitleSchema = z.string().trim().min(1).max(200);
-const ConfirmationCodeSchema = z.string().trim().min(1).max(100);
+/**
+ * B-20 storage hygiene: confirmation codes normalize trim + UPPERCASE at the
+ * wire (codes are case-insensitive in practice and displayed uppercase).
+ * Uppercase is a total transform — nothing previously accepted is rejected,
+ * so stored lowercase codes self-heal on their next edit instead of 400ing.
+ * Charset/length stay permissive (1–100): PNRs are 6 alnum but hotel/OTA
+ * confirmation numbers run longer with hyphens — the format lock is a Sean
+ * decision (B-20 questionable list), not a schema fact.
+ */
+const ConfirmationCodeSchema = z.string().trim().toUpperCase().min(1).max(100);
 
 /**
  * R-ib-11: direct-client `source` values. `email`/`share` are settable ONLY

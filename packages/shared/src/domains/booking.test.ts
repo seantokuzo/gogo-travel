@@ -532,6 +532,17 @@ describe("BookingCreateSchema (§3.4 POST)", () => {
     });
     expect(parsed.details).toEqual({ category: "flight", flight_number: "UA 837" });
   });
+
+  it("B-20: confirmation codes trim + uppercase-normalize at the wire (storage hygiene)", () => {
+    // Uppercase is a TOTAL transform — nothing previously accepted is now
+    // rejected (stored lowercase codes self-heal on their next edit, never
+    // 400). Charset stays permissive: only case folds.
+    const parsed = BookingCreateSchema.parse({ ...valid, confirmation_code: "  abc123  " });
+    expect(parsed.confirmation_code).toBe("ABC123");
+    expect(BookingUpdateSchema.parse({ confirmation_code: "qf-88x" }).confirmation_code).toBe(
+      "QF-88X",
+    );
+  });
 });
 
 describe("BookingUpdateSchema (§3.4 PATCH)", () => {
