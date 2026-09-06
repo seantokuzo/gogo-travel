@@ -85,6 +85,18 @@ ultra` remains available to Sean on the merged diff.
 3. Server/Neon/Docker unchanged; migration 0001 was already applied to Neon during
    the 2026-08-29 session.
 
+#### DEVICE QA RESULTS 2026-09-06 — RUN COMPLETE
+
+All rig, diagnostics, F-043, and polish legs PASS on device (run-sheet report):
+B-5 verified live (.env workaround retired), B-14 cold-start deeplink verified,
+diagnostics tier-3 verified, **F-043 FLIPPED** (3258959 — 20 features verified).
+One FAIL: the one-tap picker commit (now B-15a). Findings triaged 2026-09-06:
+bugs B-15..B-19 filed (B-15 pickers + B-16 ideas-sheet + B-17/18 dispatched,
+B-19 freeze parked no-repro), B-20 input sweep queued after B-15, B-9 EXTENDED
+(airlines + inference) w/ server half dispatched, and a four-feature Sean
+spec-pass batch (overnight dual items · calendar tz switcher · calendar views ·
+ideas status rework) awaiting spec text.
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**
