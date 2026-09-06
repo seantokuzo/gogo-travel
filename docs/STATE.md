@@ -97,6 +97,18 @@ B-19 freeze parked no-repro), B-20 input sweep queued after B-15, B-9 EXTENDED
 spec-pass batch (overnight dual items · calendar tz switcher · calendar views ·
 ideas status rework) awaiting spec text.
 
+#### QA-WAVE BUILD-OUT 2026-09-06/07 — 3 of 4 PRs MERGED
+
+B-15 (pickers: Done commit, PickerCard, keyboard, exclusive-open) · B-16 (Add-to-day
+root cause BY DESIGN → the ideas rework is now THE FIX; prefill + end-only win shipped)
+· B-17/18 (cancel booked-only per Sean's ruling over the contradicted §3.2 + rental
+subtext) all MERGED, full pipeline each. **PR #50 (B-9 server: airports+airlines+0002)
+fully verified, judge HELD on Sean's ODbL decision.** New rows: B-21 contention flakes
+(P1 — threatens the act-0 gate, 3 sightings), picker options (Sean), VoiceOver
+checkpoint labels. B-20 input sweep unblocked. Sean decisions outstanding: ODbL ·
+spec-pass batch approach (rec: roadmap-prep draft) · B-16b interim gate copy ·
+diagnostics entry ruling · PR #38 read · B-7 ruling.
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**
