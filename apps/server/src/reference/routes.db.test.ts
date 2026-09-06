@@ -36,6 +36,7 @@ import type { AuthRouterDeps } from "../auth/routes.js";
 import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 import { escapeLikePattern } from "./routes.js";
+import { toAirlineWire, toAirportWire } from "./serialize.js";
 
 const dockerAvailable = inject("dbAvailable");
 
@@ -169,6 +170,28 @@ describe.skipIf(!dockerAvailable)("B-9 reference routes (integration)", () => {
     }
   });
 
+  it("EVERY seeded row serializes to a valid wire shape (dataset-refresh regression gate)", async () => {
+    // R1 advisory fix: name/city caps, country shape, and lat/lng ranges are
+    // enforced only by the GENERATOR — the DDL has no lat/lng bound. A future
+    // refresh migration seeding one bad row (lat 95, 250-char name) would
+    // apply cleanly, the server would return it unvalidated, and the CLIENT's
+    // Zod parse would hard-error the WHOLE search response for any query
+    // surfacing it — with CI green. This sweep makes that red HERE instead.
+    const airportRows = await db.select().from(schema.airports);
+    expect(airportRows.length).toBeGreaterThanOrEqual(4000);
+    const badAirports = airportRows
+      .filter((row) => !AirportSchema.safeParse(toAirportWire(row)).success)
+      .map((row) => row.iata);
+    expect(badAirports).toEqual([]);
+
+    const airlineRows = await db.select().from(schema.airlines);
+    expect(airlineRows.length).toBeGreaterThanOrEqual(800);
+    const badAirlines = airlineRows
+      .filter((row) => !AirlineSchema.safeParse(toAirlineWire(row)).success)
+      .map((row) => row.iata);
+    expect(badAirlines).toEqual([]);
+  });
+
   // ---- auth posture -------------------------------------------------------
 
   it("all three routes sit behind requireAuth (401 without a token)", async () => {
@@ -207,12 +230,36 @@ describe.skipIf(!dockerAvailable)("B-9 reference routes (integration)", () => {
     expect(body.items[0]?.iata).toBe("NRT");
   });
 
-  it("matches by city and ranks name-prefix above city hits (Tokyo → HND first)", async () => {
-    const res = await searchAirports("q=Tokyo");
+  it("ranks name-prefix above city-prefix on a COMPETITIVE query (Paris → ORY before CDG)", async () => {
+    // R1 blocking fix: the previous pin (Tokyo → HND) was a single-match
+    // query — swapping the tier-2/3 CASE arms stayed green. "Paris" is
+    // competitive: ORY is a name-prefix hit ("Paris-Orly Airport", rank 2)
+    // while CDG is a city-prefix hit ("Charles de Gaulle …" / city "Paris
+    // (Roissy…)", rank 3) whose name sorts BEFORE ORY's — so a tier swap
+    // (arm reorder OR rank-value swap: both collapse the pair to the name
+    // tiebreak, "Charles…" < "Paris-Orly…") puts CDG first and reds this.
+    const res = await searchAirports("q=Paris");
     const body = PaginatedAirports.parse(await res.json());
-    // "Tokyo Haneda International Airport" is a name-prefix hit (rank 2).
-    expect(body.items[0]?.iata).toBe("HND");
-    expect(body.items.map((a) => a.iata)).toContain("HND");
+    expect(body.items[0]?.iata).toBe("ORY");
+    expect(body.items.map((a) => a.iata)).toContain("CDG");
+  });
+
+  it("ranks name-substring above city-substring on a COMPETITIVE query (alpes → GNB before NCE)", async () => {
+    // Same discipline for tiers 4/5, with PURE matchers (a dual-matcher like
+    // Rio's GIG — name AND city both containing the query — survives a swap
+    // via the name tiebreak, proven while building this pin): "alpes" hits
+    // exactly two rows — GNB by name substring ONLY ("Grenoble Alpes Isère
+    // Airport", city "Grenoble", rank 4) and NCE by city substring ONLY
+    // ("Nice-Côte d'Azur Airport", city "Nice, Alpes-Maritimes", rank 5).
+    // A 4↔5 swap flips the pair unconditionally and reds this.
+    const res = await searchAirports("q=alpes");
+    const body = PaginatedAirports.parse(await res.json());
+    const order = body.items.map((a) => a.iata);
+    // Relative order, not an exact list — a dataset refresh may add matches,
+    // but a tier swap must still flip this pair.
+    expect(order).toContain("NCE");
+    expect(order.indexOf("GNB")).toBe(0);
+    expect(order.indexOf("NCE")).toBeGreaterThan(order.indexOf("GNB"));
   });
 
   it("finds NFC-stored names from decomposed input (Malé → MLE, the places NFC parity)", async () => {
