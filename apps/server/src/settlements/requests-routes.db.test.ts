@@ -275,6 +275,32 @@ describe.skipIf(!dockerAvailable)("T-9.4 settle-requests routes (integration)", 
     expect(((await nonMember.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
+  it("Q1: invalid amount_cents (zero / negative / float) → 400 VALIDATION_FAILED; nothing inserted", async () => {
+    const creditor = await seedUserWithToken();
+    const debtor = await seedUserWithToken();
+    const trip = await createTripVia(creditor.accessToken);
+    await addMember(trip.id, debtor.userId, "editor");
+    await seedDebt(trip.id, creditor.userId, debtor.userId, 4321);
+
+    // Law #2 at the boundary: zero, negative, and float cents all fail validation
+    // (PositiveCentsSchema wiring in SettleRequestCreateSchema) — a live debt is
+    // seeded so only the schema, never the debt math, can reject these.
+    for (const amount_cents of [0, -4321, 25.5]) {
+      const res = await postRequest(trip.id, creditor.accessToken, {
+        from_user_id: debtor.userId,
+        amount_cents,
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    }
+
+    const rows = await db
+      .select()
+      .from(schema.settlementRequests)
+      .where(eq(schema.settlementRequests.tripId, trip.id));
+    expect(rows).toHaveLength(0);
+  });
+
   it("Q1: a viewer CAN send the bill (party rules are role-independent, R-money-26)", async () => {
     const owner = await seedUserWithToken();
     const viewer = await seedUserWithToken();
