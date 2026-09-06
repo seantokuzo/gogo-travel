@@ -20,6 +20,7 @@
 import { ScheduleBookingInputSchema, type Booking, type BookingWithItems } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
+import { ApiRequestError } from "@/auth";
 import { IdeasBucket } from "@/features/itinerary";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -38,6 +39,7 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
 const CANCELLED_ID = "fffffff1-ffff-4fff-8fff-fffffffffff1";
 const PLANNED_TIMELESS_ID = "fffffff2-ffff-4fff-8fff-fffffffffff2";
+const WITH_TIMES_IDEA_ID = "fffffff4-ffff-4fff-8fff-fffffffffff4";
 
 const mockOpenBooking = jest.fn();
 
@@ -50,6 +52,30 @@ function ideaBooking(overrides?: Partial<Booking>): Booking {
     starts_at: null,
     price_cents: 3200,
     currency: "USD",
+    ...overrides,
+  });
+}
+
+/**
+ * B-16 card class (Sean device QA 2026-09-06): an `idea` that already CARRIES
+ * date/times in its details. I-1 pins ideas to zero itinerary items, so it
+ * sits in the bucket like any other idea — but its derived `starts_at` is
+ * known, which R-ib-8's third arm makes fatal to `POST …/schedule`.
+ * Instants are wire-faithful: the UTC denormalization of the +09:00 locals.
+ */
+function ideaWithTimes(overrides?: Partial<Booking>): Booking {
+  return makeBooking({
+    id: WITH_TIMES_IDEA_ID,
+    category: "activity",
+    status: "idea",
+    title: "Sumo tournament",
+    details: {
+      category: "activity",
+      starts_at: "2027-03-02T14:30:00+09:00",
+      ends_at: "2027-03-02T16:00:00+09:00",
+    },
+    starts_at: "2027-03-02T05:30:00.000Z",
+    ends_at: "2027-03-02T07:00:00.000Z",
     ...overrides,
   });
 }
@@ -397,6 +423,72 @@ it("the schedule sheet's Day picker seeds from the trip start (B-10 seed-chain p
   await fireEvent.press(
     screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"),
   );
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+/**
+ * B-16 ROOT-CAUSE REPRO (Sean device QA 2026-09-06: "entering a date in the
+ * Add-to-day modal and pressing the button errors"). The erroring cards are
+ * ideas that already CARRY date/times: their derived `starts_at` is known,
+ * and the schedule endpoint's wire contract rejects known-times bookings
+ * outright — R-ib-8: "WHEN the booking has known times THE SYSTEM SHALL
+ * reject VALIDATION_FAILED (its calendar presence is automatic, R-ib-5)";
+ * implemented at apps/server/src/bookings/service.ts `scheduleBooking`
+ * (`current.startsAt !== null` → 400, before the body is even consulted).
+ *
+ * This test localizes the failure: the responder mirrors that server arm
+ * verbatim and ASSERTS the client's body was a schema-valid
+ * ScheduleBookingInput — so the error is NOT client validation and NOT wire
+ * shape; it is the server's semantic rejection of this booking's state. The
+ * client fix is the queued ideas-status rework (§3.2 status actions), not a
+ * different request body — nothing this sheet can send makes the call legal.
+ */
+it("B-16 repro: 'Add to day' on an idea that carries date/times is rejected by the wire contract (R-ib-8) and surfaces the ErrorBanner", async () => {
+  const scheduleBodies: unknown[] = [];
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaWithTimes()] },
+    overrides: {
+      "POST /trips/:tripId/bookings/:bookingId/schedule": (input) => {
+        scheduleBodies.push(input.body);
+        // Contract-faithful: the fixture booking's starts_at is known, so
+        // the real server answers 400 VALIDATION_FAILED, always.
+        return Promise.reject(
+          new ApiRequestError(
+            400,
+            "VALIDATION_FAILED",
+            "booking has known times — its calendar presence is automatic",
+            { starts_at: "known" },
+          ),
+        );
+      },
+    },
+  });
+
+  await screen.findByTestId("itinerary-ideas");
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
+  await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
+
+  // Sean's exact gesture: enter a day (even the booking's OWN day) and press.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
+  await fireEvent(screen.getByTestId("itinerary-ideas-schedule-input-day-picker"), "onChange", {
+    nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
+  });
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+
+  await waitFor(() => expect(scheduleBodies).toHaveLength(1));
+  // NOT client validation, NOT wire shape: the body the client sent is a
+  // valid ScheduleBookingInput — the rejection is about the BOOKING's state.
+  expect(ScheduleBookingInputSchema.safeParse(scheduleBodies[0]).success).toBe(true);
+
+  // What Sean saw: the sheet's generic failure banner, flow dead-ended.
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+  expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
+  // Rollback (hook-owned): the card is back in the bucket, unchanged.
+  expect(screen.getByTestId(`itinerary-ideas-item-${WITH_TIMES_IDEA_ID}`)).toBeOnTheScreen();
+
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
