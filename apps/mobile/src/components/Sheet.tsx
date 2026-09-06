@@ -68,6 +68,27 @@ export function shouldDismissSheet(gesture: { dy: number; vy: number }): boolean
 }
 
 /**
+ * TEST-ONLY seam (B-22 ①) — captures the exit animation's completion
+ * callback, `__DEV__` writes only; prod never reads it and never invokes it.
+ *
+ * Why it must exist: the `unmountedRef` guard on the exit completion defends
+ * against the NATIVE driver's asynchronous `finished: true` delivery landing
+ * after a consumer unmount. Under jest's JS driver that interleaving is
+ * unreachable — unmount detaches the value nodes (`__removeChild` cascade →
+ * `AnimatedValue.__detach` → `stopAnimation`), so a post-unmount completion
+ * always arrives `finished: false` and the guarded block never runs
+ * (probe-proven in B-22; why PR #52's errorSpy pin could not red on guard
+ * deletion either — React 19 additionally drops post-unmount setState
+ * silently). The suite pins the guard by invoking THIS captured callback
+ * with `finished: true` after teardown — the exact device-side delivery the
+ * guard exists for. Same posture as `shouldDismissSheet` above: exported for
+ * tests, not part of the component API.
+ */
+export const __sheetExitCompletionForTests: {
+  current: ((result: { finished: boolean }) => void) | null;
+} = { current: null };
+
+/**
  * Module-scope factory (render-scope-free — react-hooks/refs + Compiler
  * clean). Swipe-down keeps working under reduce-motion: it is an essential
  * interaction, not a decorative animation.
@@ -243,7 +264,7 @@ export function Sheet({
             useNativeDriver: true,
           }),
         ];
-    Animated.parallel(exit).start(({ finished }) => {
+    const onExitComplete = ({ finished }: { finished: boolean }) => {
       if (finished && !unmountedRef.current) {
         // Park values for the next entrance, then unmount (async callback —
         // not a sync-in-effect set). Skipped entirely once the component is
@@ -252,7 +273,11 @@ export function Sheet({
         scrimOpacity.setValue(0);
         setExiting(false);
       }
-    });
+    };
+    if (__DEV__) {
+      __sheetExitCompletionForTests.current = onExitComplete;
+    }
+    Animated.parallel(exit).start(onExitComplete);
   }, [visible, exiting, reduceMotion, windowHeight, translate, dragY, scrimOpacity, theme.motion]);
 
   // Swipe-down on the grab-handle/header region (R-ds-19). Memoized without
