@@ -154,3 +154,69 @@ describe("DateField iOS presentation (B-10a) + contextual seed (B-10b)", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * B-15a — one-tap commit of the seeded date (device-confirmed FAIL,
+ * 2026-09-06). The iOS inline calendar fires `onValueChange` only when the
+ * VALUE CHANGES, so tapping the already-highlighted (seeded) day is a native
+ * no-op — a path jest cannot reproduce (the fixture host fires whatever we
+ * tell it to; the real native side stays silent — the PR #46 fixture-vs-
+ * device gap). What jest CAN pin honestly: before B-15 the modal had NO
+ * affordance that commits the displayed day (close/scrim dismiss without
+ * selecting — pinned above), so the seeded-open → one-action → field-filled
+ * path did not exist. These pins are RED on pre-B-15 main by construction.
+ * Device eyes still owed: tapping the pre-highlighted day itself remains a
+ * native no-op — Done is the committed one-action path.
+ */
+describe("DateField Done commits the displayed day (B-15a)", () => {
+  const onSelect = jest.fn();
+  afterEach(() => onSelect.mockReset());
+
+  async function renderField(props?: { contextDate?: string; value?: string }) {
+    return renderWithTheme(
+      <DateField
+        label="Start date"
+        value={props?.value ?? ""}
+        {...(props?.contextDate !== undefined ? { contextDate: props.contextDate } : {})}
+        onSelect={onSelect}
+        testID="f"
+      />,
+    );
+  }
+
+  // Kill-mutation: drop the `onSelect(...)` inside the Done handler (or the
+  // Done affordance itself) → red. The existing "close button dismisses
+  // WITHOUT selecting" pin above is the control arm proving commit is the
+  // Done button's doing, not a side effect of any dismissal.
+  it("Done commits the context-seeded day and closes (seeded-open → one action → field filled)", async () => {
+    await renderField({ contextDate: "2027-04-24" });
+    await fireEvent.press(screen.getByTestId("f"));
+    await fireEvent.press(screen.getByTestId("f-sheet-done"));
+    expect(onSelect).toHaveBeenCalledWith("2027-04-24");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("f-sheet")).toBeNull();
+  });
+
+  // Kill-mutation: seed Done from `contextDate` unconditionally → red (a set
+  // value must beat the context — same precedence pickerSeedDate pins).
+  it("Done re-commits the SET value when one exists (value beats context)", async () => {
+    await renderField({ value: "2027-05-08", contextDate: "2027-04-24" });
+    await fireEvent.press(screen.getByTestId("f"));
+    await fireEvent.press(screen.getByTestId("f-sheet-done"));
+    expect(onSelect).toHaveBeenCalledWith("2027-05-08");
+    expect(screen.queryByTestId("f-sheet")).toBeNull();
+  });
+
+  // Control arm for the whole describe: a CHANGED day still commits one-tap
+  // through `onValueChange` (the pre-B-15 path stays intact — Done is
+  // additive, not a second required step).
+  it("picking a different day still commits immediately without Done", async () => {
+    await renderField({ contextDate: "2027-04-24" });
+    await fireEvent.press(screen.getByTestId("f"));
+    await fireEvent(screen.getByTestId("f-picker"), "onChange", {
+      nativeEvent: { timestamp: new Date(2027, 3, 25, 12).getTime(), utcOffset: 0 },
+    });
+    expect(onSelect).toHaveBeenCalledWith("2027-04-25");
+    expect(screen.queryByTestId("f-sheet")).toBeNull();
+  });
+});

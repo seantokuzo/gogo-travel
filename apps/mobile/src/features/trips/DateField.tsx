@@ -32,11 +32,20 @@
  * from shifting the day. `onValueChange`/`onDismiss` are the picker's
  * non-deprecated callbacks (its `onChange` warns in dev).
  *
+ * ONE-TAP COMMIT (B-15a): the iOS inline calendar fires `onValueChange` only
+ * on a value CHANGE, so tapping the already-highlighted seeded day is a
+ * native no-op — device QA 2026-09-06 confirmed the seeded-open path was
+ * uncommittable. The modal header's Done button is the committed one-action
+ * path: it selects the DISPLAYED day (the seed — a change commits & closes
+ * immediately, so the display can never drift from it) and closes. Close/
+ * scrim stay cancel-without-selecting.
+ *
  * testIDs (nav §2.7 rule-4 derivation from the field's base): the row is
  * `{testID}`, the revealed picker `{testID}-picker`, the error text
  * `{testID}-error` (mirrors the DS Input's derived error id so the form's
  * assertions stay uniform); the iOS modal card is `{testID}-sheet` with
- * `{testID}-sheet-close` / `{testID}-sheet-scrim` dismissal affordances.
+ * `{testID}-sheet-done` (commit) and `{testID}-sheet-close` /
+ * `{testID}-sheet-scrim` (cancel) affordances.
  */
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISODate } from "@gogo/shared";
@@ -139,6 +148,18 @@ const useStyles = createStyles((t) =>
       borderRadius: t.radius.full,
       backgroundColor: t.color.bg.inset,
     },
+    // B-15a: Done + close cluster on the header's trailing edge.
+    modalActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: t.space[3],
+    },
+    modalDone: {
+      minHeight: 32,
+      justifyContent: "center",
+      paddingHorizontal: t.space[2],
+    },
+    modalDoneText: { color: t.color.text.accent },
   }),
 );
 
@@ -156,6 +177,14 @@ export function DateField({
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
   const close = () => setOpen(false);
+  // B-15a: commit the DISPLAYED day. A changed day commits & closes through
+  // `onValueChange` before Done is ever reachable, so the displayed day is
+  // always the seed (value > context > today) — tapping the pre-highlighted
+  // day itself never fires natively (iOS change-only semantics).
+  const confirmDisplayed = () => {
+    onSelect(pickerDateToISO(pickerSeedDate(value, contextDate)));
+    setOpen(false);
+  };
 
   const picker = open ? (
     <DateTimePicker
@@ -205,16 +234,30 @@ export function DateField({
                 <AppText role="subheading" accessibilityRole="header">
                   {label}
                 </AppText>
-                <Pressable
-                  onPress={close}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close"
-                  hitSlop={theme.hitSlop.sm}
-                  style={s.modalClose}
-                  testID={`${testID}-sheet-close`}
-                >
-                  <Icon name="close" size={18} color={theme.color.text.secondary} />
-                </Pressable>
+                <View style={s.modalActions}>
+                  <Pressable
+                    onPress={confirmDisplayed}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Done, use displayed ${label}`}
+                    hitSlop={theme.hitSlop.sm}
+                    style={s.modalDone}
+                    testID={`${testID}-sheet-done`}
+                  >
+                    <AppText role="subheading" style={s.modalDoneText}>
+                      Done
+                    </AppText>
+                  </Pressable>
+                  <Pressable
+                    onPress={close}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
+                    hitSlop={theme.hitSlop.sm}
+                    style={s.modalClose}
+                    testID={`${testID}-sheet-close`}
+                  >
+                    <Icon name="close" size={18} color={theme.color.text.secondary} />
+                  </Pressable>
+                </View>
               </View>
               {picker}
             </View>
