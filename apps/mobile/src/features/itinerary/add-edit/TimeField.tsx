@@ -6,22 +6,41 @@
  * is correct by construction. Optional times get a Clear affordance
  * (`{testID}-clear`) — schedule/add flows treat "" as all-day/absent.
  *
+ * B-10c: an unset field used to open the spinner at 12:00 regardless of
+ * context. `contextTime` mirrors DateField's `contextDate` — a flight's
+ * arrival seeds from its entered departure time — falling back to noon.
+ * Seed only: the picked value is untouched.
+ *
+ * PRESENTATION (B-15b): the iOS spinner's fixed intrinsic width overflowed
+ * the right screen edge in half-width form rows (itinerary item forms —
+ * device QA 2026-09-06), the same failure the inline calendar had in B-10a.
+ * The picker now presents in the shared `PickerCard` bottom modal (screen-
+ * anchored; extracted from DateField — the PR #40 conventions lane predicted
+ * this second consumer). Commit semantics are UNCHANGED: a spinner change
+ * still commits & closes through `onValueChange`; the card's Done commits
+ * the DISPLAYED (seeded) time — B-15a parity, since iOS fires only on
+ * change and a context-seeded time was otherwise uncommittable.
+ *
  * testIDs mirror DateField's derivation: row `{testID}`, revealed picker
- * `{testID}-picker`, error `{testID}-error`, clear `{testID}-clear`.
+ * `{testID}-picker`, error `{testID}-error`, clear `{testID}-clear`; the
+ * iOS card ids ({testID}-sheet, -sheet-done, -sheet-close, -sheet-scrim)
+ * derive inside PickerCard.
  */
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISOTime } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useState } from "react";
-import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { useCallback, useState } from "react";
+import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText } from "@/components";
+import { AppText, PickerCard, usePickerFocus } from "@/components";
 
 export interface TimeFieldProps {
   label: string;
   /** Wall `HH:MM`, or `""` when unset. */
   value: ISOTime | "";
   onSelect(value: ISOTime): void;
+  /** B-10c: where the spinner OPENS when `value` is empty. Noon when absent/"". */
+  contextTime?: ISOTime | "";
   /** Present ⇒ the field is clearable (optional time semantics). */
   onClear?(): void;
   /** Error state — replaces the helper slot, danger border (Input parity). */
@@ -34,6 +53,13 @@ export interface TimeFieldProps {
 export function timeToPickerDate(value: ISOTime | ""): Date {
   const [h, m] = value === "" ? [12, 0] : value.split(":").map(Number);
   return new Date(2000, 0, 1, h ?? 12, m ?? 0);
+}
+
+/** B-10c seed resolution: value wins; else the context time; else noon. */
+export function timePickerSeed(value: ISOTime | "", contextTime?: ISOTime | ""): Date {
+  if (value !== "") return timeToPickerDate(value);
+  if (contextTime !== undefined && contextTime !== "") return timeToPickerDate(contextTime);
+  return timeToPickerDate("");
 }
 
 /** Local Date → wall `HH:MM` (device-clock components — no tz math). */
@@ -62,10 +88,43 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function TimeField({ label, value, onSelect, onClear, error, testID }: TimeFieldProps) {
+export function TimeField({
+  label,
+  value,
+  onSelect,
+  contextTime,
+  onClear,
+  error,
+  testID,
+}: TimeFieldProps) {
   const s = useStyles();
   const [open, setOpen] = useState(false);
   const hasError = error !== undefined && error.length > 0;
+  // Stable identity: usePickerFocus keys its claim slot on this function.
+  const close = useCallback(() => setOpen(false), []);
+  // B-15d: opening this picker closes any other open picker in the family.
+  usePickerFocus(open, close);
+  // B-15a parity: commit the DISPLAYED time. A spun change commits & closes
+  // through `onValueChange` before Done is reachable, so the displayed time
+  // is always the seed (value > context > noon).
+  const confirmDisplayed = () => {
+    onSelect(pickerDateToTime(timePickerSeed(value, contextTime)));
+    setOpen(false);
+  };
+
+  const picker = open ? (
+    <DateTimePicker
+      testID={`${testID}-picker`}
+      value={timePickerSeed(value, contextTime)}
+      mode="time"
+      display={Platform.OS === "ios" ? "spinner" : "default"}
+      onValueChange={(_event, date) => {
+        onSelect(pickerDateToTime(date));
+        setOpen(false);
+      }}
+      onDismiss={close}
+    />
+  ) : null;
 
   return (
     <View style={s.container}>
@@ -91,7 +150,15 @@ export function TimeField({ label, value, onSelect, onClear, error, testID }: Ti
       </View>
       <Pressable
         testID={testID}
-        onPress={() => setOpen((prev) => !prev)}
+        onPress={() => {
+          // B-15c: opening a picker over an armed keyboard left typing
+          // routed into the previously-focused input (device QA 2026-09-06).
+          // Keyboard.dismiss() BLURS the focused TextInput (its RN
+          // implementation is TextInputState.blurTextInput(currentlyFocused)),
+          // so one call covers both halves: keyboard down + focus cleared.
+          if (!open) Keyboard.dismiss();
+          setOpen(!open);
+        }}
         accessibilityRole="button"
         accessibilityLabel={value === "" ? `${label}, select time` : `${label}, ${value}`}
         style={[s.field, open && s.fieldOpen, hasError && s.fieldError]}
@@ -100,19 +167,15 @@ export function TimeField({ label, value, onSelect, onClear, error, testID }: Ti
           {value === "" ? "Select time" : value}
         </AppText>
       </Pressable>
-      {open ? (
-        <DateTimePicker
-          testID={`${testID}-picker`}
-          value={timeToPickerDate(value)}
-          mode="time"
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          onValueChange={(_event, date) => {
-            onSelect(pickerDateToTime(date));
-            setOpen(false);
-          }}
-          onDismiss={() => setOpen(false)}
-        />
-      ) : null}
+      <PickerCard
+        label={label}
+        visible={open}
+        onDone={confirmDisplayed}
+        onClose={close}
+        testID={testID}
+      >
+        {picker}
+      </PickerCard>
       {hasError ? (
         <AppText
           role="caption"

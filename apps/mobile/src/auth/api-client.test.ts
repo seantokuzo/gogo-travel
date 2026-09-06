@@ -2,7 +2,7 @@
  * API client (T-5.7) — descriptor-driven requests + refresh-on-401 rotation.
  * fetch is injected; the shared `@gogo/shared` descriptors drive URL/verb/parse.
  */
-import { authEndpoints, userEndpoints, type User } from "@gogo/shared";
+import { authEndpoints, inviteEndpoints, userEndpoints, type User } from "@gogo/shared";
 
 import {
   ApiRequestError,
@@ -121,6 +121,94 @@ describe("createApiClient — request building", () => {
     expect(err).toBeInstanceOf(ApiRequestError);
     expect((err as ApiRequestError).code).toBe("NETWORK");
     expect((err as ApiRequestError).message).not.toContain("host:3000");
+  });
+});
+
+describe("B-6 dev cause surfacing on transport failure (PR #37 R1)", () => {
+  // jest-expo runs with __DEV__ true; the prod arm flips the global for one
+  // test and restores it — api-client reads __DEV__ at request time, not at
+  // module load, so the flip takes effect without a re-import.
+  const devGlobal = globalThis as unknown as { __DEV__: boolean };
+  const originalDev = devGlobal.__DEV__;
+  const apiWarnCalls = (spy: jest.SpyInstance) =>
+    spy.mock.calls.filter(
+      (call) => typeof call[0] === "string" && (call[0] as string).startsWith("[api] "),
+    );
+
+  afterEach(() => {
+    devGlobal.__DEV__ = originalDev;
+    jest.restoreAllMocks();
+  });
+
+  it("dev arm: warns with the method, the base URL the phone dialed, and the path TEMPLATE", async () => {
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(client.request(userEndpoints.getMe, {})).rejects.toMatchObject({
+      status: 0,
+      code: "NETWORK",
+    });
+
+    // The one clue B-5 cost two debugging rounds to recover: WHICH host the
+    // request went to. Reverting B-6 (deleting the __DEV__ warn) goes red
+    // here. Base + template (PR #43 R1): the host and route shape carry the
+    // full diagnostic value; interpolated params never enter the warn.
+    const calls = apiWarnCalls(warnSpy);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toContain("GET");
+    expect(calls[0]?.[0]).toContain("http://host:3000/api");
+    expect(calls[0]?.[0]).toContain("/users/me");
+  });
+
+  it("dev arm NEVER warns an interpolated path param — invite tokens stay out of the dev surface (PR #43 R1)", async () => {
+    // The warn feeds the diagnostics panel's copyable evidence via the
+    // console tap; an invite token is the join capability (R-trips-16).
+    // Falsification: revert the warn to interpolate `url` → the token
+    // assertion below goes red.
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED"));
+    const token = "sekrit-invite-token-abc123";
+
+    await expect(
+      client.request(inviteEndpoints.previewInvite, { params: { token } }),
+    ).rejects.toMatchObject({ status: 0, code: "NETWORK" });
+
+    // Control arm: the token WAS in the URL the transport dialed — the
+    // redaction below is the warn's doing, not a dead request path.
+    expect(fetchImpl).toHaveBeenCalledWith(
+      `http://host:3000/api/invites/${token}`,
+      expect.anything(),
+    );
+
+    const calls = apiWarnCalls(warnSpy);
+    expect(calls).toHaveLength(1);
+    const warned = calls[0]?.[0] as string;
+    expect(warned).not.toContain(token);
+    // The template (host + route shape) is still fully present.
+    expect(warned).toContain("http://host:3000/api");
+    expect(warned).toContain("/invites/:token");
+  });
+
+  it("prod arm (__DEV__ false): NO warn — and the control: the same failure still throws the sanitized error", async () => {
+    devGlobal.__DEV__ = false;
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { client, fetchImpl } = setup();
+    fetchImpl.mockRejectedValue(new Error("ECONNREFUSED http://host:3000/api/users/me"));
+
+    // Control arm for the negative assertion below (vacuous-pin taxonomy,
+    // mobile.md): the identical failure DOES reach the caller as the
+    // sanitized ApiRequestError, so this path demonstrably executed — the
+    // absence of a warn is the __DEV__ gate, not a dead test.
+    const err = await client.request(userEndpoints.getMe, {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect((err as ApiRequestError).code).toBe("NETWORK");
+    expect((err as ApiRequestError).message).not.toContain("host:3000");
+
+    // The dev arm above is the ungated control proving this spy setup
+    // captures the [api] line when the gate is open.
+    expect(apiWarnCalls(warnSpy)).toHaveLength(0);
   });
 });
 

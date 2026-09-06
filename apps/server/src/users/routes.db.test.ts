@@ -13,17 +13,11 @@
  * FAILURE; a local Docker-less run skips with a loud banner. The only
  * network is the local container (Law #5) — storage and cash.app are fakes.
  */
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterEach, afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from "vitest";
 import {
   AvatarUploadTicketSchema,
   PaymentHandlesSchema,
@@ -44,40 +38,12 @@ import type { AuthRouterDeps } from "../auth/routes.js";
 import type { ObjectStorage } from "../storage/object-storage.js";
 import type { CashtagChecker, CashtagCheckResult } from "./cashtag.js";
 import type { UsersRouterDeps } from "./routes.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-5.5 USERS/ENTITLEMENTS SUITE SKIPPED      ║\n" +
-      "║  Profile, avatar commit, payment handles, push tokens, member     ║\n" +
-      "║  profiles, and entitlements (auth-users spec §3.4.2/§3.4.3,       ║\n" +
-      "║  R-user-1..8, R-ent-1/3) were NOT verified. Start Docker and      ║\n" +
-      "║  re-run `pnpm --filter @gogo/server test` before treating this    ║\n" +
-      "║  green.                                                           ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-5.5 users suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-5.5 users/entitlements " +
-        "suite could not verify auth-users spec §3.4.2/§3.4.3 (R-user-1..8, " +
-        "R-ent-1/3). A skip here is NOT a pass. Provision Docker or a " +
-        "Postgres service container.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -118,8 +84,7 @@ function withoutRequestId(body: Envelope): Omit<Envelope["error"], "requestId"> 
 }
 
 describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let authDeps: AuthRouterDeps;
@@ -142,13 +107,8 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
   };
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
-    await migrate(db, { migrationsFolder });
+    suiteDb = await createSuiteDb("users_routes");
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -182,8 +142,7 @@ describe.skipIf(!dockerAvailable)("T-5.5 users & entitlements routes (integratio
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   afterEach(() => {

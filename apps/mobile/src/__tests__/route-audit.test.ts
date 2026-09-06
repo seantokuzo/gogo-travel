@@ -29,6 +29,8 @@ const ALLOWLIST: Record<string, string> = {
     "trip-list screen — asserted by the entry-redirect tests and the walkthrough, not URL-audited",
   "gallery.tsx":
     "dev-only DS gallery (DS-10) — __DEV__-gated, outside spec §2.1; covered by gallery-screen.test.tsx",
+  "(auth)/diagnostics.tsx":
+    "dev-only device-smoke diagnostics (T-S3.5) — __DEV__-gated, outside spec §2.1; covered by features/dev/diagnostics/* suites",
   "+native-intent.tsx":
     "NOT a route — expo-router's native URL hook (ignored by route generation); covered by deep-links.test.ts",
   "+not-found.tsx":

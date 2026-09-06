@@ -101,6 +101,8 @@ export function MapSearch({ tripId, destination, onSelectResult, onResultsChange
         value={query}
         onChangeText={setQuery}
         placeholder="Search this trip's area"
+        // B-20: autocorrect fights foreign place names (destination-search parity).
+        autoCorrect={false}
         helper={
           trimmed !== "" && !searchable
             ? "Keep typing — search starts at 2 characters."

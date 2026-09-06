@@ -13,17 +13,12 @@
  *
  * Driver: postgres-js on ephemeral testcontainers Postgres — a Docker-less
  * CI run is a HARD FAILURE; a local Docker-less run skips with a loud
- * banner. Run server DB suites with `--no-file-parallelism` (QUEUE P1).
+ * banner. Suites run file-parallel on per-suite clones of the shared
+ * container (T-S3.3 — `--no-file-parallelism` retired).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { asc, eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import type { TravelMode } from "@gogo/shared/enums";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
@@ -32,38 +27,12 @@ import { createLegRecomputer, isTravelLegFkViolation, SAME_PLACE_PROVIDER } from
 import { sweepStaleLegs } from "./staleness.js";
 import type { RouteQuery, RouteResult, RoutingPort } from "./providers.js";
 import type { TravelLegScheduler } from "./worker.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-7.3 RECOMPUTE SUITE SKIPPED               ║\n" +
-      "║  The §3.5 adjacency/diff/cleanup matrix, transit degradation,     ║\n" +
-      "║  provider-outage retention, the item-deletion FK race, and the    ║\n" +
-      "║  R-ib-23 staleness sweep were NOT verified. Start Docker and      ║\n" +
-      "║  re-run `pnpm --filter @gogo/server test` before treating this    ║\n" +
-      "║  green.                                                           ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-7.3 recompute suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-7.3 recompute suite could " +
-        "not verify itinerary-bookings spec §3.5 (R-ib-19..23). A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const HOUR_MS = 3_600_000;
@@ -117,8 +86,7 @@ function fakeScheduler() {
 }
 
 describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let userId: string;
 
@@ -128,14 +96,8 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
   const PAST = new Date(Date.now() - 6 * HOUR_MS);
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("travel_legs_recompute");
+    db = suiteDb.db;
     const { user } = await createUserWithEntitlements(db, {
       email: `legs-${uniq()}@example.com`,
       displayName: "Leg Tester",
@@ -145,8 +107,7 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   // ---- seeding helpers ------------------------------------------------------

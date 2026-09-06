@@ -51,6 +51,31 @@ jest.mock("expo-router", () => ({
   useRouter: () => ({ replace: jest.fn(), back: jest.fn(), push: jest.fn() }),
 }));
 
+/**
+ * B-21: FAKE timers for the whole suite — the real determinization of the
+ * B-2 contention-flake family. Two real timers used to race the act
+ * boundary here:
+ *  (a) VirtualizedList's cell-batch setState — every FlatList DATA change
+ *      schedules `_updateCellsToRender` on a `setTimeout(50)`
+ *      (`updateCellsBatchingPeriod` default, VirtualizedList.js);
+ *  (b) the DS Sheet's exit completion (`setExiting(false)`) on the
+ *      ~duration.base (200ms) Animated exit.
+ * With real timers, RNTL's waitFor/findBy run their checks act-wrapped but
+ * idle UN-act'd between checks, so under CI's 2-core starvation either timer
+ * could land in an idle gap ("An update to VirtualizedList/Sheet was not
+ * wrapped in act" — PR #47/#49 full runs; sleep-based settles only covered
+ * the window probabilistically). Under fake timers no timer fires unless
+ * advanced, and every advancement site is act-wrapped: RNTL's own
+ * waitFor/findBy advance via `act(() => jest.advanceTimersByTimeAsync(...))`
+ * and the settle helpers below advance inside act. The whole environment
+ * follows the fake clock: RN's jest rAF polyfill is
+ * `setTimeout(() => cb(jest.now()), 0)` (Animated tracks it) and TanStack's
+ * timeoutManager calls the global setTimeout dynamically (notify batching
+ * tracks it too). mockNavApi spies `apiClient.request` wholesale, so the
+ * api-client's real abort timer never runs here.
+ */
+jest.useFakeTimers();
+
 const ME_OWNER = makeMember();
 const B_EDITOR = makeMember({
   user: { id: MEMBER_B_ID, display_name: "Blake Editor" },
@@ -106,39 +131,37 @@ function membersGetSequence(first: MemberListItem[], later?: MemberListItem[]) {
 }
 
 /**
- * Hold an act() window over VirtualizedList's deferred cell-batch update
- * (B-2 family, T-6.8 variant): every FlatList DATA change schedules a
- * Batchinator setState ~50ms later, and RNTL's waitFor sleeps BETWEEN
- * act-wrapped checks — under CI's 2-core contention that timer lands in an
- * un-act'd sleep window ("An update to VirtualizedList was not wrapped in
- * act"). Call after every checkpoint that renders or mutates the list.
+ * Fire VirtualizedList's deferred cell-batch update (B-2 family, T-6.8
+ * variant; determinized in B-21): every FlatList DATA change schedules a
+ * `_updateCellsToRender` setState on a 50ms batch timer. Under fake timers
+ * it fires exactly here — inside act — never in a waitFor idle gap. Call
+ * after every checkpoint that renders or mutates the list.
  */
 async function settleList() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await jest.advanceTimersByTimeAsync(60);
   });
 }
 
 /**
- * Hold act() over a Sheet's exit-completion setState (timed slide-out at
- * duration.base = 200ms → `setExiting(false)`): a waitFor SLEEP between
- * act-wrapped checks is un-act'd, so under full-turbo contention the
- * completion otherwise lands there ("An update to Sheet was not wrapped in
- * act"). Call right after any press that closes a sheet.
+ * Drive a Sheet's exit to completion (timed slide-out at duration.base =
+ * 200ms → `setExiting(false)`) inside act (B-21): under fake timers the
+ * completion cannot land in an un-act'd waitFor idle gap — it fires exactly
+ * here. Call right after any press that closes a sheet.
  */
 async function settleSheetExit() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await jest.advanceTimersByTimeAsync(250);
   });
 }
 
 afterEach(async () => {
-  // Drain the Sheet exit animation (duration.base = 200ms) + TanStack's
-  // queued notifyManager macrotasks + any straggling VirtualizedList batch
-  // INSIDE act, so no state update lands un-act-wrapped after the test ends
-  // (B-2 flake family).
+  // Drain any still-pending Sheet exit (duration.base = 200ms), TanStack's
+  // queued notifyManager macrotasks, and straggling VirtualizedList batches
+  // INSIDE act (B-2/B-21): under fake timers nothing left pending can fire
+  // after this — un-advanced timers are discarded with the file's clock.
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await jest.advanceTimersByTimeAsync(350);
   });
   jest.restoreAllMocks();
 });

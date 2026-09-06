@@ -165,6 +165,135 @@ it("no ?category= → the 10-option step; picking flight mounts its form + partn
   expect(screen.getByTestId("itinerary-item-new-button-search-skyscanner")).toBeDisabled();
 });
 
+it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a field error", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "SFO to Tokyo");
+  // As-you-type normalization — lowercase in, uppercase rendered.
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "sfo");
+  expect(screen.getByTestId("itinerary-item-new-input-origin-iata").props.value).toBe("SFO");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-flight-number"),
+    "ua837",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-flight-number").props.value).toBe("UA837");
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-confirmation"),
+    "abc123",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-confirmation").props.value).toBe("ABC123");
+
+  // Save-time IATA gate: 2 letters → FIELD error (never the generic banner),
+  // no wire call.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nr",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-destination-iata-error")).toBeOnTheScreen();
+
+  // Fixing the code clears the gate; the body carries normalized values.
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-destination-iata"),
+    "nrt",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "SFO",
+    destination_iata: "NRT",
+    flight_number: "UA837",
+  });
+  expect(body.confirmation_code).toBe("ABC123");
+});
+
+it("B-20 R1: field traits reach the rendered Inputs — prop pins on the traits→Input seam", async () => {
+  // jest's fireEvent.changeText BYPASSES native maxLength (and keyboards
+  // don't exist under jest at all), so prop assertions are the only
+  // red-capable pin shape for this class — behavioral typing tests stay
+  // green with the trait wiring dead (round-1 P5/P7 probes). These pins
+  // kill P5: strip keyboardType/autoCapitalize/autoCorrect/maxLength from
+  // BookingForm's detail Input and they go red.
+  await renderScreen({ category: "flight" });
+
+  const iata = screen.getByTestId("itinerary-item-new-input-origin-iata");
+  expect(iata.props.maxLength).toBe(3);
+  expect(iata.props.autoCapitalize).toBe("characters");
+  expect(iata.props.autoCorrect).toBe(false);
+  expect(iata.props.keyboardType).toBe("default");
+
+  // Plain text detail field — the optionalString(200) wire-cap mirror.
+  expect(screen.getByTestId("itinerary-item-new-input-airline").props.maxLength).toBe(200);
+
+  // Confirmation code — the shared ConfirmationCodeSchema max(100) mirror
+  // plus its code-field casing traits (call-site literals, round-1 P7).
+  const confirmation = screen.getByTestId("itinerary-item-new-input-confirmation");
+  expect(confirmation.props.maxLength).toBe(100);
+  expect(confirmation.props.autoCapitalize).toBe("characters");
+  expect(confirmation.props.autoCorrect).toBe(false);
+});
+
+it("B-20 R1: int fields render the number pad — prop pin", async () => {
+  await renderScreen({ category: "lodging" });
+  const guests = screen.getByTestId("itinerary-item-new-input-guests");
+  expect(guests.props.keyboardType).toBe("number-pad");
+  expect(guests.props.maxLength).toBe(9);
+});
+
+it("B-20: lowercase currency normalizes as-you-type and reaches the wire uppercase", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "activity" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Kaiseki");
+  // R1 prop pin (round-1 P6 — the zero-decimal branch was invertible):
+  // 2-decimal default (trip base USD) gets the decimal pad…
+  expect(screen.getByTestId("itinerary-item-new-input-price").props.keyboardType).toBe(
+    "decimal-pad",
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-currency"), "jpy");
+  expect(screen.getByTestId("itinerary-item-new-input-currency").props.value).toBe("JPY");
+  // …and a zero-decimal currency flips it to the plain number pad (the
+  // decimal key's only product for JPY would be a parse error).
+  expect(screen.getByTestId("itinerary-item-new-input-price").props.keyboardType).toBe(
+    "number-pad",
+  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-price"), "1500");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  // The zero-decimal parse consulted the NORMALIZED currency — 1500 minor
+  // units, not a 100× corruption (Law #2 arm of the uppercase pin).
+  expect(body.currency).toBe("JPY");
+  expect(body.price_cents).toBe(1500);
+});
+
 it("booking create: body is a valid BookingCreate — default idea status, Law #2 cents", async () => {
   const created: unknown[] = [];
   await renderScreen(
@@ -485,6 +614,48 @@ it("booking edit: prefilled from the detail read; PATCH is a valid BookingUpdate
   await waitFor(() => expect(mockBack).toHaveBeenCalledTimes(1));
 });
 
+it("B-20 R1: a stored non-code IATA value never blocks a title-only edit — untouched prefill rides verbatim", async () => {
+  // Pre-B-20 / AI-capture rows can legally store origin_iata "Narita"
+  // (wire optionalString 200). The save-time gate guards what the USER
+  // typed — an untouched prefill must neither error nor mutate (round-1
+  // correctness lane). This pins the SCREEN threading: BookingForm must
+  // hand its initial state to buildDetails or the gate strands the row.
+  const patched: unknown[] = [];
+  const existing: BookingWithItems = {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Old name",
+      details: { category: "flight", origin_iata: "Narita" },
+    }),
+    items: [],
+  };
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve({ ...existing, title: "New name" });
+        },
+      },
+    },
+  );
+
+  const titleInput = await screen.findByTestId("itinerary-item-new-input-title");
+  await fireEvent.changeText(titleInput, "New name");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.title).toBe("New name");
+  expect(body.details).toMatchObject({ category: "flight", origin_iata: "Narita" });
+  expect(screen.queryByTestId("itinerary-item-new-input-origin-iata-error")).toBeNull();
+});
+
 it("place visit: CT-2 typeahead against /places/search; create body is a valid ItineraryItemCreate (R-itin-23)", async () => {
   const created: unknown[] = [];
   await renderScreen(
@@ -685,8 +856,160 @@ describe("discard guard copy (nav §2.6; round-2 N2)", () => {
   });
 });
 
+/**
+ * PR #49 R1 (correctness lane) — Done on an UNCHANGED picker value must not
+ * arm the §2.6 dirty guard. New with B-15a: before it, no same-value commit
+ * path existed (change-only native events), so `touch`/`setDetailField`
+ * could latch onDirty unconditionally. Scenario fixed: edit → peek at the
+ * calendar → Done → swipe-dismiss showed "Discard changes?" with zero
+ * changes. Compare-before-latch now lives at the picker call sites; the
+ * settings form is comparison-derived and was never affected.
+ */
+describe("same-value Done leaves the dirty guard unarmed (PR #49 R1)", () => {
+  // Kill-mutation: revert ItemForm's Day onSelect to `touch(setDay)` → the
+  // first dismissal is intercepted → red. Control arm in the same test: a
+  // REAL day change through the same picker still arms the guard.
+  it("edit item: peek at the prefilled Day, Done — clean; a real change arms", async () => {
+    await renderScreen({ itemId: ITEM_B_ID });
+    await screen.findByTestId("itinerary-item-new-input-title");
+
+    // Peek: open the Day picker (prefilled TRIP_START) and Done it shut.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day-sheet-done"));
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    // Control: a genuinely different day still arms.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+    await fireEvent(screen.getByTestId("itinerary-item-new-input-day-picker"), "onChange", {
+      nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 },
+    });
+    expect((await attemptDismiss()).prevented).toBe(true);
+    // The discard confirm actually presented (copy wording is pinned by the
+    // §2.6 copy describe above — here only the arming matters).
+    expect(screen.getByTestId("itinerary-item-new-button-cancel-confirm")).toBeOnTheScreen();
+  });
+
+  // Kill-mutation: drop either same-value guard at BookingForm's datetime
+  // call sites → the first dismissal is intercepted → red. Both halves are
+  // peeked (date AND time) so each guard is individually load-bearing.
+  it("edit booking: peek at a prefilled datetime (date + time), Done — clean; a real change arms", async () => {
+    const existing: BookingWithItems = {
+      ...makeBooking({
+        id: BOOKING_IDEA_ID,
+        category: "activity",
+        status: "idea",
+        starts_at: null,
+        title: "Kaiseki",
+        details: {
+          category: "activity",
+          venue_name: "TeamLab",
+          starts_at: "2027-03-02T14:30:00+09:00",
+        },
+      }),
+      items: [],
+    };
+    await renderScreen(
+      { bookingId: BOOKING_IDEA_ID },
+      {
+        overrides: {
+          "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        },
+      },
+    );
+    await screen.findByTestId("itinerary-item-new-input-starts-at-date");
+
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-date"));
+    await fireEvent.press(
+      screen.getByTestId("itinerary-item-new-input-starts-at-date-sheet-done"),
+    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time"));
+    await fireEvent.press(
+      screen.getByTestId("itinerary-item-new-input-starts-at-time-sheet-done"),
+    );
+    expect((await attemptDismiss()).prevented).toBe(false);
+
+    // Control: a genuinely different time still arms.
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time"));
+    await fireEvent(
+      screen.getByTestId("itinerary-item-new-input-starts-at-time-picker"),
+      "onChange",
+      { nativeEvent: { timestamp: new Date(2000, 0, 1, 15, 45).getTime(), utcOffset: 0 } },
+    );
+    expect((await attemptDismiss()).prevented).toBe(true);
+  });
+});
+
 it("viewers get the read-only notice — no form, no save (R-ib-24)", async () => {
   await renderScreen({ category: "activity" }, { role: "viewer" });
   expect(screen.getByTestId("itinerary-item-new-viewer")).toBeOnTheScreen();
   expect(screen.queryByTestId("itinerary-item-new-button-save")).toBeNull();
+});
+
+/**
+ * B-10b/c contextual picker seeds (device QA 2026-08-29): date pickers must
+ * never open on TODAY inside a trip flow. The pairing is the CALLER's
+ * (BookingForm maps each datetime field to its sibling, falling back to the
+ * trip start), so it is pinned here through the real flight form. Seeds are
+ * asserted through the picker wrapper's public `date` translation
+ * (`dateToMilliseconds(value)` — the same channel the native side reads).
+ * TRIP_START (2027-03-01) differs from any plausible "today", so the
+ * no-departure arm genuinely discriminates trip-start from the old default.
+ */
+it("flight arrival seeds from the entered departure — trip start before that (B-10)", async () => {
+  await renderScreen({ category: "flight" });
+
+  // CONTROL ARM (no departure entered yet): the arrival DATE picker opens on
+  // the trip's start date, not on today.
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date"));
+  expect(
+    screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date,
+  ).toBe(new Date(2027, 2, 1, 12).getTime());
+  await fireEvent.press(
+    screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"),
+  );
+
+  // Enter the departure date + time through their pickers.
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-departs-at-date"));
+  await fireEvent(
+    screen.getByTestId("itinerary-item-new-input-departs-at-date-picker"),
+    "onChange",
+    { nativeEvent: { timestamp: new Date(2027, 2, 2, 12).getTime(), utcOffset: 0 } },
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-departs-at-time"));
+  await fireEvent(
+    screen.getByTestId("itinerary-item-new-input-departs-at-time-picker"),
+    "onChange",
+    { nativeEvent: { timestamp: new Date(2027, 2, 2, 17, 5).getTime(), utcOffset: 0 } },
+  );
+
+  // Arrival DATE now seeds from the departure's day…
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date"));
+  expect(
+    screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date,
+  ).toBe(new Date(2027, 2, 2, 12).getTime());
+  await fireEvent.press(
+    screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"),
+  );
+
+  // …and the arrival TIME spinner from the departure's time (17:05 on the
+  // TimeField's fixed 2000-01-01 carrier date).
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-time"));
+  expect(
+    screen.getByTestId("itinerary-item-new-input-arrives-at-time-picker").props.date,
+  ).toBe(new Date(2000, 0, 1, 17, 5).getTime());
+});
+
+/**
+ * PR #40 R1 (tests lane): the ItemForm Day seed chain (`contextDay=
+ * {trip.start_date}` at item/new.tsx) was unpinned — severing it left the
+ * suite green while the Day picker silently reverted to opening on today.
+ * Red when that prop is removed: TRIP_START (2027-03-01) is not today.
+ */
+it("custom item Day picker seeds from the trip start when no day is prefilled (B-10 seed-chain pin)", async () => {
+  await renderScreen({ category: "custom" });
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day"));
+  expect(screen.getByTestId("itinerary-item-new-input-day-picker").props.date).toBe(
+    new Date(2027, 2, 1, 12).getTime(),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day-sheet-close"));
 });

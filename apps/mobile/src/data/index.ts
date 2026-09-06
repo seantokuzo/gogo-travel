@@ -69,6 +69,8 @@ export {
 } from "./itinerary";
 export type { DayOrderVars, ItemUpdateVars, ItineraryMutationOptions } from "./itinerary";
 export { isOfflineError, tripHasOfflineError, useTripOffline } from "./offline";
+export { invalidateMoneyData, usePutBudget, useTripBalances, useTripBudgets } from "./money";
+export type { BudgetPutVars, MoneyMutationOptions } from "./money";
 export {
   findSavedPlace,
   isOptimisticSavedPlaceId,

@@ -224,6 +224,7 @@ export default function ItineraryItemNewScreen() {
           tripId={trip.id}
           kind={item.kind}
           item={item}
+          contextDay={trip.start_date}
           onDirty={onDirty}
           onSaved={onSaved}
         />
@@ -267,6 +268,7 @@ export default function ItineraryItemNewScreen() {
         prefillDay={prefillDay}
         prefillTime={prefillTime}
         prefillPlace={prefillPlace}
+        contextDay={trip.start_date}
         onDirty={onDirty}
         onSaved={onSaved}
       />

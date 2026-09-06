@@ -18,16 +18,12 @@
  * banner. Fixtures are local files: DuckDB loads NO extensions and touches
  * NO network (Law #5).
  */
-import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, inject, it, vi } from "vitest";
 import { regionCellsForDestination } from "@gogo/shared/region-grid";
 import type { SpineSource } from "@gogo/shared/config/places";
 import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
@@ -45,38 +41,12 @@ import type { PlacesIngestTrigger } from "./ingest-queue.js";
 import type { RawSpineRecord, SpineRecord } from "./normalize.js";
 import { ingestRegionCell, type RegionIngestDeps } from "./region-ingest.js";
 import { crossSourceDuplicateQuery } from "./spine-upsert.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-6.4 PLACES INGEST SUITE SKIPPED           ║\n" +
-      "║  Region ingest, cross-source dedup, refresh window, the failure   ║\n" +
-      "║  path, and the trip-create trigger (places spec §3.1,             ║\n" +
-      "║  R-places-1..5/7/18) were NOT verified. Start Docker and re-run   ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-6.4 places ingest suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-6.4 places ingest suite " +
-        "could not verify places spec §3.1 (R-places-1..5/7/18). A skip is " +
-        "NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -96,7 +66,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const T0 = new Date("2026-07-25T12:00:00.000Z");
 
 describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", () => {
-  let container: StartedPostgreSqlContainer;
+  let suiteDb: SuiteDb;
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let reader: DuckDbGeoParquetReader;
@@ -104,21 +74,15 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
   const goodDatasets = { overture: OVERTURE_FIXTURE, fsq_os: FSQ_FIXTURE };
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("places_region_ingest");
+    client = suiteDb.client;
+    db = suiteDb.db;
     reader = createDuckDbGeoParquetReader();
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
     reader?.close();
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   const depsWith = (overrides: Partial<RegionIngestDeps> = {}): RegionIngestDeps => ({

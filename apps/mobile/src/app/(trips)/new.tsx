@@ -255,6 +255,7 @@ export default function TripNewScreen() {
               if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }));
             }}
             placeholder="Spring in Kyoto"
+            maxLength={200}
             error={fieldErrors.name}
             returnKeyType="next"
             testID="trip-new-input-name"
@@ -274,6 +275,9 @@ export default function TripNewScreen() {
                 }
               }}
               placeholder="Search cities"
+              // B-20: autocorrect fights foreign place names — the core input
+              // of a travel app's destination search.
+              autoCorrect={false}
               helper={
                 selectedPlace === null && destinationQuery !== "" && !searchActive
                   ? "Keep typing — search starts at 4 characters."
@@ -320,6 +324,9 @@ export default function TripNewScreen() {
                 <DateField
                   label="Start date"
                   value={startDate}
+                  // B-10b: an empty side of the range opens on its sibling,
+                  // not on today — a far-future trip needs no month paging.
+                  contextDate={endDate}
                   onSelect={(value) => {
                     setStartDate(value);
                     if (fieldErrors.start_date) {
@@ -334,6 +341,7 @@ export default function TripNewScreen() {
                 <DateField
                   label="End date"
                   value={endDate}
+                  contextDate={startDate}
                   onSelect={(value) => {
                     setEndDate(value);
                     if (fieldErrors.end_date) {

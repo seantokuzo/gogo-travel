@@ -64,9 +64,25 @@ export const bookings = pgTable(
       .where(sql`${t.captureId} IS NOT NULL`),
     index("bookings_place_id_idx").on(t.placeId),
     index("bookings_created_by_idx").on(t.createdBy),
+    // ⚠️ TEMPORARY WIDENING (B-8, 2026-08-29) — remove when B-8 is fixed.
+    // The strict rule is `starts_at <= ends_at`. The client currently stamps
+    // `Z` on every entered wall time (`form-model.ts:205`) instead of the real
+    // offset, so a legitimate eastbound flight — Tokyo 17:00 JST → LAX 10:00
+    // PDT — transmits as 17:00Z → 10:00Z and looks inverted. That made every
+    // date-line flight unenterable.
+    //
+    // Until the client sends real offsets, transport categories tolerate an
+    // apparent inversion of up to 12h. Scoped to `flight`/`train` on purpose:
+    // those are the only categories whose two endpoints can legitimately sit
+    // in different zones, so lodging check-out-before-check-in (etc.) stays a
+    // hard error. 12h covers the Tokyo→LA class (~7h apparent inversion); it
+    // does NOT cover the theoretical worst case (UTC+14 → UTC-11 ≈ 25h), which
+    // is accepted deliberately — this is a QA unblock, not the fix.
     check(
       "bookings_time_order_ck",
-      sql`${t.startsAt} IS NULL OR ${t.endsAt} IS NULL OR ${t.startsAt} <= ${t.endsAt}`,
+      sql`${t.startsAt} IS NULL OR ${t.endsAt} IS NULL OR ${t.startsAt} <= ${t.endsAt}
+        OR (${t.category} IN ('flight', 'train')
+            AND ${t.endsAt} >= ${t.startsAt} - interval '12 hours')`,
     ),
     check("bookings_price_nonnegative_ck", sql`${t.priceCents} >= 0`),
     // R-db-13: a non-null price requires a currency.

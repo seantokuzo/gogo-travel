@@ -21,16 +21,11 @@
  * CI run is a HARD FAILURE; a local Docker-less run skips with a loud
  * banner. No network beyond the local container (Law #5).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type postgres from "postgres";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { paginatedSchema } from "@gogo/shared/api/envelope";
 import {
   TripListItemSchema,
@@ -54,39 +49,12 @@ import {
   createRecordingTripEvents,
   type RecordingTripEvents,
 } from "./push-invalidation.test-util.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-6.1 TRIP CRUD SUITE SKIPPED               ║\n" +
-      "║  Trip CRUD, the F-038 IDOR harness, create transactionality,      ║\n" +
-      "║  the base-currency lock, expect_updated_at, and the status seam   ║\n" +
-      "║  (trips spec §3.3/§3.4, R-trips-1..8/19/20/22) were NOT           ║\n" +
-      "║  verified. Start Docker and re-run                                ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-6.1 trip CRUD suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-6.1 trip CRUD suite could " +
-        "not verify trips spec §3.3/§3.4 (R-trips-1..8/19/20/22). A skip is " +
-        "NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -97,7 +65,7 @@ const FROZEN_NOW = new Date("2026-07-25T12:00:00.000Z");
 const PaginatedTripListSchema = paginatedSchema(TripListItemSchema);
 
 describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
+  let suiteDb: SuiteDb;
   let client: postgres.Sql;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
@@ -109,14 +77,9 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("trips_routes");
+    client = suiteDb.client;
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -142,8 +105,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   // ---- seeding helpers ------------------------------------------------------

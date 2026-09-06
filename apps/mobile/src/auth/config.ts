@@ -8,6 +8,7 @@
  * secret ever lives in this module.
  */
 import Constants from "expo-constants";
+import { NativeModules } from "react-native";
 
 /** apps/server dev port (server `env.ts` `PORT` default). */
 export const DEV_SERVER_PORT = 3000;
@@ -50,23 +51,152 @@ export function assertSecureBaseUrl(url: string, dev: boolean = __DEV__): string
 }
 
 /**
+ * Narrow view of the `SourceCode` native module (RN 0.86
+ * `Libraries/NativeModules/specs/NativeSourceCode`): new-arch/TurboModule
+ * exposes `getConstants().scriptURL`; the legacy bridge hoists constants onto
+ * the module object as `.scriptURL`. Both are covered.
+ */
+type SourceCodeModule = {
+  getConstants?: () => { scriptURL?: string | null };
+  scriptURL?: string | null;
+};
+
+/**
+ * The host the bundle itself was served from — i.e. the Metro dev server
+ * (B-5). In a dev build `SourceCode.scriptURL` is ALWAYS the Metro URL
+ * (`http://<host>:8081/index.bundle?...`), even in a dev-client build where
+ * `Constants.expoConfig.hostUri` is empty. In a release build the bundle is
+ * embedded, `scriptURL` is `file://...`, the `https?` match fails, and this
+ * returns `null` — an embedded bundle has no dev host to offer.
+ *
+ * Same extraction RN's own `getDevServer()` performs
+ * (`Libraries/Core/Devtools/getDevServer.js`); read here via `NativeModules`
+ * to spare a deep Flow-file import (and its throw on `scriptURL: null`,
+ * which is exactly what the jest preset's `SourceCode` mock returns).
+ */
+/** Raw `SourceCode.scriptURL` (both native-arch shapes), or null when absent. */
+function readScriptURL(): string | null {
+  const sourceCode = (NativeModules as { SourceCode?: SourceCodeModule | null }).SourceCode;
+  const scriptURL = sourceCode?.getConstants?.().scriptURL ?? sourceCode?.scriptURL;
+  return typeof scriptURL === "string" ? scriptURL : null;
+}
+
+function resolveMetroHost(): string | null {
+  const scriptURL = readScriptURL();
+  if (scriptURL === null) return null;
+  // `@` is excluded so a userinfo-bearing URL (`http://a@evil.com`) can never
+  // smuggle its real host past the capture: the guard's host parse and
+  // fetch's host parse would otherwise disagree about which side of the `@`
+  // is the host (R1 security finding). The capture stops at the userinfo
+  // boundary, so only the pre-`@` segment can ever be derived.
+  const match = /^https?:\/\/([^:/@]+)/.exec(scriptURL);
+  return match?.[1] ?? null;
+}
+
+/** Which resolution tier produced the base URL (T-S3.5 device-smoke leg 1). */
+export type ApiBaseUrlSource =
+  | "explicit-env"
+  | "expo-config-host-uri"
+  | "metro-script-url"
+  | "localhost-fallback";
+
+/**
+ * The resolved base URL plus its provenance — which tier fired, and the raw
+ * inputs every tier read. Evidence surface for the `__DEV__` diagnostics
+ * panel (R-test-2): B-5 cost two debugging rounds because nobody could SEE
+ * which tier a device resolved. None of these values is a secret (module
+ * header: the base URL is public by design; hostUri/scriptURL are the Metro
+ * dev host the bundle itself came from).
+ */
+export interface ApiBaseUrlResolution {
+  /** Identical to `resolveApiBaseUrl()`'s return — same tiers, same guard. */
+  url: string;
+  /** 1-based tier number (doc-comment on `resolveApiBaseUrl`). */
+  tier: 1 | 2 | 3 | 4;
+  source: ApiBaseUrlSource;
+  /** Raw inputs as read, before any tier logic touched them. */
+  inputs: {
+    explicitEnv: string | null;
+    hostUri: string | null;
+    scriptURL: string | null;
+  };
+}
+
+/**
+ * `resolveApiBaseUrl` with the tier decision made visible. This IS the
+ * resolver — `resolveApiBaseUrl` delegates here, so the provenance this
+ * reports can never diverge from the URL the app actually uses (a separate
+ * "explainer" re-implementing the tiers would be the B-5 class all over
+ * again: two copies of the truth, one of them wrong on hardware).
+ */
+export function explainApiBaseUrl(): ApiBaseUrlResolution {
+  const explicit = process.env.EXPO_PUBLIC_API_URL;
+  const hostUri = Constants.expoConfig?.hostUri ?? null;
+  const scriptURL = readScriptURL();
+  // TRULY raw (PR #43 R1): a set-but-blank var stays "" here — normalizing it
+  // to null made leg 1 say "(unset)" while leg 3 said "SET BUT BLANK" in the
+  // same screenshot. The tier logic below applies its own emptiness rule.
+  const inputs = {
+    explicitEnv: explicit ?? null,
+    hostUri,
+    scriptURL,
+  };
+
+  if (explicit && explicit.length > 0) {
+    return {
+      url: assertSecureBaseUrl(withApiSuffix(explicit)),
+      tier: 1,
+      source: "explicit-env",
+      inputs,
+    };
+  }
+
+  if (hostUri) {
+    const host = hostUri.split(":")[0];
+    if (host) {
+      return {
+        url: assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+        tier: 2,
+        source: "expo-config-host-uri",
+        inputs,
+      };
+    }
+  }
+
+  const metroHost = resolveMetroHost();
+  if (metroHost) {
+    return {
+      url: assertSecureBaseUrl(`http://${metroHost}:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+      tier: 3,
+      source: "metro-script-url",
+      inputs,
+    };
+  }
+
+  return {
+    url: assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`),
+    tier: 4,
+    source: "localhost-fallback",
+    inputs,
+  };
+}
+
+/**
  * Resolve the API base URL (always normalized to end in `/api`). Priority:
  * 1. `EXPO_PUBLIC_API_URL` — explicit override (staging/prod/tunnel).
  * 2. Derived from the Metro dev host (`Constants.expoConfig.hostUri` =
  *    `<lan-ip>:8081`) → `http://<lan-ip>:3000/api`, so a physical device on
- *    the same LAN reaches the dev server with zero config.
- * 3. `http://localhost:3000/api` — simulator fallback (no dev host).
+ *    the same LAN reaches the dev server with zero config (Expo Go path).
+ * 3. Derived from the bundle's own source URL (`SourceCode.scriptURL`) —
+ *    dev-client builds, where `hostUri` is EMPTY and tier 2 never fires
+ *    (B-5: the fall-through to `localhost` made a physical device call
+ *    itself; every device→server call died as "network request failed").
+ * 4. `http://localhost:3000/api` — the SIMULATOR's fallback (loopback IS the
+ *    dev box there). Never correct for a physical device, which is why it is
+ *    the terminal tier and nothing device-shaped may land on it.
  */
 export function resolveApiBaseUrl(): string {
-  const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit && explicit.length > 0) return assertSecureBaseUrl(withApiSuffix(explicit));
-
-  const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const host = hostUri.split(":")[0];
-    if (host) return assertSecureBaseUrl(`http://${host}:${DEV_SERVER_PORT}${API_BASE_PATH}`);
-  }
-  return assertSecureBaseUrl(`http://localhost:${DEV_SERVER_PORT}${API_BASE_PATH}`);
+  return explainApiBaseUrl().url;
 }
 
 /**

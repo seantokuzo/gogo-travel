@@ -28,9 +28,14 @@ import {
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
+  ITEM_A_ID,
   ITEM_B_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   itineraryApiOverrides,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -182,6 +187,20 @@ describe("day sections (R-itin-1)", () => {
     });
   });
 
+  it("a POPULATED day's header carries the `+` add affordance prefilled with its date (B-11)", async () => {
+    await renderItinerary();
+    // TRIP_START is populated in the default universe (flight + lodging
+    // check-in + Walk Shibuya) — exactly the day that used to be add-locked
+    // in list view (the R-itin-1 slim row only exists on empty days).
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    expect(screen.queryByTestId(`itinerary-day-add-${TRIP_START}`)).toBeNull();
+    await fireEvent.press(screen.getByTestId(`itinerary-day-header-add-${TRIP_START}`));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/item/new",
+      params: { tripId: TEST_TRIP_ID, day: TRIP_START },
+    });
+  });
+
   it("booking-derived cards render the parent's title and status badge (R-itin-8)", async () => {
     await renderItinerary();
     await screen.findByText("UA 837 SFO→NRT");
@@ -194,6 +213,36 @@ describe("day sections (R-itin-1)", () => {
   });
 });
 
+describe("B-18 — rental pickup/drop-off captions (list view)", () => {
+  it("a rental's two derived rows carry DISTINCT subtexts; non-derived rows carry none", async () => {
+    await renderItinerary({
+      api: {
+        items: [...defaultItineraryItems(), ...rentalItems()],
+        bookings: [...defaultBookings(), rentalBooking()],
+      },
+    });
+    // Both rows render the SAME bare booking title — the caption is the only
+    // row-level discriminator (the device-QA gap).
+    const pickup = await screen.findByTestId(
+      `itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}-subtext`,
+    );
+    expect(pickup).toHaveTextContent("Pickup");
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
+    ).toHaveTextContent("Drop off");
+    expect(screen.getAllByText("Toyota Rent a Car")).toHaveLength(2);
+    // R1: the a11y label carries the discriminator too — VoiceOver must not
+    // announce two identical "Toyota Rent a Car" rows.
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}`).props.accessibilityLabel,
+    ).toBe("Toyota Rent a Car Pickup");
+    // CONTROL: the flight row is booking-derived but NOT a dual-point
+    // derivation — no caption element at all.
+    expect(screen.getByTestId(`itinerary-list-item-${ITEM_A_ID}`)).toBeTruthy();
+    expect(screen.queryByTestId(`itinerary-list-item-${ITEM_A_ID}-subtext`)).toBeNull();
+  });
+});
+
 describe("spanning lodging (R-itin-31)", () => {
   it("synthesizes check-in and check-out point rows; no row on the night between", async () => {
     await renderItinerary();
@@ -203,6 +252,19 @@ describe("spanning lodging (R-itin-31)", () => {
     expect(screen.queryByTestId(`itinerary-list-item-${ITEM_LODGING_ID}`)).toBeNull();
     expect(screen.getByText("Check-in")).toBeTruthy();
     expect(screen.getByText("Check-out")).toBeTruthy();
+  });
+
+  it("check-in and check-out rows carry DISTINCT a11y labels (B-23, the B-18 join)", async () => {
+    await renderItinerary();
+    const checkIn = await screen.findByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-in`);
+    const checkOut = screen.getByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-out`);
+    // The card's container label suppresses the Badge subtree, so without the
+    // checkpoint joining the label both rows announce the bare booking title
+    // — a VoiceOver user can't tell arrival from departure. The grid already
+    // joins it (GridDayColumn labelSuffix); this pins list parity.
+    expect(checkIn.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-in");
+    expect(checkOut.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-out");
+    expect(checkIn.props.accessibilityLabel).not.toBe(checkOut.props.accessibilityLabel);
   });
 
   it("both synthesized rows route to the SAME booking detail", async () => {
@@ -321,6 +383,10 @@ describe("add entry points (T-7.6 / IT-7, R-itin-18) + viewer gating (R-ib-24)",
     // Day 2 is empty in the default universe — editors get its add row.
     expect(screen.queryByTestId(`itinerary-day-add-${TRIP_DAY_2}`)).toBeNull();
     expect(screen.getByTestId(`itinerary-day-header-${TRIP_DAY_2}`)).toBeOnTheScreen();
+    // B-11 header `+` is a write affordance too — the editor arm of the
+    // populated-day test above is this assertion's control (same testID,
+    // present there, pressable, routes).
+    expect(screen.queryByTestId(`itinerary-day-header-add-${TRIP_START}`)).toBeNull();
   });
 });
 

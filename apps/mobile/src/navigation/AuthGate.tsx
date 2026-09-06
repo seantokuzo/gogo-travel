@@ -9,11 +9,16 @@
  * ready) rather than rendering a `<Redirect>`, because the resume branch must
  * consume the stash exactly once. The Stack stays mounted the whole time so
  * the navigator is always available to replace into.
+ *
+ * The first post-hydration decision is deferred by one effect cycle (B-14
+ * latch): a cold boot's deep-linked landing commits in the same render that
+ * mounts the children, so the flip-time route read can still be the boot
+ * default — see the redirect effect.
  */
 import { createStyles } from "@gogo/tokens/react";
 import { SplashScreen, useRouter, useSegments, usePathname } from "expo-router";
 import type { Href } from "expo-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
 import { useSessionStore } from "@/auth";
@@ -57,6 +62,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const inAuthGroup = segments[0] === "(auth)";
   const onOnboarding = inAuthGroup && segments.includes("onboarding");
 
+  // B-14 latch: the gate's FIRST post-hydration route read can predate the
+  // navigator's committed cold-boot landing (see the redirect effect below).
+  const [routeReadSettled, setRouteReadSettled] = useState(false);
+
   // Boot hydration — once (idempotent in the store).
   useEffect(() => {
     void useSessionStore.getState().hydrate();
@@ -71,6 +80,26 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // built action object) so it fires only on a real state/route change.
   useEffect(() => {
     if (!hydrated) return;
+    // B-14 (cold-boot deeplink race): on the hydration flip, this effect's
+    // segments/pathname were captured in the render that MOUNTED the children
+    // — before the navigator's deep-linked initial route was observable to
+    // these hooks (expo-router syncs its route info when a leaf route renders
+    // or on the container's next state change, both AFTER this closure was
+    // built). Deciding off that stale boot-default read ("/") sent a
+    // signed-out cold boot of gogo://diagnostics — an unauthed-reachable
+    // (auth) route this gate's contract says to render — to sign-in,
+    // stomping the already-committed panel. Arm a one-shot latch instead of
+    // deciding: the state flip re-runs this effect in a render whose route
+    // read reflects every navigation committed at mount, and THAT run
+    // decides. Costs one effect cycle exactly once per app boot.
+    if (!routeReadSettled) {
+      // The extra render this rule guards against IS the fix: the latch must
+      // flip post-commit so the re-run reads the committed route — a
+      // render-phase flip would re-read the same pre-commit snapshot.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRouteReadSettled(true);
+      return;
+    }
     const action = resolveGate({
       hydrated,
       authed,
@@ -101,7 +130,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
         }
         break;
     }
-  }, [hydrated, authed, firstRun, resetting, inAuthGroup, onOnboarding, pathname, router]);
+  }, [
+    hydrated,
+    authed,
+    firstRun,
+    resetting,
+    inAuthGroup,
+    onOnboarding,
+    pathname,
+    router,
+    routeReadSettled,
+  ]);
 
   if (!hydrated) return <SplashHold />;
   return <>{children}</>;

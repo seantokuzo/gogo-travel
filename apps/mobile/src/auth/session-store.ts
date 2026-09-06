@@ -28,6 +28,10 @@ import { queryClient } from "@/data/query-client";
 // Direct module import (not the feature barrel) — the barrel pulls the panel,
 // whose data hooks import this file's apiClient: a require cycle.
 import { clearDeeplinkOutRecord } from "@/features/deeplinks/return-prompt-store";
+// Concrete module, NOT the @/features/money barrel: the barrel pulls the
+// segment components, which import @/auth — the same cycle the query-client
+// import note guards against.
+import { resetMoneySegmentMemory } from "@/features/money/segment-memory";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
 
@@ -202,6 +206,10 @@ export const useSessionStore = create<SessionState>()(
       queryClient.clear();
       resetTabMemory();
       clearLastViewedTrip();
+      // T-9.5 R1 (security): the money-segment choice is in-session state of
+      // the same R-nav-4 class as tab memory — a shared-device next account
+      // must not land on the previous account's segment.
+      resetMoneySegmentMemory();
       // Sign-out hygiene (T-7.8 R1): a pending deeplink-return record must
       // not prompt "Did you book it?" at the NEXT account for the previous
       // account's trip.

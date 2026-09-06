@@ -46,6 +46,44 @@ export function seedUnauthenticated(): void {
 }
 
 /**
+ * Cold-boot-faithful UNAUTHED seed (B-14): `hydrated` starts FALSE and flips
+ * true only when the returned `releaseHydration` is called — mirroring the
+ * real `hydrate()`, which awaits `storage.getRefreshToken()` before
+ * `set({ hydrated: true })` even for a signed-out user. `seedUnauthenticated`
+ * cannot reproduce boot races: it sets `hydrated: true` synchronously
+ * pre-render, so the gate never sees the splash-hold window.
+ *
+ * `releaseHydration` resolves the storage read AND awaits the store flip, so
+ * callers can wrap it in `act` and assert the post-hydration navigation.
+ */
+export function seedColdBootUnauthenticated(): { releaseHydration: () => Promise<void> } {
+  let release!: () => void;
+  const storageRead = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const hydrate = async (): Promise<void> => {
+    if (useSessionStore.getState().hydrated) return;
+    await storageRead; // the async secure-store read (no token → signed out)
+    useSessionStore.setState({ hydrated: true, user: null, accessToken: null });
+  };
+  useSessionStore.setState({
+    hydrated: false,
+    user: null,
+    accessToken: null,
+    firstRun: false,
+    pendingDestination: null,
+    resetting: false,
+    hydrate,
+  });
+  return {
+    releaseHydration: async () => {
+      release();
+      await storageRead;
+    },
+  };
+}
+
+/**
  * Seed the store to match the auth reachability of the URL a route-tree render
  * is about to address: `(auth)/sign-in` needs no user; `(auth)/onboarding`
  * needs a first-run user; every other route needs an authenticated user.

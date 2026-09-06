@@ -8,9 +8,14 @@
  */
 import {
   BOOKING_CATEGORIES,
+  bookingPrimaryTimes,
   centsToMoneyText,
+  wallDate,
+  wallTime,
   type Booking,
   type BookingCategory,
+  type ISODate,
+  type ISOTime,
   type ItineraryItem,
 } from "@gogo/shared";
 
@@ -98,16 +103,18 @@ export function formatIdeaPrice(priceCents: number, currency: string): string {
   return `${currency} ${centsToMoneyText(priceCents, currency)}`;
 }
 
-/** The flat row list the bucket's FlatList renders (groups flattened). */
+/** The flat row list a bin's FlatList renders (groups flattened). */
 export type IdeasRow =
   | { type: "group"; key: string; label: string }
   | { type: "card"; key: string; card: IdeaCard; cancelled: boolean };
 
-export function buildIdeasRows(
-  groups: readonly IdeasGroup[],
-  cancelled: readonly Booking[],
-  showCancelled: boolean,
-): IdeasRow[] {
+/**
+ * B-13: the Ideas BIN's rows — unscheduled groups only. Cancelled bookings
+ * moved out to their own peer bin (`buildCancelledRows`); the pre-B-13
+ * shape appended them here behind a foot toggle, which made showing
+ * cancelled surface the Ideas box with zero ideas in it.
+ */
+export function buildIdeasRows(groups: readonly IdeasGroup[]): IdeasRow[] {
   const rows: IdeasRow[] = [];
   for (const group of groups) {
     rows.push({
@@ -119,16 +126,56 @@ export function buildIdeasRows(
       rows.push({ type: "card", key: card.booking.id, card, cancelled: false });
     }
   }
-  if (showCancelled && cancelled.length > 0) {
-    rows.push({ type: "group", key: "group-cancelled", label: "Cancelled" });
-    for (const booking of cancelled) {
-      rows.push({
-        type: "card",
-        key: booking.id,
-        card: { booking, needsDay: false },
-        cancelled: true,
-      });
-    }
-  }
   return rows;
+}
+
+/**
+ * B-13: the Cancelled BIN's rows — flat cancelled cards, no group label
+ * (the bin's own header already says "Cancelled"). Same row vocabulary as
+ * the Ideas bin: the two bins are peers of the same shape.
+ */
+export function buildCancelledRows(cancelled: readonly Booking[]): IdeasRow[] {
+  return cancelled.map((booking) => ({
+    type: "card",
+    key: booking.id,
+    card: { booking, needsDay: false },
+    cancelled: true,
+  }));
+}
+
+/** The ScheduleSheet's initial picker values — `""` = the field starts unset. */
+export interface SchedulePrefill {
+  day: ISODate | "";
+  startTime: ISOTime | "";
+  endTime: ISOTime | "";
+}
+
+/**
+ * B-16 (device QA 2026-09-06): an idea that already carries date/times must
+ * open the Add-to-day sheet with them as the pickers' VALUES — not just the
+ * B-10b picker seeds — so the user isn't forced to re-enter what the card
+ * already knows. Wall components are sliced from the details' LOCAL strings
+ * (shared `wallDate`/`wallTime`, §3.3 — no tz math), the same derivation
+ * I-2 uses, so the sheet shows where the card would actually land.
+ *
+ * Shape rules:
+ *  - nothing carried ⇒ all empty (the pre-B-16 behavior, kept as-is);
+ *  - the day anchors on the primary START, falling back to the end when only
+ *    the end is known (each side is independent — R-ib-4 posture);
+ *  - an end on a DIFFERENT wall-date is dropped: the sheet's single-day
+ *    `end_time` can't carry it, and prefilling it would render an overnight
+ *    span as inverted times. A same-wall-date inversion (the date-line
+ *    class) prefills as carried — the form's existing inversion rule, not
+ *    this projection, is what governs submittability.
+ */
+export function schedulePrefill(booking: Booking): SchedulePrefill {
+  const { start, end } = bookingPrimaryTimes(booking.details);
+  const anchor = start ?? end;
+  if (anchor === null) return { day: "", startTime: "", endTime: "" };
+  const day = wallDate(anchor);
+  return {
+    day,
+    startTime: start !== null ? wallTime(start) : "",
+    endTime: end !== null && wallDate(end) === day ? wallTime(end) : "",
+  };
 }

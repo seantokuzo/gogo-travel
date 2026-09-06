@@ -405,9 +405,16 @@ export default function BookingDetailScreen() {
                   }
                   testID="booking-detail-button-edit"
                 />
-                {/* Terminal state: §3.2 has no transition OUT of cancelled, so
-                    the action would be a guaranteed 400. */}
-                {booking.status !== "cancelled" ? (
+                {/* B-17 (Sean device-QA ruling, 2026-09-06): the Cancel
+                    affordance renders ONLY on a BOOKED booking. §3.2 permits
+                    cancel-from-idea/planned on the wire — the API keeps
+                    accepting those — but "cancel" is a claim about a
+                    reservation you actually hold; an idea/planned entry is
+                    discarded via `→ idea` / delete, not "cancelled". UI
+                    ruling supersedes the spec table (flagged for spec-sync,
+                    not edited here). Cancelled stays excluded too: terminal,
+                    a guaranteed 400. */}
+                {booking.status === "booked" ? (
                   <Button
                     title="Cancel booking"
                     variant="secondary"

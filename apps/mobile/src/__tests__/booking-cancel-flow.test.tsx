@@ -73,7 +73,10 @@ function makeStatefulApi(trip: TripListItem) {
   const lodging = makeBooking({
     id: BOOKING_LODGING_ID,
     category: "lodging",
-    status: "planned",
+    // B-17: cancel is a booked-only affordance — the acceptance flow rides
+    // the one status whose UI can still reach it. The flow itself (confirm →
+    // off calendar → under Show cancelled, F-043 criterion 3) is unchanged.
+    status: "booked",
     title: "Park Hyatt Tokyo",
     details: { category: "lodging", property_name: "Park Hyatt Tokyo" },
     starts_at: "2027-03-01T06:00:00.000Z",
@@ -210,15 +213,19 @@ it("cancel → confirm → off the calendar, visible under Show cancelled", asyn
     expect(screen.queryByTestId(`itinerary-list-item-${ITEM_LODGING_ID}`)).toBeNull(),
   );
 
-  // Visible under "Show cancelled" (R-itin-12 — the bucket is a cancelled
-  // booking's ONLY surface).
-  await fireEvent.press(await screen.findByTestId("itinerary-ideas-toggle"));
+  // Visible under show-cancelled (R-itin-12 / F-043 criterion 3): the
+  // cancelled booking's ONLY surface is the Cancelled peer bin (B-13) — and
+  // the emptied Ideas bin is GONE rather than showing an empty box (the
+  // exact device-QA repro: zero ideas, one cancelled lodging).
+  expect(screen.queryByTestId("itinerary-ideas")).toBeNull();
+  const cancelledToggle = await screen.findByTestId("itinerary-cancelled-toggle");
+  // Collapsed by default — expanding IS the show-cancelled affordance,
+  // which is also the CONTROL for the assertion after it.
+  expect(screen.queryByTestId(`itinerary-cancelled-item-${BOOKING_LODGING_ID}`)).toBeNull();
+  await fireEvent.press(cancelledToggle);
   await settle();
-  // Hidden by default — the toggle is what reveals it, which is also the
-  // CONTROL for the assertion after it.
-  expect(screen.queryByTestId(`itinerary-ideas-item-${BOOKING_LODGING_ID}`)).toBeNull();
-  await fireEvent.press(await screen.findByTestId("itinerary-ideas-show-cancelled"));
-  await settle();
-  expect(await screen.findByTestId(`itinerary-ideas-item-${BOOKING_LODGING_ID}`)).toBeTruthy();
+  expect(
+    await screen.findByTestId(`itinerary-cancelled-item-${BOOKING_LODGING_ID}`),
+  ).toBeTruthy();
   expect(screen.getByText("Park Hyatt Tokyo")).toBeTruthy();
 });

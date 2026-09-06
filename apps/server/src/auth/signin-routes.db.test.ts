@@ -12,13 +12,8 @@
  * beyond the local container (Law #5 — JWKS and Apple exchange are faked
  * through their DI seams).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
   createLocalJWKSet,
   exportJWK,
@@ -27,8 +22,7 @@ import {
   SignJWT,
   type JWTVerifyGetKey,
 } from "jose";
-import postgres from "postgres";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from "vitest";
 import { SignInResponseSchema, type SignInResponse } from "@gogo/shared/domains/auth";
 import { createApp } from "../app.js";
 import {
@@ -41,39 +35,12 @@ import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { decryptSecret, parseAesKey, sha256Hex } from "./crypto.js";
 import type { AuthRouterDeps } from "./routes.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-5.2 SIGN-IN INTEGRATION SUITE SKIPPED     ║\n" +
-      "║  The /auth/apple + /auth/google contracts (auth-users spec        ║\n" +
-      "║  §3.4.1, R-auth-1..7/15) were NOT verified. Start Docker and      ║\n" +
-      "║  re-run `pnpm --filter @gogo/server test` before treating this    ║\n" +
-      "║  branch as green.                                                 ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-// Same contract as DB-1: in CI a skip must never be mistaken for a pass.
-if (!dockerAvailable && process.env.CI) {
-  it("T-5.2 sign-in integration suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-5.2 sign-in integration " +
-        "suite could not verify auth-users spec §3.4.1. A skip here is NOT " +
-        "a pass. Provision Docker or a Postgres service container and re-run.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const APPLE_AUD = "com.gogo.travel";
@@ -83,8 +50,7 @@ const SIGNER_KID = "gogo-es256-2026-07";
 const APPLE_REFRESH_PLAINTEXT = "apple-refresh-token-plaintext-secret";
 
 describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let providerKey: Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
@@ -96,16 +62,8 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
   const exchangedCodes: string[] = [];
 
   beforeAll(async () => {
-    // 60s startup budget: three DB suites boot their own container
-    // concurrently in the full gate; the default 10s port-bind wait went red
-    // when the third hit it (T-5.2 round-1 flake).
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
-    await migrate(db, { migrationsFolder });
+    suiteDb = await createSuiteDb("auth_signin_routes");
+    db = suiteDb.db;
 
     const provider = await generateKeyPair("RS256", { extractable: true });
     providerKey = provider.privateKey;
@@ -140,8 +98,7 @@ describe.skipIf(!dockerAvailable)("T-5.2 sign-in routes (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   afterEach(() => {

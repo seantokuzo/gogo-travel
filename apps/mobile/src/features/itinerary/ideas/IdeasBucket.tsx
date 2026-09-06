@@ -1,18 +1,28 @@
 /**
- * Ideas / unscheduled bucket (T-7.6 / IT-5 — itinerary spec §2.3,
- * R-itin-10..12): the collapsible section the itinerary screen pins at its
- * IDEAS BUCKET SEAM, above the day list.
+ * Ideas / Cancelled bins (T-7.6 / IT-5 — itinerary spec §2.3, R-itin-10..12;
+ * reshaped by B-13): the collapsible sections the itinerary screen pins at
+ * its IDEAS BUCKET SEAM, above the day list.
+ *
+ * B-13 (Sean's ruling, device QA 2026-08-29): Ideas and Cancelled are TWO
+ * PEER BINS of the same shape, and each renders ONLY when it has contents —
+ * an empty bin hides entirely rather than showing an empty box (the old
+ * single-container shape put cancelled behind a foot toggle INSIDE the Ideas
+ * box, so showing cancelled surfaced an Ideas container with zero ideas).
+ * "Hide when empty" is never "hide cancelled": the Cancelled bin exists
+ * whenever cancelled bookings exist, and expanding it is the show-cancelled
+ * surface (F-043 criterion 3 — a cancelled booking stays reachable, keeping
+ * its row and expense links).
  *
  * Data: consumes the SAME cache entries the screen already mounts
  * (`useItinerary` + `useItineraryBookings` — zero extra requests; bucket
  * membership = zero-item bookings computed client-side, R-ib-10) plus the
- * cancelled list (`useCancelledBookings`, eager: R-itin-12 makes the bucket
+ * cancelled list (`useCancelledBookings`, eager: R-itin-12 makes these bins
  * the ONLY surface for cancelled bookings, so a cancelled-only trip must
- * still grow the entry).
+ * still grow the Cancelled bin).
  *
- * Visibility (R-itin-10/12): hidden while the reads are unsettled and when
- * there is nothing to show (no unscheduled, no cancelled). Count badge =
- * unscheduled only (cancelled are hidden behind the foot toggle).
+ * Visibility (R-itin-10/12 + B-13): both bins hidden while the reads are
+ * unsettled (no flash-in); each bin then renders iff it has contents. A
+ * failed cancelled read degrades to "no Cancelled bin".
  *
  * Scheduling (R-itin-11): "Add to day" → ScheduleSheet → optimistic
  * schedule (hook-owned). Write affordances are hidden for viewers
@@ -21,7 +31,7 @@
  */
 import type { Booking, TripWithRole } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactElement } from "react";
 import { FlatList, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { AppText, Badge, Button, Card, Icon } from "@/components";
@@ -29,6 +39,7 @@ import { useCancelledBookings, useItinerary, useItineraryBookings } from "@/data
 
 import { CATEGORY_ICONS, statusBadgeTone } from "../model";
 import {
+  buildCancelledRows,
   buildIdeasGroups,
   buildIdeasRows,
   formatIdeaPrice,
@@ -68,20 +79,78 @@ const useStyles = createStyles((t) =>
     cardRow: { flexDirection: "row", alignItems: "center", gap: t.space[3] },
     cardBody: { flex: 1, gap: t.space[1] },
     badgeRow: { flexDirection: "row", alignItems: "center", gap: t.space[2] },
-    foot: { paddingVertical: t.space[2], alignItems: "flex-start" },
   }),
 );
 
-export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
+interface BinProps {
+  /** Header title — the bin's identity ("Ideas" / "Cancelled"). */
+  title: string;
+  /** Count badge value + tone (Ideas: accent unscheduled; Cancelled: neutral). */
+  count: number;
+  countTone: "accent" | "neutral";
+  accessibilityLabel: string;
+  /** testID base: `{testID}` root, `{testID}-toggle`, `{testID}-list`. */
+  testID: string;
+  rows: IdeasRow[];
+  renderRow: (info: { item: IdeasRow }) => ReactElement;
+  /** Extra always-mounted children (the Ideas bin hosts the ScheduleSheet). */
+  children?: ReactElement | null;
+}
+
+/** One collapsible bin — B-13's shared shape, rendered per peer. */
+function Bin({
+  title,
+  count,
+  countTone,
+  accessibilityLabel,
+  testID,
+  rows,
+  renderRow,
+  children,
+}: BinProps) {
   const s = useStyles();
   const { height: windowHeight } = useWindowDimensions();
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <View style={s.container} testID={testID}>
+      <Pressable
+        style={s.header}
+        onPress={() => setExpanded((prev) => !prev)}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        accessibilityState={{ expanded }}
+        testID={`${testID}-toggle`}
+      >
+        <AppText role="subheading" style={s.headerTitle}>
+          {title}
+        </AppText>
+        <Badge label={String(count)} tone={countTone} size="sm" />
+        <View style={s.headerSpacer} />
+        <Icon name={expanded ? "chevron-up" : "chevron-down"} size={18} />
+      </Pressable>
+      {expanded ? (
+        <FlatList
+          data={rows}
+          keyExtractor={(row) => row.key}
+          renderItem={renderRow}
+          style={{ maxHeight: Math.round(windowHeight * 0.45) }}
+          contentContainerStyle={s.list}
+          testID={`${testID}-list`}
+        />
+      ) : null}
+      {children}
+    </View>
+  );
+}
+
+export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
+  const s = useStyles();
 
   const itineraryQuery = useItinerary(trip.id);
   const bookingsQuery = useItineraryBookings(trip.id);
   const cancelledQuery = useCancelledBookings(trip.id);
 
-  const [expanded, setExpanded] = useState(false);
-  const [showCancelled, setShowCancelled] = useState(false);
   const [scheduleTarget, setScheduleTarget] = useState<Booking | null>(null);
 
   const unscheduled = useMemo(
@@ -90,14 +159,11 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
     [bookingsQuery.data, itineraryQuery.data],
   );
   const cancelled = useMemo(() => cancelledQuery.data?.items ?? [], [cancelledQuery.data]);
-  const rows = useMemo(
-    () => buildIdeasRows(buildIdeasGroups(unscheduled), cancelled, showCancelled),
-    [unscheduled, cancelled, showCancelled],
-  );
+  const ideasRows = useMemo(() => buildIdeasRows(buildIdeasGroups(unscheduled)), [unscheduled]);
+  const cancelledRows = useMemo(() => buildCancelledRows(cancelled), [cancelled]);
 
-  // R-itin-10: hidden when empty — and hidden until the reads that decide
-  // "empty" have settled (no flash-in). A failed cancelled read degrades to
-  // "no cancelled" (its only cost is the toggle).
+  // Hidden until the reads that decide "empty" have settled (no flash-in).
+  // A failed cancelled read degrades to "no Cancelled bin" (its only cost).
   //
   // `scheduleTarget === null` is load-bearing (round-1 blocker): scheduling
   // the LAST idea empties `unscheduled` at OPTIMISTIC-write time, which
@@ -107,8 +173,9 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
   // silently reappeared. Staying mounted for the duration of a presented
   // schedule keeps the sheet's documented rollback-visible posture true.
   const settled = itineraryQuery.data !== undefined && bookingsQuery.data !== undefined;
-  const empty = unscheduled.length === 0 && cancelled.length === 0 && scheduleTarget === null;
-  if (!settled || empty) return null;
+  const showIdeas = unscheduled.length > 0 || scheduleTarget !== null;
+  const showCancelledBin = cancelled.length > 0;
+  if (!settled || (!showIdeas && !showCancelledBin)) return null;
 
   const editor = trip.role !== "viewer";
 
@@ -129,7 +196,11 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
         onPress={() => onOpenBooking(booking.id)}
         style={s.card}
         accessibilityLabel={booking.title}
-        testID={`itinerary-ideas-item-${booking.id}`}
+        testID={
+          item.cancelled
+            ? `itinerary-cancelled-item-${booking.id}`
+            : `itinerary-ideas-item-${booking.id}`
+        }
       >
         <View style={s.cardRow}>
           <Icon name={CATEGORY_ICONS[booking.category]} size={20} />
@@ -166,54 +237,38 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
   };
 
   return (
-    <View style={s.container} testID="itinerary-ideas">
-      <Pressable
-        style={s.header}
-        onPress={() => setExpanded((prev) => !prev)}
-        accessibilityRole="button"
-        accessibilityLabel={`Ideas, ${unscheduled.length} unscheduled`}
-        accessibilityState={{ expanded }}
-        testID="itinerary-ideas-toggle"
-      >
-        <AppText role="subheading" style={s.headerTitle}>
-          Ideas
-        </AppText>
-        <Badge label={String(unscheduled.length)} tone="accent" size="sm" />
-        <View style={s.headerSpacer} />
-        <Icon name={expanded ? "chevron-up" : "chevron-down"} size={18} />
-      </Pressable>
-      {expanded ? (
-        <FlatList
-          data={rows}
-          keyExtractor={(row) => row.key}
-          renderItem={renderRow}
-          style={{ maxHeight: Math.round(windowHeight * 0.45) }}
-          contentContainerStyle={s.list}
-          testID="itinerary-ideas-list"
-          ListFooterComponent={
-            cancelled.length > 0 ? (
-              <Pressable
-                style={s.foot}
-                onPress={() => setShowCancelled((prev) => !prev)}
-                accessibilityRole="button"
-                accessibilityLabel={showCancelled ? "Hide cancelled" : "Show cancelled"}
-                testID="itinerary-ideas-show-cancelled"
-              >
-                <AppText role="caption" color="secondary">
-                  {showCancelled
-                    ? "Hide cancelled"
-                    : `Show cancelled (${cancelled.length})`}
-                </AppText>
-              </Pressable>
-            ) : null
-          }
+    <>
+      {showIdeas ? (
+        <Bin
+          title="Ideas"
+          count={unscheduled.length}
+          countTone="accent"
+          accessibilityLabel={`Ideas, ${unscheduled.length} unscheduled`}
+          testID="itinerary-ideas"
+          rows={ideasRows}
+          renderRow={renderRow}
+        >
+          <ScheduleSheet
+            tripId={trip.id}
+            booking={scheduleTarget}
+            contextDay={trip.start_date}
+            onClose={() => setScheduleTarget(null)}
+          />
+        </Bin>
+      ) : null}
+      {showCancelledBin ? (
+        <Bin
+          title="Cancelled"
+          count={cancelled.length}
+          countTone="neutral"
+          accessibilityLabel={`Cancelled, ${cancelled.length} ${
+            cancelled.length === 1 ? "booking" : "bookings"
+          }`}
+          testID="itinerary-cancelled"
+          rows={cancelledRows}
+          renderRow={renderRow}
         />
       ) : null}
-      <ScheduleSheet
-        tripId={trip.id}
-        booking={scheduleTarget}
-        onClose={() => setScheduleTarget(null)}
-      />
-    </View>
+    </>
   );
 }

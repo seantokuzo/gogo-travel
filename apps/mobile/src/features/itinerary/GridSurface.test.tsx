@@ -24,7 +24,11 @@ import {
   ITEM_B_ID,
   ITEM_C_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   makeItineraryItem,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -101,6 +105,29 @@ describe("GridSurface", () => {
       top: 600,
       height: 150,
     });
+  });
+
+  it("captions a rental's derived blocks Pickup / Drop off — and nothing else (B-18)", async () => {
+    await renderGrid({
+      items: [...defaultItineraryItems(), ...rentalItems()],
+      bookingsById: new Map(
+        [...defaultBookings(), rentalBooking()].map((b) => [b.id, b]),
+      ),
+    });
+    // Two blocks, one booking title — the caption is the discriminator.
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_PICKUP_ID}-subtext`),
+    ).toHaveTextContent("Pickup");
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
+    ).toHaveTextContent("Drop off");
+    // R1: the a11y label carries the discriminator on the grid surface too.
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_RENTAL_PICKUP_ID}`).props.accessibilityLabel,
+    ).toBe("Toyota Rent a Car Pickup");
+    // CONTROL: a non-derived booking block renders no caption element.
+    expect(screen.getByTestId(`itinerary-grid-item-${ITEM_A_ID}`)).toBeOnTheScreen();
+    expect(screen.queryByTestId(`itinerary-grid-item-${ITEM_A_ID}-subtext`)).toBeNull();
   });
 
   it("floors tiny blocks at MIN_BLOCK_HEIGHT so they stay readable/tappable", async () => {
@@ -197,13 +224,33 @@ describe("GridSurface", () => {
         screen.getByTestId(`itinerary-grid-span-${ITEM_LODGING_ID}-${date}`),
       ).toBeOnTheScreen();
     }
-    // Never a full-height band: no block for the lodging item.
+    // Never a full-height band: no UNQUALIFIED block for the lodging item
+    // (the B-12 checkpoint indicators below are the only timed-grid render).
     expect(screen.queryByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}`)).toBeNull();
     // Labeled at the check-in/check-out edges only (§2.6).
     expect(screen.getAllByText("Park Hyatt Tokyo")).toHaveLength(2);
     // Every segment routes to the SAME booking detail.
     await fireEvent.press(screen.getByTestId(`itinerary-grid-span-${ITEM_LODGING_ID}-${TRIP_DAY_2}`));
     expect(handlers.onOpenBooking).toHaveBeenCalledWith(BOOKING_LODGING_ID);
+  });
+
+  it("draws derived check-in/check-out indicators at the real times, routing like the span (B-12)", async () => {
+    const handlers = await renderGrid();
+    // Default lodging: check-in 15:00 on TRIP_START, check-out 11:00 on
+    // TRIP_END. At DEFAULT_HOUR_HEIGHT (1pt/min) a 15-min indicator's true
+    // span is 15pt — the MIN_BLOCK_HEIGHT floor keeps it tappable, which IS
+    // the "~15-min-item size" ask.
+    const checkIn = screen.getByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}-check-in`);
+    expect(checkIn).toHaveStyle({ top: 900, height: MIN_BLOCK_HEIGHT });
+    expect(
+      screen.getByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}-check-out`),
+    ).toHaveStyle({ top: 660, height: MIN_BLOCK_HEIGHT });
+    expect(screen.getByText("Check-in")).toBeOnTheScreen();
+    expect(screen.getByText("Check-out")).toBeOnTheScreen();
+    // Same destination as the all-day lane segment — booking detail.
+    await fireEvent.press(checkIn);
+    expect(handlers.onOpenBooking).toHaveBeenCalledWith(BOOKING_LODGING_ID);
+    expect(handlers.onOpenItem).not.toHaveBeenCalled();
   });
 
   it("splits overlapping blocks side-by-side with an overlap Badge on each (R-itin-15)", async () => {

@@ -16,7 +16,17 @@
  * check-in/check-out rows qualify with `-check-in`/`-check-out` (two rows,
  * one itemId; grammar-conforming qualifier, flagged for §2.9 sync). Day add
  * rows `itinerary-day-add-{date}`; day headers `itinerary-day-header-{date}`
- * (new id, same flag).
+ * (new id, same flag); header add buttons `itinerary-day-header-add-{date}`
+ * (B-11, same flag).
+ *
+ * B-11: EVERY day header carries a trailing `+` add affordance (via
+ * `onHeaderAdd`, the `onSortDay` viewer-gating convention) — the R-itin-1
+ * slim row only ever existed on EMPTY days, so a populated day had no way
+ * to add a second item in list view. The header `+` is deliberately NOT a
+ * new DayListRow variant: the flat row array drives drag/drop index
+ * resolution (`resolveDrop`), and extra rows would shift every index the
+ * reorder math depends on. The empty-day slim row stays exactly as
+ * R-itin-1 specifies.
  *
  * TRAVEL-TIME SEAM (T-7.5 — FILLED): `leg` rows render `LegChip` between the
  * entry rows the model paired; `overlapping` entry rows carry the R-itin-7
@@ -58,6 +68,14 @@ const useStyles = createStyles((t) =>
       gap: t.space[1],
       minHeight: 28,
     },
+    // B-11 header add — same 28pt + hitSlop.sm = 44pt R-ds-9 math as
+    // sortAction (it sits in the same mis-hit-prone trailing band).
+    headerAdd: {
+      minHeight: 28,
+      minWidth: 28,
+      alignItems: "center",
+      justifyContent: "center",
+    },
     emptyDay: {
       flexDirection: "row",
       alignItems: "center",
@@ -97,6 +115,18 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
     entry.checkpoint === null
       ? `itinerary-list-item-${entry.itemId}`
       : `itinerary-list-item-${entry.itemId}-${entry.checkpoint}`;
+  // B-18/B-23: the row discriminator joins the label — the container label
+  // suppresses the Badge/caption subtree, so without it a lodging's check-in
+  // and check-out rows (and a rental's pickup/drop-off rows) announce the
+  // same bare title to VoiceOver. Same precedence as the grid
+  // (GridDayColumn): checkpoint first, never both — subtext is rental-only,
+  // checkpoint lodging-only.
+  const labelSuffix =
+    entry.checkpoint !== null
+      ? ` ${entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}`
+      : entry.subtext !== null
+        ? ` ${entry.subtext}`
+        : "";
   return (
     <Card
       onPress={() => onOpen(entry)}
@@ -107,7 +137,7 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
         drag();
       }}
       testID={testID}
-      accessibilityLabel={entry.title}
+      accessibilityLabel={`${entry.title}${labelSuffix}`}
       style={s.card}
     >
       <View style={s.cardRow}>
@@ -116,6 +146,17 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
           <AppText role="body" numberOfLines={1}>
             {entry.title}
           </AppText>
+          {/* B-18: "Pickup" / "Drop off" caption on a rental's derived point
+              rows — the §2.2 caption typography, same as the time line. */}
+          {entry.subtext !== null ? (
+            <AppText
+              role="caption"
+              color="secondary"
+              testID={`itinerary-list-item-${entry.itemId}-subtext`}
+            >
+              {entry.subtext}
+            </AppText>
+          ) : null}
           <AppText role="caption" color="secondary">
             {entry.timeLabel}
           </AppText>
@@ -160,6 +201,13 @@ export interface ItineraryDayListProps {
   onOpenEntry(entry: DayEntry): void;
   /** Empty-day "Add to this day" row (R-itin-1). */
   onAddToDay(date: ISODate): void;
+  /**
+   * B-11: the day header's trailing `+` — an add affordance on EVERY day, so
+   * populated days aren't add-locked in list view. Undefined ⇒ never renders
+   * (write affordance — viewers must not see it, R-ib-24; the onSortDay
+   * convention).
+   */
+  onHeaderAdd?: ((date: ISODate) => void) | undefined;
   /** R-itin-4: chip tap → the mode Sheet (owned by the screen). */
   onOpenLeg(leg: DayLeg): void;
   /**
@@ -177,6 +225,7 @@ export function ItineraryDayList({
   onReorder,
   onOpenEntry,
   onAddToDay,
+  onHeaderAdd,
   onOpenLeg,
   onSortDay,
   ref,
@@ -248,6 +297,20 @@ export function ItineraryDayList({
                 <AppText role="caption" color="secondary">
                   {row.count === 0 ? "" : row.count === 1 ? "1 item" : `${row.count} items`}
                 </AppText>
+                {/* B-11: every day gets an add affordance — the slim row
+                    below only exists on EMPTY days (R-itin-1). */}
+                {onHeaderAdd !== undefined ? (
+                  <Pressable
+                    onPress={() => onHeaderAdd(row.date)}
+                    style={s.headerAdd}
+                    hitSlop={theme.hitSlop.sm}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add to ${formatDayHeader(row.date)}`}
+                    testID={`itinerary-day-header-add-${row.date}`}
+                  >
+                    <Icon name="add" size={16} color={theme.color.text.accent} />
+                  </Pressable>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -275,7 +338,7 @@ export function ItineraryDayList({
           );
       }
     },
-    [onAddToDay, onOpenEntry, onOpenLeg, onSortDay, s, scrollToDay, theme],
+    [onAddToDay, onHeaderAdd, onOpenEntry, onOpenLeg, onSortDay, s, scrollToDay, theme],
   );
 
   return (

@@ -10,16 +10,10 @@
  * contract as `constraints.test.ts`: requires Docker; a Docker-less CI run
  * is a HARD FAILURE, a local Docker-less run skips with a loud banner.
  */
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq, sql } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { createUserWithEntitlements } from "./create-user.js";
 import {
   EXPIRED_REFRESH_TOKEN_RETENTION_DAYS,
@@ -27,62 +21,27 @@ import {
   REVOKED_SESSION_RETENTION_DAYS,
 } from "./prune-auth.js";
 import * as schema from "./schema/index.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-5.1 AUTH CONSTRAINT SUITE SKIPPED         ║\n" +
-      "║  The auth-table invariants (auth-users spec §3.3) were NOT        ║\n" +
-      "║  verified. Start Docker and re-run `pnpm --filter @gogo/server    ║\n" +
-      "║  test` before treating this branch as green.                      ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-// Same contract as DB-1: in CI a skip must never be mistaken for a pass.
-if (!dockerAvailable && process.env.CI) {
-  it("T-5.1 auth constraint suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-5.1 auth constraint suite " +
-        "could not verify auth-users spec §3.3. A skip here is NOT a pass. " +
-        "Provision Docker or a Postgres service container and re-run.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 describe.skipIf(!dockerAvailable)("T-5.1 auth-table constraint suite", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
 
   beforeAll(async () => {
-    // 60s startup budget — concurrent DB suites can exceed the default 10s
-    // port-bind wait in the full gate (T-5.2 round-1 flake).
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
-    await migrate(db, { migrationsFolder });
+    suiteDb = await createSuiteDb("db_auth_constraints");
+    db = suiteDb.db;
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   let seq = 0;

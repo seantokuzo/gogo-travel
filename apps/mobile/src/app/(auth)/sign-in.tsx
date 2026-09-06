@@ -43,7 +43,12 @@ const noop = (): void => undefined;
 // Structural views of the auth-session hook result (kept in sync with
 // `@/auth/google`) so this route never imports expo-auth-session directly.
 type GoogleResult = { type: string; params?: Record<string, string> };
-type GoogleRequestLike = { nonce?: string } | null | undefined;
+// `extraParams.nonce` is where the raw nonce actually lives on native — see
+// the nonce note in `@/auth/google`. Typing only `nonce` here still compiled
+// (structurally assignable to the builder's wider param), which is part of why
+// the missing-nonce bug was invisible.
+type GoogleRequestLike =
+  { nonce?: string; extraParams?: Record<string, string> } | null | undefined;
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -133,7 +138,14 @@ export default function SignInScreen() {
         await useSessionStore.getState().applySignIn(response);
         // Authenticated: the root gate takes over navigation. Leave `busy` set
         // so the spinner holds until this screen unmounts.
-      } catch {
+      } catch (err) {
+        // B-6 (device QA 2026-08-29): this was a bare `catch`, so a network
+        // failure, a malformed payload and a session-store failure all
+        // rendered as one identical banner. That is correct for the USER —
+        // internals never belong in the UI — but it also destroyed the only
+        // signal a device QA session gets, and it made B-5 read as an OAuth
+        // bug for two full rounds. Keep the generic message; keep the cause.
+        if (__DEV__) console.warn(`[auth] ${provider} sign-in failed:`, err);
         setError(GENERIC_ERROR);
         setBusy(null);
       }

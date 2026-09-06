@@ -9,17 +9,12 @@
  *
  * Driver: postgres-js on ephemeral testcontainers Postgres — a Docker-less
  * CI run is a HARD FAILURE; a local Docker-less run skips with a loud
- * banner. Run server DB suites with `--no-file-parallelism` (QUEUE P1).
+ * banner. Suites run file-parallel on per-suite clones of the shared
+ * container (T-S3.3 — `--no-file-parallelism` retired).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
 import type { TripMemberRole } from "@gogo/shared/enums";
 import { RATE_LIMITS } from "../config.js";
@@ -37,38 +32,12 @@ import {
 } from "../bookings/dirty-days.js";
 import { createTravelLegWorker, type LegBatch } from "./worker.js";
 import type { TravelLegsRouterDeps } from "./routes.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-7.3 REFRESH-LEGS SUITE SKIPPED            ║\n" +
-      "║  The refresh endpoint (202/dedup/rate-limit/authz, R-ib-23/24)    ║\n" +
-      "║  and the R-ib-19 wedged-pipeline mutation-latency pin were NOT    ║\n" +
-      "║  verified. Start Docker and re-run                                ║\n" +
-      "║  `pnpm --filter @gogo/server test` before treating this green.    ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-7.3 refresh-legs suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-7.3 refresh-legs suite " +
-        "could not verify itinerary-bookings spec §3.4 refresh-legs " +
-        "(R-ib-19/23/24). A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -100,8 +69,7 @@ function fakeScheduler() {
 }
 
 describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let authDeps: AuthRouterDeps;
   let signer: AccessTokenSigner;
@@ -110,14 +78,8 @@ describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () 
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("travel_legs_routes");
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -138,8 +100,7 @@ describe.skipIf(!dockerAvailable)("T-7.3 refresh-legs routes (integration)", () 
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   /** An app with this suite's travel-legs deps (and optional mutation markers). */

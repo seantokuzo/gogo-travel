@@ -29,7 +29,21 @@ export interface InputProps {
   multiline?: boolean;
   keyboardType?: KeyboardTypeOptions;
   autoComplete?: TextInputProps["autoComplete"];
+  /** RN passthrough (B-20) — code/handle/URL fields set "characters"/"none". */
+  autoCapitalize?: TextInputProps["autoCapitalize"];
+  /** RN passthrough (B-20) — `false` for codes, handles, URLs, place search. */
+  autoCorrect?: boolean;
+  /** RN passthrough (B-20) — mirror the field's wire cap; never tighter than it. */
+  maxLength?: number;
   returnKeyType?: ReturnKeyTypeOptions;
+  /**
+   * Commit seam for inline-edit fields (T-9.5 budget caps): fires when
+   * editing ends — blur AND submit both land here (RN TextInput semantics),
+   * so one handler covers keyboard-done and tap-away.
+   */
+  onEndEditing?(): void;
+  /** RN passthrough — `false` blocks input (e.g. while a commit is in flight). */
+  editable?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -78,7 +92,12 @@ export function Input({
   multiline,
   keyboardType,
   autoComplete,
+  autoCapitalize,
+  autoCorrect,
+  maxLength,
   returnKeyType,
+  onEndEditing,
+  editable,
   testID,
 }: InputProps) {
   const { theme } = useTheme();
@@ -111,7 +130,12 @@ export function Input({
           multiline={multiline}
           keyboardType={keyboardType}
           autoComplete={autoComplete}
+          autoCapitalize={autoCapitalize}
+          autoCorrect={autoCorrect}
+          maxLength={maxLength}
           returnKeyType={returnKeyType}
+          onEndEditing={onEndEditing}
+          editable={editable}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
           accessibilityLabel={label}

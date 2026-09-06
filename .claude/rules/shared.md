@@ -12,4 +12,5 @@ paths: ["packages/**"]
 - Module shape (R-shared-14): per domain export `XSchema` + `type X` + owned tuples; subpath exports; `"sideEffects": false`; tree-shakeable.
 - `@gogo/tokens` = design tokens/themes only (P-4 spec: `.specs/design-system/tokens.spec.md`) — root entry is pure data, platform-agnostic, no React; React runtime lives ONLY under `./react` (optional peer, platform seams DI-injected).
 - Toolchain: TS 5.9.3 strict (root base), vitest pinned 4.1.10, tests colocated `src/*.test.ts`, build = `tsc` → `dist/` (consumers import `dist`, so `pnpm build` after contract changes).
+- **`./testing` = the hostile fixture pack (T-S3.4), TEST-ONLY:** never re-export from `src/index.ts`, never import from production code — its bug simulators (`zStamp`, `naiveTwoDecimalText`) are wrong by construction. Import as `@gogo/shared/testing` in test files only. Consumer suites: `<subject>.hostile.test.ts` (the `.test.ts` tail is load-bearing for pickup; the pack `hostile.ts` itself is NOT a test).
 - Full spec: `.specs/shared/contracts.spec.md` — behavior not covered there is an escalation, not an improvisation (Law #4).

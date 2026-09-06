@@ -14,19 +14,14 @@
  *
  * Driver: postgres-js on ephemeral testcontainers Postgres — a Docker-less
  * CI run is a HARD FAILURE; a local Docker-less run skips with a loud
- * banner. No network beyond the local container (Law #5). Run the server DB
- * suites with `--no-file-parallelism` (Testcontainers contention, QUEUE P1).
+ * banner. No network beyond the local container (Law #5). Suites run
+ * file-parallel on per-suite clones of the shared container (T-S3.3 —
+ * `--no-file-parallelism` retired).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq, inArray } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
-import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { BookingSchema, type Booking } from "@gogo/shared/domains/booking";
 import {
   DayOrderResultSchema,
@@ -48,40 +43,12 @@ import {
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
 import type { DirtyDayMark } from "../bookings/dirty-days.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n" +
-      "╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — T-7.2 ITINERARY SUITE SKIPPED               ║\n" +
-      "║  Composite read, item CRUD, day-order PUT, booking-item           ║\n" +
-      "║  protection, the R-ib-9 unschedule matrix, the F-038 IDOR         ║\n" +
-      "║  harness, viewer-403, place visibility, and the dirty-day seam    ║\n" +
-      "║  (itinerary-bookings spec §3.4, R-ib-13..18/24) were NOT          ║\n" +
-      "║  verified. Start Docker and re-run `pnpm --filter @gogo/server    ║\n" +
-      "║  test` before treating this green.                                ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("T-7.2 itinerary suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the T-7.2 itinerary suite could " +
-        "not verify itinerary-bookings spec §3.4 (R-ib-13..18/24). " +
-        "A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const SIGNER_KID = "gogo-es256-2026-07";
@@ -100,8 +67,7 @@ function createRecordingMarker() {
 }
 
 describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: ReturnType<typeof createApp>;
   let signer: AccessTokenSigner;
@@ -111,14 +77,8 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("itinerary_routes");
+    db = suiteDb.db;
 
     const signerPair = await generateKeyPair("ES256");
     signer = { privateKey: signerPair.privateKey, kid: SIGNER_KID };
@@ -149,8 +109,7 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   // ---- seeding helpers ------------------------------------------------------

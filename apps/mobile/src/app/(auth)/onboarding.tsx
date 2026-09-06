@@ -245,11 +245,17 @@ export default function OnboardingScreen() {
 
           {step === 3 ? (
             <View style={s.fields}>
+              {/* B-20: handle-field posture mirrors PaymentHandlesSection —
+                  no casing/correction (wrong-handle generators), caps mirror
+                  the shared write schemas (30 post-strip + typable prefix). */}
               <Input
                 label="Venmo"
                 value={venmo}
                 onChangeText={setVenmo}
                 placeholder="@username"
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={31}
                 testID="onboarding-input-venmo"
               />
               <Input
@@ -257,6 +263,9 @@ export default function OnboardingScreen() {
                 value={cashtag}
                 onChangeText={setCashtag}
                 placeholder="$cashtag"
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={31}
                 testID="onboarding-input-cashtag"
               />
               <Input
@@ -264,6 +273,9 @@ export default function OnboardingScreen() {
                 value={paypalme}
                 onChangeText={setPaypalme}
                 placeholder="username"
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={30}
                 testID="onboarding-input-paypalme"
               />
               <Input
@@ -272,6 +284,8 @@ export default function OnboardingScreen() {
                 onChangeText={setZelle}
                 placeholder="you@example.com"
                 keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
                 testID="onboarding-input-zelle"
               />
               <Input

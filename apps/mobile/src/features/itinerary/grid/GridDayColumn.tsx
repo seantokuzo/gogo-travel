@@ -12,8 +12,15 @@
  *    + title + status-tinted left edge (§2.5), overlap Badge when sharing a
  *    time range, "+1" tail on midnight-clipped spans (§2.6).
  *
- * testIDs (§2.9): blocks `itinerary-grid-item-{itemId}`, slots
- * `itinerary-grid-slot-{date}-{HH}`.
+ * B-12: derived spanning-lodging checkpoint indicators render as slim
+ * dashed-border blocks at the real check-in/check-out times, captioned
+ * "Check-in"/"Check-out" — ephemeral projections of the ONE spanning row
+ * (never itinerary rows, F-051 criterion 2), routing to the same booking
+ * detail as the all-day lane segment.
+ *
+ * testIDs (§2.9): blocks `itinerary-grid-item-{itemId}` — checkpoint
+ * indicators qualify with `-check-in`/`-check-out` (the list-row grammar) —
+ * slots `itinerary-grid-slot-{date}-{HH}`.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -51,6 +58,9 @@ const useStyles = createStyles((t) =>
     },
     blockRow: { flexDirection: "row", alignItems: "center", gap: t.space[1] },
     blockTitle: { flexShrink: 1 },
+    // B-12 checkpoint indicator — dashed border marks it as derived UI, not
+    // an item; otherwise the block anatomy (status edge, icon) is shared.
+    blockDerived: { borderStyle: "dashed", backgroundColor: t.color.bg.inset },
     blockBadges: {
       flexDirection: "row",
       alignItems: "center",
@@ -118,18 +128,32 @@ export function GridDayColumn({
           (block.endMinutes - block.startMinutes) * pxPerMinute,
           MIN_BLOCK_HEIGHT,
         );
+        // B-12: checkpoint indicators key/label with the list-row qualifier
+        // grammar (two derived blocks share one itemId).
+        const key = block.checkpoint === null ? block.itemId : `${block.itemId}-${block.checkpoint}`;
+        const checkpointLabel = block.checkpoint === "check-in" ? "Check-in" : "Check-out";
+        // B-18: rental pickup/drop-off rides the label the same way the B-12
+        // checkpoint does — never both (subtext is rental-only, checkpoint
+        // lodging-only).
+        const labelSuffix =
+          block.checkpoint !== null
+            ? ` ${checkpointLabel}`
+            : block.subtext !== null
+              ? ` ${block.subtext}`
+              : "";
         return (
           <Pressable
-            key={block.itemId}
-            testID={`itinerary-grid-item-${block.itemId}`}
+            key={key}
+            testID={`itinerary-grid-item-${key}`}
             accessibilityRole="button"
-            accessibilityLabel={block.title}
+            accessibilityLabel={`${block.title}${labelSuffix}`}
             onPress={() => {
               if (block.bookingId !== null) onOpenBooking(block.bookingId);
               else onOpenItem(block.itemId);
             }}
             style={[
               s.block,
+              block.checkpoint !== null && s.blockDerived,
               {
                 top,
                 height,
@@ -142,9 +166,21 @@ export function GridDayColumn({
             <View style={s.blockRow}>
               <Icon name={block.icon} size={12} color={theme.color.text.secondary} />
               <AppText role="caption" numberOfLines={1} style={s.blockTitle}>
-                {block.title}
+                {block.checkpoint === null ? block.title : checkpointLabel}
               </AppText>
             </View>
+            {/* B-18: "Pickup" / "Drop off" caption under the title — the
+                block's own caption typography, secondary tone. */}
+            {block.subtext !== null ? (
+              <AppText
+                role="caption"
+                color="secondary"
+                numberOfLines={1}
+                testID={`itinerary-grid-item-${key}-subtext`}
+              >
+                {block.subtext}
+              </AppText>
+            ) : null}
             {block.overlapping || block.plusOne ? (
               <View style={s.blockBadges}>
                 {block.overlapping ? <Badge label="Overlap" tone="warning" size="sm" /> : null}

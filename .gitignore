@@ -4,6 +4,9 @@ node_modules/
 # Env / secrets
 .env
 .env.*
+# .env.test is GENERATED throwaway material (scripts/gen-test-env.mjs) —
+# explicitly listed so a future narrowing of `.env.*` can't expose it.
+.env.test
 !.env.example
 
 # Build output

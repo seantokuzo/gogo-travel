@@ -81,11 +81,17 @@ export function PaymentHandlesSection({ user }: { user: User }) {
             testID="profile-handles-error"
           />
         ) : null}
+        {/* B-20: handles are usernames — iOS sentence-casing and autocorrect
+            both produce WRONG handles silently. Length caps mirror the shared
+            write schemas (30-char post-strip + 1 for the typable prefix). */}
         <Input
           label="Venmo"
           value={venmo}
           onChangeText={setVenmo}
           placeholder="@username"
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={31}
           testID="profile-input-venmo"
         />
         <Input
@@ -93,6 +99,9 @@ export function PaymentHandlesSection({ user }: { user: User }) {
           value={cashtag}
           onChangeText={setCashtag}
           placeholder="$cashtag"
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={31}
           testID="profile-input-cashtag"
         />
         <Input
@@ -100,6 +109,9 @@ export function PaymentHandlesSection({ user }: { user: User }) {
           value={paypalme}
           onChangeText={setPaypalme}
           placeholder="username"
+          autoCapitalize="none"
+          autoCorrect={false}
+          maxLength={30}
           testID="profile-input-paypalme"
         />
         <Input
@@ -108,6 +120,8 @@ export function PaymentHandlesSection({ user }: { user: User }) {
           onChangeText={setZelle}
           placeholder="you@example.com"
           keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
           testID="profile-input-zelle"
         />
         <Input

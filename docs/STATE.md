@@ -25,7 +25,136 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — PHASE QA + F-055..F-062 FLIPS PENDING pk token + QA unpark)
+### QA WRAP SESSION 2026-08-30 — device-QA branch merged, polish shipped, S-3 testing overhaul launched
+
+#### Outcomes (all merged to main, full 5-lane pipeline + independent fix verification + fresh judge, each)
+
+- **PR #37 MERGED d4f7637** (qa/device-integration): B-4 Google nonce, B-6 dev error
+  surfacing, dev-only request log, B-8 TEMPORARY 12h transport grace + migration 0001,
+  seed-qa-places script, 3 ledger flips (F-023/F-044/F-051; **F-043 NOT flipped** —
+  criteria 1–2 untested). Round 1: 4 blocking (ADR-002 status enum + 3 mutation-proven
+  test gaps: B-8 boundary unpinned both sides, request-log mount wiring zero tests,
+  google contract pinned by comments only — the B-4 mock-infidelity class) / 11
+  advisory → 5-commit fix leg → verifier EXECUTED every deductive kill-chain to red in
+  an isolated worktree (the fixer couldn't — live Metro/tsx-watch on the tree) →
+  VERIFIED-CLEAN → judge merge/high. #35/#36 auto-resolved merged (branches contained).
+  Escalation banner (sensitive+blocking) note-not-stop per precedent; `/code-review
+ultra` remains available to Sean on the merged diff.
+- **PR #39 MERGED 8b1ee89** (B-5, P0): `resolveApiBaseUrl` tier 3 derives the Metro
+  host from `NativeModules.SourceCode.scriptURL`; `localhost` is now the
+  simulator-terminal fallback ONLY; `file://` (release) refused at the `^https?://`
+  anchor. ALL-5-LANES-SHIP round 1 (0 blocking / 3 advisory); same-round `@`-userinfo
+  hardening fa90229 (guard-parse/fetch-parse agreement by construction);
+  VERIFIED-CLEAN; judge merge/high. Follow-ups → QUEUE "B-5 follow-ups" row.
+- **PR #40 MERGED dfaba92** (B-10..B-13 polish batch, 4 atomic commits + 2 fix-leg):
+  B-10 DateField/TimeField screen-anchored modal picker + contextual seeding (value >
+  context > today; flight arrival seeds from departure) — deliberate Modal-not-DS-Sheet,
+  rationale in the DateField.tsx header (nested sheet stacks + sheet-tax), token-styled,
+  DS dismissal grammar kept; B-11 day-header `+` add affordance (flat row array
+  untouched — resolveDrop indices stable); B-12 derived check-in/check-out checkpoint
+  indicators, render-only BY DATAFLOW (F-051 c2); B-13 peer Ideas/Cancelled bins,
+  hide-when-empty, cancelled reachable via bin (F-043 c3, pinned end-to-end). Two
+  pre-existing pins AMENDED and proven EQUIVALENT-OR-STRONGER (15 executed mutation
+  probes; the old pins' exact regressions still red). Fix leg: spec synced to the
+  Sean-ruled surfaces (R-itin-12/15/31, §2.3/2.6/2.9 — the spec had begun contradicting
+  shipped behavior, a Law #4 revert hazard) + 4 caller seed pins + ISODate brand. One
+  pushback UPHELD by the verifier (trip-settings seed pin unwritable — unrepresentable
+  state). Judge merge/high. Mobile now 149 suites.
+- **PR #38 OPEN — S-3 testing-overhaul strategy** (docs-only: ADR-006 _Proposed_ +
+  `.specs/testing/testing-overhaul.spec.md`). **Held for Sean's read** — merging locks
+  the ADR (doc-homes append-only), and it carries three Sean questions with parkable
+  defaults recorded: B-7 ruling (suite pins it `it.fails` either way), diagnostics
+  entry placement (deeplink-entry until ruled), generated-vs-committed test env keys
+  (rec: generated). **W1 ✅ MERGED 2026-08-30 — T-S3.1 (PR #41, 0643621: faithful env +
+  boot-shape suite) ∥ T-S3.2 (PR #42, aaf0742: mock-fidelity contracts — found a real
+  mock fiction at rest, StyleURL v11-vs-v10). Server 62 suites / 857; mobile 151 / 1468.
+  W2 ✅ MERGED 2026-08-30 — T-S3.5 (PR #43,
+  3754a4e: gogo://diagnostics panel) ∥ T-S3.3 (PR #44, b903017: shared-PG container —
+  Testcontainers P1 RETIRED, server 126s→21s; 65 files / 868). W3 ✅ MERGED 2026-08-30 — T-S3.4 (PR #45,
+  65a8ac1: hostile fixtures — Sean's real NRT→LAX flight is now a library fixture; the
+  AKL→PPT class is documented STILL-UNENTERABLE until B-9). **S-3 BUILD COMPLETE: all
+  five tasks on main. Remaining: Sean reads PR #38 → merge locks ADR-006.** Narratives: QUEUE Recently-done rows.
+
+#### The rig — Sean's steps, in order
+
+1. **Kill + reopen the app** — Metro now serves merged main; B-5/B-6/B-10..13 reach
+   the device as JS-only changes (no rebuild).
+2. Verify sign-in + any server call. **THEN** delete `EXPO_PUBLIC_API_URL` from the
+   gitignored `apps/mobile/.env` and restart Metro — tier 3 derives the host from the
+   dev server now; the DHCP-fragile hardcode is retired.
+3. Server/Neon/Docker unchanged; migration 0001 was already applied to Neon during
+   the 2026-08-29 session.
+
+#### DEVICE QA RESULTS 2026-09-06 — RUN COMPLETE
+
+All rig, diagnostics, F-043, and polish legs PASS on device (run-sheet report):
+B-5 verified live (.env workaround retired), B-14 cold-start deeplink verified,
+diagnostics tier-3 verified, **F-043 FLIPPED** (3258959 — 20 features verified).
+One FAIL: the one-tap picker commit (now B-15a). Findings triaged 2026-09-06:
+bugs B-15..B-19 filed (B-15 pickers + B-16 ideas-sheet + B-17/18 dispatched,
+B-19 freeze parked no-repro), B-20 input sweep queued after B-15, B-9 EXTENDED
+(airlines + inference) w/ server half dispatched, and a four-feature Sean
+spec-pass batch (overnight dual items · calendar tz switcher · calendar views ·
+ideas status rework) awaiting spec text.
+
+#### QA-WAVE BUILD-OUT 2026-09-06/07 — 3 of 4 PRs MERGED
+
+B-15 (pickers: Done commit, PickerCard, keyboard, exclusive-open) · B-16 (Add-to-day
+root cause BY DESIGN → the ideas rework is now THE FIX; prefill + end-only win shipped)
+· B-17/18 (cancel booked-only per Sean's ruling over the contradicted §3.2 + rental
+subtext) all MERGED, full pipeline each. **PR #50 (B-9 server: airports+airlines+0002)
+fully verified, judge HELD on Sean's ODbL decision.** New rows: B-21 contention flakes
+(P1 — threatens the act-0 gate, 3 sightings), picker options (Sean), VoiceOver
+checkpoint labels. B-20 input sweep unblocked. Sean decisions outstanding: ODbL ·
+spec-pass batch approach (rec: roadmap-prep draft) · B-16b interim gate copy ·
+diagnostics entry ruling · PR #38 read · B-7 ruling.
+
+#### QA-WAVE CLOSE-OUT 2026-09-06 — B-20 + B-21 MERGED, wave complete
+
+B-20 (PR #51, 4bf592c): input sweep obvious class shipped through the full pipeline
+(1 blocking seam-pin find fixed + verified; iata dirty-gate; schema-order fix).
+**Q1–Q4 questionable list → Sean (Active row).** B-21 (PR #52, 5057326): contention
+flakes determinized — SIGSTOP/SIGCONT pulse repro, fake-timer fix, 10/10 act-0;
+the act-0 gate is trustworthy again. B-22 filed (React-19 guard re-pin + settle()
+migration + worker handle). Overnight session-limit kill: 3 agents resumed in place,
+zero work lost. **Sean decision queue (gate-order): ① ODbL (gates #50 → B-9 client
+→ B-8 revert) ② Q1–Q4 ③ spec-pass batch approach ④ PR #38 read ⑤ B-16b copy ·
+diagnostics entry · B-7.** Dispatchable sans Sean: VoiceOver checkpoint-label row,
+lint-gap row, B-22.
+
+#### Sean device-QA checklist (ledger-exact wording — no paraphrase)
+
+- **F-043 criteria 1–2 (still untested; do NOT flip on less):**
+  1. "create one booking per category" — `car_rental`, `moped_rental`, `activity`,
+     `other` have never been created (flight/lodging/restaurant/train exist). Also
+     untested: invalid detail shape → 400; price requires currency.
+  2. category change on update rejected; instants denormalize from details.
+     (Criterion 3 was evidenced 2026-08-29 — cancelled "Imperial Hotel Tokyo".)
+- **B-10 one-tap check** (PR #40 correctness advisory): open a picker whose seed
+  pre-highlights the wanted day (flight arrival after entering departure) and tap that
+  highlighted day ONCE — does it commit? iOS inline pickers fire change only on VALUE
+  change; if the tap no-ops we add a Done affordance. Recovery cue exists (field still
+  reads "Select date").
+- **Polish golden paths:** B-10 both date fields open full-width + seeded · B-11 add
+  via the day header on a POPULATED day · B-12 stay shows check-in/check-out
+  indicators that tap through to booking detail · B-13 bins hidden when empty,
+  cancelled reachable by expanding Cancelled.
+
+#### Still-true landmines carried forward
+
+- **Device data is known-wrong (B-8 class):** every booking entered before the tz fix
+  carries instants offset by the real timezone ("LAX => NRT" stores 2h49m for an ~11h
+  flight). Re-enter after B-9 (airport table + IANA tz); don't trust itinerary
+  ordering or leave-by math against them. The 12h grace + migration 0001 are
+  TEMPORARY and revert TOGETHER when B-9 lands (that revert is the B-8 row's DoD).
+- **B-7 (P0) is BLOCKED on a Sean spec ruling** (Autonomy Contract #1/#6): text-only
+  destination vs self-seeding first search — options in the QUEUE row.
+  `seed-qa-places.mjs` remains the QA workaround (now `--force`-guarded +
+  owner-scoped).
+- **Ask the ledger's exact criteria, never a paraphrase** (the 2026-08-29 session's
+  repeated failure mode — deliberately preserved here).
+
+### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — pk token LANDED 2026-08-29; PHASE QA + F-055..F-062 FLIPS now RUNNABLE, device-gated on Sean)
 
 - **Scope** (PLANNING § P-8): @rnmapbox/maps themed map, 3 pin families +
   clustering + day filter, place sheet/detail w/ spine data + dormant fresh
@@ -410,10 +539,10 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   `avatar_key`→server-signed-read-URL security note into the P-12 wire;
   notification-priming onboarding step → P-6 push seam. F-024/F-025 land
   partially, verify fully at P-12.
-- **Testcontainers contention (QUEUE P1, LIVE cross-phase):** 9+ DB suites boot
-  Postgres in parallel → port-bind timeout + WEDGES the Docker daemon. Workaround:
-  server suite `--no-file-parallelism`; real fix = shared globalSetup container.
-  Hits every future DB-suite task.
+- **Testcontainers contention — RESOLVED 2026-08-30 (PR #44, T-S3.3):** the shared
+  globalSetup container + template clones replaced 20+ per-suite boots; `--no-file-parallelism`
+  retired; plain `vitest run` is safe and ~6× faster. Watch-mode caveat: the template
+  migrates once per process — restart the watcher after editing `drizzle/`.
 - Review-mode: local 5-lane pipeline + fresh impartial judge is the standard gate;
   `/code-review ultra` optional (2 free left), substitutable by a deep local
   self-review when Sean waives it.
@@ -476,6 +605,81 @@ ultra` available on merged diff. Full narrative: QUEUE Recently-done
   - the QUEUE obligations row: settlements mount · page-size hoist ·
     lock-chain doc sync · budgets trips-first order) ∥ T-9.5 (money tab
     shell + balances segment, mobile) — server∥mobile disjoint, worktrees.
+- **GOOGLE SIGN-IN WORKS ON DEVICE 2026-08-29** — first real authenticated
+  session on hardware. Evidence: `[req] POST /api/auth/google -> 200 (853ms)`
+  in the dev server log, Neon shows `users 1 / auth_sessions 1 /
+refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
+  order matters, because fixing them out of order looks like no progress:
+  1. **B-4 (fixed, PR #35)** — `expo-auth-session` never mints a nonce on
+     native, so our payload builder bailed and the app never called the
+     server at all. See the nonce note in `apps/mobile/src/auth/google.ts`.
+  2. **B-5 (OPEN, P0, QUEUE row)** — `resolveApiBaseUrl()` fell through to
+     `http://localhost:3000`, so the phone called ITSELF. Google sign-in was
+     fully working by then — valid `id_token` in hand — and the POST just
+     went nowhere. Breaks EVERY device→server call. Worked around with a
+     hardcoded `EXPO_PUBLIC_API_URL` in the gitignored `apps/mobile/.env`;
+     that override MUST come out when B-5 lands (it dies on a DHCP change).
+  3. **B-6 (OPEN, P1, QUEUE row)** — a bare `catch` in `sign-in.tsx:141`
+     discarded every real error behind one generic banner, which is why #2
+     read as an OAuth problem for two rounds.
+  - **Method note worth keeping:** the miss that cost the most was verifying
+    reachability by curling the server FROM THE MAC. That proved the server
+    was up; it proved nothing about what the phone was dialing. For any
+    device-side network failure, log the resolved base URL on the DEVICE
+    first — it is one line and it is the whole answer.
+  - Observability gap closed the same day: `apps/server/src/http/dev-request-log.ts`
+    (PR #36) — the server previously emitted ONE log line total, so "rejected"
+    and "never arrived" were indistinguishable. `no-console` never blocked
+    this; the root eslint config allows `warn`/`error`.
+- **ENV + DEVICE RIG FULLY GREEN 2026-08-29 — supersedes the BLOCKED(creds)
+  status below.** Sean walked the env setup; everything signed-in is now
+  unblocked. Landmines found and fixed (do not re-derive):
+  - **Neon DB was EMPTY** — the URL connected fine (pooled endpoint,
+    `sslmode=require&channel_binding=require`, PG 18.6) but migrations had
+    never run. `pnpm --filter @gogo/server db:migrate` → 30 public tables +
+    `drizzle.__drizzle_migrations`. A green connection probe is NOT proof of
+    a migrated schema — check `information_schema.tables`.
+  - **`AUTH_ES256_PRIVATE_KEY` had been pasted without its PEM armor**
+    (184 ch, zero newlines = the bare base64 DER body) → `createPrivateKey`
+    fails `DECODER routines::unsupported`. Canonical form is the WHOLE PEM as
+    a `\n`-escaped single line in double quotes, ~241 ch. Node's
+    `--env-file` expands `\n` to real newlines itself, and `pem()` in
+    `auth/wire.ts` normalizes the other case — either survives.
+  - **Auth env is ALL-OR-NOTHING across 8 vars and a PARTIAL set THROWS at
+    boot** — it does NOT fall back to health-only (`buildAuthDepsFromEnv`).
+    The 4 Apple vars carry deliberate THROWAWAYS (real P-256 key + 32-byte
+    AES) so the gate clears for QA; Apple code exchange fails by design until
+    the real portal setup at P-14. `ios.usesAppleSignIn` deliberately NOT
+    added — the entitlement needs a real App ID with the capability.
+  - **Bundle id `com.anonymous.gogo-travel` → `app.gogotravel`** (PR #33,
+    036dac9) — Sean bought `gogotravel.app`. The AASA drift guard
+    (`link-config-audit.test.ts:69`) caught the stale artifact in CI, exactly
+    as designed. `app.json` `associatedDomains` still points at the
+    `links.gogotravel.example` placeholder — now that the real domain is
+    owned, the P-14 `LINK_DOMAIN` swap is unblocked early.
+  - **`expo-auth-session@57.0.5` builds its native Google redirect as
+    `${bundleId}:/oauthredirect`, NOT the reversed client id**
+    (`build/providers/Google.js:145`), and prebuild already registers the
+    bundle id as a `CFBundleURLScheme` — so a bundle-id rename needs zero
+    `CFBundleURLTypes` work. Verified in `node_modules`, not training data.
+  - **Verification evidence (config-level; the tap is Sean's):** Google
+    authorize probe ACCEPTED `app.gogotravel:/oauthredirect` (302 → sign-in)
+    and REJECTED `com.anonymous.gogo-travel:/oauthredirect` (302 →
+    `/signin/oauth/error`, `authError` decodes to `redirect_uri_mismatch`) —
+    a discriminating control, not a one-sided pass. Unsigned-JWT POST to
+    `/api/auth/google` → **401 UNAUTHENTICATED, not 500**, proving jose
+    fetched Google's JWKS and the whole verifier chain executes. Metro's
+    served bundle (12.7 MB, `/.expo/.virtual-metro-entry.bundle?platform=ios`
+    — NOT `/index.bundle`, which 404s under expo-router 57) contains all
+    three `EXPO_PUBLIC_*` values inlined and no trace of the old bundle id.
+  - **Mapbox pk token landed in BOTH envs** (`MAPBOX_ACCESS_TOKEN` server +
+    `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` mobile) — the boot warning is gone.
+    **The P-8 "pk token deferred to phase QA" park is RESOLVED**, unblocking
+    F-055..F-062 map QA.
+  - Rig now: LAN `192.168.1.69` (was `.23`), server `:3000` auth-mounted +
+    Neon-backed, Metro `:8081` `--clear`, app installed + launched as
+    `app.gogotravel`. `.env.example` rewritten against `src/env.ts` (it had
+    only ever documented `DATABASE_URL`).
 - **DEVICE-QA RIG LIVE 2026-08-24 (Sean unparked QA — backlogged P-5..P-8
   device pass):** dev client compiled for Sean's iPhone 15 Pro
   (`DerivedData-device`, arm64, RNMBX baked ×967, signed 4B8499Z59P, main @

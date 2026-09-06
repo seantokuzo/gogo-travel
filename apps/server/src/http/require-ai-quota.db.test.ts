@@ -12,17 +12,11 @@
  * Driver: postgres-js on ephemeral testcontainers Postgres — Docker-less CI is
  * a HARD FAILURE; a local Docker-less run skips with a loud banner (Law #5).
  */
-import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq, sql } from "drizzle-orm";
-import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { migrate } from "drizzle-orm/postgres-js/migrator";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { generateKeyPair } from "jose";
-import postgres from "postgres";
 import { Hono } from "hono";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from "vitest";
 import type { AiFeature } from "@gogo/shared/enums";
 import type { EntitlementOverrides } from "@gogo/shared/domains/entitlement";
 import { createUserWithEntitlements } from "../db/create-user.js";
@@ -32,34 +26,12 @@ import { requestIdMiddleware, createErrorHandler } from "./app-middleware.js";
 import type { RequestVars } from "./errors.js";
 import { createRequireAuth } from "./require-auth.js";
 import { aiQuotaContextOf, createRequireAiQuota } from "./require-ai-quota.js";
+import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
-const dockerAvailable = await (async () => {
-  try {
-    await promisify(execFile)("docker", ["info"], { timeout: 60_000 });
-    return true;
-  } catch {
-    return false;
-  }
-})();
-
-if (!dockerAvailable) {
-  console.warn(
-    "\n╔══════════════════════════════════════════════════════════════════╗\n" +
-      "║  DOCKER UNAVAILABLE — requireAiQuota GATE SUITE SKIPPED           ║\n" +
-      "║  The AI cap seam (auth-users §3.5, R-ent-2) was NOT verified.     ║\n" +
-      "║  Start Docker and re-run before treating this green.             ║\n" +
-      "╚══════════════════════════════════════════════════════════════════╝\n",
-  );
-}
-
-if (!dockerAvailable && process.env.CI) {
-  it("requireAiQuota suite must run in CI (Docker unavailable ⇒ hard fail)", () => {
-    throw new Error(
-      "Docker unavailable during a CI run — the requireAiQuota gate suite could " +
-        "not verify auth-users §3.5 / R-ent-2. A skip is NOT a pass.",
-    );
-  });
-}
+// Docker probe, loud skip banner, and the CI hard-fail all live in ONE
+// place now: src/test/global-setup.ts (T-S3.3 shared container; the
+// `--no-file-parallelism` workaround is retired — QUEUE P1).
+const dockerAvailable = inject("dbAvailable");
 
 const BOOT_TIMEOUT_MS = 240_000;
 const FIXED_NOW = new Date("2026-07-15T12:00:00.000Z");
@@ -72,8 +44,7 @@ interface Envelope {
 }
 
 describe.skipIf(!dockerAvailable)("requireAiQuota (integration)", () => {
-  let container: StartedPostgreSqlContainer;
-  let client: postgres.Sql;
+  let suiteDb: SuiteDb;
   let db: PostgresJsDatabase<typeof schema>;
   let app: Hono<RequestVars>;
   let signer: AccessTokenSigner;
@@ -84,14 +55,8 @@ describe.skipIf(!dockerAvailable)("requireAiQuota (integration)", () => {
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
 
   beforeAll(async () => {
-    container = await new PostgreSqlContainer("postgres:17-alpine")
-      .withStartupTimeout(60_000)
-      .start();
-    client = postgres(container.getConnectionUri(), { max: 5, onnotice: () => undefined });
-    db = drizzle({ client, schema });
-    await migrate(db, {
-      migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)),
-    });
+    suiteDb = await createSuiteDb("http_require_ai_quota");
+    db = suiteDb.db;
 
     const pair = await generateKeyPair("ES256");
     signer = { privateKey: pair.privateKey, kid: "gogo-es256-test" };
@@ -120,8 +85,7 @@ describe.skipIf(!dockerAvailable)("requireAiQuota (integration)", () => {
   }, BOOT_TIMEOUT_MS);
 
   afterAll(async () => {
-    await client?.end();
-    await container?.stop();
+    await suiteDb?.drop();
   });
 
   afterEach(() => {
