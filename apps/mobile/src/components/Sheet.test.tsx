@@ -224,18 +224,26 @@ describe("Sheet", () => {
       // (B-22 ①). The errorSpy pin above discriminates only the un-act'd-
       // escape class — React 19 silently drops a post-unmount setState, so
       // deleting the guard leaves that spy green (probe-proven, PR #52
-      // review). Timer drains cannot reach the guard either: under jest's JS
-      // driver, unmount detaches the value nodes and STOPS the exit, so a
+      // review). Timer drains cannot reach the guard either: jest runs the
+      // preset's MOCKED native driver (its NativeModules mock fires
+      // `endCallback({ finished: true })` on a ~16ms setTimeout; animated
+      // values never move), and unmount's detach cascade
+      // (`AnimatedProps.__detach` → `__removeChild`-to-zero →
+      // `AnimatedValue.__detach` → `stopAnimation`) delivers
+      // `{ finished: false }` FIRST — the completion debounce
+      // (`Animation.__notifyAnimationEnd` nulls `_onEnd` after its first
+      // delivery) swallows the mock's later `finished: true`, so a
       // post-unmount completion always arrives `finished: false` (B-22
-      // probe). The guard's real target is the NATIVE driver's asynchronous
-      // `finished: true` delivery landing after teardown — simulated here by
-      // invoking the REAL completion closure captured by
+      // probe). The guard's real target is the ON-DEVICE native driver's
+      // asynchronous `finished: true` delivery landing after teardown —
+      // simulated here by invoking the REAL completion closure captured by
       // `__sheetExitCompletionForTests` (the same function object handed to
-      // `Animated.parallel(...).start`). The observable is the guarded
+      // `Animated.parallel(...).start`); under jest only this seam can reach
+      // the guard with `finished: true`. The observable is the guarded
       // block's value PARKING (`translate.setValue(offscreen)`,
       // `scrimOpacity.setValue(0)`): a `Animated.Value.prototype.setValue`
-      // spy, cleared after unmount, sees explicit calls only (timing frames
-      // flow through `_updateValue`).
+      // spy, cleared after unmount, sees explicit calls only — under jest no
+      // animation frames touch the values at all.
       // Mutation-proven: deleting the `!unmountedRef.current` clause turns
       // this RED (2 parking setValue calls post-unmount); restored, GREEN.
       jest.useFakeTimers();

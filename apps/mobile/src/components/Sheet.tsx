@@ -72,10 +72,16 @@ export function shouldDismissSheet(gesture: { dy: number; vy: number }): boolean
  * callback, `__DEV__` writes only; prod never reads it and never invokes it.
  *
  * Why it must exist: the `unmountedRef` guard on the exit completion defends
- * against the NATIVE driver's asynchronous `finished: true` delivery landing
- * after a consumer unmount. Under jest's JS driver that interleaving is
- * unreachable — unmount detaches the value nodes (`__removeChild` cascade →
- * `AnimatedValue.__detach` → `stopAnimation`), so a post-unmount completion
+ * against the ON-DEVICE native driver's asynchronous `finished: true`
+ * delivery landing after a consumer unmount. Under jest that interleaving is
+ * unreachable, driver-agnostically: jest runs the preset's MOCKED native
+ * driver (`@react-native/jest-preset`'s NativeModules mock fires
+ * `endCallback({ finished: true })` on a ~16ms setTimeout; animated values
+ * never move), but unmount's detach cascade (`AnimatedProps.__detach` →
+ * `__removeChild`-to-zero → `AnimatedValue.__detach` → `stopAnimation`)
+ * delivers `{ finished: false }` FIRST, and the completion debounce
+ * (`Animation.__notifyAnimationEnd` nulls `_onEnd` after its first delivery)
+ * swallows the mock's later `finished: true`. So a post-unmount completion
  * always arrives `finished: false` and the guarded block never runs
  * (probe-proven in B-22; why PR #52's errorSpy pin could not red on guard
  * deletion either — React 19 additionally drops post-unmount setState

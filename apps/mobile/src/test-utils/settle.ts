@@ -49,9 +49,11 @@ export async function settle(): Promise<void> {
  * For suites running file-scope fake timers: ONE act window advancing the
  * fake clock far enough to fire every timer these screens leave pending —
  * TanStack's notify batch and the test client's gcTime-0 GC (both 0 ms),
- * VirtualizedList's cell batch (50 ms), a DS Sheet exit (200 ms). Each
- * completion can then only land HERE, act-wrapped — never in a waitFor idle
- * gap (RNTL's fake-timer branch advances inside act too, wait-for.js:66).
+ * VirtualizedList's cell batch (50 ms), a DS Sheet exit's completion (under
+ * jest the preset's mocked native driver delivers it on a ~16 ms setTimeout
+ * — never a 200 ms JS-driven timer; B-22 probe). Each completion can then
+ * only land HERE, act-wrapped — never in a waitFor idle gap (RNTL's
+ * fake-timer branch advances inside act too, wait-for.js:66).
  * Anything still un-advanced at file end is discarded with the file's clock.
  *
  * Same ONE-HOME rationale as `settle()` above. Converted suites alias this
