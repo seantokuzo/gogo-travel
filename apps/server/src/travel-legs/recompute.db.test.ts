@@ -790,9 +790,15 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
       code: "23503",
       constraint_name: "bookings_place_id_places_id_fk",
     });
+    // PG 18 reclassified RESTRICT enforcement to 23001 (one-home, B-24).
+    const restrict = Object.assign(new Error("violates fk"), {
+      code: "23001",
+      constraint_name: "travel_legs_to_item_id_itinerary_items_id_fk",
+    });
     expect(isTravelLegFkViolation(pgJs)).toBe(true);
     expect(isTravelLegFkViolation(pgProtocol)).toBe(true);
     expect(isTravelLegFkViolation(wrapped)).toBe(true);
+    expect(isTravelLegFkViolation(restrict)).toBe(true);
     expect(isTravelLegFkViolation(foreign)).toBe(false);
     expect(isTravelLegFkViolation(new Error("plain"))).toBe(false);
   });

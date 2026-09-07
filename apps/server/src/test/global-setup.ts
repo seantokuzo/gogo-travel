@@ -3,7 +3,9 @@
  * testcontainer per vitest run, replacing 21 per-suite boots (the QUEUE P1
  * Testcontainers-contention real fix; `--no-file-parallelism` retires).
  *
- * Boot order: probe Docker once → start ONE `postgres:17-alpine` → create a
+ * Boot order: probe Docker once → start ONE `postgres:18-alpine` (prod is
+ * Neon Postgres 18 — a 17 image masked the PG 18 SQLSTATE 23001
+ * reclassification, B-24) → create a
  * TEMPLATE database → run the drizzle migrations into it ONCE → lock it
  * against connections → `provide()` the coordinates. Suites then clone their
  * own throwaway database via `createSuiteDb()` (`src/test/suite-db.ts`) —
@@ -78,17 +80,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
   // slow daemons blew the 10s default back when suites booted their own —
   // T-5.2 round-1 flake); max_connections raised because up to
   // maxWorkers × (pool max 5) suite connections now share this instance.
-  // DELIBERATE DIVERGENCE from prod (Neon PG 18.6), recorded per the PR-#32
-  // conversion rider: bumping to postgres:18-alpine reds 3 tests because PG 18
-  // reclassified ON DELETE RESTRICT violations from SQLSTATE 23503
-  // (foreign_key_violation) to 23001 (restrict_violation) and reworded the
-  // message ("violates RESTRICT setting of foreign key constraint" — probed
-  // live on 18.6). Two db/constraints.test.ts message-pattern pins miss, and
-  // places/routes.ts `fkViolationTable` (23503-only) stops mapping RESTRICT
-  // deletes to the §3.3 409 — i.e. the 17 image MASKS a live prod-parity bug
-  // (custom-place RESTRICT delete 500s on Neon 18.6). Fix 23001 handling +
-  // the two pins FIRST (own QUEUE row), then bump this line to 18-alpine.
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:17-alpine")
+  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:18-alpine")
     .withCommand(["postgres", "-c", "max_connections=200"])
     .withStartupTimeout(60_000)
     .start();

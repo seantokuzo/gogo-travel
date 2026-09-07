@@ -40,6 +40,12 @@ describe("isExpenseBookingFkViolation (both driver shapes — PR #30 R1)", () =>
     expect(isExpenseBookingFkViolation(wrapped)).toBe(true);
   });
 
+  it("accepts 23001 — PG 18's RESTRICT reclassification (one-home inheritance) [B-24]", () => {
+    expect(
+      isExpenseBookingFkViolation(shaped({ code: "23001", constraint: EXPENSES_BOOKING_FK })),
+    ).toBe(true);
+  });
+
   it("is constraint-PRECISE: other FKs on the write path stay loud", () => {
     expect(
       isExpenseBookingFkViolation(

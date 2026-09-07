@@ -66,6 +66,7 @@ import type { BookingDetails } from "@gogo/shared/domains/booking";
 import type { BookingSource, BookingStatus } from "@gogo/shared/enums";
 import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
@@ -249,7 +250,7 @@ export function isPlaceFkViolation(error: unknown): boolean {
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       const constraint =
         typeof candidate.constraint_name === "string"
           ? candidate.constraint_name

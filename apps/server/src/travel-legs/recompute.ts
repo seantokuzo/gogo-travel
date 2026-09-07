@@ -65,6 +65,7 @@ import type { TravelMode } from "@gogo/shared/enums";
 import { COMPUTED_TRAVEL_MODES } from "@gogo/shared/config/travel-legs";
 import { TRAVEL_LEGS_PROVIDER_TIMEOUT_MS, TRAVEL_LEGS_TTL_MS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { markDaysDirty, type DirtyDayMarker } from "../bookings/dirty-days.js";
 import { ProviderRequestError, type RouteResult, type RoutingPort } from "./providers.js";
@@ -96,7 +97,7 @@ export function isTravelLegFkViolation(error: unknown): boolean {
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       const constraint =
         typeof candidate.constraint_name === "string"
           ? candidate.constraint_name

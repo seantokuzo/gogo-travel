@@ -34,6 +34,12 @@ describe("isPlaceFkViolation (place-FK 23503 walker, both driver shapes)", () =>
     expect(isPlaceFkViolation(new Error("Failed query", { cause: inner }))).toBe(true);
   });
 
+  it("accepts 23001 — PG 18's RESTRICT reclassification (one-home inheritance) [B-24]", () => {
+    expect(
+      isPlaceFkViolation(driverError({ code: "23001", constraint: BOOKINGS_PLACE_FK })),
+    ).toBe(true);
+  });
+
   it("OTHER FK constraints on the write path stay loud (constraint-precise)", () => {
     expect(
       isPlaceFkViolation(
