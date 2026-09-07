@@ -12,6 +12,7 @@ paths: ["apps/mobile/**"]
 - 🔴 Push needs an EAS `projectId` in app config or `getExpoPushToken()` silently returns `null`.
 - 🟡 `crypto.randomUUID()` doesn't exist in RN — use `react-native-get-random-values` + `uuid`, or nanoid w/ polyfill.
 - 🟡 Long lists = `FlatList`/`FlashList`, never `ScrollView` + `.map()`.
+- 🔴 **Passing ANY input to `expo lint` REPLACES the default input set — it does not append** (PR #58, 2026-09-07). `@expo/cli`'s `lintAsync.js` only pushes a DEFAULT_INPUT when `fs.existsSync` passes, and this package has only `src/` at its root, so bare `expo lint` was already equivalent to `expo lint src`; today's `expo lint src jest.setup.js` is a strict SUPERSET, not a narrowing. But add one more path to that script carelessly and you can silently drop `src` from the gate with CI staying green. Change the `lint` script only with the full input list in hand.
 - 🟡 `expo lint` has no `--max-warnings 0` cap (flag pass-through undocumented); every other package is zero-warning — don't let mobile warnings accumulate.
 - Wire types come from `@gogo/shared` — no local redefines. No `any`, no `console.log`.
 - Routes live in `src/app/` (expo-router, typed routes on). Server state = TanStack Query; client state = Zustand.
