@@ -18,7 +18,7 @@
  * file-parallel on per-suite clones of the shared container (T-S3.3 —
  * `--no-file-parallelism` retired).
  */
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { createLocalJWKSet, generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
@@ -278,6 +278,28 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       .from(schema.itineraryItems)
       .where(eq(schema.itineraryItems.bookingId, bookingId))
       .orderBy(schema.itineraryItems.day, schema.itineraryItems.sortOrder);
+
+  /**
+   * Reproduce a GRACE-ERA booking row (round-1 B1): lift
+   * `bookings_time_order_ck`, invert the row's stored instants, restore the
+   * CHECK exactly as migration 0003 does (`NOT VALID`). That is the state 0003
+   * leaves Sean's device DB in — and `NOT VALID` does NOT exempt the row from
+   * enforcement, only from the one-time validation scan, so Postgres re-checks
+   * it on the new tuple of every UPDATE of it. Per-suite DB clone + sequential
+   * tests within a file ⇒ the DDL cannot leak.
+   */
+  async function grandfatherInvertedInstants(bookingId: string) {
+    await db.execute(sql`ALTER TABLE bookings DROP CONSTRAINT bookings_time_order_ck`);
+    try {
+      await db.execute(
+        sql`UPDATE bookings SET ends_at = starts_at - interval '7 hours' WHERE id = ${bookingId}`,
+      );
+    } finally {
+      await db.execute(
+        sql`ALTER TABLE bookings ADD CONSTRAINT bookings_time_order_ck CHECK (starts_at IS NULL OR ends_at IS NULL OR starts_at <= ends_at) NOT VALID`,
+      );
+    }
+  }
 
   /** Seed a travel leg directly — a FIXTURE for the read path. The app-layer
    * single-writer rule (R-ib-22) binds the app, not test seeding. */
@@ -1024,6 +1046,52 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       .where(eq(schema.bookings.id, booking.id));
     expect(parent?.status).toBe("booked");
     expect(dirtyCalls).toHaveLength(0); // failed mutation never marks
+  });
+
+  it("B-8 round-1 B1: unscheduling a GRANDFATHERED inverted booking's item answers 400, never a 23514-driven 500 — item and status survive", async () => {
+    // The path no booking-side validator covers: R-ib-9's `planned → idea`
+    // flip is an UPDATE of the PARENT booking, and Postgres re-checks
+    // `bookings_time_order_ck` (added NOT VALID by migration 0003) against the
+    // new tuple. On a grace-era parent whose STORED instants are inverted the
+    // statement raises 23514 and aborts the whole transaction. Nothing can
+    // make this write succeed while the row's times are wrong — widening the
+    // constraint or rewriting the row is a human call — so the deliverable is
+    // an honest, specific 400 instead of a 500 "internal error".
+    const { editor, trip } = await seedCollabTrip();
+    const booking = await createBookingVia(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "NRT-LAX (grace era)",
+      status: "planned",
+      details: {
+        category: "flight",
+        departs_at: "2026-09-02T17:00:00+09:00",
+        arrives_at: "2026-09-02T10:00:00-07:00",
+      },
+    });
+    const items = await dbBookingItems(booking.id);
+    expect(items).toHaveLength(1);
+    await grandfatherInvertedInstants(booking.id);
+
+    dirtyCalls.length = 0;
+    const res = await deleteItemReq(trip.id, items[0]!.id, editor.accessToken);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ErrorEnvelope;
+    expect(body.error.code).toBe("VALIDATION_FAILED");
+    expect(body.error.message).toContain("stored times are inverted");
+    // `constraint`, not `service`: this path has no booking-side validator at
+    // all — Postgres IS the check here, and the 23514 fallback is what turns
+    // it into a 400. Delete that `.catch` and this arm reds with a 500.
+    expect(body.error.details).toMatchObject({ rejected_by: "constraint" });
+
+    // The transaction aborted, so the unschedule did NOT half-happen: the item
+    // survives, the status is untouched, and a failed mutation never marks.
+    expect(await dbBookingItems(booking.id)).toHaveLength(1);
+    const [parent] = await db
+      .select()
+      .from(schema.bookings)
+      .where(eq(schema.bookings.id, booking.id));
+    expect(parent?.status).toBe("planned");
+    expect(dirtyCalls).toHaveLength(0);
   });
 
   it("DELETE: viewer 403 (R-ib-24)", async () => {

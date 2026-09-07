@@ -13,5 +13,14 @@
 -- human call). Re-enter the bad bookings, then
 -- `ALTER TABLE bookings VALIDATE CONSTRAINT bookings_time_order_ck;`
 -- promotes it to fully validated.
+-- HAND-PREPENDED (round-1 A3): both ALTERs take ACCESS EXCLUSIVE on `bookings`.
+-- `NOT VALID` keeps the lock SHORT once acquired; what is unbounded by default
+-- is the WAIT for it, and a queued exclusive request blocks every subsequent
+-- read and write on the table behind it. Bounding the wait turns a potential
+-- bookings-API stall into a clean abort: the file runs in ONE transaction on
+-- both paths (drizzle-orm's migrator and drizzle-kit's `migrate`), so a
+-- lock_timeout rolls the whole migration back, leaves the journal unwritten,
+-- and is safely retryable.
+SET lock_timeout = '3s';--> statement-breakpoint
 ALTER TABLE "bookings" DROP CONSTRAINT "bookings_time_order_ck";--> statement-breakpoint
 ALTER TABLE "bookings" ADD CONSTRAINT "bookings_time_order_ck" CHECK ("bookings"."starts_at" IS NULL OR "bookings"."ends_at" IS NULL OR "bookings"."starts_at" <= "bookings"."ends_at") NOT VALID;

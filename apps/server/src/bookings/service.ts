@@ -72,6 +72,11 @@ import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
 import type { DirtyDayMark } from "./dirty-days.js";
 import type { BookingRow, ItineraryItemRow } from "./serialize.js";
+import {
+  assertStoredInstantsOrdered,
+  isTimeOrderCkViolation,
+  rethrowTimeOrderCkMapped,
+} from "./time-order.js";
 
 /** §3.2 transition matrix, verbatim. Anything absent is VALIDATION_FAILED. */
 export const BOOKING_STATUS_TRANSITIONS: Readonly<Record<BookingStatus, readonly BookingStatus[]>> =
@@ -140,6 +145,14 @@ function marksFor(tripId: string, days: Iterable<string>): DirtyDayMark[] {
  * exactly again: every category, no window. The constraint is the authority;
  * widening this mirror without a matching migration turns 400s into 23514
  * 500s, which is the whole reason the mirror exists.
+ *
+ * NOT a full equivalence, in one direction (round-1 A1): 0003 adds the
+ * constraint `NOT VALID`, so on any database that ran 0001 the DB is
+ * strictly HARSHER than this mirror can see — grace-era rows hold inverted
+ * instants this function never gets to inspect, and Postgres re-checks them
+ * on every UPDATE of those rows. That asymmetry is `time-order.ts`'s job
+ * (`assertStoredInstantsOrdered` + the 23514 fallback), not this one's:
+ * "the mirror passed" does NOT imply "the DB will accept the write".
  */
 function derivedInstantsOf(details: BookingDetails): {
   startsAt: Date | null;
@@ -580,6 +593,19 @@ export async function updateBooking(
       if (input.confirmation_code !== undefined) set.confirmationCode = input.confirmation_code;
       if (input.place_id !== undefined) set.placeId = input.place_id;
 
+      // Round-1 B1: the DB re-checks `bookings_time_order_ck` against the NEW
+      // tuple of every UPDATE — `NOT VALID` only exempts rows nobody touches.
+      // So the grace-era rows migration 0003 deliberately grandfathers are
+      // update-poison: a details-less PATCH copies their stored (inverted)
+      // instants into the SET above and raises 23514. `derivedInstantsOf`
+      // above never sees them (it validates payloads). Validate the MERGED
+      // instants whenever this update actually writes a column, so the answer
+      // is a specific 400 instead of an unmapped 500. Nothing here can make
+      // the write SUCCEED — that needs the row's times fixed, which a
+      // details-carrying PATCH does (B-9's re-entry flow) and a migration
+      // must never do (Autonomy trigger #5).
+      if (Object.keys(set).length > 0) assertStoredInstantsOrdered(nextStartsAt, nextEndsAt);
+
       const updated =
         Object.keys(set).length > 0
           ? (
@@ -639,7 +665,14 @@ export async function updateBooking(
         dirtyDays: marksFor(tripId, dirty),
       };
     })
-    .catch(rethrowPlaceFkMapped); // A2: race-window place-FK 23503 → canonical 404
+    // A2: race-window place-FK 23503 → canonical 404. Round-1 B1: the
+    // grandfathered-row 23514 → the same 400 the pre-write check answers, so
+    // no ordering of concurrent writes can turn this path into a 500.
+    // Constraint-precise, and UPDATE-only on purpose — see `time-order.ts`.
+    .catch((error: unknown) => {
+      if (isTimeOrderCkViolation(error)) rethrowTimeOrderCkMapped(error);
+      return rethrowPlaceFkMapped(error);
+    });
 }
 
 /**

@@ -677,12 +677,34 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       expect(ordered.startsAt).not.toBeNull();
 
       // Equal instants are legal (`<=`, not `<`) — a zero-length booking.
+      // Round-1 A2: assert the ROW, not "seedBooking didn't throw" — an
+      // assertion-less arm greens on a constraint that rejects nothing.
       const instant = new Date("2027-04-24T08:00:00Z");
-      await seedBooking(trip.id, user.id, {
+      const zeroLength = await seedBooking(trip.id, user.id, {
         category: "activity",
         startsAt: instant,
         endsAt: instant,
       });
+      expect(zeroLength.startsAt?.getTime()).toBe(instant.getTime());
+      expect(zeroLength.endsAt?.getTime()).toBe(instant.getTime());
+
+      // The `IS NULL` disjuncts (tests-lane advisory): half-open rows were
+      // always legal and this migration neither widens nor narrows them, but
+      // this file is the constraint's canonical home and 0003 sets the
+      // precedent for hand-editing generated SQL — a dropped `IS NULL` clause
+      // has no compiler to catch it. One arm per disjunct, asserting the row.
+      const openEnded = await seedBooking(trip.id, user.id, {
+        category: "activity",
+        startsAt: instant,
+        endsAt: null,
+      });
+      expect(openEnded.endsAt).toBeNull();
+      const openStarted = await seedBooking(trip.id, user.id, {
+        category: "activity",
+        startsAt: null,
+        endsAt: instant,
+      });
+      expect(openStarted.startsAt).toBeNull();
     });
 
     it("R-db-6: rejects custom places with a source_id, imports without one, and orphan customs", async () => {

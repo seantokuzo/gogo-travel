@@ -78,6 +78,12 @@ export const bookings = pgTable(
     // to apply against them. New writes and updates are checked; the
     // grandfathered rows are Sean's to re-enter (never a migration's to
     // rewrite), after which `VALIDATE CONSTRAINT` can promote it.
+    //
+    // So the mirror is NOT fully equivalent on a database that ran 0001
+    // (round-1 A1): `NOT VALID` exempts those rows from validation but NOT
+    // from enforcement — Postgres re-checks this CHECK on the new tuple of
+    // every UPDATE, so the DB rejects writes the payload-only mirror happily
+    // admits. `bookings/time-order.ts` owns that asymmetry.
     check(
       "bookings_time_order_ck",
       sql`${t.startsAt} IS NULL OR ${t.endsAt} IS NULL OR ${t.startsAt} <= ${t.endsAt}`,

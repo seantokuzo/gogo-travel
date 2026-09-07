@@ -250,6 +250,33 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     arrives_at: "2026-09-02T14:25:00+09:00",
   };
 
+  /**
+   * Reproduce a GRACE-ERA row (round-1 B1). Migration 0003 re-adds
+   * `bookings_time_order_ck` `NOT VALID`, so rows written while the 12h
+   * transport grace was live keep their genuinely inverted instants. There is
+   * no service path that can write one any more, so the only faithful way to
+   * make one is what the migration itself leaves behind: lift the CHECK,
+   * invert the row's stored instants, restore the CHECK exactly as 0003 does.
+   * The row is then UNCHECKED — which is emphatically not exempt: Postgres
+   * re-evaluates the CHECK against the new tuple of every UPDATE of it.
+   *
+   * Per-suite DB clone (`createSuiteDb`), and vitest runs a file's tests
+   * sequentially, so this DDL cannot leak into another suite or arm; the
+   * `finally` restores the constraint even if the UPDATE fails.
+   */
+  async function grandfatherInvertedInstants(bookingId: string) {
+    await db.execute(sql`ALTER TABLE bookings DROP CONSTRAINT bookings_time_order_ck`);
+    try {
+      await db.execute(
+        sql`UPDATE bookings SET ends_at = starts_at - interval '7 hours' WHERE id = ${bookingId}`,
+      );
+    } finally {
+      await db.execute(
+        sql`ALTER TABLE bookings ADD CONSTRAINT bookings_time_order_ck CHECK (starts_at IS NULL OR ends_at IS NULL OR starts_at <= ends_at) NOT VALID`,
+      );
+    }
+  }
+
   const dbItems = (bookingId: string) =>
     db
       .select()
@@ -649,6 +676,78 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       },
     });
     expect(Date.parse(orderedTrain.ends_at!)).toBeGreaterThan(Date.parse(orderedTrain.starts_at!));
+  });
+
+  it("B-8 round-1 B1: a GRANDFATHERED inverted row reads fine, its details-less PATCH is a 400 (never a 23514 500), and a corrected-details PATCH heals it", async () => {
+    const { editor, trip } = await seedCollabTrip();
+
+    // The enforcement ASYMMETRY `NOT VALID` creates, which no other arm
+    // reaches: every other pin here is an INSERT against an empty-of-bad-rows
+    // table. `NOT VALID` skips the one-time table scan; it does NOT stop
+    // Postgres re-checking the constraint on the new tuple of every UPDATE.
+    // So the rows 0003 deliberately grandfathers are update-poison, and the
+    // `derivedInstantsOf` mirror cannot see it — it validates PAYLOADS.
+    const booking = await createBookingVia(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "NRT-LAX (grace era)",
+      details: DATE_LINE_EASTBOUND.details,
+    });
+    await grandfatherInvertedInstants(booking.id);
+
+    // Reads are untouched — the whole point of grandfathering rather than
+    // deleting. Sean's real flight stays visible in the app.
+    const read = await getBooking(trip.id, booking.id, editor.accessToken);
+    expect(read.status).toBe(200);
+    const stored = BookingWithItemsSchema.parse(await read.json());
+    expect(Date.parse(stored.ends_at!)).toBeLessThan(Date.parse(stored.starts_at!));
+
+    // A details-less PATCH rewrites the row carrying those stored instants.
+    // Before the fix this raised 23514, nothing mapped it (`pg-errors.ts`
+    // covered 23503/23001 only) and `createErrorHandler` answered 500
+    // "internal error". Now: a specific 400 naming the STORED row.
+    const titleOnly = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      title: "Renamed, nothing else",
+    });
+    expect(titleOnly.status).toBe(400);
+    const titleBody = (await titleOnly.json()) as ErrorEnvelope;
+    expect(titleBody.error.code).toBe("VALIDATION_FAILED");
+    expect(titleBody.error.message).toContain("stored times are inverted");
+    // `rejected_by` pins WHICH layer answered: the pre-write guard, not the
+    // 23514 fallback behind it. Delete the guard and this reds on
+    // `"constraint"` — the two fixes stay independently falsifiable.
+    expect(titleBody.error.details).toMatchObject({ rejected_by: "service" });
+
+    // Same for the status flip the PR body promised a 400 for. `idea →
+    // booked` is a LEGAL transition (§3.2), so this cannot green on the
+    // transition check — the message pins which guard answered.
+    const statusOnly = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      status: "booked",
+    });
+    expect(statusOnly.status).toBe(400);
+    const statusBody = (await statusOnly.json()) as ErrorEnvelope;
+    expect(statusBody.error.code).toBe("VALIDATION_FAILED");
+    expect(statusBody.error.message).toContain("stored times are inverted");
+    // …and the row is untouched by the rejected write (transaction aborted).
+    expect((await dbBooking(booking.id))?.status).toBe(booking.status);
+
+    // SELF-HEALING, and the reason this is a 400 and not a permanent wall:
+    // a PATCH that CARRIES details re-derives the instants, so the correctly
+    // composed date-line flight — what the post-B-9 client sends when Sean
+    // re-enters it through the airport/timezone pickers — writes ordered
+    // instants and satisfies the constraint.
+    const healed = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      details: DATE_LINE_EASTBOUND.details,
+    });
+    expect(healed.status).toBe(200);
+    const healedBody = BookingWithItemsSchema.parse(await healed.json());
+    expect(Date.parse(healedBody.ends_at!)).toBeGreaterThan(Date.parse(healedBody.starts_at!));
+
+    // Once healed the row is an ordinary row again — the same details-less
+    // PATCH that just 400'd now succeeds.
+    const afterHeal = await patchBooking(trip.id, booking.id, editor.accessToken, {
+      title: "Renamed, nothing else",
+    });
+    expect(afterHeal.status).toBe(200);
   });
 
   it("POST: viewer 403 (R-ib-24 server-enforced)", async () => {
