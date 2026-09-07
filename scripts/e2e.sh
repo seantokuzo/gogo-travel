@@ -222,7 +222,14 @@ elif [[ -d "$FLOW_TARGET" ]]; then
 fi
 
 echo "e2e: ${#SELECTED_FLOWS[@]} flow(s) selected (include=[${INCLUDE_TAGS:-*}] exclude=[${EXCLUDE_TAGS:-none}]):"
-for f in "${SELECTED_FLOWS[@]}"; do
+# `"${arr[@]}"` on a zero-element array throws "unbound variable" under
+# `set -u` on bash < 4.4 — stock macOS /bin/bash is 3.2.57 and hits this
+# every time the filter matches nothing, dying here instead of at the
+# crafted `die` below (S-4 round 2, verifier-caught on bash 3.2.57,
+# confirmed clean on bash 5.2.26 pre-fix). The `${arr[@]+"${arr[@]}"}`
+# guard expands to nothing when the array is empty instead of dereferencing
+# it, and is a no-op for a non-empty array — verified identical on both.
+for f in "${SELECTED_FLOWS[@]+"${SELECTED_FLOWS[@]}"}"; do
   echo "  - $f"
   case ",$(flow_tags "$f")" in
     *,env-no-apple-account,*)
