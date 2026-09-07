@@ -9,6 +9,8 @@
  * server derives it the same way (R-db-19).
  */
 import type {
+  Airline,
+  Airport,
   InviteListItem,
   InvitePreview,
   ISODate,
@@ -26,6 +28,11 @@ import { localTodayISO } from "@/navigation/trip-defaults";
 
 import { CREATED_INVITE_ID, CREATED_INVITE_URL, TEST_INVITE_ID, TEST_TRIP_ID } from "./ids";
 import { emptyBalancesRead, emptyBudgetsRead } from "./money-fixtures";
+import {
+  flightLookupFixture,
+  searchAirlineFixtures,
+  searchAirportFixtures,
+} from "./reference-fixtures";
 import { TEST_USER } from "./session-fixtures";
 
 /** Day arithmetic on ISO dates (UTC math — no tz drift for day offsets). */
@@ -215,6 +222,10 @@ export interface NavApiOptions {
   members?: MemberListItem[];
   /** `GET /trips/:tripId/invites` page items (default: none). */
   invites?: InviteListItem[];
+  /** B-9 reference universe for `/airports/search` (default: the fixture cast). */
+  airports?: Airport[];
+  /** B-9 reference universe for `/airlines/search` + `/airlines/flight-lookup`. */
+  airlines?: Airline[];
   /** `METHOD path` → responder; replaces the route (partial-failure seam). */
   overrides?: Record<string, (input: Record<string, unknown>) => Promise<unknown>>;
 }
@@ -238,7 +249,19 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
       const key = `${descriptor.method} ${descriptor.path}`;
       const override = opts.overrides?.[key];
       if (override) return override((input ?? {}) as Record<string, unknown>);
+      const query = (input as { query?: Record<string, string> } | undefined)?.query;
       switch (key) {
+        // B-9 transport reference — global, read-only, migration-seeded rows
+        // behind auth alone. Defaulted (not 404'd) so every flight/train form
+        // test gets the real typeahead behavior instead of an error banner.
+        case "GET /airports/search":
+          return Promise.resolve(searchAirportFixtures(query?.["q"] ?? "", opts.airports));
+        case "GET /airlines/search":
+          return Promise.resolve(searchAirlineFixtures(query?.["q"] ?? "", opts.airlines));
+        case "GET /airlines/flight-lookup":
+          return Promise.resolve(
+            flightLookupFixture(query?.["flight_number"] ?? "", opts.airlines),
+          );
         case "GET /trips": {
           const page: Paginated<TripListItem> = { items: trips, nextCursor: null };
           return Promise.resolve(page);
