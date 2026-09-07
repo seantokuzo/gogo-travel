@@ -57,3 +57,10 @@ tags:
       LINK: "gogo://diagnostics"
 - assertNotVisible:
     id: "sign-in-screen"
+# Positive control alongside the negative — proves the app actually rendered
+# this route rather than having crashed before it mounted (S-4 round 1 / tests
+# lane blocking finding; landed round 2 after an independent verifier caught
+# that round 1 only reworded this file's header comment without adding the
+# assertion — see deeplink-matrix.yaml C6/W1 for the identical pattern).
+- assertVisible:
+    id: "diagnostics-screen-inert"
