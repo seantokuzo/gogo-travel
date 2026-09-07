@@ -71,6 +71,17 @@ describe("evaluateSplit — equal", () => {
     expect(result.readout).toBeNull();
     expect(result.shares).toEqual([]);
   });
+
+  it("zero-decimal odd amount: JPY 1501 equal places the whole-unit residue deterministically (751/750)", () => {
+    // JPY minor unit IS the whole yen — the ±1 residue lands on the first
+    // user_id, never a fractional yen anywhere (Law #2 at 0dp).
+    const result = evaluateSplit(1501, "JPY", split({}));
+    expect(result.ok).toBe(true);
+    expect(result.shares).toEqual([
+      { user_id: ME, share_cents: 751 },
+      { user_id: B, share_cents: 750 },
+    ]);
+  });
 });
 
 describe("evaluateSplit — exact (§2.4 'remaining to allocate')", () => {
@@ -171,6 +182,35 @@ describe("evaluateSplit — percent (2dp = basis points)", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.readout).toMatch(/percentages/i);
+  });
+
+  it("an ACTIVE participant at explicit 0% resolves to an explicit zero-share row (not absent)", () => {
+    const result = evaluateSplit(
+      10000,
+      "USD",
+      split({ type: "percent", percentText: { [ME]: "100", [B]: "0" } }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.readout).toBe("Sum: 100%");
+    // B stays IN the wire set with a zero share — the module-doc's
+    // zero-share provenance claim covers this arm too.
+    expect(result.shares).toEqual([
+      { user_id: ME, share_cents: 10000 },
+      { user_id: B, share_cents: 0 },
+    ]);
+  });
+
+  it("a BLANK percent row counts as 0 bp — same explicit zero-share row", () => {
+    const result = evaluateSplit(
+      10000,
+      "USD",
+      split({ type: "percent", percentText: { [ME]: "100" } }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.shares).toEqual([
+      { user_id: ME, share_cents: 10000 },
+      { user_id: B, share_cents: 0 },
+    ]);
   });
 });
 

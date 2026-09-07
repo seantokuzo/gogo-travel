@@ -71,7 +71,8 @@ export const SPLIT_TYPE_LABELS: Readonly<Record<SplitType, string>> = {
 /**
  * The split editor's state. `participants` is the toggled-IN set (§2.4:
  * toggling a member out makes their share ABSENT, not zero — zero-share
- * rows are only produced by explicit `exact` entry). Per-member entry maps
+ * rows come only from an ACTIVE participant's entry: an `exact` zero or
+ * blank amount, or a `percent` 0%/blank row). Per-member entry maps
  * keep values for every member ever touched; only active participants'
  * entries count.
  */
