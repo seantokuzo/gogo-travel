@@ -31,26 +31,53 @@
 # `ERR_REQUEST_CANCELED`, so `signInWithApple()` throws and the banner is the
 # CORRECT response (`apple.ts` returns null only for the cancel code).
 #
+# This is machine state, not a universal invariant (S-4 round 1 / tests lane
+# advisory) — tagged `env-no-apple-account` so a reader (and, later, a runner)
+# knows this flow assumes it. On a sim signed INTO an Apple Account, tapping
+# Apple gets the real cancel sheet instead (no "Close"), `signInWithApple()`
+# returns null on `ERR_REQUEST_CANCELED`, and NO banner renders — this flow
+# goes red at the `Close` wait for purely environmental reasons. That is
+# correct: the environment changed and the pin should say so. Fix it by
+# updating the affordance here, not by loosening the assertion into something
+# both shapes satisfy.
+#
 # CONSEQUENCE — what is NOT covered here: the true user-cancel path (cancel is
 # NOT an error → no banner). Reaching it needs a simulator signed into an Apple
 # Account, which is manual, stateful, and un-reproducible in this lane. It is
 # marked, not faked. Coverage moves to the session door (env-gated test
 # session, approved 2026-09-07, wave 2).
 #
-# If the lane's simulator is ever signed into an Apple Account this flow goes
-# RED at `Close`. That is correct: the environment changed and the pin should
-# say so. Fix it by updating the affordance here, not by loosening the
-# assertion into something both shapes satisfy.
-#
 # ── HOUSEKEEPING (learned the hard way, S-4 round 1) ──────────────────────────
 # This flow MUST leave the app clean. A system sheet or an undismissed banner
-# left standing survives `stopApp` and `launchApp: clearState: true`, and wedges
-# every flow that runs after it — one un-dismissed Apple sheet turned a single
-# real failure into 4/4 red. Hence Cell 3 ends by dismissing.
+# left standing survives `stopApp` and `launchApp: clearState: true`, and
+# wedges every flow that runs after it — one un-dismissed Apple sheet turned a
+# single real failure into 4/4 red. Cell 3 dismisses the banner as part of the
+# PIN itself (that dismissibility IS the B-6 assertion) — but that only runs on
+# the happy path, and `executionOrder.continueOnFailure` defaults to true, so a
+# failure anywhere at or after Cell 2 used to leave the sheet standing for
+# every flow after this one. `onFlowComplete` below is the actual fix: Maestro
+# runs it whether the flow passed or failed, so it dismisses whatever was left
+# on screen regardless of where execution stopped. `config.yaml`'s
+# `executionOrder.flowsOrder` also pins this flow's run position explicitly —
+# before, it ran after `deeplink-matrix` by alphabetical luck, not by design.
 appId: app.gogotravel
-name: signin-cancel-surface
+name: sign-in-cancel-surface
 tags:
   - release
+  - env-no-apple-account
+onFlowComplete:
+  - runFlow:
+      when:
+        visible: "Close"
+      commands:
+        - tapOn: "Close"
+  - runFlow:
+      when:
+        visible:
+          id: "sign-in-error-dismiss"
+      commands:
+        - tapOn:
+            id: "sign-in-error-dismiss"
 ---
 - launchApp:
     clearState: true

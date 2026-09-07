@@ -15,7 +15,7 @@
 # `clearState: true` guarantees signed-out: no stale session container, no
 # leftover stash from a previous flow.
 appId: app.gogotravel
-name: signin-renders
+name: sign-in-renders
 tags:
   - smoke
   - release
@@ -32,11 +32,16 @@ tags:
 # favored). Present means the native module resolved and mounted.
 - assertVisible:
     id: "sign-in-button-apple"
-# Google: the placeholder, standing in for the hook-bearing button. Its mere
-# presence is the T-5.7 pin — an unconfigured build that renders it has not
-# taken the screen down.
+# Google: the placeholder, standing in for the hook-bearing button. `sign-in.tsx`
+# renders the SAME testID for both the disabled placeholder AND the real
+# hook-bearing button once configured, so visibility alone cannot tell "the
+# render gate held" from "Google is now configured" (S-4 round 1 / tests lane
+# advisory) — asserting `enabled: false` is the actual T-5.7 pin: a build that
+# renders this testID ENABLED has not held the gate, it has become configured,
+# and the crash class is no longer being exercised at all.
 - assertVisible:
     id: "sign-in-button-google"
+    enabled: false
 # A freshly launched screen has no error banner. If this is visible, something
 # ran and failed before a single tap.
 - assertNotVisible:
