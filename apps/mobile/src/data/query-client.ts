@@ -176,6 +176,18 @@ export const queryKeys = {
   tripSettlements: (tripId: string) => ["trips", tripId, "settlements"] as const,
   tripSettleRequest: (tripId: string, requestId: string) =>
     ["trips", tripId, "settle-requests", requestId] as const,
+  /**
+   * Transport reference reads (B-9 client half — `airportEndpoints`). OWN
+   * ROOT (the `placeSearch`/`fxRate` rationale): global, migration-seeded,
+   * read-only rows behind auth alone — no trip in the path, so trip access
+   * loss must never evict them and the 404-scrub never reaches them. `q` /
+   * `flight` are the NORMALIZED request values (trimmed+NFC / canonical
+   * `NH204`) so spellings of one query share a cache entry.
+   */
+  referenceAirportSearch: (q: string) => ["reference", "airports", "search", q] as const,
+  referenceAirlineSearch: (q: string) => ["reference", "airlines", "search", q] as const,
+  referenceFlightLookup: (flight: string) =>
+    ["reference", "airlines", "flight-lookup", flight] as const,
 } as const;
 
 /**

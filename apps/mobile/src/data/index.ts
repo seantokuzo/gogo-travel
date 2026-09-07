@@ -34,6 +34,15 @@ export {
   useTripList,
 } from "./trips-mutations";
 export {
+  flightLookupKeyOf,
+  isSearchableReferenceQuery,
+  normalizeReferenceQuery,
+  REFERENCE_STALE_TIME,
+  useAirlineSearch,
+  useAirportSearch,
+  useFlightAirlineLookup,
+} from "./reference";
+export {
   collabInvalidationPlan,
   evictTripSubtree,
   handleCollabEvent,

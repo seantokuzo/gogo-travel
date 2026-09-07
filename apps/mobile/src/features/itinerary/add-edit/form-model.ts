@@ -6,14 +6,29 @@
  * §2.4 table), the state ⇄ wire converters, Law #2 money parsing, and the
  * form-field → DeeplinkPanel input mapping.
  *
- * Datetime posture (spec-uncovered, flagged in the PR): detail times are
- * ISO-8601 with offset representing DESTINATION wall time (§3.3), but the
- * client has no destination tz database — v1 composes the entered wall
- * date+time with a `Z` offset. The server derives item day/times by
- * SLICING the wall components (shared `wallDate`/`wallTime`), so calendar
- * placement is exact; only the denormalized UTC instant is approximate
- * (trip-internal sort order, self-consistent). A field with only one half
- * set is a validation error, never a silent drop.
+ * Datetime posture (B-9 client half — THE B-8 fix): detail times are
+ * ISO-8601 with an offset representing DESTINATION wall time (§3.3). A
+ * datetime field whose category carries an IANA `*_tz` sibling on the wire
+ * (flight/train `departs_tz`/`arrives_tz` — the `tzKey` below) composes the
+ * entered wall date+time IN THAT ZONE via `composeZonedDateTime`
+ * (DST-aware, resolved per endpoint — never one uniform per-booking
+ * offset), and writes the zone id beside it. The zone arrives from the
+ * endpoint's airport pick (`tzFrom`) or from the always-visible zone
+ * picker.
+ *
+ * Categories WITHOUT `*_tz` on the wire (lodging, car/moped rental,
+ * activity, restaurant, other) stay on the legacy `composeLocalDateTime`
+ * `Z` path — deliberately OUT OF SCOPE for B-9 (proposed shape in the PR
+ * body). Their instants stay approximate; wall slicing (shared
+ * `wallDate`/`wallTime`) keeps calendar placement exact either way.
+ *
+ * `raw` (edit mode): the stored wire string a form value was decomposed
+ * from. An UNTOUCHED datetime re-emits it byte-for-byte, so a title-only
+ * edit can never re-stamp, re-round or re-zone a time the user never
+ * opened (the B-20 R1 dirty-gate principle applied to times). Every
+ * date/time/zone edit drops `raw`, so a touched field always recomposes.
+ *
+ * A field with only one half set is a validation error, never a silent drop.
  */
 import {
   ACTIVITY_PROVIDERS,
@@ -30,6 +45,8 @@ import {
 
 import type { DeeplinkSearchInput } from "@/features/deeplinks";
 
+import { composeZonedDateTime } from "./zoned-time";
+
 // ---------------------------------------------------------------------------
 // Field configs (§2.4 table — exactly its fields, nothing more)
 // ---------------------------------------------------------------------------
@@ -39,6 +56,19 @@ export interface DateTimeValue {
   date: string;
   /** `HH:MM` or `""`. */
   time: string;
+  /**
+   * B-9: the IANA zone these wall values are read in. Only meaningful for a
+   * field whose config declares a `tzKey`. `""` = NOT KNOWN — a stored row
+   * that predates zone capture; the picker says so rather than inventing a
+   * zone, and the value is only demanded once the user edits the time.
+   */
+  tz?: string;
+  /**
+   * B-9 edit provenance: the stored wire string this value was decomposed
+   * from. Present ⇒ the field is UNTOUCHED ⇒ `buildDetails` re-emits it
+   * verbatim. Every user edit of date/time/zone drops it (module doc).
+   */
+  raw?: string;
 }
 
 export type FieldValue = string | DateTimeValue;
@@ -57,28 +87,66 @@ export type BookingFieldConfig =
        * NOT validate these (formats vary by carrier).
        */
       designator?: boolean;
+      /**
+       * B-9: this designator is a FLIGHT number — the form offers the
+       * airline the shared parser + `/airlines/flight-lookup` resolve from
+       * it. Presentation only; the stored value is untouched.
+       */
+      inferAirline?: boolean;
     }
   | { key: string; label: string; kind: "int" }
   | { key: string; label: string; kind: "url" }
   /**
    * B-20: IATA airport code — exactly 3 letters, auto-uppercased. Save-time
-   * validation lives in buildDetails (client-side only: the SHARED schema
-   * stays max(200) until B-9's airport picker lands — narrowing the wire
-   * shape now could brick READS of already-stored non-code text, since the
-   * details schemas serve both directions; see the B-20 decision list).
+   * validation lives in buildDetails (client-side ONLY: the SHARED schema
+   * stays max(200) — B-9 does NOT narrow it, Q2 is still Sean's ruling —
+   * because the details schemas serve both directions and narrowing would
+   * brick READS of already-stored non-code text).
+   *
+   * B-9: rendered as the AIRPORT TYPEAHEAD. A pick commits the code AND
+   * hands its IANA zone to the datetime field that names this key in
+   * `tzFrom`, which is what makes a correct instant composable at all.
    */
   | { key: string; label: string; kind: "iata" }
-  | { key: string; label: string; kind: "datetime" }
+  /**
+   * B-9: `tzKey` names the wire's IANA sibling for this time
+   * (`departs_at` → `departs_tz`). Its presence is what switches the field
+   * onto the zoned composition and gives it a visible zone picker.
+   * `tzFrom` names the IATA field whose airport pick supplies that zone
+   * automatically (flights); a field without one (trains — no station
+   * reference table exists) relies on the picker alone.
+   */
+  | { key: string; label: string; kind: "datetime"; tzKey?: string; tzFrom?: string }
+  /** B-9: airline typeahead (`/airlines/search`) — stores the airline NAME. */
+  | { key: string; label: string; kind: "airline" }
   | { key: string; label: string; kind: "enum"; options: readonly string[] };
 
 export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingFieldConfig[]>> = {
   flight: [
-    { key: "airline", label: "Airline", kind: "text" },
-    { key: "flight_number", label: "Flight number", kind: "text", designator: true },
+    { key: "airline", label: "Airline", kind: "airline" },
+    {
+      key: "flight_number",
+      label: "Flight number",
+      kind: "text",
+      designator: true,
+      inferAirline: true,
+    },
     { key: "origin_iata", label: "From (IATA)", kind: "iata" },
     { key: "destination_iata", label: "To (IATA)", kind: "iata" },
-    { key: "departs_at", label: "Departs", kind: "datetime" },
-    { key: "arrives_at", label: "Arrives", kind: "datetime" },
+    {
+      key: "departs_at",
+      label: "Departs",
+      kind: "datetime",
+      tzKey: "departs_tz",
+      tzFrom: "origin_iata",
+    },
+    {
+      key: "arrives_at",
+      label: "Arrives",
+      kind: "datetime",
+      tzKey: "arrives_tz",
+      tzFrom: "destination_iata",
+    },
     { key: "cabin_class", label: "Cabin class", kind: "text" },
     { key: "seat", label: "Seat", kind: "text", designator: true },
   ],
@@ -96,8 +164,11 @@ export const CATEGORY_FIELDS: Readonly<Record<BookingCategory, readonly BookingF
     { key: "train_number", label: "Train number", kind: "text", designator: true },
     { key: "origin_station", label: "From station", kind: "text" },
     { key: "destination_station", label: "To station", kind: "text" },
-    { key: "departs_at", label: "Departs", kind: "datetime" },
-    { key: "arrives_at", label: "Arrives", kind: "datetime" },
+    // No station reference table exists (B-9 scope) — trains carry the same
+    // wire `*_tz` fields as flights but reach them through the zone picker
+    // alone, with no `tzFrom` airport rung.
+    { key: "departs_at", label: "Departs", kind: "datetime", tzKey: "departs_tz" },
+    { key: "arrives_at", label: "Arrives", kind: "datetime", tzKey: "arrives_tz" },
     { key: "coach", label: "Coach", kind: "text", designator: true },
     { key: "seat", label: "Seat", kind: "text", designator: true },
   ],
@@ -213,11 +284,42 @@ export function fieldInputTraits(field: BookingFieldConfig): FieldInputTraits {
         maxLength: field.multiline === true ? 2000 : 200,
         transform: identity,
       };
+    // B-9: the airline typeahead's own query input. Wire cap 200 (the
+    // stored value is the airline NAME); autocorrect fights carrier names
+    // ("Finnair" → "Fin air") exactly as it fights place names.
+    case "airline":
+      return {
+        keyboardType: "default",
+        autoCorrect: false,
+        maxLength: 200,
+        transform: identity,
+      };
     // Not rendered through Input — traits exist so the switch is total.
     case "datetime":
     case "enum":
       return { keyboardType: "default", maxLength: 200, transform: identity };
   }
+}
+
+/**
+ * B-9: the datetime fields of a category that carry an IANA zone on the
+ * wire. ONE derivation so the form, the model and the tests can never
+ * disagree about which times are zoned.
+ */
+export function zonedDateTimeFields(
+  category: BookingCategory,
+): readonly { key: string; label: string; tzKey: string; tzFrom?: string }[] {
+  const out: { key: string; label: string; tzKey: string; tzFrom?: string }[] = [];
+  for (const field of CATEGORY_FIELDS[category]) {
+    if (field.kind !== "datetime" || field.tzKey === undefined) continue;
+    out.push({
+      key: field.key,
+      label: field.label,
+      tzKey: field.tzKey,
+      ...(field.tzFrom !== undefined ? { tzFrom: field.tzFrom } : {}),
+    });
+  }
+  return out;
 }
 
 /** The category's primary-start detail key (§3.3 table) — gap-tap prefill target. */
@@ -245,32 +347,72 @@ export function primaryStartKey(category: BookingCategory): string {
 
 export function emptyFormState(
   category: BookingCategory,
-  prefill?: { day?: ISODate; time?: ISOTime },
+  prefill?: {
+    day?: ISODate;
+    time?: ISOTime;
+    /**
+     * B-9: the zone a NEW zoned time is stamped in until the user picks an
+     * airport or another zone — the ladder's default rung (last zone this
+     * trip's forms submitted, else the device zone). Absent ⇒ `""`, which
+     * `buildDetails` rejects rather than silently Z-stamping.
+     */
+    tz?: string;
+  },
 ): DetailsFormState {
   const state: DetailsFormState = {};
   for (const field of CATEGORY_FIELDS[category]) {
-    state[field.key] = field.kind === "datetime" ? { date: "", time: "" } : "";
+    if (field.kind !== "datetime") {
+      state[field.key] = "";
+      continue;
+    }
+    state[field.key] =
+      field.tzKey !== undefined
+        ? { date: "", time: "", tz: prefill?.tz ?? "" }
+        : { date: "", time: "" };
   }
   // Grid gap-tap (R-itin-14): BOTH day and time present ⇒ the category's
   // primary start is prefilled to the tapped slot (saving auto-schedules,
   // I-2). A day WITHOUT a time (empty-day add row) is NOT written into
   // details — it stays the create→schedule fallback target (R-itin-19).
   if (prefill?.day !== undefined && prefill.time !== undefined) {
-    state[primaryStartKey(category)] = { date: prefill.day, time: prefill.time };
+    const key = primaryStartKey(category);
+    const seeded = state[key];
+    state[key] = {
+      ...(typeof seeded === "object" ? seeded : {}),
+      date: prefill.day,
+      time: prefill.time,
+    };
   }
   return state;
 }
 
-/** Edit-mode prefill: decompose the stored details into form state. */
+/**
+ * Edit-mode prefill: decompose the stored details into form state.
+ *
+ * B-9: a datetime keeps the stored string as `raw` (untouched ⇒ re-emitted
+ * verbatim, never re-composed) and, for a zoned field, the stored `*_tz` —
+ * or `""` when the row predates zone capture. Wall slicing is exact (§3.3),
+ * so display never re-offsets whatever the offset was.
+ */
 export function stateFromDetails(details: BookingDetails): DetailsFormState {
   const state = emptyFormState(details.category);
   const record = details as unknown as Record<string, unknown>;
   for (const field of CATEGORY_FIELDS[details.category]) {
     const value = record[field.key];
-    if (value === undefined || value === null) continue;
     if (field.kind === "datetime" && typeof value === "string") {
-      state[field.key] = { date: wallDate(value), time: wallTime(value) };
-    } else if (field.kind === "int" && typeof value === "number") {
+      const stored = field.tzKey !== undefined ? record[field.tzKey] : undefined;
+      state[field.key] = {
+        date: wallDate(value),
+        time: wallTime(value),
+        raw: value,
+        ...(field.tzKey !== undefined
+          ? { tz: typeof stored === "string" ? stored : "" }
+          : {}),
+      };
+      continue;
+    }
+    if (value === undefined || value === null) continue;
+    if (field.kind === "int" && typeof value === "number") {
       state[field.key] = String(value);
     } else if (typeof value === "string") {
       state[field.key] = value;
@@ -289,10 +431,19 @@ export interface BuildDetailsResult {
   errors: Record<string, string>;
 }
 
-/** Wall date+time → the v1 local-ISO composition (module doc: `Z` offset). */
+/**
+ * Wall date+time → the ZONELESS local-ISO composition (`Z` offset). Still
+ * the path for the categories the wire gives no `*_tz` field (module doc);
+ * a zoned field NEVER lands here — `buildDetails` errors instead, so there
+ * is no route back to B-8's silent Z-stamping.
+ */
 export function composeLocalDateTime(date: string, time: string): string {
   return `${date}T${time}:00Z`;
 }
+
+/** Field-level messages for the zoned composition (one home — form + tests). */
+export const TZ_MISSING_ERROR = "Pick the time zone for this time.";
+export const TZ_UNKNOWN_ERROR = "That time zone isn't available on this device.";
 
 const INT_RE = /^\d{1,9}$/;
 const IATA_RE = /^[A-Z]{3}$/;
@@ -319,11 +470,38 @@ export function buildDetails(
     const value = state[field.key];
     if (field.kind === "datetime") {
       const dt = (value as DateTimeValue | undefined) ?? { date: "", time: "" };
-      if (dt.date !== "" && dt.time !== "") {
-        out[field.key] = composeLocalDateTime(dt.date, dt.time);
-      } else if (dt.date !== "" || dt.time !== "") {
+      if (dt.date === "" && dt.time === "") continue;
+      if (dt.date === "" || dt.time === "") {
         errors[field.key] = "Set both date and time, or clear both.";
+        continue;
       }
+      // B-9: an UNTOUCHED stored value re-emits byte-for-byte — offset,
+      // seconds and zone exactly as they were saved. A title-only edit
+      // cannot re-stamp a time the user never opened.
+      if (dt.raw !== undefined) {
+        out[field.key] = dt.raw;
+        if (field.tzKey !== undefined && dt.tz !== undefined && dt.tz !== "") {
+          out[field.tzKey] = dt.tz;
+        }
+        continue;
+      }
+      if (field.tzKey === undefined) {
+        // No `*_tz` on the wire for this category — the legacy path.
+        out[field.key] = composeLocalDateTime(dt.date, dt.time);
+        continue;
+      }
+      const tz = dt.tz ?? "";
+      if (tz === "") {
+        errors[field.key] = TZ_MISSING_ERROR;
+        continue;
+      }
+      const composed = composeZonedDateTime(dt.date, dt.time, tz);
+      if (composed === null) {
+        errors[field.key] = TZ_UNKNOWN_ERROR;
+        continue;
+      }
+      out[field.key] = composed;
+      out[field.tzKey] = tz;
       continue;
     }
     const text = typeof value === "string" ? value.trim() : "";
@@ -425,11 +603,21 @@ function dateOf(state: DetailsFormState, key: string): string | undefined {
   return typeof value === "object" && value.date !== "" ? value.date : undefined;
 }
 
+/**
+ * A datetime as a partner-URL parameter. B-9: prefers the stored string,
+ * then the zoned composition, and only falls back to the `Z` shape when no
+ * zone is known — a deeplink URL is ephemeral, so an approximate offset
+ * here is a worse search result, never corrupted stored data.
+ */
 function isoOf(state: DetailsFormState, key: string): string | undefined {
   const value = state[key];
-  return typeof value === "object" && value.date !== "" && value.time !== ""
-    ? composeLocalDateTime(value.date, value.time)
-    : undefined;
+  if (typeof value !== "object" || value.date === "" || value.time === "") return undefined;
+  if (value.raw !== undefined) return value.raw;
+  if (value.tz !== undefined && value.tz !== "") {
+    const composed = composeZonedDateTime(value.date, value.time, value.tz);
+    if (composed !== null) return composed;
+  }
+  return composeLocalDateTime(value.date, value.time);
 }
 
 /** Live mapping: current form state → the DeeplinkPanel's per-category fields. */
