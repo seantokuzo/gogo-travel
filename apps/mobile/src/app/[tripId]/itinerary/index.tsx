@@ -72,6 +72,7 @@ import {
   readItineraryViewMode,
   resolveDrop,
   storeItineraryViewMode,
+  type AddOptionId,
   type DayEntry,
   type DayLeg,
   type ItineraryDayListHandle,
@@ -132,6 +133,12 @@ export default function ItineraryScreen() {
   const [mode, setMode] = useState<ItineraryViewMode>(() => readItineraryViewMode(trip.id));
   const [notice, setNotice] = useState<ReorderNotice>(null);
   const [addSheetVisible, setAddSheetVisible] = useState(false);
+  /**
+   * B-19: the option chosen in the add sheet, held until that sheet's RN
+   * Modal is off screen. `null` ⇒ the exit carries no intent (scrim, close,
+   * swipe, Android back) and must push nothing.
+   */
+  const [pendingAddOption, setPendingAddOption] = useState<AddOptionId | null>(null);
   /** R-itin-4: the pair whose mode Sheet is presented (null ⇒ closed). */
   const [openLeg, setOpenLeg] = useState<DayLeg | null>(null);
   const listHandle = useRef<ItineraryDayListHandle>(null);
@@ -185,13 +192,39 @@ export default function ItineraryScreen() {
     });
   };
 
-  // R-itin-18: the FAB opens the 10-option add Sheet; a selection opens the
-  // form modal with that type preset.
-  const openAddOption = (option: Parameters<typeof addOptionSlug>[0]) => {
+  /**
+   * R-itin-18 add sheet, in three beats (B-19 — the itinerary-freeze bug):
+   * open (clearing any stale intent), RECORD + close on a selection, PUSH
+   * once the sheet's Modal is gone.
+   *
+   * The push MUST NOT share a commit with `setAddSheetVisible(false)`:
+   * `item/new` is a `presentation: "modal"` route, and presenting it while
+   * the sheet's `RCTModalHostViewController` is still up latches
+   * `RNSScreenStackView._updatingModals` to `YES` for the life of this tab's
+   * stack — every later modal present/dismiss on the itinerary tab silently
+   * no-ops, which is exactly the "itinerary page froze, other tabs fine,
+   * only a kill+reopen recovers" report. Full mechanism: the `onExited` prop
+   * doc in `components/Sheet.tsx`.
+   *
+   * Why it stopped reproducing for Sean: with items on the trip he started
+   * using the day-header `+` (`openAdd`), which pushes with NO sheet open.
+   */
+  const openAddSheet = () => {
+    setPendingAddOption(null);
+    setAddSheetVisible(true);
+  };
+
+  const openAddOption = (option: AddOptionId) => {
+    setPendingAddOption(option);
     setAddSheetVisible(false);
+  };
+
+  const pushPendingAddOption = () => {
+    if (pendingAddOption === null) return;
+    setPendingAddOption(null);
     router.push({
       pathname: "/[tripId]/itinerary/item/new",
-      params: { tripId: trip.id, category: addOptionSlug(option) },
+      params: { tripId: trip.id, category: addOptionSlug(pendingAddOption) },
     });
   };
 
@@ -322,7 +355,7 @@ export default function ItineraryScreen() {
             ? {
                 action: {
                   label: "Add your first plan",
-                  onPress: () => setAddSheetVisible(true),
+                  onPress: openAddSheet,
                   testID: "itinerary-empty-add",
                 },
               }
@@ -454,13 +487,14 @@ export default function ItineraryScreen() {
             <Fab
               icon="add"
               label="Add to itinerary"
-              onPress={() => setAddSheetVisible(true)}
+              onPress={openAddSheet}
               testID="itinerary-fab-add"
             />
             <AddOptionsSheet
               visible={addSheetVisible}
               onDismiss={() => setAddSheetVisible(false)}
               onSelect={openAddOption}
+              onExited={pushPendingAddOption}
             />
           </>
         ) : null}

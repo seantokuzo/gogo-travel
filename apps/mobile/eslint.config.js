@@ -2,6 +2,7 @@
 const { defineConfig } = require("eslint/config");
 const expoConfig = require("eslint-config-expo/flat");
 const prettierConfig = require("eslint-config-prettier");
+const globals = require("globals");
 
 // DS-4 / R-ds-7: token-only styling. Every color comes from theme tokens and
 // every style sheet goes through the createStyles(theme) factory, so literal
@@ -32,6 +33,19 @@ module.exports = defineConfig([
   expoConfig,
   {
     ignores: ["dist/*", ".expo/*"],
+  },
+  {
+    // jest.setup.js was never inside the lint gate (default scope is
+    // src/app/components; the file lives at the package root) — the old
+    // `/* eslint-env jest */` directive at its top is dead under flat config
+    // (ESLint stopped honoring `eslint-env` comments), so `jest.mock(...)`
+    // etc. read as 34 `no-undef` errors once the file IS linted (see the
+    // `lint` script below, which now includes it explicitly). Declare the
+    // jest globals here instead of disabling the rule.
+    files: ["jest.setup.js"],
+    languageOptions: {
+      globals: { ...globals.jest },
+    },
   },
   {
     // NAV-7 / R-nav-22: raw RN interactive elements in screens must carry a
@@ -68,8 +82,11 @@ module.exports = defineConfig([
   },
   {
     // DS-4 / R-ds-7 for everything outside the block above (components,
-    // theme adapters): token-only styling. Test/typetest/test-util files are
-    // exempt — they declare no shipped visual styles.
+    // theme adapters): token-only styling. Test/typetest/test-infra files
+    // are exempt — they declare no shipped visual styles. `src/testing/**`
+    // is the second spec-mandated test-infra home alongside
+    // `src/test-utils/**` (testing-overhaul spec) — a mock-shape-parity
+    // literal there would otherwise force an inline disable.
     files: ["src/**/*.{ts,tsx}"],
     ignores: [
       "src/app/**",
@@ -78,9 +95,39 @@ module.exports = defineConfig([
       "src/**/*.typetest.*",
       "src/__tests__/**",
       "src/test-utils/**",
+      "src/testing/**",
     ],
     rules: {
       "no-restricted-syntax": ["error", ...tokenOnlySelectors],
+    },
+  },
+  {
+    // Security (queued lint-gap batch, PR #45 R1): the hostile fixture pack
+    // under @gogo/shared/testing is a bug simulator — wrong-by-construction
+    // inputs built to break validation — and it's auto-import-visible from
+    // any editor's autocomplete. A prod import silently ships fixture
+    // generators into the app bundle. Test files (their own test-infra home
+    // included) still need it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/**/*.test.*",
+      "src/__tests__/**",
+      "src/testing/**",
+      "src/test-utils/**",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@gogo/shared/testing*"],
+              message:
+                "@gogo/shared/testing is the hostile fixture pack (wrong-by-construction bug simulators) — test-only. Import it from a *.test.* file, src/test-utils/**, or src/testing/**, never shipped app code.",
+            },
+          ],
+        },
+      ],
     },
   },
   prettierConfig,
