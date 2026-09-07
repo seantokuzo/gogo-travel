@@ -15,6 +15,7 @@
 import { router } from "expo-router";
 import { act, fireEvent, screen, waitFor, within } from "expo-router/testing-library";
 
+import { ApiRequestError } from "@/auth";
 import { queryClient } from "@/data";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
@@ -22,6 +23,7 @@ import { TEST_INVITE_TOKEN, TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeItineraryItem } from "@/test-utils/itinerary-fixtures";
 import { renderApp } from "@/test-utils/render-app";
 import { SCREEN_ROUTES } from "@/test-utils/screen-routes";
+import { makeSettleRequestDetail } from "@/test-utils/settle-fixtures";
 import { makeInvitePreview, mockNavApi } from "@/test-utils/trip-fixtures";
 
 // Tab switches fire the `selection` haptic through the DS TabNav — keep the
@@ -114,9 +116,23 @@ describe("dynamic segments thread their params (deep-link plumbing for NAV-5)", 
   });
 
   it("settle-request id reaches the request screen (R-nav-13 target)", async () => {
+    // Real screen since T-9.7: the Q2 responder resolves ONLY for the
+    // URL's id — the rendered requester line therefore proves the param
+    // threaded (an unthreaded id would 404 into the EmptyState instead).
+    mockNavApi({
+      overrides: {
+        "GET /trips/:tripId/settle-requests/:requestId": (input) => {
+          const params = input["params"] as { requestId: string };
+          return params.requestId === "req-5"
+            ? Promise.resolve(makeSettleRequestDetail())
+            : Promise.reject(new ApiRequestError(404, "NOT_FOUND", "not found"));
+        },
+      },
+    });
     await renderApp(`/${TEST_TRIP_ID}/money/request/req-5`);
     const request = await screen.findByTestId("settle-request-screen");
-    expect(within(request).getByText("Request req-5")).toBeOnTheScreen();
+    expect(await within(request).findByTestId("settle-request-headline")).toBeOnTheScreen();
+    expect(within(request).queryByTestId("settle-request-empty")).toBeNull();
   });
 });
 
