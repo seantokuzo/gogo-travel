@@ -89,7 +89,8 @@ research → ADR if non-obvious.
 - Atomic commits — `type(scope): description` (`feat`, `fix`, `refactor`,
   `docs`, `test`, `chore`).
 - Branch naming — `P-N/T-M-slug` for tasks, `B-N/slug` for bugs, `S-N/slug`
-  for spikes, `qa/<slug>` for multi-bug QA integration branches.
+  for spikes, `qa/<slug>` for multi-bug QA integration branches, `chore/<slug>`
+  for ID-less hygiene batches (source QUEUE rows carry no stable ID).
 - Merge style `--merge` (never squash/rebase). CI green before merge unless
   labeled `expected-ci-fail`.
 

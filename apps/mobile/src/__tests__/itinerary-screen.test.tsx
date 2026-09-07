@@ -375,18 +375,59 @@ describe("ideas bucket seam (T-7.6 / IT-5, R-itin-10)", () => {
 });
 
 describe("add entry points (T-7.6 / IT-7, R-itin-18) + viewer gating (R-ib-24)", () => {
-  it("the FAB opens the 10-option add sheet; a selection routes with the category preset", async () => {
+  /**
+   * B-19 (the itinerary-freeze bug): `item/new` is a `presentation: "modal"`
+   * route, so the push MUST land after the add sheet's RN Modal is off
+   * screen — pushing it in the same handler that closes the sheet presents
+   * an expo-router modal on a stack that is still showing a foreign
+   * `RCTModalHostViewController`, which latches
+   * `RNSScreenStackView._updatingModals` and kills every later modal
+   * present/dismiss on THIS tab (other tabs keep working; only a relaunch
+   * clears it). The "not yet called" assertion is the load-bearing half:
+   * restoring the same-handler push turns it RED.
+   */
+  it("the FAB opens the 10-option add sheet; a selection routes AFTER the sheet exits", async () => {
     await renderItinerary();
     await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
     await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
     expect(screen.getByTestId("itinerary-add-sheet")).toBeOnTheScreen();
     await fireEvent.press(screen.getByTestId("itinerary-add-option-car-rental"));
+
+    // Sheet still presented ⇒ nothing pushed yet (B-19).
+    expect(screen.getByTestId("itinerary-add-sheet")).toBeOnTheScreen();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
+    await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
+    await settle();
+    expect(mockPush).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/[tripId]/itinerary/item/new",
       params: { tripId: TEST_TRIP_ID, category: "car-rental" },
     });
-    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
+  });
+
+  it("a sheet closed with NO option chosen routes nowhere (B-19 — onExited is a lifecycle signal)", async () => {
+    await renderItinerary();
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    await fireEvent.press(screen.getByTestId("itinerary-fab-add"));
+    // Close button, not the scrim — the scrim is RNTL-unqueryable (mobile.md).
+    await fireEvent.press(screen.getByTestId("itinerary-add-sheet-close"));
     await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
+    await settle();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("the day-header `+` still pushes immediately — it opens no sheet (B-19 discriminator)", async () => {
+    await renderItinerary();
+    await screen.findByTestId(`itinerary-day-header-${TRIP_START}`);
+    // This is the path that stopped Sean's repro once the trip had items:
+    // no Modal is presented, so there is nothing to sequence behind.
+    await fireEvent.press(screen.getByTestId(`itinerary-day-header-add-${TRIP_START}`));
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/[tripId]/itinerary/item/new",
+      params: { tripId: TEST_TRIP_ID, day: TRIP_START },
+    });
   });
 
   it("viewers get NO write affordances: no FAB, no empty-day add rows", async () => {
@@ -419,12 +460,17 @@ describe("states (R-itin-28)", () => {
     await screen.findByTestId("itinerary-empty");
     await fireEvent.press(screen.getByTestId("itinerary-empty-add"));
     await fireEvent.press(screen.getByTestId("itinerary-add-option-lodging"));
+    // B-19: deferred to the exit, exactly like the FAB path. THIS is the
+    // trip shape Sean hit — with zero items the empty-state CTA and the FAB
+    // are the only add affordances, and both go through the sheet.
+    expect(mockPush).not.toHaveBeenCalled();
+    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
+    await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
+    await settle();
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/[tripId]/itinerary/item/new",
       params: { tripId: TEST_TRIP_ID, category: "lodging" },
     });
-    // Drain the add sheet's ~200ms exit inside act (SHEET TAX).
-    await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
   });
 
   it("zero items but unscheduled bookings exist → day sections, not EmptyState", async () => {

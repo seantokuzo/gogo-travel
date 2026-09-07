@@ -31,7 +31,14 @@ describe("buildDetails (state → wire)", () => {
     for (const category of BOOKING_CATEGORIES) {
       const state = emptyFormState(category);
       for (const field of CATEGORY_FIELDS[category]) {
-        if (field.kind === "datetime") state[field.key] = { date: "2027-03-02", time: "14:30" };
+        if (field.kind === "datetime")
+          state[field.key] = {
+            date: "2027-03-02",
+            time: "14:30",
+            // B-9: a wire-zoned time needs its zone — buildDetails refuses
+            // to Z-stamp one (that refusal IS the B-8 fix).
+            ...(field.tzKey !== undefined ? { tz: "Asia/Tokyo" } : {}),
+          };
         else if (field.kind === "int") state[field.key] = "3";
         else if (field.kind === "url") state[field.key] = "https://example.com/x";
         else if (field.kind === "iata") state[field.key] = "NRT";
@@ -132,16 +139,27 @@ describe("buildDetails (state → wire)", () => {
     const built = buildDetails("activity", state);
     expect(built.details).not.toBeNull();
     const back = stateFromDetails(built.details!);
-    expect(back["starts_at"]).toEqual({ date: "2027-03-02", time: "14:30" });
+    // B-9: the decomposed value carries `raw` — the stored string, re-emitted
+    // verbatim if the user never opens the field (no `tz`: activity has no
+    // `*_tz` on the wire, so it stays on the zoneless path).
+    expect(back["starts_at"]).toEqual({
+      date: "2027-03-02",
+      time: "14:30",
+      raw: "2027-03-02T14:30:00Z",
+    });
     expect(back["venue_name"]).toBe("TeamLab");
     expect(back["ticket_count"]).toBe("2");
   });
 });
 
 describe("fieldInputTraits (B-20 — one derivation for every rendered field)", () => {
-  it("iata: 3-cap, uppercase transform, characters keyboard, no autocorrect", () => {
+  it("iata: WIRE cap (B-9 R1 — never the 3-letter save rule), uppercase transform, no autocorrect", () => {
     const traits = fieldInputTraits({ key: "origin_iata", label: "From (IATA)", kind: "iata" });
-    expect(traits.maxLength).toBe(3);
+    // B-9 widened the airport field to the wire cap so "Narita
+    // International" is typeable; the 3-letter rule is enforced at the SAVE
+    // gate (`buildDetails`), never as a typing cap. A 3 here would re-arm
+    // the pre-B-9 bug for any consumer that trusts this one derivation.
+    expect(traits.maxLength).toBe(200);
     expect(traits.autoCapitalize).toBe("characters");
     expect(traits.autoCorrect).toBe(false);
     expect(traits.transform("nrt")).toBe("NRT");

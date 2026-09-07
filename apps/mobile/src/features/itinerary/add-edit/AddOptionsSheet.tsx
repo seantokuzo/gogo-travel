@@ -18,11 +18,17 @@ import type { AddOptionId } from "./form-model";
 export interface AddOptionsSheetProps {
   visible: boolean;
   onDismiss(): void;
-  /** Fires once per presentation; the host routes and dismisses. */
+  /** Fires once per presentation; the host records the intent and dismisses. */
   onSelect(option: AddOptionId): void;
+  /**
+   * DS `Sheet` `onExited`, forwarded verbatim (B-19): the host pushes the
+   * `item/new` MODAL route from here, never from `onSelect` — see the Sheet
+   * prop's doc for the RNScreens wedge that rule exists for.
+   */
+  onExited?: () => void;
 }
 
-export function AddOptionsSheet({ visible, onDismiss, onSelect }: AddOptionsSheetProps) {
+export function AddOptionsSheet({ visible, onDismiss, onSelect, onExited }: AddOptionsSheetProps) {
   const actedRef = useRef(false);
 
   // Re-arm the one-action gate on every presentation.
@@ -34,6 +40,7 @@ export function AddOptionsSheet({ visible, onDismiss, onSelect }: AddOptionsShee
     <Sheet
       visible={visible}
       onDismiss={onDismiss}
+      {...(onExited === undefined ? {} : { onExited })}
       title="Add to itinerary"
       testID="itinerary-add-sheet"
     >

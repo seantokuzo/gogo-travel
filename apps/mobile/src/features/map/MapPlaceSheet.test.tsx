@@ -7,8 +7,9 @@
  *  - R-map-11: save toggle wired to the optimistic data layer (save POSTs
  *    and lands "Saved"; unsave DELETEs the settled row); viewers get STATE
  *    (badge), never the control — editor CONTROL alongside;
- *  - R-map-12: Add to day dismisses, jumps the tab FIRST, then pushes the
- *    prefilled item/new modal (order claim — mobile.md landmine);
+ *  - R-map-12: Add to day dismisses, and once the sheet's Modal is OFF
+ *    SCREEN jumps the tab FIRST, then pushes the prefilled item/new modal
+ *    (order claim — mobile.md landmine; the deferral is B-19);
  *  - R-map-23: View in itinerary exists ONLY for an itinerary-pin origin
  *    and lands PER KIND — item-kind → item/[itemId], booking-kind →
  *    booking/[bookingId] directly (T-8.4's rerouted convention, MAP-6
@@ -25,7 +26,8 @@
  * diff" that pin existed to force. Its successor is the presence +
  * viewer-gating + per-kind suite below.
  */
-import { fireEvent, screen } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { useState } from "react";
 
 import { MapPlaceSheet } from "./MapPlaceSheet";
 import { resetMapLocationForTests, useMapLocationStore } from "./location";
@@ -88,6 +90,42 @@ afterEach(async () => {
   callSequence.length = 0;
 });
 
+/**
+ * B-19: the sheet only EXITS when its `place` prop goes null, which is what
+ * the real parent does (`MapPlaceSheetSlot`'s dismiss clears both selection
+ * sources). A fixed `place` prop would hold the RN Modal on screen forever
+ * and no deferred navigation could ever be observed — so the suite drives
+ * the sheet through the same controlled shape production uses.
+ */
+function Host({
+  initialPlace,
+  itineraryItemId,
+  onDismiss,
+}: {
+  initialPlace: ReturnType<typeof makePlace>;
+  itineraryItemId: string | null;
+  onDismiss: () => void;
+}) {
+  const [current, setCurrent] = useState<ReturnType<typeof makePlace> | null>(initialPlace);
+  return (
+    <MapPlaceSheet
+      tripId={TEST_TRIP_ID}
+      place={current}
+      itineraryItemId={itineraryItemId}
+      onDismiss={() => {
+        setCurrent(null);
+        onDismiss();
+      }}
+    />
+  );
+}
+
+/** Drain the sheet's ~200ms exit inside act, then its `onExited` round trip. */
+async function drainSheetExit(): Promise<void> {
+  await waitFor(() => expect(screen.queryByTestId("map-sheet-place")).toBeNull());
+  await settle();
+}
+
 interface RenderOpts {
   place?: Partial<Parameters<typeof makePlace>[0]>;
   role?: "owner" | "editor" | "viewer";
@@ -107,18 +145,15 @@ async function renderSheet(opts: RenderOpts = {}) {
       "GET /trips/:tripId/saved-places": () =>
         Promise.resolve({ items: opts.savedRows ?? [], nextCursor: null }),
       "POST /trips/:tripId/saved-places": () =>
-        Promise.resolve(
-          makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: place.id, place }),
-        ),
+        Promise.resolve(makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: place.id, place })),
       "DELETE /trips/:tripId/saved-places/:savedPlaceId": () => Promise.resolve(undefined),
       ...opts.overrides,
     },
   });
   const view = await renderWithProviders(
     <TripProvider trip={trip}>
-      <MapPlaceSheet
-        tripId={TEST_TRIP_ID}
-        place={place}
+      <Host
+        initialPlace={place}
         itineraryItemId={opts.itineraryItemId ?? null}
         onDismiss={onDismiss}
       />
@@ -193,9 +228,7 @@ describe("R-map-11 save toggle (E5)", () => {
 
   it("editor: a SAVED settled row unsaves (DELETE with the real row id)", async () => {
     const { request } = await renderSheet({
-      savedRows: [
-        makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: PLACE.id, place: PLACE }),
-      ],
+      savedRows: [makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: PLACE.id, place: PLACE })],
     });
     expect(screen.getByText("Saved")).toBeTruthy();
 
@@ -228,9 +261,7 @@ describe("R-map-11 save toggle (E5)", () => {
   it("viewer: STATE (badge when saved), never the control — editor CONTROL alongside", async () => {
     await renderSheet({
       role: "viewer",
-      savedRows: [
-        makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: PLACE.id, place: PLACE }),
-      ],
+      savedRows: [makeSavedPlaceWithPlace({ id: SAVED_ROW_ID, place_id: PLACE.id, place: PLACE })],
     });
     expect(screen.queryByTestId("map-sheet-place-button-save")).toBeNull();
     expect(screen.queryByTestId("map-sheet-place-button-add-to-day")).toBeNull();
@@ -247,12 +278,24 @@ describe("R-map-11 save toggle (E5)", () => {
 });
 
 describe("R-map-12 Add to day (E5)", () => {
-  it("dismisses, jumps the itinerary tab FIRST, then pushes the prefilled item/new modal", async () => {
+  /**
+   * B-19: `item/new` is a `presentation: "modal"` route. Presenting it while
+   * this sheet's `RCTModalHostViewController` is still up latches
+   * `RNSScreenStackView._updatingModals` on the ITINERARY tab's stack, and
+   * every later modal there silently no-ops until relaunch. The "nothing
+   * yet" assertion is the discriminator: moving the jump+push back into the
+   * tap handler turns it RED.
+   */
+  it("dismisses, and only ONCE THE SHEET IS GONE jumps the tab then pushes item/new", async () => {
     const { onDismiss } = await renderSheet();
 
     await fireEvent.press(screen.getByTestId("map-sheet-place-button-add-to-day"));
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
+    // Sheet still presented ⇒ no tab jump, no push (B-19).
+    expect(callSequence).toEqual([]);
+
+    await drainSheetExit();
     expect(callSequence).toEqual([
       ["tab", "itinerary"],
       [
@@ -269,6 +312,16 @@ describe("R-map-12 Add to day (E5)", () => {
       ],
     ]);
   });
+
+  it("a plain close navigates NOWHERE after the exit (onExited is a lifecycle signal)", async () => {
+    await renderSheet();
+
+    // Close button, not the scrim — the scrim is RNTL-unqueryable (mobile.md).
+    await fireEvent.press(screen.getByTestId("map-sheet-place-close"));
+    await drainSheetExit();
+
+    expect(callSequence).toEqual([]);
+  });
 });
 
 describe("R-map-23 View in itinerary (E5 — per-kind, itinerary pins only)", () => {
@@ -277,12 +330,14 @@ describe("R-map-23 View in itinerary (E5 — per-kind, itinerary pins only)", ()
     expect(screen.queryByTestId("map-sheet-place-button-view-itinerary")).toBeNull();
   });
 
-  it("item-kind: dismisses, jumps, then pushes item/[itemId]", async () => {
+  it("item-kind: dismisses, then (after the exit) jumps and pushes item/[itemId]", async () => {
     const { onDismiss } = await renderSheet({ itineraryItemId: ITEM_C_ID });
 
     await fireEvent.press(screen.getByTestId("map-sheet-place-button-view-itinerary"));
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(callSequence).toEqual([]); // B-19: deferred past the Modal teardown
+    await drainSheetExit();
     expect(callSequence).toEqual([
       ["tab", "itinerary"],
       [
@@ -300,6 +355,8 @@ describe("R-map-23 View in itinerary (E5 — per-kind, itinerary pins only)", ()
 
     await fireEvent.press(screen.getByTestId("map-sheet-place-button-view-itinerary"));
 
+    expect(callSequence).toEqual([]); // B-19: deferred past the Modal teardown
+    await drainSheetExit();
     expect(callSequence).toEqual([
       ["tab", "itinerary"],
       [
@@ -359,7 +416,15 @@ it("a failed open surfaces the inline error and stays retryable", async () => {
   expect(mockOpenUrl).toHaveBeenCalledTimes(2);
 });
 
-it("Details dismisses then pushes the map stack's place route (typed params)", async () => {
+/**
+ * The deliberate counterpart to the B-19 deferrals above: Details is a
+ * SAME-TAB push onto the map stack, so RNScreens' modal list is unchanged
+ * and `setModalViewControllers` returns at its `isEqualToArray` check before
+ * `_updatingModals` is ever set. Nothing to sequence behind — and this pin
+ * is what stops a well-meant "make them all consistent" change from adding
+ * ~200 ms to a push that never had the bug.
+ */
+it("Details dismisses and pushes the map stack's place route IMMEDIATELY (typed params)", async () => {
   const { onDismiss } = await renderSheet();
 
   await fireEvent.press(screen.getByTestId("map-sheet-place-button-details"));
@@ -369,6 +434,10 @@ it("Details dismisses then pushes the map stack's place route (typed params)", a
     pathname: "/[tripId]/map/place/[placeId]",
     params: { tripId: TEST_TRIP_ID, placeId: PLACE.id },
   });
+  await drainSheetExit();
+  // And the exit adds nothing on top — one push, no stray tab jump.
+  expect(mockPush).toHaveBeenCalledTimes(1);
+  expect(mockTabNavigate).not.toHaveBeenCalled();
 });
 
 it("close button routes through onDismiss (scrim is RNTL-unqueryable — mobile.md)", async () => {

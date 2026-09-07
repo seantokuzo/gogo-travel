@@ -155,32 +155,36 @@ components (Law #5 clean); `openLink` does gogo:// cold-start first-class.
 Maestro's wait/retry kernel; keep AXe as the escape hatch only.
 
 **Task breakdown, in order:**
+
 1. **ADR-007** — record the adoption + the Detox disqualifier + the constraints
-   (local-first; no metered CI; AXe stays escape-hatch). 2. **Install pinned**:
-   ⚠️ npm `maestro` (2.1.1) and homebrew-core `maestro` (0.17.3) are UNRELATED
-   SQUATTER packages — install ONLY via `mobile-dev-inc/tap` or the official
-   script, version-pinned (cli-2.10.x era, ~monthly cadence); JVM app, Java 17
-   is present; verify the `MAESTRO_CLI_NO_ANALYTICS` env opt-out at install.
+   (local-first; no metered CI; AXe stays escape-hatch).
+2. **Install pinned**: ⚠️ npm `maestro` (2.1.1) and homebrew-core `maestro`
+   (0.17.3) are UNRELATED SQUATTER packages — install ONLY via
+   `mobile-dev-inc/tap` or the official script, version-pinned (cli-2.10.x era,
+   ~monthly cadence); JVM app, Java 17 is present; verify the
+   `MAESTRO_CLI_NO_ANALYTICS` env opt-out at install.
 3. **The build lane**: `npx expo run:ios --configuration Release` per merge
    candidate — dev-client builds are for flow AUTHORING only (black-box
    `launchApp` lands on the dev launcher; `clearState:true` wipes the stored
    Metro URL). Note: the installed sim app still carries the pre-#33 bundle id —
-   a rebuild is due regardless. 4. **Flows 1–4 (unauthed, buildable
-   immediately)**: `smoke-diagnostics-cold` (openLink gogo://diagnostics; handle
-   the iOS SpringBoard open-prompt with a conditional runFlow — approval persists
-   per sim), `deeplink-matrix` (codify the B-14 AXe matrix), `signin-renders`,
-   `signin-cancel-surface` (MED feasibility — the ASWebAuthenticationSession
-   sheet may resist accessibility taps; fall back to the door). 5. **The session
-   door (APPROVED — Autonomy trigger #4 satisfied 2026-09-07)**: an auth bypass
-   minting a test session, env-gated — Sean verbatim: "gated on env var such as
-   NODE_ENV 'development' or 'testing' or 'e2e' if we want to be more targeted."
-   Design at build (extend the `scripts/gen-test-env.mjs` throwaway-env pattern;
-   double-gate so prod builds cannot carry it); full review pipeline, security
-   lane mandatory. 6. **Flows 5–10 (the runsheet replacements)**:
-   `session-door-entry`, `create-trip-golden` (datetimepicker path),
-   `add-flight-dateline` (drive the REAL B-8 hostile-fixture wall times from
-   `@gogo/shared/testing`), `ideas-to-schedule`, `cancel-visibility`,
-   `cross-tab-state` (tab-bar presses ONLY — the vendored-navigator no-op rule).
+   a rebuild is due regardless.
+4. **Flows 1–4 (unauthed, buildable immediately)**: `smoke-diagnostics-cold`
+   (openLink gogo://diagnostics; handle the iOS SpringBoard open-prompt with a
+   conditional runFlow — approval persists per sim), `deeplink-matrix` (codify
+   the B-14 AXe matrix), `signin-renders`, `signin-cancel-surface` (MED
+   feasibility — the ASWebAuthenticationSession sheet may resist accessibility
+   taps; fall back to the door).
+5. **The session door (APPROVED — Autonomy trigger #4 satisfied 2026-09-07)**:
+   an auth bypass minting a test session, env-gated — Sean verbatim: "gated on
+   env var such as NODE_ENV 'development' or 'testing' or 'e2e' if we want to be
+   more targeted." Design at build (extend the `scripts/gen-test-env.mjs`
+   throwaway-env pattern; double-gate so prod builds cannot carry it); full
+   review pipeline, security lane mandatory.
+6. **Flows 5–10 (the runsheet replacements)**: `session-door-entry`,
+   `create-trip-golden` (datetimepicker path), `add-flight-dateline` (drive the
+   REAL B-8 hostile-fixture wall times from `@gogo/shared/testing`),
+   `ideas-to-schedule`, `cancel-visibility`, `cross-tab-state` (tab-bar presses
+   ONLY — the vendored-navigator no-op rule).
 7. Wire a local pre-merge script (JUnit output); GH-macOS CI optional later.
 
 **Known limits (set expectations in ADR-007):** the @rnmapbox map canvas is
@@ -221,6 +225,76 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   indicators that tap through to booking detail · B-13 bins hidden when empty,
   cancelled reachable by expanding Cancelled.
 
+#### REVIEW WAVE 2026-09-07 — PR #58 + #60 MERGED; #59/#61/#62 still open (session in progress)
+
+**MERGED**
+
+- **PR #58 `67055a1`** (chore/lint-gaps): the four queued lint gaps closed —
+  `apps/mobile/jest.setup.js` into the expo lint gate (+ `globals@17.7.0`
+  devDep, `globals.jest` scoped to that one file); `src/testing/**` +
+  `src/test-utils/**` into the token-styling and no-restricted-imports
+  exemptions; `no-restricted-imports` now bans `@gogo/shared/testing*` in
+  prod scopes of BOTH apps; root `lint:root` extended to `scripts/`. 2-lane
+  panel (correctness + conventions, deliberate for a config-only PR): 0
+  blocking / 4 advisory, 3 fixed + 1 deferred, independent verification 8/8
+  VERIFIED, judge merge/high. Worth preserving: the feared lint-scope
+  narrowing was DISPROVED — `@expo/cli`'s `lintAsync.js` only pushes a
+  DEFAULT_INPUT when `fs.existsSync` passes, and `apps/mobile` has only
+  `src/` at its package root, so bare `expo lint` was already equivalent to
+  `expo lint src`; the new invocation is a strict superset.
+- **PR #60 `ef241ef`** (B-19/sheet-exit-before-modal-push): B-19 root-caused
+  and fixed. Mechanism (source-verified): the DS `Sheet` renders an RN
+  `Modal` that stays PRESENTED through its JS exit animation, so a
+  `router.push` of a `presentation:"modal"` route in the same handler makes
+  react-native-screens dismiss a FOREIGN (non-`RNSScreen`) modal; because the
+  Sheet uses `animationType="none"` that dismissal is `animated:NO`, its
+  `transitionCoordinator` is nil, `animateAlongsideTransition:completion:`
+  no-ops, `finish()` never runs, and `_updatingModals` (a per-
+  `RNSScreenStackView` ivar) is never cleared — so that ONE tab's stack can
+  never present or dismiss a modal again. Explains every symptom: tab dead,
+  other tabs fine, item saved server-side, only kill+reopen recovers, and it
+  stopped reproducing once items existed (the natural add gesture with items
+  present is the day-header `+`, which pushes with no Sheet open). Fix: an
+  `onExited` callback fired when a null-rendering probe mounted INSIDE the RN
+  Modal unmounts (its unmount coincides with the native dismissal
+  completion), three call sites deferring their push into it, a
+  per-presentation `Modal` `key` closing a stale-`isRendered` re-wedge
+  window, and a landmine entry in `.claude/rules/mobile.md`. 5 lanes, 3
+  blocking / 6 advisory, all fixed, independent verification 10/10 VERIFIED,
+  judge merge/high. **Headline finding:** the tests lane proved the original
+  "load-bearing" pin was TOOTHLESS — a naive `useEffect`-on-`mounted`
+  implementation that still wedges on iOS kept all EIGHT original pins
+  green, confirmed by execution twice (fixer + independent verifier). The
+  fix now carries a file-local iOS-faithful `jest.mock` of RN's `Modal`.
+  Also record: `animationType="fade"` WOULD fix the wedge in one line but
+  was rejected on verified grounds — it maps to
+  `UIModalTransitionStyleCrossDissolve` with `shouldAnimate:YES`, layering a
+  UIKit cross-dissolve at a fixed duration over the Sheet's own spring
+  slide, un-disableable by reduce-motion, across ~20 consumers (a DS motion
+  change, not a bug fix).
+- **`0d50988`**: five follow-up QUEUE rows filed (see that commit / the
+  QUEUE Active table).
+
+**STILL OPEN when this was written**
+
+- **PR #62** (B-9/airports-airlines-client-forms) — the B-9 CLIENT half,
+  +4080/-101 over 29 files, CI green, 5-lane panel in progress (security
+  ship 0/1, performance ship 0/1 at time of writing). This is the REAL B-8
+  fix. Note the branch name differs from the QUEUE row's
+  `B-9/airports-airlines-client` because that name was held by a dead
+  agent's worktree.
+- **PR #59** (B-8/revert-tz-grace) — DRAFT, deliberately. Reverts the
+  temporary 12h grace + re-adds the strict CHECK as migration 0003
+  `NOT VALID`. Round 1: 2 blocking / 4 advisory, both blocking fixed
+  (`86eac22`), independent verification VERIFIED on all 11 items. It is a
+  draft because merging it before PR #62 would reinstate the original B-8 P0
+  (every date-line flight rejected again). **Merge order is: #62 then #59.**
+- **PR #61** (S-4/maestro-e2e-lane) — HELD. Fixes applied (`1f49ff5`), but 3
+  of 4 release flows have never run green and ALL FOUR flows' assertions
+  changed this round, so even the one earlier green run is stale. Merge
+  gate: one `bash scripts/e2e.sh` run showing a non-zero test count and zero
+  failures. Blocked by the simulator wedge (landmine below).
+
 #### Still-true landmines carried forward
 
 - **Device data is known-wrong (B-8 class):** every booking entered before the tz fix
@@ -234,6 +308,34 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   owner-scoped).
 - **Ask the ledger's exact criteria, never a paraphrase** (the 2026-08-29 session's
   repeated failure mode — deliberately preserved here).
+- **Host iOS simulator stack is wedged (2026-09-07).** `xcrun simctl boot`
+  on any device hangs indefinitely (killed at 60s, then 75s); `simctl list`
+  works but nothing reaches Booted. Tried and did NOT fix: `kill -9` of the
+  stale `SimLaunchHost.x86`, `killall -9` of the user-owned
+  `CoreSimulatorService` (launchd respawned both), plus the earlier S-4
+  agent's shutdown-all / Simulator.app restarts / clean service restart /
+  orphaned `SimRenderServer`+`SimMetalHost` kills / `launchctl kickstart`.
+  Not disk (214 GB free), not load. Remaining fix = log out or reboot the
+  host, which is Sean's call. Blocks PR #61's merge gate and all device QA.
+- **Grandfathered-booking dead end**, arriving when PR #59 lands: an
+  itinerary item derived from a booking with inverted stored instants
+  CANNOT be unscheduled, because `deleteItem`'s R-ib-9 `planned → idea` flip
+  is an UPDATE of the parent booking and the re-tightened `NOT VALID` CHECK
+  rejects it (a specific 400, never a 500 — that was the round-1 fix).
+  Reads, deletes and any details-CARRYING PATCH still work, and a details
+  PATCH HEALS the row, which is exactly the B-9 re-entry flow — so it is
+  mostly self-healing. The only exits are: edit the booking's times, or
+  delete the booking.
+- **B-19's ledger flip is NOT earned yet.** Nothing in PR #60 was
+  device-verified (simulator down); the mechanism was established by
+  reading `RNSScreenStack.mm` (vendored 4.25.2) and an RN 0.81.5 copy of
+  `RCTModalHostViewComponentView.mm` (0.86.2's is not vendored). Device
+  recipe lives in the PR #60 body: empty trip → Slow Animations → FAB →
+  pick an option → save → try tapping; the discriminator is that the
+  day-header `+` path never froze while the FAB path always did;
+  `gogo://diagnostics` leg 6 should show NO dev error (a native wedge
+  leaves no JS error). Also eyeball the ~200ms deferred transitions for
+  jank.
 
 ### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — pk token LANDED 2026-08-29; PHASE QA + F-055..F-062 FLIPS now RUNNABLE, device-gated on Sean)
 

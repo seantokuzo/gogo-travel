@@ -7,7 +7,7 @@
 import { ThemeProvider } from "@gogo/tokens/react";
 import { act, fireEvent, screen } from "@testing-library/react-native";
 import type { ReactElement } from "react";
-import { Animated, Dimensions } from "react-native";
+import { Animated, Dimensions, Modal, View } from "react-native";
 
 import { AppText, Sheet } from "@/components";
 import { renderWithTheme } from "@/test-utils/render";
@@ -18,6 +18,138 @@ import {
   DISMISS_VELOCITY,
   shouldDismissSheet,
 } from "./Sheet";
+
+/**
+ * iOS-FAITHFUL `Modal` stand-in (B-19 round 1) — the reason the pins below
+ * can discriminate the fix at all.
+ *
+ * The jest preset's mock (`@react-native/jest-preset/jest/mocks/Modal.js`)
+ * returns `null` the instant `visible === false`, so under it "the Modal's
+ * children unmounted" and "the native modal was dismissed" are the SAME
+ * commit. On iOS they are one dismissal apart, and that gap IS B-19: RN keeps
+ * the modal presented while `isRendered` is true (`Modal.js:276-282`,
+ * `_shouldShowModal()` = `visible || isRendered`) and clears `isRendered`
+ * only in the `onDismiss` handler (`Modal.js:318-327`), which native emits
+ * from `dismissViewControllerAnimated:completion:`
+ * (`RCTModalHostViewComponentView.mm:194-204`). Against the preset mock the
+ * NAIVE fix — `useEffect(() => { if (wasMounted && !mounted) onExited?.(); },
+ * [mounted])` with no probe — passes every pin in this file while
+ * reproducing B-19 on device.
+ *
+ * So this reimplements the real machine (constructor seed
+ * `isRendered: props.visible === true`, the false→true re-arm in
+ * `componentDidUpdate`, `_shouldShowModal`) and makes the native dismissal an
+ * EXPLICIT step the test drives. Per R-test-1 / ADR-006 B-4 the mock's own
+ * behavior is re-asserted by a test — see "Modal mock fidelity" below; a mock
+ * this load-bearing has to be pinned itself.
+ *
+ * `platform` defaults to `"android"`, which is exactly the preset mock's
+ * behavior, so every pre-existing pin in this file is untouched. The B-19
+ * block opts into `"ios"`.
+ */
+jest.mock("react-native/Libraries/Modal/Modal", () => {
+  // jest.mock factories are hoisted above ES imports — require() is the only
+  // way to reach modules from inside one (place-detail-cross-tab precedent).
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const ReactModule = require("react") as typeof import("react");
+
+  type MockModalProps = {
+    visible?: boolean;
+    children?: import("react").ReactNode;
+    onDismiss?: () => void;
+  };
+
+  let platform: "ios" | "android" = "android";
+
+  class MockModal extends ReactModule.Component<MockModalProps, { isRendered: boolean }> {
+    /** Native dismissal in flight — set when `visible` goes true→false. */
+    dismissalPending = false;
+
+    constructor(props: MockModalProps) {
+      super(props);
+      // Modal.js:236-238 — a FRESH instance can never inherit a stale flag.
+      this.state = { isRendered: props.visible === true };
+    }
+
+    componentDidMount() {
+      liveInstances.add(this);
+    }
+
+    componentWillUnmount() {
+      liveInstances.delete(this);
+    }
+
+    componentDidUpdate(prev: MockModalProps) {
+      // Modal.js:266-270 — re-armed ONLY on the false→true edge.
+      if (prev.visible === false && this.props.visible === true) {
+        this.setState({ isRendered: true });
+      }
+      // Native bookkeeping: hiding a PRESENTED modal starts a dismissal whose
+      // completion (and therefore `onDismiss`) lands later. iOS only —
+      // `Modal.js:317-327` gates the whole `onDismiss` handler on
+      // `Platform.OS === 'ios'`, so on Android nothing is ever delivered.
+      if (
+        platform === "ios" &&
+        prev.visible === true &&
+        this.props.visible === false &&
+        this.state.isRendered
+      ) {
+        this.dismissalPending = true;
+      }
+    }
+
+    /** The `dismissViewControllerAnimated:completion:` completion block. */
+    completeNativeDismissal() {
+      this.dismissalPending = false;
+      this.setState({ isRendered: false }, () => this.props.onDismiss?.());
+    }
+
+    render(): import("react").ReactNode {
+      // Modal.js:276-282.
+      const show =
+        platform === "ios"
+          ? this.props.visible === true || this.state.isRendered
+          : this.props.visible === true;
+      return show ? this.props.children : null;
+    }
+  }
+
+  const liveInstances = new Set<MockModal>();
+
+  return {
+    __esModule: true,
+    default: MockModal,
+    __modalMockControls: {
+      setPlatform(os: "ios" | "android") {
+        platform = os;
+      },
+      reset() {
+        platform = "android";
+        liveInstances.clear();
+      },
+      pendingNativeDismissals(): number {
+        return [...liveInstances].filter((instance) => instance.dismissalPending).length;
+      },
+      /** Deliver every in-flight dismissal completion, oldest instance first. */
+      completeNativeDismissals() {
+        for (const instance of [...liveInstances]) {
+          if (instance.dismissalPending) instance.completeNativeDismissal();
+        }
+      },
+    },
+  };
+});
+
+const { __modalMockControls: modalMock } = jest.requireMock(
+  "react-native/Libraries/Modal/Modal",
+) as {
+  __modalMockControls: {
+    setPlatform(os: "ios" | "android"): void;
+    reset(): void;
+    pendingNativeDismissals(): number;
+    completeNativeDismissals(): void;
+  };
+};
 
 /** Same wrapper renderWithTheme applies — rerenders must re-wrap manually. */
 function themed(ui: ReactElement) {
@@ -120,8 +252,7 @@ describe("Sheet", () => {
         </Sheet>,
       );
       expect(
-        screen.getByTestId("sheet-container", { includeHiddenElements: true }).props
-          .pointerEvents,
+        screen.getByTestId("sheet-container", { includeHiddenElements: true }).props.pointerEvents,
       ).toBe("auto");
     });
 
@@ -283,6 +414,363 @@ describe("Sheet", () => {
         setValueSpy.mockRestore();
         __sheetExitCompletionForTests.current = null;
       }
+    });
+  });
+
+  /**
+   * B-19 — `onExited` is the seam every "close the sheet, then open a modal
+   * ROUTE" caller pushes from. Its whole value is WHEN it lands: a push that
+   * shares a commit with the dismiss (or that fires from the exit
+   * animation's completion, before the Modal has actually gone) presents an
+   * expo-router modal while the sheet's `RCTModalHostViewController` is
+   * still up, which latches `RNSScreenStackView._updatingModals` and wedges
+   * that tab's stack for the life of the process.
+   *
+   * FALSIFICATION SET (R-test-7) — what these cases can and cannot red, and
+   * why the "on iOS" block below is not optional.
+   *
+   * The cases in THIS block run against the default Modal mock, which is the
+   * jest preset's behavior: `visible === false` unmounts the children in that
+   * same commit, so "the Modal is gone" and "`mounted` flipped false" are
+   * indistinguishable. They red on:
+   *   - firing `onExited` from `onExitComplete` next to `setExiting(false)`
+   *     (the exit TIMER — one commit early);
+   *   - deleting `firedExitTickRef` (the fresh-identity replay);
+   *   - firing from `ModalPresenceProbe`'s own cleanup unconditionally (the
+   *     unmount-mid-exit case);
+   * and they CANNOT red on the one variant that actually matters:
+   *   - deleting the probe and firing from
+   *     `useEffect(() => { if (wasMounted && !mounted) onExited?.(); },
+   *     [mounted])` — passive effects run after the commit, so
+   *     `sheetStillMountedAtCall` is `false` here and all of these stay
+   *     GREEN, while on iOS that fires with the
+   *     `RCTModalHostViewController` still presented and B-19 reproduces.
+   *
+   * On iOS the Modal outlives `visible: false` by a whole dismissal
+   * animation. That divergence is the bug, so it gets its own block with a
+   * Modal mock that models it.
+   */
+  describe("onExited — fires only once the RN Modal is off screen (B-19)", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("stays silent through the exit window, then fires ONCE with the Modal already gone", async () => {
+      jest.useFakeTimers();
+      let sheetStillMountedAtCall: boolean | null = null;
+      const onExited = jest.fn(() => {
+        sheetStillMountedAtCall =
+          screen.queryByTestId("sheet", { includeHiddenElements: true }) !== null;
+      });
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} onExited={() => onExited()} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      expect(onExited).not.toHaveBeenCalled();
+
+      await view.rerender(
+        themed(
+          <Sheet
+            visible={false}
+            onDismiss={() => undefined}
+            onExited={() => onExited()}
+            testID="sheet"
+          >
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      // The exit window: still mounted, still PRESENTED natively — the exact
+      // interval in which a modal-route push wedges the stack.
+      expect(screen.getByTestId("sheet", { includeHiddenElements: true })).toBeTruthy();
+      expect(onExited).not.toHaveBeenCalled();
+
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(screen.queryByTestId("sheet", { includeHiddenElements: true })).toBeNull();
+      expect(onExited).toHaveBeenCalledTimes(1);
+      expect(sheetStillMountedAtCall).toBe(false);
+
+      // A later render with a FRESH callback identity (every consumer render
+      // makes one — the closure carries the pending intent) must not replay
+      // an exit that was already reported.
+      await view.rerender(
+        themed(
+          <Sheet
+            visible={false}
+            onDismiss={() => undefined}
+            onExited={() => onExited()}
+            testID="sheet"
+          >
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires NOTHING when the consumer unmounts mid-exit", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      // Torn down before the exit completes — the Modal goes with it, and a
+      // callback landing after teardown would route a dead screen.
+      await view.unmount();
+      await jest.advanceTimersByTimeAsync(400);
+      expect(onExited).not.toHaveBeenCalled();
+    });
+
+    it("a sheet that never opened reports no exit", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      await renderWithTheme(
+        <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).not.toHaveBeenCalled();
+    });
+
+    it("is a LIFECYCLE signal: a scrim/close dismissal fires it too", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      const onDismiss = jest.fn();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={onDismiss} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await fireEvent.press(screen.getByTestId("sheet-close"));
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+      // The consumer owns `visible`; mirror what it does with that dismissal.
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={onDismiss} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * The iOS ordering, modeled: the RN `Modal` keeps its children — and its
+     * `RCTModalHostViewController` — up past `visible: false`, until the
+     * native dismissal completes. Everything B-19 turns on lives in that gap,
+     * and no other block in this suite can see it.
+     */
+    describe("on iOS — the Modal outlives `visible: false`", () => {
+      beforeEach(() => {
+        modalMock.setPlatform("ios");
+      });
+      afterEach(() => {
+        modalMock.reset();
+      });
+
+      it("[mock fidelity] holds children past `visible: false` until the native dismissal", async () => {
+        // R-test-1 / ADR-006 B-4: a mock this load-bearing re-asserts its own
+        // behavior, or every pin built on it is an assertion about a fiction.
+        const onDismiss = jest.fn();
+        const view = await renderWithTheme(
+          <Modal visible onDismiss={onDismiss}>
+            <View testID="modal-child" />
+          </Modal>,
+        );
+        expect(screen.getByTestId("modal-child")).toBeTruthy();
+
+        await view.rerender(
+          themed(
+            <Modal visible={false} onDismiss={onDismiss}>
+              <View testID="modal-child" />
+            </Modal>,
+          ),
+        );
+        // Still presented (Modal.js `_shouldShowModal()` = visible ||
+        // isRendered) — the dismissal has only been asked for.
+        expect(screen.getByTestId("modal-child")).toBeTruthy();
+        expect(modalMock.pendingNativeDismissals()).toBe(1);
+        expect(onDismiss).not.toHaveBeenCalled();
+
+        await act(async () => {
+          modalMock.completeNativeDismissals();
+        });
+        expect(screen.queryByTestId("modal-child")).toBeNull();
+        expect(onDismiss).toHaveBeenCalledTimes(1);
+      });
+
+      it("[mock fidelity] the default arm unmounts in the same commit — the preset's behavior", async () => {
+        // Every OTHER pin in this file runs on this arm; if it ever drifts
+        // from `@react-native/jest-preset/jest/mocks/Modal.js` they stop
+        // meaning what they say.
+        modalMock.setPlatform("android");
+        const view = await renderWithTheme(
+          <Modal visible>
+            <View testID="modal-child" />
+          </Modal>,
+        );
+        expect(screen.getByTestId("modal-child")).toBeTruthy();
+        await view.rerender(
+          themed(
+            <Modal visible={false}>
+              <View testID="modal-child" />
+            </Modal>,
+          ),
+        );
+        expect(screen.queryByTestId("modal-child")).toBeNull();
+        expect(modalMock.pendingNativeDismissals()).toBe(0);
+      });
+
+      it("stays silent when the exit TIMER lands — it fires on the native dismissal", async () => {
+        jest.useFakeTimers();
+        let sheetStillMountedAtCall: boolean | null = null;
+        const onExited = jest.fn(() => {
+          sheetStillMountedAtCall =
+            screen.queryByTestId("sheet", { includeHiddenElements: true }) !== null;
+        });
+        const view = await renderWithTheme(
+          <Sheet visible onDismiss={() => undefined} onExited={() => onExited()} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        );
+        await view.rerender(
+          themed(
+            <Sheet
+              visible={false}
+              onDismiss={() => undefined}
+              onExited={() => onExited()}
+              testID="sheet"
+            >
+              <AppText>x</AppText>
+            </Sheet>,
+          ),
+        );
+
+        await act(async () => {
+          jest.advanceTimersByTime(400);
+        });
+        // The JS exit is OVER — `mounted` is false and the Sheet has stopped
+        // rendering the modal. The native controller is still up. THIS is the
+        // window the naive `[mounted]`-keyed effect fires in, and this is the
+        // assertion that reds it.
+        expect(onExited).not.toHaveBeenCalled();
+        expect(modalMock.pendingNativeDismissals()).toBe(1);
+
+        await act(async () => {
+          modalMock.completeNativeDismissals();
+        });
+        expect(onExited).toHaveBeenCalledTimes(1);
+        expect(sheetStillMountedAtCall).toBe(false);
+      });
+
+      it("fires once PER PRESENTATION across two full cycles", async () => {
+        jest.useFakeTimers();
+        const onExited = jest.fn();
+        const view = await renderWithTheme(
+          <Sheet visible onDismiss={() => undefined} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        );
+        for (const cycle of [1, 2]) {
+          if (cycle === 2) {
+            await view.rerender(
+              themed(
+                <Sheet visible onDismiss={() => undefined} onExited={onExited} testID="sheet">
+                  <AppText>x</AppText>
+                </Sheet>,
+              ),
+            );
+          }
+          await view.rerender(
+            themed(
+              <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+                <AppText>x</AppText>
+              </Sheet>,
+            ),
+          );
+          await act(async () => {
+            jest.advanceTimersByTime(400);
+          });
+          await act(async () => {
+            modalMock.completeNativeDismissals();
+          });
+          // Collapse the per-tick latch to a once-ever boolean and cycle 2 is
+          // silent — i.e. every Sheet→modal-route flow in the app is a dead
+          // tap from the second use onward, with the whole suite green.
+          expect(onExited).toHaveBeenCalledTimes(cycle);
+        }
+      });
+
+      it("a stale `isRendered` from a reopen cannot make the NEXT close fire early", async () => {
+        jest.useFakeTimers();
+        const onExited = jest.fn();
+        const visibleSheet = (
+          <Sheet visible onDismiss={() => undefined} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>
+        );
+        const hiddenSheet = (
+          <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>
+        );
+        const view = await renderWithTheme(visibleSheet);
+
+        // Close 1, exit timer lands. The controller is off screen natively,
+        // but RN's `onDismiss` has not reached JS yet (2-3 frames).
+        await view.rerender(themed(hiddenSheet));
+        await act(async () => {
+          jest.advanceTimersByTime(400);
+        });
+        expect(onExited).not.toHaveBeenCalled();
+
+        // The user reopens INSIDE that window. The `key` retires the
+        // presentation-1 instance, so its late `onDismiss` has nowhere to
+        // land and cannot leave `isRendered: false` on a presented modal.
+        // The teardown that retiring it produces belongs to a superseded
+        // presentation and must not be reported — a sheet is on screen.
+        await view.rerender(themed(visibleSheet));
+        await act(async () => {
+          modalMock.completeNativeDismissals();
+        });
+        expect(onExited).not.toHaveBeenCalled();
+
+        // Close 2 — the one that used to unmount the probe in the same commit
+        // as `mounted → false`, i.e. before the native dismissal had even
+        // started. Drop the `key` and this assertion goes red.
+        await view.rerender(themed(hiddenSheet));
+        await act(async () => {
+          jest.advanceTimersByTime(400);
+        });
+        expect(onExited).not.toHaveBeenCalled();
+        expect(modalMock.pendingNativeDismissals()).toBe(1);
+
+        await act(async () => {
+          modalMock.completeNativeDismissals();
+        });
+        expect(onExited).toHaveBeenCalledTimes(1);
+      });
     });
   });
 

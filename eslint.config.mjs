@@ -41,5 +41,29 @@ export default tseslint.config(
     files: ["**/*.{js,mjs,cjs}"],
     extends: [tseslint.configs.disableTypeChecked],
   },
+  {
+    // Security (queued lint-gap batch, PR #45 R1): the hostile fixture pack
+    // under @gogo/shared/testing is a bug simulator — wrong-by-construction
+    // inputs built to break validation — and it's auto-import-visible from
+    // any editor's autocomplete. A prod import silently ships fixture
+    // generators into the running server. Test files (and the server's
+    // test-helper directory) still need it.
+    files: ["apps/server/**/*.ts"],
+    ignores: ["apps/server/**/*.test.ts", "apps/server/src/test/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@gogo/shared/testing*"],
+              message:
+                "@gogo/shared/testing is the hostile fixture pack (wrong-by-construction bug simulators) — test-only. Import it from a *.test.ts file or src/test/**, never shipped server code.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettierConfig,
 );

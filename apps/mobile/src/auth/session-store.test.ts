@@ -17,6 +17,11 @@ import {
   readDeeplinkOutRecord,
   recordDeeplinkOut,
 } from "@/features/deeplinks/return-prompt-store";
+import {
+  defaultZoneFor,
+  rememberTripZone,
+} from "@/features/itinerary/add-edit/last-zone-store";
+import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
 import { recallMoneySegment, rememberMoneySegment } from "@/features/money/segment-memory";
 import {
   consumePendingSettleReturn,
@@ -316,8 +321,15 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
       method: "venmo",
       amountCents: 2550,
     });
+    // B-9 R1 (security): the per-TRIP last-used time zone is the same class
+    // again, and it is keyed by TRIP rather than by user — on a shared
+    // device, two collaborators on one trip share the rung, so user B's next
+    // booking form would default its zone picker to the zone user A last
+    // submitted.
+    rememberTripZone("trip-x", "Asia/Tokyo");
     expect(recallTab("trip-x")).toBe("map");
     expect(readLastViewedTrip()?.tripId).toBe("trip-x");
+    expect(defaultZoneFor("trip-x")).toBe("Asia/Tokyo");
     expect(readDeeplinkOutRecord()).not.toBeNull();
     expect(recallMoneySegment("trip-x")).toBe("balances");
 
@@ -336,6 +348,9 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
     // T-9.7 R1: no settle-return prompt (or fabricated settlement) can cross
     // the account boundary — the stash is gone, not merely stale.
     expect(consumePendingSettleReturn()).toBeNull();
+    // B-9 R1: the next account's form falls back to the DEVICE zone, not to
+    // the previous account's last submission.
+    expect(defaultZoneFor("trip-x")).toBe(deviceTimeZone());
     expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
   });
 });

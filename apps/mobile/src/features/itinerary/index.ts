@@ -82,6 +82,35 @@ export { OptionChips } from "./add-edit/OptionChips";
 export type { OptionChipsProps } from "./add-edit/OptionChips";
 export { PlacePickerField } from "./add-edit/PlacePickerField";
 export type { PlacePickerFieldProps } from "./add-edit/PlacePickerField";
+// B-9 client half — the transport reference pickers and the zoned-time core.
+export { AirlinePickerField } from "./add-edit/AirlinePickerField";
+export type { AirlinePickerFieldProps } from "./add-edit/AirlinePickerField";
+export { AirportPickerField } from "./add-edit/AirportPickerField";
+export type { AirportPickerFieldProps } from "./add-edit/AirportPickerField";
+export { FlightNumberField } from "./add-edit/FlightNumberField";
+export type { FlightNumberFieldProps } from "./add-edit/FlightNumberField";
+export { TimeZoneField, zoneFieldLabel } from "./add-edit/TimeZoneField";
+export type { TimeZoneFieldProps } from "./add-edit/TimeZoneField";
+export { defaultZoneFor, rememberTripZone, useLastZoneStore } from "./add-edit/last-zone-store";
+export {
+  normalizeZoneQuery,
+  searchTimeZones,
+  timeZoneCatalog,
+  timeZoneSlug,
+} from "./add-edit/time-zone-catalog";
+export type { TimeZoneEntry } from "./add-edit/time-zone-catalog";
+export {
+  composeZonedDateTime,
+  describeTimeZone,
+  deviceTimeZone,
+  formatUtcOffset,
+  gmtLabelOf,
+  isKnownTimeZone,
+  referenceInstantFor,
+  resolveWallTime,
+  zoneOffsetMinutesAt,
+} from "./add-edit/zoned-time";
+export type { TimeZoneDescription, WallResolution } from "./add-edit/zoned-time";
 export {
   ADD_OPTION_LABELS,
   ADD_OPTION_ORDER,
@@ -98,6 +127,9 @@ export {
   primaryStartKey,
   stateFromDetails,
   statusOptionsFor,
+  TZ_MISSING_ERROR,
+  TZ_UNKNOWN_ERROR,
+  zonedDateTimeFields,
 } from "./add-edit/form-model";
 export type {
   AddOptionId,
