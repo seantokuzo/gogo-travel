@@ -10,7 +10,7 @@
  * (tab navigator first, THEN the push — the MapPlaceSheet convention);
  * missing/malformed id and load-error arms.
  */
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import ExpenseDetailScreen from "@/app/[tripId]/money/expense/[expenseId]";
 import { ApiRequestError } from "@/auth";
@@ -119,6 +119,32 @@ it("delete: ConfirmDialog gates the E5 call; success navigates back", async () =
     expenseId: TEST_EXPENSE_ID,
   });
   expect(mockBack).toHaveBeenCalled();
+});
+
+it("a failed delete surfaces the dismissible error banner and stays put (no silent drop)", async () => {
+  const rejecters: ((reason: unknown) => void)[] = [];
+  await renderScreen(
+    {},
+    {
+      overrides: {
+        "DELETE /trips/:tripId/expenses/:expenseId": () =>
+          new Promise((_resolve, reject) => {
+            rejecters.push(reject);
+          }),
+      },
+    },
+  );
+  await fireEvent.press(screen.getByTestId("expense-detail-button-delete"));
+  await fireEvent.press(await screen.findByTestId("expense-detail-button-delete-confirm"));
+  await act(async () => {
+    for (const reject of rejecters) reject(new ApiRequestError(500, "INTERNAL", "boom"));
+  });
+  const banner = await screen.findByTestId("expense-detail-delete-error");
+  expect(banner).toBeTruthy();
+  expect(screen.getByText("Couldn't delete the expense. Try again.")).toBeTruthy();
+  // Failure never navigates — the record is still on screen for retry.
+  expect(mockBack).not.toHaveBeenCalled();
+  expect(screen.getByText("Dinner at Menya")).toBeTruthy();
 });
 
 it("cancel keeps the expense: dialog dismissed, no E5 call (control arm)", async () => {

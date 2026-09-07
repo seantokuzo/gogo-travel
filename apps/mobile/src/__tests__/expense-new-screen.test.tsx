@@ -755,6 +755,86 @@ describe("edit mode (R-cmoney-12 + the ex-member PATCH posture)", () => {
   });
 });
 
+describe("mutation-error feedback (the onMutationError → banner wiring)", () => {
+  it("a failed create surfaces the generic banner — no silent-drop double-submit trap", async () => {
+    const rejecters: ((reason: unknown) => void)[] = [];
+    await renderScreen(
+      {},
+      {
+        overrides: {
+          "POST /trips/:tripId/expenses": () =>
+            new Promise((_resolve, reject) => {
+              rejecters.push(reject);
+            }),
+        },
+      },
+    );
+    await fireEvent.changeText(screen.getByTestId("expense-new-input-description"), "Snacks");
+    await fireEvent.changeText(screen.getByTestId("expense-new-input-amount"), "5");
+    await fireEvent.press(screen.getByTestId("expense-new-button-save"));
+    try {
+      // Genuinely in flight first (deferred-reject — the members-screen
+      // idiom), so the banner can only come from the settled rejection.
+      expect(await screen.findByTestId("expense-new-button-save-spinner")).toBeTruthy();
+    } finally {
+      await act(async () => {
+        for (const reject of rejecters) reject(new ApiRequestError(500, "INTERNAL", "boom"));
+      });
+    }
+    expect(await screen.findByTestId("expense-new-error")).toBeTruthy();
+    expect(screen.getByText("Couldn't save the expense. Try again.")).toBeTruthy();
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it("update failure discriminates the 409-deleted arm from the generic arm (distinct copies)", async () => {
+    const rejecters: ((reason: unknown) => void)[] = [];
+    await renderScreen(
+      { expenseId: TEST_EXPENSE_ID },
+      {
+        overrides: {
+          "GET /trips/:tripId/expenses/:expenseId": () => Promise.resolve(makeExpense()),
+          "PATCH /trips/:tripId/expenses/:expenseId": () =>
+            new Promise((_resolve, reject) => {
+              rejecters.push(reject);
+            }),
+        },
+      },
+    );
+    await fireEvent.changeText(
+      screen.getByTestId("expense-new-input-description"),
+      "Dinner — corrected",
+    );
+
+    // Generic arm: a 500 shows the retryable copy, NOT the deleted copy.
+    await fireEvent.press(screen.getByTestId("expense-new-button-save"));
+    try {
+      expect(await screen.findByTestId("expense-new-button-save-spinner")).toBeTruthy();
+    } finally {
+      await act(async () => {
+        rejecters.shift()?.(new ApiRequestError(500, "INTERNAL", "boom"));
+      });
+    }
+    expect(await screen.findByTestId("expense-new-error")).toBeTruthy();
+    expect(screen.getByText("Couldn't save the changes. Try again.")).toBeTruthy();
+    expect(screen.queryByText(/was deleted/)).toBeNull();
+
+    // 409-deleted arm: unretryable state gets the unretryable copy.
+    await fireEvent.press(screen.getByTestId("expense-new-button-save"));
+    try {
+      expect(await screen.findByTestId("expense-new-button-save-spinner")).toBeTruthy();
+    } finally {
+      await act(async () => {
+        rejecters.shift()?.(new ApiRequestError(409, "CONFLICT", "expense deleted"));
+      });
+    }
+    expect(
+      await screen.findByText("This expense was deleted — it can't be edited anymore."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Couldn't save the changes. Try again.")).toBeNull();
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+});
+
 describe("dirty guard (nav §2.6)", () => {
   it("typed-then-dismiss intercepts with the discard Confirm; confirm releases the action", async () => {
     await renderScreen({});
