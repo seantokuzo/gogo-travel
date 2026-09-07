@@ -5,20 +5,37 @@
 # predated the navigator's committed cold-boot landing, so it decided off the
 # boot default "/" and redirected away from an (auth)-group route it was
 # supposed to render. The fix is the one-shot `routeReadSettled` latch in
-# AuthGate.tsx. Nothing in jest reproduced it — the renderRouter `serverUrl`
-# prefetch is a structural blind spot — which is the whole reason this lane
-# exists (ADR-007).
+# AuthGate.tsx.
 #
-# WHY TWO ARMS. On a Release build the diagnostics panel renders `null` by
-# design (T-S3.5 `__DEV__` gate), so arm 2's screen is BLANK: there is nothing
-# positive to assert, and a lone `assertNotVisible: sign-in-screen` would also
-# pass if the app crashed, hung on the splash, or never launched. Arm 1 is the
-# control that removes those explanations — it proves, in this same run on this
-# same build, that a cold deeplink DOES reach the gate and that
-# `sign-in-screen` IS observable. Only then is arm 2's negative discriminating.
+# `renderRouter`'s `serverUrl` prefetch is the structural blind spot
+# (lane-confirmed during B-14's review) — jest's harness resolves the initial
+# URL before hydration in a way no real cold launch does. That blind spot is
+# real and is the reason this lane exists (ADR-007) — but it is NOT "nothing
+# in jest reproduced it": `src/__tests__/diagnostics-coldstart-race.test.tsx`
+# is the bespoke falsification pin for exactly this bug (renders `ExpoRoot`
+# directly with a promise-valued `getLinkingURL` and holds hydration pending),
+# runs in CI, and stays red on unfixed main. This flow is not the ONLY
+# regression pin; it is the one exercising the real native initial-URL
+# delivery path on top of it.
 #
-# Falsification: revert the AuthGate latch and arm 2 goes red while arm 1 stays
-# green. An arm-2-only flow cannot make that distinction.
+# WHY TWO ARMS, AND WHY ARM 2 ALSO HAS A POSITIVE ASSERTION (S-4 round 1 /
+# tests lane blocking finding). On a Release build the diagnostics panel
+# renders no dev surface (T-S3.5 `__DEV__` gate) — but the route now mounts an
+# inert `diagnostics-screen-inert` marker (`(auth)/diagnostics.tsx`) instead of
+# `null`, precisely so this arm has something positive to assert. Without it,
+# a lone `assertNotVisible: sign-in-screen` would equally pass if the app
+# crashed before this route ever mounted (e.g. `installConsoleTap()` or an
+# import it pulls throws in the Release Hermes bundle) — arm 1 is a SEPARATE
+# cold launch of a DIFFERENT route, so it cannot prove the app survived arm 2.
+# The `assertVisible: diagnostics-screen-inert` below closes that gap directly:
+# it can only pass if this exact route rendered on this exact launch. Arm 1
+# still earns its keep as the sign-in-screen control (same build, same run,
+# proves the gate/splash plumbing works at all) and stays for that reason.
+#
+# Falsification: revert the AuthGate latch and arm 2 goes red on the
+# `assertNotVisible` while arm 1 stays green. Separately: remove the inert
+# marker (`return null` again) and arm 2 goes red on the `assertVisible` the
+# moment the route fails to mount — a regression the old shape could not see.
 appId: app.gogotravel
 name: smoke-diagnostics-cold
 tags:

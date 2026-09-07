@@ -13,7 +13,22 @@
 # other cells are controls that make those negatives mean something: they prove
 # on this same build, in this same run, that a cold/warm deeplink really does
 # traverse registry → gate → sign-in. Without them a green C6 is consistent
-# with "the app never launched".
+# with "the app never launched" — which C6/W1 close directly too, by asserting
+# the `diagnostics-screen-inert` marker as well as the sign-in negative (S-4
+# round 1 / tests lane blocking finding — see smoke-diagnostics-cold.yaml for
+# the full rationale; same fix, same route).
+#
+# WHAT THIS DOES NOT PIN (S-4 round 1 / tests lane advisory — read before
+# trusting this as registry coverage). C1–C5 all assert the SAME postcondition
+# (`sign-in-screen` visible) and therefore carry exactly one bit between them:
+# they prove "a gated link still gates" and cold/warm parity for the (auth)
+# route, and that nothing crashes or hangs on any of these five shapes. They
+# do NOT distinguish one registry mapping from another — delete or mis-map the
+# `/invite/[token]` → `/join/[token]` entry in deep-links.ts and C2 still goes
+# green via the fallback → `/(trips)` → gate → sign-in path; same for
+# C1/C3/C4. The registry's actual mapping correctness is unit-covered in
+# `deep-links.test.ts`; this flow's job is the gate/transport behavior around
+# it, not the mapping table itself.
 #
 # NOT COVERED HERE (documented, not silently skipped):
 #   • the `https://links.gogotravel.example/…` universal-link transport — the
@@ -22,6 +37,8 @@
 #     different transport; unit-covered in deep-links.test.ts.
 #   • the R-nav-17 link notice (C4/C5 raise it) — it renders on the trip-list
 #     screen, which is behind auth. Wave 2, via the session door.
+#   • the stashed `pendingDestination` post-auth target — not observable
+#     until the wave-2 session door; a signed-out-only matrix cannot assert it.
 appId: app.gogotravel
 name: deeplink-matrix
 tags:
@@ -79,6 +96,11 @@ tags:
       LINK: "gogo://diagnostics"
 - assertNotVisible:
     id: "sign-in-screen"
+# Positive control alongside the negative — proves the app actually rendered
+# this route rather than having crashed before it mounted (S-4 round 1 / tests
+# lane blocking finding; see smoke-diagnostics-cold.yaml).
+- assertVisible:
+    id: "diagnostics-screen-inert"
 
 # ── W1 · WARM parity for C6 — from sign-in, without relaunching ───────────────
 # Get to sign-in warm (C6 left us on diagnostics), then deliver the same link
@@ -96,6 +118,8 @@ tags:
       LINK: "gogo://diagnostics"
 - assertNotVisible:
     id: "sign-in-screen"
+- assertVisible:
+    id: "diagnostics-screen-inert"
 
 # ── W2 · WARM parity for C1 — a gated link still gates on the warm path ───────
 - runFlow:

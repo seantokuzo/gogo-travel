@@ -5,3 +5,21 @@
 # its own, and it must never be discovered as a test.
 flows:
   - "*.yaml"
+
+# Explicit order (S-4 round 1 / tests lane advisory) — before this, the run
+# order was alphabetical luck: `sign-in-cancel-surface` happened to run before
+# `deeplink-matrix`, so the system sheet it could leave standing (see that
+# flow's HOUSEKEEPING comment) wedged a flow after it. `sign-in-cancel-surface`
+# now also cleans up via its own `onFlowComplete` hook regardless of
+# pass/fail — this ordering is belt-and-braces on top of that, running the
+# flow most likely to leave OS-level UI standing LAST so nothing else can
+# inherit it. `continueOnFailure: true` is deliberate: this is a smoke/release
+# suite meant to report every flow's result in one run (the merge gate wants a
+# single JUnit with all four release flows' outcomes, not an early stop).
+executionOrder:
+  continueOnFailure: true
+  flowsOrder:
+    - sign-in-renders
+    - smoke-diagnostics-cold
+    - deeplink-matrix
+    - sign-in-cancel-surface

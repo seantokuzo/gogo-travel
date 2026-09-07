@@ -74,12 +74,20 @@ describe("(auth)/diagnostics __DEV__ gate", () => {
     expect(screen.getByTestId("diagnostics-evidence-base-url")).toBeOnTheScreen();
   });
 
-  it("RELEASE ARM: renders NOTHING — with the live-flip control proving the pin could fail", async () => {
-    // Falsification: remove the `if (!__DEV__) return null` gate → the null
-    // assertion below goes red.
+  it("RELEASE ARM: renders an inert marker only — with the live-flip control proving the pin could fail", async () => {
+    // Falsification: remove the `if (!__DEV__) return <View .../>` gate →
+    // either assertion below goes red (the marker disappears, or the real
+    // panel's testID shows up in its place).
+    //
+    // The marker (not `null`) exists so the Maestro E2E lane
+    // (smoke-diagnostics-cold.yaml / deeplink-matrix.yaml C6+W1) has
+    // something positive to assert on a cold `gogo://diagnostics` launch —
+    // S-4 PR #61 round 1: a bare `null` gave the E2E pin nothing to
+    // distinguish "app is alive on this route" from "app crashed before this
+    // route ever mounted".
     devGlobal.__DEV__ = false;
     const result = await renderWithTheme(<DiagnosticsRoute />);
-    expect(result.toJSON()).toBeNull();
+    expect(screen.getByTestId("diagnostics-screen-inert")).toBeOnTheScreen();
     expect(screen.queryByTestId("diagnostics-screen")).toBeNull();
     // No leg ran: release mounts no probes at all.
     expect(fetchMock).not.toHaveBeenCalled();
