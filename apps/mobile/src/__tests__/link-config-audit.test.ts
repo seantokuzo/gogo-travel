@@ -22,7 +22,11 @@ function readJson(path: string): unknown {
 interface AppJson {
   expo: {
     scheme: string;
-    ios: { bundleIdentifier: string; associatedDomains?: string[] };
+    ios: {
+      bundleIdentifier: string;
+      associatedDomains?: string[];
+      infoPlist?: { LSApplicationQueriesSchemes?: string[] };
+    };
     android: {
       intentFilters?: {
         autoVerify?: boolean;
@@ -43,6 +47,15 @@ describe("app.json ↔ shared LINK_DOMAIN", () => {
 
   it("iOS associated domains carry exactly the applinks entry for LINK_DOMAIN", () => {
     expect(appJson.expo.ios.associatedDomains).toEqual([`applinks:${LINK_DOMAIN}`]);
+  });
+
+  it("iOS LSApplicationQueriesSchemes carries exactly ['venmo'] — the only probed scheme (R-cmoney-16)", () => {
+    // Without this Info.plist entry canOpenURL("venmo://…") returns false on
+    // device and the app-scheme arm silently dies into the web fold. Suites
+    // mock expo-linking (sealed via mock-shape-parity), so this config pin
+    // is the only CI tripwire — the REAL bite is device test D1 at P-14.
+    // Exactly minimal by security posture: only the scheme we probe.
+    expect(appJson.expo.ios.infoPlist?.LSApplicationQueriesSchemes).toEqual(["venmo"]);
   });
 
   it("Android intent filters autoVerify LINK_DOMAIN over https for BOTH registry families", () => {

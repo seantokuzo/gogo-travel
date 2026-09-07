@@ -97,6 +97,41 @@ B-19 freeze parked no-repro), B-20 input sweep queued after B-15, B-9 EXTENDED
 spec-pass batch (overnight dual items · calendar tz switcher · calendar views ·
 ideas status rework) awaiting spec text.
 
+#### QA-WAVE BUILD-OUT 2026-09-06/07 — 3 of 4 PRs MERGED
+
+B-15 (pickers: Done commit, PickerCard, keyboard, exclusive-open) · B-16 (Add-to-day
+root cause BY DESIGN → the ideas rework is now THE FIX; prefill + end-only win shipped)
+· B-17/18 (cancel booked-only per Sean's ruling over the contradicted §3.2 + rental
+subtext) all MERGED, full pipeline each. **PR #50 (B-9 server: airports+airlines+0002)
+fully verified, judge HELD on Sean's ODbL decision.** New rows: B-21 contention flakes
+(P1 — threatens the act-0 gate, 3 sightings), picker options (Sean), VoiceOver
+checkpoint labels. B-20 input sweep unblocked. Sean decisions outstanding: ODbL ·
+spec-pass batch approach (rec: roadmap-prep draft) · B-16b interim gate copy ·
+diagnostics entry ruling · PR #38 read · B-7 ruling.
+
+#### QA-WAVE CLOSE-OUT 2026-09-06 — B-20 + B-21 MERGED, wave complete
+
+B-20 (PR #51, 4bf592c): input sweep obvious class shipped through the full pipeline
+(1 blocking seam-pin find fixed + verified; iata dirty-gate; schema-order fix).
+**Q1–Q4 questionable list → Sean (Active row).** B-21 (PR #52, 5057326): contention
+flakes determinized — SIGSTOP/SIGCONT pulse repro, fake-timer fix, 10/10 act-0;
+the act-0 gate is trustworthy again. B-22 filed (React-19 guard re-pin + settle()
+migration + worker handle). Overnight session-limit kill: 3 agents resumed in place,
+zero work lost. **Sean decision queue (gate-order): ① ODbL (gates #50 → B-9 client
+→ B-8 revert) ② Q1–Q4 ③ spec-pass batch approach ④ PR #38 read ⑤ B-16b copy ·
+diagnostics entry · B-7.** Dispatchable sans Sean: VoiceOver checkpoint-label row,
+lint-gap row, B-22.
+
+#### P-9 W3 CLOSED 2026-09-06 — PR #32 resurrected and merged; B-24 prod bug found en route
+
+T-9.4 (settle-requests + budgets + FX proxy) merged after a 9-day stale spell: zero-conflict
+merge-from-main, suite conversion per the standing rider (row closed), full fresh 5-lane
+round (0 blocking), verified fix leg, judge merge/high. The resurrection's image-bump probe
+found **B-24**: PG 18 reclassified RESTRICT-delete FK violations 23503→23001 — on prod Neon
+18.6 the places-delete 409 was plausibly a LIVE 500, masked by the 17 test image. Fix = PR #55
+(in review; must merge-from-main + reconcile per the B-24 row). **W4 (T-9.6 expense screens,
+T-9.7 settle + send-the-bill) is now dispatchable.** FX single-flight row filed (P3).
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**

@@ -7,12 +7,17 @@
 import { ThemeProvider } from "@gogo/tokens/react";
 import { act, fireEvent, screen } from "@testing-library/react-native";
 import type { ReactElement } from "react";
-import { Dimensions } from "react-native";
+import { Animated, Dimensions } from "react-native";
 
 import { AppText, Sheet } from "@/components";
 import { renderWithTheme } from "@/test-utils/render";
 
-import { DISMISS_DRAG_PT, DISMISS_VELOCITY, shouldDismissSheet } from "./Sheet";
+import {
+  __sheetExitCompletionForTests,
+  DISMISS_DRAG_PT,
+  DISMISS_VELOCITY,
+  shouldDismissSheet,
+} from "./Sheet";
 
 /** Same wrapper renderWithTheme applies — rerenders must re-wrap manually. */
 function themed(ui: ReactElement) {
@@ -121,6 +126,15 @@ describe("Sheet", () => {
     });
 
     it("is NOT hit-testable through the exit animation", async () => {
+      // B-21: fake timers PIN the exit window open. With real timers this
+      // test raced the real ~200ms exit — a CI starvation stall could let
+      // the exit COMPLETE mid-test (sheet unmounts → getByTestId throws) or
+      // let the still-mounted completion setState land in an un-act'd gap
+      // between the awaited act calls below (the "not wrapped in act"
+      // sighting, repro'd under SIGSTOP pulsing of the jest worker). Under
+      // fake timers the exit timer cannot fire unless advanced — and this
+      // test never advances it.
+      jest.useFakeTimers();
       const onDismiss = jest.fn();
       const view = await renderWithTheme(
         <Sheet visible onDismiss={onDismiss} testID="sheet">
@@ -168,11 +182,21 @@ describe("Sheet", () => {
     });
 
     it("guards the completion setState when unmounted mid-exit", async () => {
-      // REAL timers, and the drain deliberately happens OUTSIDE act: this is
-      // the exact escape shape (the exit timer lands after the consumer tore
+      // The exact escape shape (the exit timer lands after the consumer tore
       // the sheet down — the act-warning class that cost T-6.9/PR #14 review
-      // rounds). Unguarded, React logs "An update to Sheet ... not wrapped
-      // in act" here; the errorSpy makes that a deterministic red.
+      // rounds), determinized in B-21. FAKE timers, because with real timers
+      // this test itself raced: a ≥200ms starvation stall between the
+      // rerender and the unmount let the completion fire BEFORE the unmount,
+      // outside act while the sheet was still mounted — a legitimate
+      // setState turning the errorSpy red (the incident class). Under fake
+      // timers the completion can only fire in the drain below, strictly
+      // after teardown. The drain still deliberately happens OUTSIDE act —
+      // the completion callback executes un-act'd, and the spy proves
+      // nothing escapes. (React 19 note: a post-unmount setState is silently
+      // dropped without any act warning, so this spy discriminates the
+      // un-act'd-escape class, not the unmountedRef guard per se — true of
+      // the original real-timer version of this pin as well.)
+      jest.useFakeTimers();
       const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
       const view = await renderWithTheme(
         <Sheet visible onDismiss={() => undefined} testID="sheet">
@@ -186,12 +210,79 @@ describe("Sheet", () => {
           </Sheet>,
         ),
       );
-      // Consumer tears the sheet down before the ~200ms exit timer lands.
+      // Consumer tears the sheet down before the ~200ms exit timer lands —
+      // guaranteed now: fake time has not advanced since the exit started.
       await view.unmount();
       // Drain WITHOUT act on purpose — proving nothing escapes un-act'd.
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await jest.advanceTimersByTimeAsync(400);
       expect(errorSpy).not.toHaveBeenCalled();
       errorSpy.mockRestore();
+    });
+
+    it("skips the Animated-value parking when unmounted mid-exit (B-22 direct pin)", async () => {
+      // DIRECT pin on `&& !unmountedRef.current` at the exit completion
+      // (B-22 ①). The errorSpy pin above discriminates only the un-act'd-
+      // escape class — React 19 silently drops a post-unmount setState, so
+      // deleting the guard leaves that spy green (probe-proven, PR #52
+      // review). Timer drains cannot reach the guard either: jest runs the
+      // preset's MOCKED native driver (its NativeModules mock fires
+      // `endCallback({ finished: true })` on a ~16ms setTimeout; animated
+      // values never move), and unmount's detach cascade
+      // (`AnimatedProps.__detach` → `__removeChild`-to-zero →
+      // `AnimatedValue.__detach` → `stopAnimation`) delivers
+      // `{ finished: false }` FIRST — the completion debounce
+      // (`Animation.__notifyAnimationEnd` nulls `_onEnd` after its first
+      // delivery) swallows the mock's later `finished: true`, so a
+      // post-unmount completion always arrives `finished: false` (B-22
+      // probe). The guard's real target is the ON-DEVICE native driver's
+      // asynchronous `finished: true` delivery landing after teardown —
+      // simulated here by invoking the REAL completion closure captured by
+      // `__sheetExitCompletionForTests` (the same function object handed to
+      // `Animated.parallel(...).start`); under jest only this seam can reach
+      // the guard with `finished: true`. The observable is the guarded
+      // block's value PARKING (`translate.setValue(offscreen)`,
+      // `scrimOpacity.setValue(0)`): a `Animated.Value.prototype.setValue`
+      // spy, cleared after unmount, sees explicit calls only — under jest no
+      // animation frames touch the values at all.
+      // Mutation-proven: deleting the `!unmountedRef.current` clause turns
+      // this RED (2 parking setValue calls post-unmount); restored, GREEN.
+      jest.useFakeTimers();
+      const setValueSpy = jest.spyOn(Animated.Value.prototype, "setValue");
+      try {
+        __sheetExitCompletionForTests.current = null;
+        const view = await renderWithTheme(
+          <Sheet visible onDismiss={() => undefined} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        );
+        await view.rerender(
+          themed(
+            <Sheet visible={false} onDismiss={() => undefined} testID="sheet">
+              <AppText>x</AppText>
+            </Sheet>,
+          ),
+        );
+        // The exit effect ran on the hide edge and registered its completion.
+        // (Read via a helper: TS otherwise carries the `= null` reset's
+        // property narrowing across the render calls and types this `null`.)
+        const readSeam = (): ((result: { finished: boolean }) => void) | null =>
+          __sheetExitCompletionForTests.current;
+        const completion = readSeam();
+        expect(completion).not.toBeNull();
+        await view.unmount();
+        // Everything up to and including the unmount may setValue freely
+        // (dragY reset on the entrance effect). The pin starts HERE: after
+        // teardown, a `finished: true` completion must touch NO animated
+        // value.
+        setValueSpy.mockClear();
+        await act(async () => {
+          completion?.({ finished: true });
+        });
+        expect(setValueSpy).not.toHaveBeenCalled();
+      } finally {
+        setValueSpy.mockRestore();
+        __sheetExitCompletionForTests.current = null;
+      }
     });
   });
 

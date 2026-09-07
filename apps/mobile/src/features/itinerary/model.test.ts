@@ -19,6 +19,8 @@ import {
   ITEM_LODGING_ID,
   makeItineraryItem,
   makeTravelLeg,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
@@ -171,6 +173,70 @@ describe("projectItem (R-itin-31 spanning synthesis)", () => {
     expect(projectItem(place, new Map())[0]?.title).toBe("Place visit");
     const custom = makeItineraryItem({ id: "aaaaaaa7-aaaa-4aaa-8aaa-aaaaaaaaaaa7" });
     expect(projectItem(custom, new Map())[0]?.title).toBe("Custom block");
+  });
+});
+
+describe("B-18 — rental pickup/drop-off subtext (§3.3 dual-point derivation)", () => {
+  const rentalMap = () => bookingsById([rentalBooking(), ...defaultBookings()]);
+
+  it("the rental's two derived rows carry DISTINCT subtexts, matched by §3.3 wall values", () => {
+    const [pickupItem, dropoffItem] = rentalItems();
+    if (pickupItem === undefined || dropoffItem === undefined) {
+      throw new Error("fixture missing rental items");
+    }
+    const [pickup] = projectItem(pickupItem, rentalMap());
+    const [dropoff] = projectItem(dropoffItem, rentalMap());
+    expect(pickup?.subtext).toBe("Pickup");
+    expect(dropoff?.subtext).toBe("Drop off");
+    // Same title on both — the subtext is the ONLY row-level discriminator,
+    // which is exactly the device-QA gap.
+    expect(pickup?.title).toBe(dropoff?.title);
+  });
+
+  it("CONTROL: non-derived rows carry no subtext (flight booking, custom, lodging checkpoints)", () => {
+    const flightItem = defaultItineraryItems()[0];
+    if (flightItem === undefined) throw new Error("fixture missing flight item");
+    expect(projectItem(flightItem, rentalMap())[0]?.subtext).toBeNull();
+    const custom = makeItineraryItem({ id: "aaaaaaa7-aaaa-4aaa-8aaa-aaaaaaaaaaa7" });
+    expect(projectItem(custom, rentalMap())[0]?.subtext).toBeNull();
+    // A spanning lodging's synthesized rows keep the CHECKPOINT vocabulary,
+    // never the rental one.
+    const lodgingItem = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+    if (lodgingItem === undefined) throw new Error("fixture missing lodging item");
+    for (const entry of projectItem(lodgingItem, rentalMap())) {
+      expect(entry.subtext).toBeNull();
+    }
+  });
+
+  it("an item-owned rental row (walls no longer §3.3-derived) degrades to NO caption", () => {
+    const [pickupItem] = rentalItems();
+    if (pickupItem === undefined) throw new Error("fixture missing rental items");
+    // The user dragged/edited the row: its times are item-owned (I-3) and no
+    // longer match either edge — a wrong caption would be worse than none.
+    const moved = { ...pickupItem, start_time: "11:30" };
+    expect(projectItem(moved, rentalMap())[0]?.subtext).toBeNull();
+  });
+
+  it("an unknown parent booking yields no subtext (enrichment-gap fail-safe)", () => {
+    const [pickupItem] = rentalItems();
+    if (pickupItem === undefined) throw new Error("fixture missing rental items");
+    expect(projectItem(pickupItem, new Map())[0]?.subtext).toBeNull();
+  });
+
+  it("keys off the PARENT booking id, never a wall-time scan: a flight-parented row at the rental edge's exact walls gets no caption (R1)", () => {
+    // Same day + start_time as the rental's pickup edge, but parented to the
+    // FLIGHT booking — with the rental PRESENT in the map. A scan-all-
+    // bookings-for-wall-time-match implementation captions this row
+    // "Pickup"; the id-keyed one reads the flight's details and yields null.
+    const flightAtPickupWalls = makeItineraryItem({
+      id: "aaaaaab1-aaaa-4aaa-8aaa-aaaaaaaaaab1",
+      kind: "booking",
+      booking_id: BOOKING_FLIGHT_ID,
+      title: null,
+      day: TRIP_START,
+      start_time: "09:00",
+    });
+    expect(projectItem(flightAtPickupWalls, rentalMap())[0]?.subtext).toBeNull();
   });
 });
 

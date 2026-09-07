@@ -35,7 +35,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -46,6 +46,17 @@ jest.mock("expo-router", () => ({
   // T-7.9: the screen reads `?day=` for the booking-detail return jump.
   useLocalSearchParams: () => ({}),
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending in THIS suite: TanStack's notify
+ * batch + gcTime-0 GC (0 ms), the REAL day list's VirtualizedList cell batch
+ * (50 ms), and the LegModeSheet's ~200 ms DS exit — every mode-sheet close
+ * below drains through waitFor, whose RNTL fake-timer branch advances the
+ * clock act-wrapped, so the exit completion can no longer land in an idle
+ * gap. The aliased `settleFake` (250 ms) supersets the whole pending set.
+ */
+jest.useFakeTimers();
 
 const openURLMock = Linking.openURL as jest.Mock;
 

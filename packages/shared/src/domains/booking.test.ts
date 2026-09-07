@@ -532,6 +532,32 @@ describe("BookingCreateSchema (§3.4 POST)", () => {
     });
     expect(parsed.details).toEqual({ category: "flight", flight_number: "UA 837" });
   });
+
+  it("B-20: confirmation codes trim + uppercase-normalize at the wire (storage hygiene)", () => {
+    // Uppercase is a TOTAL transform — nothing previously accepted is now
+    // rejected (stored lowercase codes self-heal on their next edit, never
+    // 400). Charset stays permissive: only case folds.
+    const parsed = BookingCreateSchema.parse({ ...valid, confirmation_code: "  abc123  " });
+    expect(parsed.confirmation_code).toBe("ABC123");
+    expect(BookingUpdateSchema.parse({ confirmation_code: "qf-88x" }).confirmation_code).toBe(
+      "QF-88X",
+    );
+  });
+
+  it("B-20 boundary: length validates the USER'S input, not the uppercased value (Unicode expansion)", () => {
+    // Unicode uppercasing can EXPAND UTF-16 length (ß→SS, ﬁ→FI). max(100)
+    // must measure the pre-fold input — otherwise a stored 60×ß code (60
+    // units, accepted pre-B-20) strands its booking at the next edit: the
+    // exact 400 class the schema comment promises can't happen. Pins the
+    // .trim().min(1).max(100).toUpperCase() order (round-1 security lane).
+    const sixtySharpS = "ß".repeat(60); // 60 UTF-16 units in, 120 out
+    const parsed = BookingCreateSchema.parse({ ...valid, confirmation_code: sixtySharpS });
+    expect(parsed.confirmation_code).toBe("SS".repeat(60));
+    expect(parsed.confirmation_code).toHaveLength(120);
+    expect(
+      BookingUpdateSchema.parse({ confirmation_code: sixtySharpS }).confirmation_code,
+    ).toBe("SS".repeat(60));
+  });
 });
 
 describe("BookingUpdateSchema (§3.4 PATCH)", () => {

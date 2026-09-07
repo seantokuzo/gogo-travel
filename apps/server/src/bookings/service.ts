@@ -32,10 +32,18 @@
  * is the Neon WebSocket `Pool`, never Neon-HTTP (landmine #1: its
  * `.transaction()` throws; postgres-js tests can't catch it).
  *
- * LOCK ORDER (global, EXTENDED here — never reorder): users → trip_members
- * → invites → **bookings → itinerary_items**. Every service transaction
- * takes the booking row `FOR UPDATE` FIRST; item rows are only ever locked/
- * written while holding their parent booking's lock. IB-2's item mutations
+ * LOCK ORDER (this module's segment of the global chain — canonical full
+ * chain: expenses/service.ts module doc, synced T-9.4; the chain now leads
+ * with **trips** and tails through expenses/settlements/budgets): … →
+ * **bookings → itinerary_items** → …. ⚠️ A no-cycle claim must audit
+ * IMPLICIT locks too (PR #30 R1 landmine): row inserts take RI `FOR KEY
+ * SHARE` on referenced parents — a booking insert key-shares `users`
+ * (created_by) and `trips`, so the created_by-vs-account-deletion AB-BA
+ * class documented at the canonical home applies to this module's inserts
+ * as well (repo-wide class, QUEUE-tracked at PR #30 R1).
+ * Every service transaction takes the booking row `FOR UPDATE` FIRST; item
+ * rows are only ever locked/written while holding their parent booking's
+ * lock. IB-2's item mutations
  * on `booking`-kind items MUST take the parent booking `FOR UPDATE` before
  * touching the item (R-ib-9 writes the booking row too); `place_visit`/
  * `custom` items have no parent and are disjoint. The booking DELETE fences
@@ -58,6 +66,7 @@ import type { BookingDetails } from "@gogo/shared/domains/booking";
 import type { BookingSource, BookingStatus } from "@gogo/shared/enums";
 import { and, asc, eq, isNull, ne, or } from "drizzle-orm";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
@@ -241,7 +250,7 @@ export function isPlaceFkViolation(error: unknown): boolean {
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       const constraint =
         typeof candidate.constraint_name === "string"
           ? candidate.constraint_name

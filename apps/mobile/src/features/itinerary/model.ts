@@ -17,15 +17,17 @@
  * importing that module here would cycle through `grid/model`, which already
  * imports this one.
  */
-import type {
-  Booking,
-  BookingCategory,
-  BookingDetails,
-  BookingStatus,
-  ISODate,
-  ItineraryItem,
-  ItineraryItemKind,
-  TravelLeg,
+import {
+  wallDate,
+  wallTime,
+  type Booking,
+  type BookingCategory,
+  type BookingDetails,
+  type BookingStatus,
+  type ISODate,
+  type ItineraryItem,
+  type ItineraryItemKind,
+  type TravelLeg,
 } from "@gogo/shared";
 
 import type { IconName } from "@/components";
@@ -143,6 +145,13 @@ export interface DayEntry {
   timeLabel: string;
   /** Check-in / Check-out marker caption on synthesized rows. */
   checkpoint: "check-in" | "check-out" | null;
+  /**
+   * B-18: "Pickup" / "Drop off" caption on a rental's two derived point rows
+   * (§3.3 plurality) — both otherwise render the bare booking title. Null on
+   * every other row, and on a rental row whose times no longer match the
+   * booking's (item-owned, I-3): no caption beats a wrong one.
+   */
+  subtext: string | null;
   /** Cross-midnight chip (§2.6): spanning non-lodging renders once with "+1". */
   plusOne: boolean;
   /** `planned`/`booked` Badge on booking rows (R-itin-8); null on others. */
@@ -164,6 +173,28 @@ function timeLabel(start: string | null, end: string | null): string {
   return start ?? `Until ${end ?? ""}`;
 }
 
+/**
+ * B-18: which rental edge a derived point row IS. The wire marks neither
+ * (schema §3.3.10 — derived items are plain booking-kind rows), so the edge
+ * falls out of the SAME §3.3 derivation that created the row: the pickup item
+ * was written at `wallDate/wallTime(pickup_at)`, the dropoff item at the
+ * dropoff's walls, and booking-time changes resync them (R-ib-6). A row whose
+ * walls match neither (item-owned after an edit or time removal, I-3) yields
+ * null — no caption beats a wrong one. Degenerate pickup==dropoff walls read
+ * "Pickup" on both rows: the two rows are genuinely indistinguishable then.
+ */
+export function rentalCheckpointSubtext(
+  item: Pick<ItineraryItem, "day" | "start_time">,
+  details: BookingDetails,
+): string | null {
+  if (details.category !== "car_rental" && details.category !== "moped_rental") return null;
+  const matches = (edge: string | undefined): boolean =>
+    edge !== undefined && item.day === wallDate(edge) && item.start_time === wallTime(edge);
+  if (matches(details.pickup_at)) return "Pickup";
+  if (matches(details.dropoff_at)) return "Drop off";
+  return null;
+}
+
 function entryBase(item: ItineraryItem, bookingsById: ReadonlyMap<string, Booking>) {
   const booking = item.booking_id !== null ? bookingsById.get(item.booking_id) : undefined;
   if (item.kind === "booking") {
@@ -176,6 +207,7 @@ function entryBase(item: ItineraryItem, bookingsById: ReadonlyMap<string, Bookin
       status: booking?.status ?? null,
       dayLocked: booking === undefined ? true : booking.starts_at !== null,
       category: booking?.category ?? null,
+      subtext: booking === undefined ? null : rentalCheckpointSubtext(item, booking.details),
     };
   }
   return {
@@ -187,6 +219,7 @@ function entryBase(item: ItineraryItem, bookingsById: ReadonlyMap<string, Bookin
     status: null,
     dayLocked: false,
     category: null,
+    subtext: null,
   };
 }
 
@@ -214,6 +247,7 @@ export function projectItem(
     icon: base.icon,
     status: base.status,
     dayLocked: base.dayLocked,
+    subtext: base.subtext,
   };
 
   if (spanning && base.category === "lodging" && item.end_day !== null) {

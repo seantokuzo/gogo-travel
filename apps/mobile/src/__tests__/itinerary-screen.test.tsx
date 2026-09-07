@@ -28,16 +28,21 @@ import {
   BOOKING_LODGING_ID,
   defaultBookings,
   defaultItineraryItems,
+  ITEM_A_ID,
   ITEM_B_ID,
   ITEM_LODGING_ID,
+  ITEM_RENTAL_DROPOFF_ID,
+  ITEM_RENTAL_PICKUP_ID,
   itineraryApiOverrides,
+  rentalBooking,
+  rentalItems,
   TRIP_DAY_2,
   TRIP_END,
   TRIP_START,
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -101,6 +106,19 @@ jest.mock("@/features/itinerary", () => ({
   ...jest.requireActual<typeof import("@/features/itinerary")>("@/features/itinerary"),
   ItineraryDayList: MockSpiedDayList,
 }));
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending timers in THIS suite: TanStack's
+ * notify batch + the test client's gcTime-0 GC (0 ms), VirtualizedList's
+ * cell batch (50 ms; the REAL drag list renders here), and the add sheet's
+ * ~200 ms exit. With real timers any of these could land in an un-act'd
+ * waitFor idle gap under CI contention (the B-2 class); under fake timers
+ * nothing fires unless advanced, and every advancement site — RNTL's
+ * fake-branch waitFor/findBy and the aliased `settleFake` (250 ms, a
+ * superset of the pending set) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 function tripFixture(overrides?: Partial<TripListItem>): TripListItem {
   return makeTrip({
@@ -208,6 +226,36 @@ describe("day sections (R-itin-1)", () => {
   });
 });
 
+describe("B-18 — rental pickup/drop-off captions (list view)", () => {
+  it("a rental's two derived rows carry DISTINCT subtexts; non-derived rows carry none", async () => {
+    await renderItinerary({
+      api: {
+        items: [...defaultItineraryItems(), ...rentalItems()],
+        bookings: [...defaultBookings(), rentalBooking()],
+      },
+    });
+    // Both rows render the SAME bare booking title — the caption is the only
+    // row-level discriminator (the device-QA gap).
+    const pickup = await screen.findByTestId(
+      `itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}-subtext`,
+    );
+    expect(pickup).toHaveTextContent("Pickup");
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_DROPOFF_ID}-subtext`),
+    ).toHaveTextContent("Drop off");
+    expect(screen.getAllByText("Toyota Rent a Car")).toHaveLength(2);
+    // R1: the a11y label carries the discriminator too — VoiceOver must not
+    // announce two identical "Toyota Rent a Car" rows.
+    expect(
+      screen.getByTestId(`itinerary-list-item-${ITEM_RENTAL_PICKUP_ID}`).props.accessibilityLabel,
+    ).toBe("Toyota Rent a Car Pickup");
+    // CONTROL: the flight row is booking-derived but NOT a dual-point
+    // derivation — no caption element at all.
+    expect(screen.getByTestId(`itinerary-list-item-${ITEM_A_ID}`)).toBeTruthy();
+    expect(screen.queryByTestId(`itinerary-list-item-${ITEM_A_ID}-subtext`)).toBeNull();
+  });
+});
+
 describe("spanning lodging (R-itin-31)", () => {
   it("synthesizes check-in and check-out point rows; no row on the night between", async () => {
     await renderItinerary();
@@ -217,6 +265,19 @@ describe("spanning lodging (R-itin-31)", () => {
     expect(screen.queryByTestId(`itinerary-list-item-${ITEM_LODGING_ID}`)).toBeNull();
     expect(screen.getByText("Check-in")).toBeTruthy();
     expect(screen.getByText("Check-out")).toBeTruthy();
+  });
+
+  it("check-in and check-out rows carry DISTINCT a11y labels (B-23, the B-18 join)", async () => {
+    await renderItinerary();
+    const checkIn = await screen.findByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-in`);
+    const checkOut = screen.getByTestId(`itinerary-list-item-${ITEM_LODGING_ID}-check-out`);
+    // The card's container label suppresses the Badge subtree, so without the
+    // checkpoint joining the label both rows announce the bare booking title
+    // — a VoiceOver user can't tell arrival from departure. The grid already
+    // joins it (GridDayColumn labelSuffix); this pins list parity.
+    expect(checkIn.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-in");
+    expect(checkOut.props.accessibilityLabel).toBe("Park Hyatt Tokyo Check-out");
+    expect(checkIn.props.accessibilityLabel).not.toBe(checkOut.props.accessibilityLabel);
   });
 
   it("both synthesized rows route to the SAME booking detail", async () => {

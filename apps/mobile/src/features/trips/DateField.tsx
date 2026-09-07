@@ -11,12 +11,9 @@
  * width (~320pt), so rendering it in the pressed field's own column
  * overflowed the screen edge whenever the field was half-width (trip-new's
  * `datesRow`) — half the day cells were untappable. The picker now presents
- * in a bottom MODAL CARD anchored to the SCREEN, never to the field's
- * column. Deliberately a plain RN `Modal` (native `fade`, no JS animation
- * timers), NOT the DS Sheet: the Sheet's ~duration.base Animated exit would
- * tax every date-picking suite with an act-drain (the "SHEET TAX" landmine),
- * and DateField already renders INSIDE a Sheet (ScheduleSheet) where nesting
- * the DS component would stack two scrim/gesture systems. Android keeps its
+ * in the shared `PickerCard` — a bottom MODAL CARD anchored to the SCREEN,
+ * never to the field's column (extracted for TimeField, B-15b; the card
+ * carries the plain-Modal-not-DS-Sheet rationale). Android keeps its
  * self-anchoring native dialog — it never had the overflow.
  *
  * EMPTY-VALUE SEED (B-10b): an unset field used to open on TODAY, which for
@@ -32,20 +29,27 @@
  * from shifting the day. `onValueChange`/`onDismiss` are the picker's
  * non-deprecated callbacks (its `onChange` warns in dev).
  *
+ * ONE-TAP COMMIT (B-15a): the iOS inline calendar fires `onValueChange` only
+ * on a value CHANGE, so tapping the already-highlighted seeded day is a
+ * native no-op — device QA 2026-09-06 confirmed the seeded-open path was
+ * uncommittable. The modal header's Done button is the committed one-action
+ * path: it selects the DISPLAYED day (the seed — a change commits & closes
+ * immediately, so the display can never drift from it) and closes. Close/
+ * scrim stay cancel-without-selecting.
+ *
  * testIDs (nav §2.7 rule-4 derivation from the field's base): the row is
  * `{testID}`, the revealed picker `{testID}-picker`, the error text
  * `{testID}-error` (mirrors the DS Input's derived error id so the form's
- * assertions stay uniform); the iOS modal card is `{testID}-sheet` with
- * `{testID}-sheet-close` / `{testID}-sheet-scrim` dismissal affordances.
+ * assertions stay uniform); the iOS modal card ids ({testID}-sheet,
+ * -sheet-done, -sheet-close, -sheet-scrim) derive inside PickerCard.
  */
 import DateTimePicker from "@react-native-community/datetimepicker";
 import type { ISODate } from "@gogo/shared";
-import { createStyles, useTheme } from "@gogo/tokens/react";
-import { useState } from "react";
-import { Modal, Platform, Pressable, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { createStyles } from "@gogo/tokens/react";
+import { useCallback, useState } from "react";
+import { Keyboard, Platform, Pressable, StyleSheet, View } from "react-native";
 
-import { AppText, Icon } from "@/components";
+import { AppText, PickerCard, usePickerFocus } from "@/components";
 
 import { formatFieldDate } from "./sections";
 
@@ -106,39 +110,6 @@ const useStyles = createStyles((t) =>
     fieldOpen: { borderColor: t.color.border.focus },
     fieldError: { borderColor: t.color.status.danger.border },
     errorText: { color: t.color.status.danger.fg },
-    // B-10a modal card — screen-anchored bottom card, full usable width, so
-    // the inline calendar's intrinsic ~320pt always fits on-screen.
-    modalRoot: { flex: 1, justifyContent: "flex-end" },
-    modalScrim: {
-      position: "absolute",
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: t.color.bg.scrim,
-    },
-    modalCard: {
-      backgroundColor: t.color.bg.surfaceRaised,
-      borderTopLeftRadius: t.radius.xl,
-      borderTopRightRadius: t.radius.xl,
-      paddingHorizontal: t.space[4],
-      paddingTop: t.space[3],
-      ...t.elevation[3],
-    },
-    modalHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingBottom: t.space[2],
-    },
-    modalClose: {
-      minWidth: 32,
-      minHeight: 32,
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: t.radius.full,
-      backgroundColor: t.color.bg.inset,
-    },
   }),
 );
 
@@ -150,17 +121,33 @@ export function DateField({
   error,
   testID,
 }: DateFieldProps) {
-  const { theme } = useTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
   const [open, setOpen] = useState(false);
+  // PR #49 R1 capture invariant: the seed is computed ONCE, in the press
+  // that opens, and BOTH the picker's `value` and Done read the capture.
+  // `pickerSeedDate`'s no-context fallback is `new Date()` — recomputing at
+  // Done-press would let the clock cross midnight between open and commit
+  // (23:59:50 open shows today; 00:00:05 Done would commit tomorrow).
+  const [seed, setSeed] = useState<Date>(() => pickerSeedDate(value, contextDate));
   const hasError = error !== undefined && error.length > 0;
-  const close = () => setOpen(false);
+  // Stable identity: usePickerFocus keys its claim slot on this function.
+  const close = useCallback(() => setOpen(false), []);
+  // B-15d: opening this picker closes any other open picker in the family.
+  usePickerFocus(open, close);
+  // B-15a: commit the DISPLAYED day. A changed day commits & closes through
+  // `onValueChange` before Done is ever reachable, so the displayed day is
+  // always the captured seed (value > context > today at OPEN time) —
+  // tapping the pre-highlighted day itself never fires natively (iOS
+  // change-only semantics).
+  const confirmDisplayed = () => {
+    onSelect(pickerDateToISO(seed));
+    setOpen(false);
+  };
 
   const picker = open ? (
     <DateTimePicker
       testID={`${testID}-picker`}
-      value={pickerSeedDate(value, contextDate)}
+      value={seed}
       mode="date"
       display={Platform.OS === "ios" ? "inline" : "default"}
       onValueChange={(_event, date) => {
@@ -178,7 +165,20 @@ export function DateField({
       </AppText>
       <Pressable
         testID={testID}
-        onPress={() => setOpen((prev) => !prev)}
+        onPress={() => {
+          // B-15c: opening a picker over an armed keyboard left typing
+          // routed into the previously-focused input (device QA 2026-09-06).
+          // Keyboard.dismiss() BLURS the focused TextInput (its RN
+          // implementation is TextInputState.blurTextInput(currentlyFocused)),
+          // so one call covers both halves: keyboard down + focus cleared.
+          if (!open) {
+            Keyboard.dismiss();
+            // PR #49 R1: every open RE-captures the seed (see the invariant
+            // note above) — a stale capture would drift across reopens.
+            setSeed(pickerSeedDate(value, contextDate));
+          }
+          setOpen(!open);
+        }}
         accessibilityRole="button"
         accessibilityLabel={value === "" ? `${label}, select date` : `${label}, ${value}`}
         style={[s.field, open && s.fieldOpen, hasError && s.fieldError]}
@@ -187,42 +187,15 @@ export function DateField({
           {value === "" ? "Select date" : formatFieldDate(value)}
         </AppText>
       </Pressable>
-      {Platform.OS === "ios" ? (
-        <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
-          <View style={s.modalRoot}>
-            <Pressable
-              style={s.modalScrim}
-              onPress={close}
-              accessibilityLabel={`Dismiss ${label} picker`}
-              testID={`${testID}-sheet-scrim`}
-            />
-            <View
-              style={[s.modalCard, { paddingBottom: insets.bottom + theme.space[4] }]}
-              accessibilityViewIsModal
-              testID={`${testID}-sheet`}
-            >
-              <View style={s.modalHeader}>
-                <AppText role="subheading" accessibilityRole="header">
-                  {label}
-                </AppText>
-                <Pressable
-                  onPress={close}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close"
-                  hitSlop={theme.hitSlop.sm}
-                  style={s.modalClose}
-                  testID={`${testID}-sheet-close`}
-                >
-                  <Icon name="close" size={18} color={theme.color.text.secondary} />
-                </Pressable>
-              </View>
-              {picker}
-            </View>
-          </View>
-        </Modal>
-      ) : (
-        picker
-      )}
+      <PickerCard
+        label={label}
+        visible={open}
+        onDone={confirmDisplayed}
+        onClose={close}
+        testID={testID}
+      >
+        {picker}
+      </PickerCard>
       {hasError ? (
         <AppText
           role="caption"

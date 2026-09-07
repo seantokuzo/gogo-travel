@@ -138,6 +138,22 @@ export function ItemForm({
     };
   };
 
+  /**
+   * PR #49 R1: compare-before-latch for the PICKER call sites. B-15a's Done
+   * commits the displayed value even when UNCHANGED — the only same-value
+   * write path in the form (text inputs fire only on actual change) — and an
+   * unconditional `touch` would falsely arm the §2.6 dirty guard: edit →
+   * peek at the calendar → Done → swipe-dismiss showed "Discard changes?"
+   * with zero changes. A same-value commit is a no-op: no dirty, no write.
+   */
+  const touchValue = <T,>(current: T, setter: (value: T) => void) => {
+    return (next: T): void => {
+      if (next === current) return;
+      onDirty();
+      setter(next);
+    };
+  };
+
   const save = (): void => {
     if (pending) return;
     const errors: Record<string, string> = {};
@@ -220,6 +236,7 @@ export function ItemForm({
           value={title}
           onChangeText={touch(setTitle)}
           placeholder="e.g. Walk Shibuya"
+          maxLength={200}
           error={fieldErrors["title"] || undefined}
           testID="itinerary-item-new-input-title"
         />
@@ -240,7 +257,7 @@ export function ItemForm({
         label="Day"
         value={day}
         contextDate={contextDay}
-        onSelect={touch(setDay)}
+        onSelect={touchValue(day, setDay)}
         error={fieldErrors["day"] || undefined}
         testID="itinerary-item-new-input-day"
       />
@@ -250,7 +267,7 @@ export function ItemForm({
           <TimeField
             label="Start time"
             value={startTime}
-            onSelect={touch(setStartTime)}
+            onSelect={touchValue(startTime, setStartTime)}
             // Through `touch`: a clear-ONLY edit must arm the §2.6 dirty
             // guard too, or removing a time and swipe-dismissing loses the
             // change with no discard confirm.
@@ -262,7 +279,7 @@ export function ItemForm({
           <TimeField
             label="End time"
             value={endTime}
-            onSelect={touch(setEndTime)}
+            onSelect={touchValue(endTime, setEndTime)}
             onClear={() => touch(setEndTime)("")}
             error={fieldErrors["end-time"] || undefined}
             testID="itinerary-item-new-input-end-time"
@@ -275,6 +292,7 @@ export function ItemForm({
         value={notes}
         onChangeText={touch(setNotes)}
         multiline
+        maxLength={2000}
         testID="itinerary-item-new-input-notes"
       />
 

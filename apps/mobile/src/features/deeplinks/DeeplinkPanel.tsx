@@ -281,6 +281,7 @@ function AdultsField({ adultsText, onChangeText }: AdultsFieldProps) {
       value={adultsText}
       onChangeText={onChangeText}
       keyboardType="number-pad"
+      maxLength={3}
       helper="Defaults to your trip's member count"
       testID="itinerary-item-new-input-adults"
     />

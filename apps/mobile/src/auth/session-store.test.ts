@@ -18,6 +18,10 @@ import {
   recordDeeplinkOut,
 } from "@/features/deeplinks/return-prompt-store";
 import { recallMoneySegment, rememberMoneySegment } from "@/features/money/segment-memory";
+import {
+  consumePendingSettleReturn,
+  recordSettleDeeplinkOut,
+} from "@/features/money/settle-return-store";
 import { readLastViewedTrip, stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 
@@ -303,6 +307,15 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
     });
     // T-9.5 R1 (security): money-segment memory is the same R-nav-4 class.
     rememberMoneySegment("trip-x", "balances");
+    // T-9.7 R1 (security): so is the settle-return stash — a pending "Did
+    // you complete the payment?" record at the NEXT account would leak the
+    // previous account's payment AND let B post a fabricated settlement.
+    recordSettleDeeplinkOut({
+      tripId: "trip-x",
+      counterpartyId: "member-y",
+      method: "venmo",
+      amountCents: 2550,
+    });
     expect(recallTab("trip-x")).toBe("map");
     expect(readLastViewedTrip()?.tripId).toBe("trip-x");
     expect(readDeeplinkOutRecord()).not.toBeNull();
@@ -320,6 +333,9 @@ describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.
     expect(readDeeplinkOutRecord()).toBeNull();
     // T-9.5 R1: the next account's money tab re-defaults to budget.
     expect(recallMoneySegment("trip-x")).toBeUndefined();
+    // T-9.7 R1: no settle-return prompt (or fabricated settlement) can cross
+    // the account boundary — the stash is gone, not merely stale.
+    expect(consumePendingSettleReturn()).toBeNull();
     expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
   });
 });

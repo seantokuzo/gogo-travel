@@ -73,7 +73,10 @@ function makeStatefulApi(trip: TripListItem) {
   const lodging = makeBooking({
     id: BOOKING_LODGING_ID,
     category: "lodging",
-    status: "planned",
+    // B-17: cancel is a booked-only affordance — the acceptance flow rides
+    // the one status whose UI can still reach it. The flow itself (confirm →
+    // off calendar → under Show cancelled, F-043 criterion 3) is unchanged.
+    status: "booked",
     title: "Park Hyatt Tokyo",
     details: { category: "lodging", property_name: "Park Hyatt Tokyo" },
     starts_at: "2027-03-01T06:00:00.000Z",

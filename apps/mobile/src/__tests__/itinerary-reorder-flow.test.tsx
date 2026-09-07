@@ -35,7 +35,7 @@ import {
   type ItineraryApiOptions,
 } from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settle } from "@/test-utils/settle";
+import { settleFake as settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 
@@ -77,6 +77,17 @@ jest.mock("react-native-reorderable-list", () => {
     useReorderableDrag: () => () => undefined,
   };
 });
+
+/**
+ * B-22 ②: file-scope FAKE timers — the B-21 determinization (full mechanism:
+ * members-screen.test.tsx header). Pending in THIS suite: TanStack's notify
+ * batch + gcTime-0 GC (0 ms) and the passthrough FlatList's VirtualizedList
+ * cell batch (50 ms). The held-in-flight PUT pin stays deferred-promise
+ * driven — a fake clock advances timers, never an unresolved promise. Every
+ * advancement site — RNTL's fake-branch waitFor/findBy and the aliased
+ * `settleFake` (250 ms, a superset) — is act-wrapped.
+ */
+jest.useFakeTimers();
 
 const mockedHaptic = triggerHaptic as jest.Mock;
 

@@ -28,10 +28,11 @@ import { queryClient } from "@/data/query-client";
 // Direct module import (not the feature barrel) — the barrel pulls the panel,
 // whose data hooks import this file's apiClient: a require cycle.
 import { clearDeeplinkOutRecord } from "@/features/deeplinks/return-prompt-store";
-// Concrete module, NOT the @/features/money barrel: the barrel pulls the
+// Concrete modules, NOT the @/features/money barrel: the barrel pulls the
 // segment components, which import @/auth — the same cycle the query-client
 // import note guards against.
 import { resetMoneySegmentMemory } from "@/features/money/segment-memory";
+import { clearSettleReturnRecord } from "@/features/money/settle-return-store";
 import { clearLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { resetTabMemory } from "@/navigation/tab-memory";
 
@@ -214,6 +215,10 @@ export const useSessionStore = create<SessionState>()(
       // not prompt "Did you book it?" at the NEXT account for the previous
       // account's trip.
       clearDeeplinkOutRecord();
+      // T-9.7 R1 (security): same class, higher stakes — a pending settle-
+      // return record at the NEXT account would leak the previous account's
+      // payment AND let the confirm post a fabricated settlement.
+      clearSettleReturnRecord();
     },
   }),
 );

@@ -99,7 +99,9 @@ jobs:
     env:
       # CI=true makes the DB constraint suite HARD-FAIL if Docker is missing
       # (T-3.3 fix) instead of skipping. On ubuntu-latest the Docker daemon is
-      # available natively, so testcontainers spins up postgres:17 for real.
+      # available natively, so testcontainers spins up the real Postgres image
+      # (the ONE line in apps/server/src/test/global-setup.ts; PG 18 for Neon
+      # parity — B-24).
       CI: "true"
     steps:
       - uses: actions/checkout@v4

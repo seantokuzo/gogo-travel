@@ -3,7 +3,9 @@
  * testcontainer per vitest run, replacing 21 per-suite boots (the QUEUE P1
  * Testcontainers-contention real fix; `--no-file-parallelism` retires).
  *
- * Boot order: probe Docker once → start ONE `postgres:17-alpine` → create a
+ * Boot order: probe Docker once → start ONE `postgres:18-alpine` (prod is
+ * Neon Postgres 18 — a 17 image masked the PG 18 SQLSTATE 23001
+ * reclassification, B-24) → create a
  * TEMPLATE database → run the drizzle migrations into it ONCE → lock it
  * against connections → `provide()` the coordinates. Suites then clone their
  * own throwaway database via `createSuiteDb()` (`src/test/suite-db.ts`) —
@@ -78,7 +80,7 @@ export default async function setup(project: TestProject): Promise<() => Promise
   // slow daemons blew the 10s default back when suites booted their own —
   // T-5.2 round-1 flake); max_connections raised because up to
   // maxWorkers × (pool max 5) suite connections now share this instance.
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:17-alpine")
+  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer("postgres:18-alpine")
     .withCommand(["postgres", "-c", "max_connections=200"])
     .withStartupTimeout(60_000)
     .start();

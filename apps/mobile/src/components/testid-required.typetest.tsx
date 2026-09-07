@@ -14,6 +14,7 @@ import { ErrorBanner } from "./ErrorBanner";
 import { Input } from "./Input";
 import { ListItem } from "./ListItem";
 import { PageHeader } from "./PageHeader";
+import { PickerCard } from "./PickerCard";
 import { SegmentedControl } from "./SegmentedControl";
 import { Sheet } from "./Sheet";
 
@@ -54,6 +55,10 @@ export const invalidWithoutTestID = [
   // prettier-ignore
   // @ts-expect-error — PageHeader trailing actions require testID (R-ds-20)
   <PageHeader key="header" title="x" testID="hdr" trailing={[{ icon: "add", label: "x", onPress: noop }]} />,
+
+  // prettier-ignore
+  // @ts-expect-error — PickerCard requires testID (R-ds-20)
+  <PickerCard key="picker-card" label="x" visible onDone={noop} onClose={noop}>{null}</PickerCard>,
 ];
 
 // Non-pressable Card / ListItem keep testID OPTIONAL — compile-time proof the

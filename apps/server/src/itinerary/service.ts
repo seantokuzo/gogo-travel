@@ -6,14 +6,20 @@
  * writes a booking's details/instants, and `booking`-kind items' protected
  * fields (R-ib-16) are rejected toward `PATCH …/bookings/:id`.
  *
- * LOCK ORDER (global, extended at T-7.1 — never reorder): users →
- * trip_members → invites → bookings → itinerary_items. Every mutation that
- * touches a `booking`-kind item takes the parent booking `FOR UPDATE` FIRST
- * (R-ib-9 writes the booking row too; R-ib-16 reads its `starts_at` as the
+ * LOCK ORDER (this module's segment of the global chain — canonical full
+ * chain: expenses/service.ts module doc, synced T-9.4; the chain now leads
+ * with **trips** and tails through expenses/settlements/budgets): … →
+ * bookings → **itinerary_items** → …. Every mutation that touches a
+ * `booking`-kind item takes the parent booking `FOR UPDATE` FIRST (R-ib-9
+ * writes the booking row too; R-ib-16 reads its `starts_at` as the
  * protection predicate), then the item row(s). Multi-row lockers (reorder,
  * multi-item unschedule) order by id — concurrent transactions acquire in
  * the same sequence, so they serialize instead of deadlocking (the day-order
- * PUT's "no partial interleave" guarantee, R-ib-15/R-ib-18 LWW).
+ * PUT's "no partial interleave" guarantee, R-ib-15/R-ib-18 LWW). ⚠️ A
+ * no-cycle claim must audit IMPLICIT locks too (PR #30 R1 landmine): item
+ * inserts take RI `FOR KEY SHARE` on referenced parents (trips/bookings/
+ * places), so the insert-vs-deletion-chain class documented at the
+ * canonical home applies here as well (repo-wide class, QUEUE-tracked).
  *
  * `travel_legs` cascade off `itinerary_items` with NO fence here — the
  * T-7.1 module-doc posture: the leg job (their single writer, T-7.3) must
@@ -38,6 +44,7 @@ import { violatesSingleDayTimeOrder } from "@gogo/shared/domains/itinerary";
 import { and, asc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { DbClient } from "../db/create-user.js";
+import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
@@ -106,7 +113,7 @@ export function isItemPlaceFkViolation(error: unknown): boolean {
       constraint_name?: unknown;
       constraint?: unknown;
     };
-    if (candidate.code === "23503") {
+    if (isFkViolationCode(candidate.code)) {
       const constraint =
         typeof candidate.constraint_name === "string"
           ? candidate.constraint_name

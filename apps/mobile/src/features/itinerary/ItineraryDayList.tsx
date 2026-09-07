@@ -115,6 +115,18 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
     entry.checkpoint === null
       ? `itinerary-list-item-${entry.itemId}`
       : `itinerary-list-item-${entry.itemId}-${entry.checkpoint}`;
+  // B-18/B-23: the row discriminator joins the label — the container label
+  // suppresses the Badge/caption subtree, so without it a lodging's check-in
+  // and check-out rows (and a rental's pickup/drop-off rows) announce the
+  // same bare title to VoiceOver. Same precedence as the grid
+  // (GridDayColumn): checkpoint first, never both — subtext is rental-only,
+  // checkpoint lodging-only.
+  const labelSuffix =
+    entry.checkpoint !== null
+      ? ` ${entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}`
+      : entry.subtext !== null
+        ? ` ${entry.subtext}`
+        : "";
   return (
     <Card
       onPress={() => onOpen(entry)}
@@ -125,7 +137,7 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
         drag();
       }}
       testID={testID}
-      accessibilityLabel={entry.title}
+      accessibilityLabel={`${entry.title}${labelSuffix}`}
       style={s.card}
     >
       <View style={s.cardRow}>
@@ -134,6 +146,17 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
           <AppText role="body" numberOfLines={1}>
             {entry.title}
           </AppText>
+          {/* B-18: "Pickup" / "Drop off" caption on a rental's derived point
+              rows — the §2.2 caption typography, same as the time line. */}
+          {entry.subtext !== null ? (
+            <AppText
+              role="caption"
+              color="secondary"
+              testID={`itinerary-list-item-${entry.itemId}-subtext`}
+            >
+              {entry.subtext}
+            </AppText>
+          ) : null}
           <AppText role="caption" color="secondary">
             {entry.timeLabel}
           </AppText>

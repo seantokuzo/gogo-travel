@@ -972,9 +972,14 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .insert(schema.tripMembers)
         .values({ tripId: trip.id, userId: payer.id, role: "editor" });
       await seedExpense(trip.id, payer.id);
+      // Version-tolerant phrasing (B-24): PG ≤ 17 says "violates foreign key
+      // constraint"; PG 18 reworded RESTRICT enforcement to "violates RESTRICT
+      // setting of foreign key constraint" (SQLSTATE 23503 → 23001). Either
+      // way it MUST be an FK rejection — a dropped RESTRICT makes the delete
+      // succeed and expectPgError still reds.
       await expectPgError(
         db.delete(schema.users).where(eq(schema.users.id, payer.id)),
-        /violates foreign key constraint/,
+        /violates (?:RESTRICT setting of )?foreign key constraint/,
       );
     });
 
@@ -1021,9 +1026,10 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         .insert(schema.savedPlaces)
         .values({ tripId: trip.id, placeId: place.id })
         .returning();
+      // Version-tolerant phrasing — same B-24 note as the user hard-delete pin.
       await expectPgError(
         db.delete(schema.places).where(eq(schema.places.id, place.id)),
-        /violates foreign key constraint/,
+        /violates (?:RESTRICT setting of )?foreign key constraint/,
       );
 
       await db.delete(schema.savedPlaces).where(eq(schema.savedPlaces.id, saved!.id));
@@ -1172,6 +1178,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           // FK violation: entitlements for a user that doesn't exist.
           await tx.insert(schema.entitlements).values({ userId: randomUUID() });
         }),
+        // B-24-DELIBERATE: classic regex — green under PG 18 IS the proof
+        // insert-side stays 23503; do NOT loosen to the tolerant form.
         /violates foreign key constraint/,
       );
 

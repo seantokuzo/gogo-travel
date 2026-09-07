@@ -132,14 +132,21 @@ export function GridDayColumn({
         // grammar (two derived blocks share one itemId).
         const key = block.checkpoint === null ? block.itemId : `${block.itemId}-${block.checkpoint}`;
         const checkpointLabel = block.checkpoint === "check-in" ? "Check-in" : "Check-out";
+        // B-18: rental pickup/drop-off rides the label the same way the B-12
+        // checkpoint does — never both (subtext is rental-only, checkpoint
+        // lodging-only).
+        const labelSuffix =
+          block.checkpoint !== null
+            ? ` ${checkpointLabel}`
+            : block.subtext !== null
+              ? ` ${block.subtext}`
+              : "";
         return (
           <Pressable
             key={key}
             testID={`itinerary-grid-item-${key}`}
             accessibilityRole="button"
-            accessibilityLabel={
-              block.checkpoint === null ? block.title : `${block.title} ${checkpointLabel}`
-            }
+            accessibilityLabel={`${block.title}${labelSuffix}`}
             onPress={() => {
               if (block.bookingId !== null) onOpenBooking(block.bookingId);
               else onOpenItem(block.itemId);
@@ -162,6 +169,18 @@ export function GridDayColumn({
                 {block.checkpoint === null ? block.title : checkpointLabel}
               </AppText>
             </View>
+            {/* B-18: "Pickup" / "Drop off" caption under the title — the
+                block's own caption typography, secondary tone. */}
+            {block.subtext !== null ? (
+              <AppText
+                role="caption"
+                color="secondary"
+                numberOfLines={1}
+                testID={`itinerary-grid-item-${key}-subtext`}
+              >
+                {block.subtext}
+              </AppText>
+            ) : null}
             {block.overlapping || block.plusOne ? (
               <View style={s.blockBadges}>
                 {block.overlapping ? <Badge label="Overlap" tone="warning" size="sm" /> : null}
