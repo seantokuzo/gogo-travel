@@ -4,10 +4,14 @@ import { bodyLimit } from "hono/body-limit";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
+import { createBudgetsRouter, type BudgetsRouterDeps } from "./budgets/routes.js";
 import { createExpensesRouter, type ExpensesRouterDeps } from "./expenses/routes.js";
+import { createFxRouter, type FxRouterDeps } from "./fx/routes.js";
 import { createItineraryRouter, type ItineraryRouterDeps } from "./itinerary/routes.js";
 import { createPlacesRouter, type PlacesRouterDeps } from "./places/routes.js";
 import { createSavedPlacesRouter } from "./places/saved-places-routes.js";
+import { createSettleRequestsRouter } from "./settlements/requests-routes.js";
+import { createSettlementsRouter, type SettlementsRouterDeps } from "./settlements/routes.js";
 import { createInvitesRouter } from "./trips/invites-routes.js";
 import { createMembersRouter } from "./trips/members-routes.js";
 import { createTravelLegsRouter, type TravelLegsRouterDeps } from "./travel-legs/routes.js";
@@ -104,9 +108,31 @@ export interface CreateAppOptions {
    * Expenses-surface dependencies (T-9.2 expense service + router). Same
    * pairing rule: every route is Auth: Required AND sits behind the
    * trip-membership gate (R-money-25) — expenses-without-auth is a wiring
-   * bug. (T-9.3's settlements surface mounts with T-9.4, not here.)
+   * bug.
    */
   expenses?: ExpensesRouterDeps;
+  /**
+   * Settlements-surface dependencies (T-9.3 balances + settlements; T-9.4
+   * settle-requests — ONE dep set, two routers, per the settlements barrel).
+   * Mounted by the T-9.4 wiring closer (the module shipped UNMOUNTED from W2
+   * by ownership design; the R-trips-22 settlements-probe lock extension
+   * merged with PR #30, so exposure is safe). Same pairing rule: every route
+   * is Auth: Required behind the trip-membership gate (R-money-25).
+   */
+  settlements?: SettlementsRouterDeps;
+  /**
+   * Budgets-surface dependencies (T-9.4 budgets service + router). Same
+   * pairing rule: both routes are Auth: Required behind the trip-membership
+   * gate (R-money-25/26) — budgets-without-auth is a wiring bug.
+   */
+  budgets?: BudgetsRouterDeps;
+  /**
+   * FX-proxy dependencies (T-9.4; P-9 ruling ③). The ONE non-trip-scoped
+   * money route — still Auth: Required (the shared `getFxRate` descriptor's
+   * JSDoc pin: never an unauthenticated open proxy), so fx-without-auth is a
+   * wiring bug like every other surface.
+   */
+  fx?: FxRouterDeps;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -130,6 +156,15 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   }
   if (options.expenses && !options.auth) {
     throw new Error("expenses router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.settlements && !options.auth) {
+    throw new Error("settlements router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.budgets && !options.auth) {
+    throw new Error("budgets router requires auth deps — it must sit behind requireAuth");
+  }
+  if (options.fx && !options.auth) {
+    throw new Error("fx router requires auth deps — it must sit behind requireAuth");
   }
 
   const app = new Hono<RequestVars>();
@@ -210,6 +245,21 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
 
   if (options.expenses) {
     app.route(API_BASE, createExpensesRouter(options.expenses));
+  }
+
+  if (options.settlements) {
+    app.route(API_BASE, createSettlementsRouter(options.settlements));
+    // Settle-requests (T-9.4 / MON-5) ride the same dep set: same DB, same
+    // requireAuth + trip-membership posture (the saved-places precedent).
+    app.route(API_BASE, createSettleRequestsRouter(options.settlements));
+  }
+
+  if (options.budgets) {
+    app.route(API_BASE, createBudgetsRouter(options.budgets));
+  }
+
+  if (options.fx) {
+    app.route(API_BASE, createFxRouter(options.fx));
   }
 
   return app;

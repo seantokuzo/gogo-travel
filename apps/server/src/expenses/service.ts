@@ -38,16 +38,29 @@
  * for the rest of its life (soft-deleted rows still count — see the
  * router's interpretation notes).
  *
- * LOCK ORDER (global chain extended per the server rule — never reorder):
- * **trips** → users → trip_members → invites → bookings → itinerary_items
- * → **expenses → expense_shares**. The trip row slots at the FRONT: no
- * existing transaction takes an EXPLICIT trips-row lock before its other
- * acquisitions (trip create locks users only; trip PATCH now locks trips
- * first; the trip DELETE member-fence's trip_members → trips-cascade order
- * predates this and stays safe against expense transactions, which take no
- * trip_members locks at all). Expense UPDATE/DELETE lock only the expenses
- * row; shares rows are only ever written while holding their parent
- * expense's lock.
+ * LOCK ORDER — THE CANONICAL CHAIN DOC (global; sibling module docs state
+ * their segment and point here — synced at T-9.4, the QUEUE obligations
+ * row). Never reorder:
+ *
+ *   **trips** → users → trip_members → invites → bookings → itinerary_items
+ *   → travel_legs → **expenses → expense_shares** → settlements →
+ *   settlement_requests → budgets
+ *
+ * The trip row slots at the FRONT: no existing transaction takes an
+ * EXPLICIT trips-row lock before its other acquisitions (trip create locks
+ * users only; trip PATCH locks trips first; the trip DELETE member-fence's
+ * trip_members → trips-cascade order predates this and stays safe against
+ * expense transactions, which take no trip_members locks at all). Expense
+ * UPDATE/DELETE lock only the expenses row; shares rows are only ever
+ * written while holding their parent expense's lock. Money-tail rules:
+ * settlement writes lock settlements → settlement_requests (S3) or the
+ * request row alone (S1); settle-request CREATE takes trips first, then
+ * inserts the request (requests-service.ts); **budgets writes take the
+ * trips row FOR UPDATE FIRST, then the budgets row** (T-9.4 / PR #30
+ * interp #7 — the trips PATCH already holds trips-then-budgets for its
+ * currency sync, so the opposite acquisition order would be an AB-BA;
+ * budgets/service.ts owns the full justification, including its
+ * implicit-FK audit: budgets' only FK is the already-held trips row).
  *
  * ⚠️ HONEST RESIDUAL (round-1 security finding — an earlier draft of this
  * doc claimed "no cycle exists", which audited only EXPLICIT locks and was
