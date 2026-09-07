@@ -101,5 +101,29 @@ module.exports = defineConfig([
       "no-restricted-syntax": ["error", ...tokenOnlySelectors],
     },
   },
+  {
+    // Security (queued lint-gap batch, PR #45 R1): the hostile fixture pack
+    // under @gogo/shared/testing is a bug simulator — wrong-by-construction
+    // inputs built to break validation — and it's auto-import-visible from
+    // any editor's autocomplete. A prod import silently ships fixture
+    // generators into the app bundle. Test files (their own test-infra home
+    // included) still need it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/**/*.test.*", "src/__tests__/**", "src/testing/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@gogo/shared/testing*"],
+              message:
+                "@gogo/shared/testing is the hostile fixture pack (wrong-by-construction bug simulators) — test-only. Import it from a *.test.* file or src/testing/**, never shipped app code.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   prettierConfig,
 ]);
