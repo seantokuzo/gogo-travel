@@ -97,8 +97,12 @@ it("R-nav-15 + NAV-5: a trip deep link for a non-member renders no-access with z
 it("R-nav-13: a settle-request link routes to the request detail inside the trip's money context", async () => {
   mockLinkApi();
   const result = await renderApp(`/t/${TEST_TRIP_ID}/request/req-5`);
+  // Real screen since T-9.7: the fixture universe holds no request req-5,
+  // so the wire's 404 renders the R-cmoney-26 unknown-id EmptyState —
+  // INSIDE the money context (the pathname pin is the routing proof; the
+  // id-threading proof lives in navigation-skeleton's id-gated responder).
   const request = await screen.findByTestId("settle-request-screen");
-  expect(within(request).getByText("Request req-5")).toBeOnTheScreen();
+  expect(await within(request).findByTestId("settle-request-empty")).toBeOnTheScreen();
   expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/money/request/req-5`);
 });
 
