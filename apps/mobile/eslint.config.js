@@ -82,8 +82,11 @@ module.exports = defineConfig([
   },
   {
     // DS-4 / R-ds-7 for everything outside the block above (components,
-    // theme adapters): token-only styling. Test/typetest/test-util files are
-    // exempt — they declare no shipped visual styles.
+    // theme adapters): token-only styling. Test/typetest/test-infra files
+    // are exempt — they declare no shipped visual styles. `src/testing/**`
+    // is the second spec-mandated test-infra home alongside
+    // `src/test-utils/**` (testing-overhaul spec) — a mock-shape-parity
+    // literal there would otherwise force an inline disable.
     files: ["src/**/*.{ts,tsx}"],
     ignores: [
       "src/app/**",
@@ -92,6 +95,7 @@ module.exports = defineConfig([
       "src/**/*.typetest.*",
       "src/__tests__/**",
       "src/test-utils/**",
+      "src/testing/**",
     ],
     rules: {
       "no-restricted-syntax": ["error", ...tokenOnlySelectors],
