@@ -122,6 +122,16 @@ zero work lost. **Sean decision queue (gate-order): ① ODbL (gates #50 → B-9 
 diagnostics entry · B-7.** Dispatchable sans Sean: VoiceOver checkpoint-label row,
 lint-gap row, B-22.
 
+#### P-9 W3 CLOSED 2026-09-06 — PR #32 resurrected and merged; B-24 prod bug found en route
+
+T-9.4 (settle-requests + budgets + FX proxy) merged after a 9-day stale spell: zero-conflict
+merge-from-main, suite conversion per the standing rider (row closed), full fresh 5-lane
+round (0 blocking), verified fix leg, judge merge/high. The resurrection's image-bump probe
+found **B-24**: PG 18 reclassified RESTRICT-delete FK violations 23503→23001 — on prod Neon
+18.6 the places-delete 409 was plausibly a LIVE 500, masked by the 17 test image. Fix = PR #55
+(in review; must merge-from-main + reconcile per the B-24 row). **W4 (T-9.6 expense screens,
+T-9.7 settle + send-the-bill) is now dispatchable.** FX single-flight row filed (P3).
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**
