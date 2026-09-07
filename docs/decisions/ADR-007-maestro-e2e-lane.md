@@ -17,10 +17,18 @@ exists once the JS bundle, the native runtime, and the OS all meet: five device
 bugs (B-4..B-8) were caught by Sean in QA, none catchable by ~3000 unit tests.
 B-14 — the cold-start deeplink stomp — was found by Sean mid-QA and is the
 sharpest example: it required a **real cold launch delivering a real
-`gogo://` URL to a real navigator**. No jest arrangement reproduced it; the
-`renderRouter` `serverUrl` prefetch is a structural blind spot (lane-confirmed
-during B-14's review), so a deferred-hydration harness stayed green on broken
-code.
+`gogo://` URL to a real navigator**. `renderRouter`'s `serverUrl` prefetch is
+the structural blind spot (lane-confirmed during B-14's review): its initial
+URL flows in synchronously, so `useSegments()` is coherent from the very first
+render — on device the initial URL arrives from the native module and can
+resolve asynchronously, which is exactly the window B-14 lived in. That blind
+spot is real and is the reason this lane exists — but it is not "nothing in
+jest reproduced it": `diagnostics-coldstart-race.test.tsx` (added alongside
+the B-14 fix, refined in PR #46 R1) is the bespoke falsification pin that
+renders `ExpoRoot` directly with a promise-valued `getLinkingURL` to drive
+that real async branch, runs in CI, and stays red on unfixed main. This lane's
+`smoke-diagnostics-cold.yaml` is not the ONLY regression pin for B-14; it adds
+the real native initial-URL delivery on top of that jest pin.
 
 The residual gap after ADR-006 is therefore: **nobody but Sean drives the real
 app.** Every regression in navigation, cold start, deeplink delivery, or the
@@ -189,20 +197,22 @@ scale past the number of runsheets Sean is willing to re-run per phase.
 - Maestro is on a roughly monthly release cadence. Pinning means deliberate
   upgrades; it also means we will lag by design.
 
-### Known limits (set expectations here, not in a post-mortem)
+## Known limits (set expectations here, not in a post-mortem)
 
 1. **The `__DEV__` gate vs the Release build lane.** The
    `gogo://diagnostics` panel is `__DEV__`-only by design (T-S3.5: a release
-   build renders `null`, both arms pinned). A Release build therefore **cannot**
+   build mounts no dev surface — an inert `diagnostics-screen-inert` marker,
+   not the real panel; both arms pinned). A Release build therefore **cannot**
    assert the panel's own testIDs. This is not a defect in either decision — it
    is the intersection of two correct ones. The split we adopt:
    `smoke-diagnostics-cold.yaml` asserts the **B-14 invariant** on Release (the
-   cold-start deeplink is not stomped back to sign-in — the actual regression),
-   while `diagnostics-panel-dev.yaml` asserts the panel's testIDs and is
-   **tagged `dev`**, excluded from the Release lane, and run against a Debug
-   build with Metro when the panel itself is under change. Never "solve" this
-   with a conditional that passes on both builds — that is a vacuous pin, and
-   this repo has scar tissue from exactly that shape.
+   cold-start deeplink is not stomped back to sign-in — the actual regression —
+   plus the route's own liveness, via the inert marker, so the pin cannot be
+   satisfied by a crashed app), while `diagnostics-panel-dev.yaml` asserts the
+   panel's testIDs and is **tagged `dev`**, excluded from the Release lane, and
+   run against a Debug build with Metro when the panel itself is under change.
+   Never "solve" this with a conditional that passes on both builds — that is a
+   vacuous pin, and this repo has scar tissue from exactly that shape.
 2. **The Mapbox map canvas is pixel/gesture territory.** `@rnmapbox/maps`
    renders to a native canvas with no accessibility tree worth asserting on.
    Flows assert **around** it — marker/annotation testIDs, the surrounding
@@ -213,11 +223,17 @@ scale past the number of runsheets Sean is willing to re-run per phase.
    "does the wheel feel right, does the keyboard cover the field, does the
    sheet spring" is not assertable. Those stay in Sean's QA pass.
 4. **`ASWebAuthenticationSession` may resist accessibility taps.** The
-   OAuth sheet is a separate out-of-process UI. `signin-cancel-surface.yaml`
+   OAuth sheet is a separate out-of-process UI. `sign-in-cancel-surface.yaml`
    is written to the point of the sheet; if the sheet's Cancel is not
    reachable, the flow is marked and the coverage moves to the **session door**
    (the env-gated test-session bypass, approved 2026-09-07, wave 2) rather than
-   being faked.
+   being faked. That flow also assumes the lane's simulator is NOT signed into
+   an Apple Account — a real environmental dependency, not a universal
+   invariant — and is tagged `env-no-apple-account` so a reader (and a future
+   runner) knows it. It leaves cleanup to an `onFlowComplete` hook so a failure
+   partway through does not strand a system sheet for the next flow in the run
+   (S-4 round 1: this happened once and cascaded one real failure into 4/4
+   red).
 5. **Flake posture: trust the auto-wait.** Maestro's fluent assertions retry;
    we do **not** paper over timing with `- wait` sleeps. If a flow is flaky,
    the fix is a better selector or `extendedWaitUntil` with a stated timeout,
@@ -226,6 +242,16 @@ scale past the number of runsheets Sean is willing to re-run per phase.
    exercise sign-in, the deeplink registry's gate behavior, and the dev panel.
    Everything past the gate (trips, itinerary, money, map) is wave 2 and
    depends on the door.
+7. **`deeplink-matrix.yaml` pins gate/transport behavior, not the registry's
+   individual mappings.** Its five cold cells (C1–C5) all assert the same
+   postcondition — `sign-in-screen` visible — so they carry one bit between
+   them: a gated link still gates, cold and warm parity holds for the (auth)
+   route, and nothing crashes or hangs on any of the five shapes. They do
+   **not** distinguish one registry mapping from another (delete or mis-map
+   `/invite/[token]` → `/join/[token]` in `deep-links.ts` and C2 still goes
+   green via the fallback path). The registry's actual mapping correctness is
+   unit-covered in `deep-links.test.ts`; this flow's job is the gate/transport
+   behavior around it.
 
 ## Links
 

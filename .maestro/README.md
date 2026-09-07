@@ -99,12 +99,19 @@ Traps, all previously hit here:
 ```bash
 pnpm --filter @gogo/mobile e2e          # release lane (excludes `dev` flows)
 bash scripts/e2e.sh --tags dev          # dev-build-only flows
-bash scripts/e2e.sh --flow .maestro/signin-renders.yaml
+bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
 bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug
 ```
 
 JUnit lands in `.tmp/e2e/junit-<timestamp>.xml`, screenshots and command
 artifacts in `.tmp/e2e/artifacts-<timestamp>/`. `.tmp/` is gitignored.
+
+Before invoking maestro, the runner independently enumerates which flows the
+current `--tags`/`--flow`/`--exclude-tags` filter selects and prints the
+count and the list (S-4 round 1) — and refuses to run at all if that count is
+zero. After the run it also refuses to treat a JUnit report with `tests="0"`
+(or no report at all) as a pass, even if maestro itself exited `0`. Both are
+defense against a filter silently matching nothing.
 
 The runner requires a **booted** simulator and refuses to start without one:
 
@@ -115,13 +122,13 @@ xcrun simctl boot <udid> && open -a Simulator
 
 ## Flows
 
-| Flow                          | Tags              | What it pins                                                                                                                                                 |
-| ----------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `smoke-diagnostics-cold.yaml` | `smoke` `release` | B-14: a cold-start `gogo://` deeplink into an (auth) route is not stomped to sign-in. Two arms — a control cold-start that MUST reach sign-in, then the pin. |
-| `deeplink-matrix.yaml`        | `release`         | The §2.3 registry × the signed-out gate, cold and warm: 6 cold cells + 2 warm-parity cells (R-nav-16).                                                       |
-| `signin-renders.yaml`         | `smoke` `release` | Sign-in mounts on the real runtime with Google **unconfigured** — the exact state that crashed the screen in T-5.7.                                          |
-| `signin-cancel-surface.yaml`  | `release`         | The Google door renders disabled; cancelling the Apple provider sheet is not an error. MED feasibility — see ADR-007 limit 4.                                |
-| `diagnostics-panel-dev.yaml`  | `dev`             | The `gogo://diagnostics` panel's own surface. **Debug build only** — see below.                                                                              |
+| Flow                          | Tags                             | What it pins                                                                                                                                                                                                                                                  |
+| ----------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smoke-diagnostics-cold.yaml` | `smoke` `release`                | B-14: a cold-start `gogo://` deeplink into an (auth) route is not stomped to sign-in. Two arms — a control cold-start that MUST reach sign-in, then the pin, which also asserts the route's own liveness marker.                                              |
+| `deeplink-matrix.yaml`        | `release`                        | The signed-out gate holds cold and warm for 6 cold cells + 2 warm-parity cells (R-nav-16) — gated links gate, the (auth) route doesn't, nothing crashes or hangs. Does **not** pin the registry's individual mappings (unit-covered in `deep-links.test.ts`). |
+| `sign-in-renders.yaml`        | `smoke` `release`                | Sign-in mounts on the real runtime with Google **unconfigured** — the exact state that crashed the screen in T-5.7. Asserts the Google door is `enabled: false`, not just visible.                                                                            |
+| `sign-in-cancel-surface.yaml` | `release` `env-no-apple-account` | The Google door renders disabled; cancelling the Apple provider sheet is not an error. MED feasibility — see ADR-007 limit 4. Assumes the sim is NOT signed into an Apple Account (the tag says so).                                                          |
+| `diagnostics-panel-dev.yaml`  | `dev`                            | The `gogo://diagnostics` panel's own surface. **Debug build only** — see below.                                                                                                                                                                               |
 
 `subflows/` holds `runFlow: file:` fragments (`cold-open`, `warm-open`). They
 are parameterised and meaningless standalone; `config.yaml` restricts test
@@ -130,11 +137,13 @@ discovery to top-level `*.yaml` so they are never run as flows.
 ### Why one flow is `dev`-only
 
 The diagnostics panel is `__DEV__`-gated by design (T-S3.5: a release build
-renders `null`, both arms pinned) and the merge lane is Release by design
+renders no dev surface — an inert `diagnostics-screen-inert` marker, not the
+real panel; both arms pinned) and the merge lane is Release by design
 (ADR-007). Both are correct; they just do not intersect. So the coverage
 splits: `smoke-diagnostics-cold.yaml` pins the **B-14 invariant** on Release
-(the actual regression — the deeplink is not stomped), and
-`diagnostics-panel-dev.yaml` pins the panel's own testIDs on a Debug build:
+(the actual regression — the deeplink is not stomped — plus route liveness via
+the inert marker), and `diagnostics-panel-dev.yaml` pins the panel's own
+testIDs on a Debug build:
 
 ```bash
 pnpm --filter @gogo/mobile start        # terminal 1 — Metro
