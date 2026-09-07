@@ -11,6 +11,31 @@ export { CapInput } from "./CapInput";
 export type { CapInputProps } from "./CapInput";
 export { ExpensesSegment } from "./ExpensesSegment";
 export type { ExpensesSegmentProps } from "./ExpensesSegment";
+export { ExpenseForm } from "./expenses/ExpenseForm";
+export type { ExpenseFormProps } from "./expenses/ExpenseForm";
+export {
+  bookingPrefill,
+  bpToPercentText,
+  deriveBaseAmountCents,
+  editSeedFromExpense,
+  emptySplitState,
+  evaluateSplit,
+  EXPENSE_CATEGORY_LABELS,
+  EXPENSE_CATEGORY_OPTIONS,
+  isEquallySplit,
+  parsePercentToBp,
+  sameShareSets,
+  SPLIT_TYPE_LABELS,
+  SPLIT_TYPES,
+} from "./expenses/expense-form-model";
+export type {
+  BookingPrefill,
+  BookingPrefillSource,
+  ExpenseFormSeed,
+  SplitEvaluation,
+  SplitFormState,
+  SplitType,
+} from "./expenses/expense-form-model";
 export { moneyLabel, signedMoneyLabel } from "./money-format";
 export {
   isMoneySegment,

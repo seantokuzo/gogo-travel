@@ -72,6 +72,15 @@ export { isOfflineError, tripHasOfflineError, useTripOffline } from "./offline";
 export { invalidateMoneyData, usePutBudget, useTripBalances, useTripBudgets } from "./money";
 export type { BudgetPutVars, MoneyMutationOptions } from "./money";
 export {
+  useCreateExpense,
+  useDeleteExpense,
+  useExpense,
+  useFxRate,
+  useTripExpenses,
+  useUpdateExpense,
+} from "./expenses";
+export type { ExpenseListFilters, ExpenseUpdateVars } from "./expenses";
+export {
   findSavedPlace,
   isOptimisticSavedPlaceId,
   optimisticSavedPlaceId,

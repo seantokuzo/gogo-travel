@@ -14,10 +14,15 @@ import {
   BalancesReadSchema,
   BudgetsReadSchema,
   EXPENSE_CATEGORIES,
+  ExpenseSchema,
+  FxRateReadSchema,
   SettleRequestSchema,
   type BalancesRead,
   type BudgetItemRead,
   type BudgetsRead,
+  type Expense,
+  type FxRateRead,
+  type Paginated,
   type SettleRequest,
 } from "@gogo/shared";
 
@@ -26,6 +31,62 @@ import { TEST_USER } from "./session-fixtures";
 
 /** A settle-request id the annotation-seam suites can reference. */
 export const TEST_REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+
+/** Expense ids for the T-9.6 list/detail suites. */
+export const TEST_EXPENSE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+export const EXPENSE_B_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
+
+/**
+ * Wire-valid `Expense` (E2/E3 shape): USD 25.50 dinner paid by the caller,
+ * split equally with B (sum invariant holds by construction — the schema
+ * parse would go RED otherwise).
+ */
+export function makeExpense(overrides?: Partial<Expense>): Expense {
+  const base: Expense = {
+    id: TEST_EXPENSE_ID,
+    trip_id: TEST_TRIP_ID,
+    description: "Dinner at Menya",
+    category: "food",
+    paid_by: TEST_USER.id,
+    amount_cents: 2550,
+    currency: "USD",
+    fx_rate: null,
+    base_amount_cents: null,
+    booking_id: null,
+    spent_at: "2026-08-28",
+    created_by: TEST_USER.id,
+    deleted_at: null,
+    deleted_by: null,
+    created_at: "2026-08-28T19:00:00.000Z",
+    updated_at: "2026-08-28T19:00:00.000Z",
+    shares: [
+      { user_id: TEST_USER.id, share_cents: 1275 },
+      { user_id: MEMBER_B_ID, share_cents: 1275 },
+    ],
+    effective_base_cents: 2550,
+    ...overrides,
+  };
+  return ExpenseSchema.parse(base);
+}
+
+/** One `Paginated<Expense>` page (default: terminal). */
+export function makeExpensesPage(
+  items: Expense[],
+  nextCursor: string | null = null,
+): Paginated<Expense> {
+  return { items, nextCursor };
+}
+
+/** Wire-valid `GET /fx/rate` document (rate = quote per 1 base, string). */
+export function makeFxRateRead(overrides?: Partial<FxRateRead>): FxRateRead {
+  return FxRateReadSchema.parse({
+    base: "EUR",
+    quote: "USD",
+    rate: "1.08",
+    as_of: "2026-08-28",
+    ...overrides,
+  });
+}
 
 /**
  * Empty-universe balances — the mockNavApi default (route-tree suites
