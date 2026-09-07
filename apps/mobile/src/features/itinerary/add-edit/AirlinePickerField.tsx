@@ -22,6 +22,16 @@ export interface AirlinePickerFieldProps {
   /** The committed detail value (the airline name). */
   value: string;
   onChangeText(value: string): void;
+  /**
+   * B-9 R1 (correctness advisory): a value the HOST committed — the flight
+   * number's "Use All Nippon Airways" suggestion — is settled exactly as a
+   * pick is. Without it `picked` stays false (it is lazily initialized from
+   * the first value and only this component's own interactions move it), so
+   * a programmatic fill drops a result list open and burns a shared
+   * reference-limiter unit for text the user never typed: the very defect
+   * class this PR fixed for prefills, through the other door.
+   */
+  settledValue?: string;
   /** Wire cap for `flight.airline` (booking.ts `optionalString`). */
   maxLength: number;
   error?: string;
@@ -45,6 +55,7 @@ export function AirlinePickerField({
   label,
   value,
   onChangeText,
+  settledValue,
   maxLength,
   error,
   testID,
@@ -58,7 +69,10 @@ export function AirlinePickerField({
   // fire a search for the text the user just deleted (and immediately abort
   // it). Gate on the live value as well as the deferred one.
   const deferredQuery = useDeferredValue(value);
-  const liveQuery = picked || value.trim() === "" ? "" : deferredQuery;
+  // A host-committed value counts as settled while it is still on screen
+  // untouched; typing changes `value` and the search resumes.
+  const settled = picked || (settledValue !== undefined && settledValue === value);
+  const liveQuery = settled || value.trim() === "" ? "" : deferredQuery;
   const searchActive = isSearchableReferenceQuery(liveQuery);
   const search = useAirlineSearch(liveQuery);
   const results = (search.data?.items ?? []).slice(0, MAX_RESULTS);

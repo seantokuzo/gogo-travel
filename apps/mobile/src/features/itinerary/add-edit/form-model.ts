@@ -248,12 +248,18 @@ const upper = (text: string): string => text.toUpperCase();
 
 export function fieldInputTraits(field: BookingFieldConfig): FieldInputTraits {
   switch (field.kind) {
+    // B-9 R1: `maxLength` is the WIRE cap (optionalString 200), not 3. The
+    // 3-letter rule is a SAVE gate (`IATA_RE` in buildDetails), never a
+    // typing cap — capping input at 3 is what made "Narita International"
+    // untypeable pre-B-9. `AirportPickerField` is the real renderer and
+    // hardcodes the same 200; these traits stay the one derivation for any
+    // future consumer that routes an `iata` field through a plain `Input`.
     case "iata":
       return {
         keyboardType: "default",
         autoCapitalize: "characters",
         autoCorrect: false,
-        maxLength: 3,
+        maxLength: 200,
         transform: upper,
       };
     case "int":
@@ -318,6 +324,45 @@ export function zonedDateTimeFields(
       tzKey: field.tzKey,
       ...(field.tzFrom !== undefined ? { tzFrom: field.tzFrom } : {}),
     });
+  }
+  return out;
+}
+
+/**
+ * B-9 R1: the comparable form of an IATA field's text. The picker already
+ * uppercases as you type, but a stored prefill can be lowercase and a paste
+ * can carry whitespace — provenance must compare the VALUE, not the typing.
+ */
+export function iataKeyText(value: FieldValue | undefined): string {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+/**
+ * B-9 R1 (correctness lane, blocking): which IATA text each zoned datetime's
+ * CURRENT zone is attributable to.
+ *
+ * An airport pick is the only thing that pushes a real IANA zone into a
+ * paired datetime, but nothing used to invalidate that zone when the same
+ * IATA field was later retyped or cleared — so "pick NRT, clear it, type
+ * LAX" wired `+09:00` under a Los Angeles origin, and an EDIT that retyped
+ * the code re-emitted the stored Tokyo instant verbatim. Both are B-8
+ * through the front door.
+ *
+ * So each zoned field remembers the code its zone came with, seeded here:
+ * on a NEW form that is `""` (the ladder zone belongs to no airport), and on
+ * an EDIT it is the stored code the stored `*_tz` was saved beside. The form
+ * clears the zone the moment the field's text walks away from it, and save
+ * then fails loud with `TZ_MISSING_ERROR` rather than stamping a zone the
+ * endpoint no longer justifies.
+ */
+export function zoneSourceFromState(
+  category: BookingCategory,
+  state: DetailsFormState,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const zoned of zonedDateTimeFields(category)) {
+    if (zoned.tzFrom === undefined) continue;
+    out[zoned.key] = iataKeyText(state[zoned.tzFrom]);
   }
   return out;
 }

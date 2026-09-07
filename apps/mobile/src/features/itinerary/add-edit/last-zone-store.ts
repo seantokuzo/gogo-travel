@@ -32,6 +32,17 @@ export function defaultZoneFor(tripId: string): string {
   return useLastZoneStore.getState().zonesByTrip[tripId] ?? deviceTimeZone();
 }
 
+/**
+ * Sign-out hygiene (B-9 R1, security lane) — the `resetTabMemory()` /
+ * `clearLastViewedTrip()` class. This map is keyed by TRIP, not by user, so
+ * on a shared device two collaborators on the same trip share a rung: user
+ * B's next booking form would default its zone picker to the zone user A
+ * last submitted. Wired into the session store's `onSignedOut`.
+ */
+export function resetLastZones(): void {
+  useLastZoneStore.getState().reset();
+}
+
 /** Record the zone a submitted form used (arrival wins — the next leg starts there). */
 export function rememberTripZone(tripId: string, tz: string): void {
   if (tz === "") return;

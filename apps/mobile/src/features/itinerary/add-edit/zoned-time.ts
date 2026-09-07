@@ -32,6 +32,16 @@
  *    string keeps the wall components the user typed (the server slices
  *    those for display, §3.3).
  * Both are recorded as PR interpretations (spec-uncovered).
+ *
+ * B-9 R1 — WRONG IS NOT AN OPTION HERE. jest runs Node/V8 with full ICU;
+ * the app runs Hermes, whose iOS `Intl` is a Foundation reimplementation
+ * (see `isIntlFaithful`). So every answer this module gives is gated three
+ * ways, and each gate turns a divergence into `null` (→ `TZ_UNKNOWN_ERROR`)
+ * rather than a believable instant: an engine self-check against known
+ * truth, a tzdb-range check on every candidate offset, and a signature test
+ * that tells a real spring-forward gap from an engine contradicting itself.
+ * `zoned-time.hermes.test.ts` runs the whole module against a
+ * Hermes-Apple-shaped `Intl` to keep those gates honest.
  */
 
 /** `±HH:MM` — the fixtures' offset shape (`@gogo/shared/testing` UtcOffset). */
@@ -47,6 +57,23 @@ export interface WallResolution {
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
+
+/**
+ * tzdb's whole range: `Etc/GMT+12` (−12:00) to `Pacific/Kiritimati` (+14:00).
+ * B-9 R1: an offset outside it isn't a zone, it is arithmetic on a misread
+ * clock — "-19:00" and "+21:00" are both well-formed enough to reach the
+ * wire, so the range is a gate, not a comment.
+ */
+const MIN_OFFSET_MINUTES = -12 * 60;
+const MAX_OFFSET_MINUTES = 14 * 60;
+
+function isPlausibleOffset(offsetMinutes: number): boolean {
+  return (
+    Number.isFinite(offsetMinutes) &&
+    offsetMinutes >= MIN_OFFSET_MINUTES &&
+    offsetMinutes <= MAX_OFFSET_MINUTES
+  );
+}
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 const knownZoneCache = new Map<string, boolean>();
@@ -93,23 +120,119 @@ export function isKnownTimeZone(tz: string): boolean {
   return known;
 }
 
-/**
- * The zone's UTC offset (minutes east) at the instant `utcMs`. Throws
- * `RangeError` for an unknown zone — callers gate with `isKnownTimeZone`.
- */
-export function zoneOffsetMinutesAt(tz: string, utcMs: number): number {
+interface WallParts {
+  year: number;
+  month: number;
+  day: number;
+  /** Already `% 24` — an h24 engine's "24" is midnight, not hour 24. */
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+/** The wall clock `tz` shows at `utcMs`, read back out of the formatter. */
+function wallPartsAt(tz: string, utcMs: number): WallParts {
   const parts = formatterFor(tz).formatToParts(new Date(utcMs));
   const read = (type: Intl.DateTimeFormatPartTypes): number => {
     const part = parts.find((candidate) => candidate.type === type);
     return part === undefined ? Number.NaN : Number(part.value);
   };
+  return {
+    year: read("year"),
+    month: read("month"),
+    day: read("day"),
+    hour: read("hour") % 24,
+    minute: read("minute"),
+    second: read("second"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Engine self-check — B-9 R1 (tests lane, blocking)
+// ---------------------------------------------------------------------------
+
+/**
+ * 17:05:09 UTC on a fixed date: a PM hour (an h12 engine reads 5), a
+ * two-digit minute, a non-zero second. Every component is known truth.
+ */
+const PROBE_PM_MS = Date.UTC(2027, 3, 24, 17, 5, 9);
+/** Midnight — what the `% 24` guard exists for; an h12 engine reads 12. */
+const PROBE_MIDNIGHT_MS = Date.UTC(2027, 3, 24, 0, 0, 0);
+
+let intlFaithful: boolean | null = null;
+
+/**
+ * Does THIS engine's `formatToParts` answer the question we actually asked?
+ *
+ * This module is the repo's only ECMA-402 dependency and the app ships
+ * HERMES, whose iOS `Intl` is a Foundation/`NSDateFormatter`
+ * reimplementation rather than ICU: `PlatformIntlApple.mm` re-derives part
+ * types by walking the resolved pattern's letters (falling back to
+ * `literal` for anything unmapped), and `en-US`'s Apple-default hour cycle
+ * is h12 — `hourCycle: "h23"` above is a REQUEST, not a guarantee.
+ *
+ * A uniformly shifted hour is INVISIBLE to `resolveWallTime`'s round-trip
+ * filter whenever the sampled instant and the resolved instant land in the
+ * same 12h half: both reads are wrong by the same 12h, the filter agrees
+ * with itself, and the composition hands back a well-formed string up to
+ * 12h wrong — no null, no throw. That is B-8 one layer down, and it cannot
+ * be caught per-call because the wrong answer is self-consistent.
+ *
+ * So ask the engine two questions whose answers we already know, in `UTC`
+ * (no zone database involved), and refuse to compose ANYTHING if either
+ * comes back wrong. Computed once; callers turn the resulting `null` into
+ * `TZ_UNKNOWN_ERROR` — loud, never plausible.
+ */
+export function isIntlFaithful(): boolean {
+  if (intlFaithful !== null) return intlFaithful;
+  let faithful: boolean;
+  try {
+    const pm = wallPartsAt("UTC", PROBE_PM_MS);
+    const midnight = wallPartsAt("UTC", PROBE_MIDNIGHT_MS);
+    faithful =
+      pm.year === 2027 &&
+      pm.month === 4 &&
+      pm.day === 24 &&
+      pm.hour === 17 &&
+      pm.minute === 5 &&
+      pm.second === 9 &&
+      midnight.day === 24 &&
+      midnight.hour === 0 &&
+      midnight.minute === 0;
+  } catch {
+    // A reduced part set reads NaN and `formatToParts(new Date(NaN))`
+    // throws `RangeError`; an engine that lands here composes nothing.
+    faithful = false;
+  }
+  intlFaithful = faithful;
+  return faithful;
+}
+
+/**
+ * Test seam: drop the per-engine memos so a suite that swaps `Intl` sees
+ * its own engine (paired with `resetTimeZoneCatalogForTests`).
+ */
+export function resetZonedTimeCachesForTests(): void {
+  formatterCache.clear();
+  knownZoneCache.clear();
+  intlFaithful = null;
+}
+
+/**
+ * The zone's UTC offset (minutes east) at the instant `utcMs`. Throws
+ * `RangeError` for an unknown zone — callers gate with `isKnownTimeZone`.
+ * Returns `NaN` when the engine omits a part it was asked for; callers
+ * treat a non-finite offset as "this engine cannot answer".
+ */
+export function zoneOffsetMinutesAt(tz: string, utcMs: number): number {
+  const wall = wallPartsAt(tz, utcMs);
   const wallAsUtc = Date.UTC(
-    read("year"),
-    read("month") - 1,
-    read("day"),
-    read("hour") % 24,
-    read("minute"),
-    read("second"),
+    wall.year,
+    wall.month - 1,
+    wall.day,
+    wall.hour,
+    wall.minute,
+    wall.second,
   );
   // The formatter reads at second precision; drop the instant's sub-second
   // part before differencing so a 999 ms residue can't round the wrong way.
@@ -145,23 +268,55 @@ function wallAsUtcMs(date: string, time: string): number | null {
  * `null` for an unknown zone or malformed wall values.
  */
 export function resolveWallTime(tz: string, date: string, time: string): WallResolution | null {
+  // B-9 R1: a shifted-hour engine composes a SELF-CONSISTENT wrong instant,
+  // so this gate is up front and absolute rather than per-candidate.
+  if (!isIntlFaithful()) return null;
   if (!isKnownTimeZone(tz)) return null;
   const wall = wallAsUtcMs(date, time);
   if (wall === null) return null;
 
-  const candidates = [
-    ...new Set([
-      zoneOffsetMinutesAt(tz, wall - DAY_MS),
-      zoneOffsetMinutesAt(tz, wall),
-      zoneOffsetMinutesAt(tz, wall + DAY_MS),
-    ]),
-  ];
-  const valid = candidates.filter(
-    (offset) => zoneOffsetMinutesAt(tz, wall - offset * MINUTE_MS) === offset,
-  );
-  if (valid.length === 1) return { offsetMinutes: valid[0] as number, kind: "unique" };
-  if (valid.length > 1) return { offsetMinutes: Math.max(...valid), kind: "ambiguous" };
-  return { offsetMinutes: Math.min(...candidates), kind: "gap" };
+  try {
+    const candidates = [
+      ...new Set([
+        zoneOffsetMinutesAt(tz, wall - DAY_MS),
+        zoneOffsetMinutesAt(tz, wall),
+        zoneOffsetMinutesAt(tz, wall + DAY_MS),
+      ]),
+      // A missing part reads NaN the whole way through, and a misread clock
+      // produces arithmetic no zone has ever had. Neither is a candidate.
+    ].filter(isPlausibleOffset);
+    if (candidates.length === 0) return null;
+
+    const valid = candidates.filter(
+      (offset) => zoneOffsetMinutesAt(tz, wall - offset * MINUTE_MS) === offset,
+    );
+    if (valid.length === 1) return { offsetMinutes: valid[0] as number, kind: "unique" };
+    if (valid.length > 1) return { offsetMinutes: Math.max(...valid), kind: "ambiguous" };
+
+    // Nothing round-tripped. That is EITHER a real spring-forward gap or an
+    // engine contradicting itself, and the two must not share an outcome:
+    // `Math.min(...candidates)` is right for the first and a believable
+    // wrong instant for the second (B-9 R1, tests lane cross-lane).
+    //
+    // A real gap has an exact signature — applying the pre-transition offset
+    // lands AFTER the transition, so it reads back as the other sampled
+    // offset, which is larger (clocks sprang forward) and which itself maps
+    // back to the pre-transition offset. The two point at each other.
+    // Anything else means the zone's own answers are incoherent: fail loud.
+    const pre = Math.min(...candidates);
+    const post = zoneOffsetMinutesAt(tz, wall - pre * MINUTE_MS);
+    const isGap =
+      candidates.includes(post) &&
+      post > pre &&
+      zoneOffsetMinutesAt(tz, wall - post * MINUTE_MS) === pre;
+    return isGap ? { offsetMinutes: pre, kind: "gap" } : null;
+  } catch {
+    // `formatToParts(new Date(NaN))` throws `RangeError`, which a degraded
+    // engine reaches through a NaN candidate. The documented contract is
+    // "null, never a throw" — honor it rather than taking out the save
+    // handler and, through `livePlacements`, the form's whole render.
+    return null;
+  }
 }
 
 /** Minutes east of UTC → `±HH:MM` (`+09:00`, `-07:00`, `+05:45`, `+00:00`). */
@@ -250,11 +405,23 @@ export interface TimeZoneDescription {
  * render a stored-but-unresolvable id honestly instead of throwing.
  */
 export function describeTimeZone(tz: string, atUtcMs: number): TimeZoneDescription | null {
+  // B-9 R1: this runs during RENDER (every picker row, every zone field). An
+  // engine that can't read its own parts throws `RangeError` out of
+  // `zoneOffsetMinutesAt` — a white screen on the booking form. `null` is
+  // the documented answer, so callers fall back to the raw id honestly.
+  if (!isIntlFaithful()) return null;
   if (!isKnownTimeZone(tz)) return null;
+  let offsetMinutes: number;
+  try {
+    offsetMinutes = zoneOffsetMinutesAt(tz, atUtcMs);
+  } catch {
+    return null;
+  }
+  if (!isPlausibleOffset(offsetMinutes)) return null;
   return {
     id: tz,
     city: zoneCityLabel(tz),
     region: zoneRegionLabel(tz),
-    gmt: gmtLabelOf(zoneOffsetMinutesAt(tz, atUtcMs)),
+    gmt: gmtLabelOf(offsetMinutes),
   };
 }

@@ -17,6 +17,14 @@
  * stay fresh for the session (`REFERENCE_STALE_TIME`); keys live under
  * their own `["reference", …]` root (the `placeSearch` rationale: global
  * reads with no trip in the path — trip eviction must not reach them).
+ *
+ * B-9 R1 (performance lane): every hook carries `placeholderData:
+ * keepPreviousData`. The shared query floor is ONE character (short codes
+ * must be searchable from the first letter), so a per-keystroke query key
+ * would otherwise flip `isPending` on every character and strobe the result
+ * list skeleton↔results while the user types a name they mean to pick from
+ * that list. The cross-cutting shared-debounce sweep (QUEUE) still stands;
+ * this is the local half that costs nothing.
  */
 import {
   AirlineSearchQuerySchema,
@@ -29,7 +37,7 @@ import {
   type FlightAirlineLookupResponse,
 } from "@gogo/shared";
 import type { Paginated } from "@gogo/shared/api/envelope";
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { apiClient } from "@/auth";
 
@@ -56,6 +64,7 @@ export function useAirportSearch(rawQuery: string): UseQueryResult<Paginated<Air
       apiClient.request(airportEndpoints.searchAirports, { query: { q } }, { signal }),
     enabled: isSearchableReferenceQuery(rawQuery),
     staleTime: REFERENCE_STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -67,6 +76,7 @@ export function useAirlineSearch(rawQuery: string): UseQueryResult<Paginated<Air
       apiClient.request(airportEndpoints.searchAirlines, { query: { q } }, { signal }),
     enabled: AirlineSearchQuerySchema.safeParse({ q: rawQuery }).success,
     staleTime: REFERENCE_STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -98,5 +108,6 @@ export function useFlightAirlineLookup(
       ),
     enabled: key !== null,
     staleTime: REFERENCE_STALE_TIME,
+    placeholderData: keepPreviousData,
   });
 }

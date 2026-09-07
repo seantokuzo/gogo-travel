@@ -26,7 +26,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { AppText, Input, ListItem } from "@/components";
 
 import { searchTimeZones, timeZoneSlug } from "./time-zone-catalog";
-import { describeTimeZone, gmtLabelOf, referenceInstantFor, zoneOffsetMinutesAt } from "./zoned-time";
+import { describeTimeZone, referenceInstantFor } from "./zoned-time";
 
 /** Bounded render — the catalog is ~420 rows; a picker shows a handful. */
 const MAX_RESULTS = 12;
@@ -52,6 +52,17 @@ export function zoneFieldLabel(tz: string, atUtcMs: number): string {
   if (tz === "") return "Not set — choose a time zone";
   const described = describeTimeZone(tz, atUtcMs);
   return described === null ? tz : `${described.city} — ${described.gmt}`;
+}
+
+/**
+ * One picker row's title. B-9 R1: goes through `describeTimeZone`, NOT a
+ * bare `zoneOffsetMinutesAt` — the raw read throws `RangeError` on an engine
+ * that omits a part, and this runs inside `render` for every visible row
+ * (a white screen, not a degraded label).
+ */
+function zoneRowTitle(id: string, city: string, atUtcMs: number): string {
+  const described = describeTimeZone(id, atUtcMs);
+  return described === null ? city : `${city} — ${described.gmt}`;
 }
 
 const useStyles = createStyles((t) =>
@@ -127,7 +138,7 @@ export function TimeZoneField({
             {results.map((entry) => (
               <ListItem
                 key={entry.id}
-                title={`${entry.city} — ${gmtLabelOf(zoneOffsetMinutesAt(entry.id, atUtcMs))}`}
+                title={zoneRowTitle(entry.id, entry.city, atUtcMs)}
                 subtitle={entry.id}
                 onPress={() => {
                   onSelect(entry.id);
