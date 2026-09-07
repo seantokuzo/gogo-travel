@@ -112,25 +112,6 @@ type Reader = DbClient | Tx;
 /** Gap unit for `sort_order` (schema §3.3.10 — app assigns 1024 steps). */
 const SORT_GAP = 1024;
 
-/**
- * ⚠️ TEMPORARY (B-8, 2026-08-29) — delete with the B-8 fix and migration 0002.
- *
- * The client stamps `Z` on every entered wall time instead of the real offset
- * (`form-model.ts:205`), so a legitimate eastbound flight (Tokyo 17:00 JST →
- * LAX 10:00 PDT) transmits as 17:00Z → 10:00Z and reads as a 7h inversion.
- * Every date-line flight was therefore impossible to enter.
- *
- * Only `flight`/`train` get the grace: they are the sole categories whose two
- * endpoints can legitimately be in different zones. Lodging check-out before
- * check-in stays a hard error, which is the whole reason for scoping it.
- *
- * KEEP IN LOCKSTEP with `bookings_time_order_ck` (migration 0001). The DB
- * constraint is the authority; this mirror only exists so the answer is a 400
- * rather than a 23514-driven 500.
- */
-const TZ_INVERSION_GRACE_MS = 12 * 60 * 60 * 1000;
-const TZ_INVERSION_GRACE_CATEGORIES = new Set<BookingDetails["category"]>(["flight", "train"]);
-
 /** `HH:MM:SS[.ffffff]` (Postgres `time`) → `HH:MM` for §3.3 comparisons. */
 const wallHHMM = (value: string | null): string | null =>
   value === null ? null : value.slice(0, 5);
@@ -150,6 +131,15 @@ function marksFor(tripId: string, days: Iterable<string>): DirtyDayMark[] {
  * derived end precedes its start must fail validation, not 500 on the
  * constraint. Cross-field detail rules are server-side refiners by design
  * (contracts §3.7 — the detail shapes stay AI-reusable and rule-free).
+ *
+ * KEEP IN LOCKSTEP with `bookings_time_order_ck`. B-8 DoD (2026-09-06):
+ * migration 0001's temporary 12h flight/train grace is GONE — B-9 gave the
+ * client an airport table with IANA zones, so it composes real offsets and a
+ * date-line flight no longer arrives inverted. Migration 0003 re-tightened the
+ * constraint to plain `starts_at <= ends_at`, and this mirror matches it
+ * exactly again: every category, no window. The constraint is the authority;
+ * widening this mirror without a matching migration turns 400s into 23514
+ * 500s, which is the whole reason the mirror exists.
  */
 function derivedInstantsOf(details: BookingDetails): {
   startsAt: Date | null;
@@ -158,20 +148,12 @@ function derivedInstantsOf(details: BookingDetails): {
   const derived = deriveBookingInstants(details);
   const startsAt = derived.starts_at !== null ? new Date(derived.starts_at) : null;
   const endsAt = derived.ends_at !== null ? new Date(derived.ends_at) : null;
-  if (startsAt !== null && endsAt !== null) {
-    // Mirrors `bookings_time_order_ck` EXACTLY, including its temporary
-    // transport grace (migration 0001, B-8). Drift here re-introduces the
-    // 500-instead-of-400 this function exists to prevent, so the two must be
-    // changed together — the constraint is the authority, this is the mirror.
-    const inversionMs = startsAt.getTime() - endsAt.getTime();
-    const graceMs = TZ_INVERSION_GRACE_CATEGORIES.has(details.category) ? TZ_INVERSION_GRACE_MS : 0;
-    if (inversionMs > graceMs) {
-      throw new HttpError(
-        "VALIDATION_FAILED",
-        "the category's primary end time precedes its start time",
-        { details: "end before start" },
-      );
-    }
+  if (startsAt !== null && endsAt !== null && endsAt.getTime() < startsAt.getTime()) {
+    throw new HttpError(
+      "VALIDATION_FAILED",
+      "the category's primary end time precedes its start time",
+      { details: "end before start" },
+    );
   }
   return { startsAt, endsAt };
 }

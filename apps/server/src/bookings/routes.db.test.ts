@@ -34,6 +34,7 @@ import {
 } from "@gogo/shared/domains/booking";
 import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
 import type { BookingStatus, TripMemberRole } from "@gogo/shared/enums";
+import { DATE_LINE_EASTBOUND } from "@gogo/shared/testing";
 import { createApp } from "../app.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
@@ -516,39 +517,39 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(((await patch.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
-  it("B-8 grace: a date-line flight (7h apparent inversion) is ACCEPTED; >12h is not; the grace does NOT leak to other categories", async () => {
+  it("B-8 DoD: the CORRECT date-line composition inserts with ordered instants; the Z-stamped one is REJECTED again (grace gone)", async () => {
     const { editor, trip } = await seedCollabTrip();
 
-    // The real shape that blocked device QA: Tokyo 17:00 JST -> LAX 10:00 PDT
-    // is a legitimate ~9h eastbound flight, but the client stamps `Z` on both
-    // wall times (form-model.ts:205), so it arrives as a 7h inversion. Inside
-    // the 12h transport grace (migration 0001) it must now be accepted.
-    const dateLine = await postBooking(trip.id, editor.accessToken, {
+    // THE ACCEPTANCE HARNESS. Sean's real flight, composed the way a post-B-9
+    // client composes it: Tokyo Apr 24 17:00+09:00 → LAX Apr 24 10:00-07:00,
+    // a legitimate 9h eastbound hop. With real offsets the derived instants
+    // are ORDERED (08:00Z → 17:00Z), so nothing needs excusing and the row
+    // must insert against the re-tightened `bookings_time_order_ck`. This arm
+    // is why the grace could be deleted — it fails if 0003 or the mirror ever
+    // rejects a legitimate date-line flight.
+    const correct = await createBookingVia(trip.id, editor.accessToken, {
       category: "flight",
-      title: "NRT-LAX",
-      details: {
-        category: "flight",
-        departs_at: "2027-04-24T17:00:00Z",
-        arrives_at: "2027-04-24T10:00:00Z",
-      },
+      title: "NRT-LAX (real offsets)",
+      details: DATE_LINE_EASTBOUND.details,
     });
-    expect(dateLine.status).toBe(201);
+    expect(correct.starts_at).not.toBeNull();
+    expect(correct.ends_at).not.toBeNull();
+    expect(Date.parse(correct.ends_at!)).toBeGreaterThan(Date.parse(correct.starts_at!));
 
-    // Beyond the window the rule still bites — the grace is bounded, not off.
-    const tooFar = await postBooking(trip.id, editor.accessToken, {
+    // THE REVERT, pinned. The SAME flight as the pre-B-9 client sent it —
+    // both wall times stamped `Z` (form-model.ts:205), a 7h apparent
+    // inversion. Migration 0001 admitted this; migration 0003 does not, and
+    // the mirror answers 400 rather than letting it reach a 23514. Restoring
+    // any window in service.ts turns this back into a 201 — red.
+    const zStamped = await postBooking(trip.id, editor.accessToken, {
       category: "flight",
-      title: "Impossible",
-      details: {
-        category: "flight",
-        departs_at: "2027-04-24T17:00:00Z",
-        arrives_at: "2027-04-24T03:00:00Z",
-      },
+      title: "NRT-LAX (pre-B-9 client)",
+      details: DATE_LINE_EASTBOUND.zStamped,
     });
-    expect(tooFar.status).toBe(400);
-    expect(((await tooFar.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    expect(zStamped.status).toBe(400);
+    expect(((await zStamped.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
 
-    // Scoping is the point: lodging has ONE location, so an inverted stay is a
-    // genuine error and must NOT inherit the transport grace.
+    // Unchanged by the revert: an inverted stay was always a hard error.
     const lodging = await postBooking(trip.id, editor.accessToken, {
       category: "lodging",
       title: "Backwards stay",
@@ -562,14 +563,13 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(((await lodging.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
   });
 
-  it("B-8 boundary (PR #37 R1): flight inverted 11h59m → 201 real insert; 12h01m → 400 from the mirror, never a 23514 500", async () => {
+  it("B-8 DoD: NO residual window — 11h59m (was a 201 insert) and 1 minute both answer 400 from the mirror", async () => {
     const { editor, trip } = await seedCollabTrip();
 
-    // ACCEPT EDGE, against the REAL constraint: 11h59m sits just inside the
-    // 12h window, so the row must actually insert (`bookings_time_order_ck`
-    // accepts it). Tightening the DB grace without touching the mirror turns
-    // this arm into a 23514 → 500 — red, not silently green.
-    const justInside = await postBooking(trip.id, editor.accessToken, {
+    // The old 12h boundary's ACCEPT edge, inverted by the revert: 11h59m used
+    // to insert for real (PR #37's pin). It must now be a 400. This is the
+    // arm that reds if migration 0003 lands without the service mirror.
+    const justInsideOldWindow = await postBooking(trip.id, editor.accessToken, {
       category: "flight",
       title: "11h59m inverted",
       details: {
@@ -578,48 +578,51 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
         arrives_at: "2027-04-24T05:01:00Z",
       },
     });
-    expect(justInside.status).toBe(201);
+    expect(justInsideOldWindow.status).toBe(400);
+    expect(((await justInsideOldWindow.json()) as ErrorEnvelope).error.code).toBe(
+      "VALIDATION_FAILED",
+    );
 
-    // REJECT EDGE, from the service MIRROR: 12h01m must answer 400
-    // VALIDATION_FAILED. If the mirror's grace drifts wider than the
-    // constraint (12h → 13h in service.ts), this request passes the mirror,
-    // trips the constraint, and 500s — the exact service↔DB lockstep drift
-    // the "KEEP IN LOCKSTEP" comment could only ask for; this arm enforces.
-    const justOutside = await postBooking(trip.id, editor.accessToken, {
+    // One minute is enough — the rule is strict ordering, not a tolerance.
+    const oneMinute = await postBooking(trip.id, editor.accessToken, {
       category: "flight",
-      title: "12h01m inverted",
+      title: "1m inverted",
       details: {
         category: "flight",
         departs_at: "2027-04-24T17:00:00Z",
-        arrives_at: "2027-04-24T04:59:00Z",
+        arrives_at: "2027-04-24T16:59:00Z",
       },
     });
-    expect(justOutside.status).toBe(400);
-    expect(((await justOutside.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    expect(oneMinute.status).toBe(400);
+    expect(((await oneMinute.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // These arms prove the MIRROR (400, never a 23514-driven 500). The other
+    // half of the lockstep — that migration 0003 actually re-tightened the
+    // constraint, so a write bypassing the service is rejected by the DB —
+    // is pinned at its canonical home, `db/constraints.test.ts`. Tighten one
+    // without the other and exactly one of the two files goes red.
   });
 
-  it("B-8 grace-set membership (PR #37 R1): inverted train ≤12h → 201; car_rental inverted 1h → 400 (deliberately excluded)", async () => {
+  it("B-8 DoD: no category is graced any more — inverted train 400, inverted car_rental 400, ORDERED train 201", async () => {
     const { editor, trip } = await seedCollabTrip();
 
-    // ACCEPT SIDE: train is the OTHER graced category. An 8h-inverted train
-    // must insert for real — removing "train" from the service set answers
-    // 400 here, removing it from the constraint alone answers 500; either
-    // de-lockstep goes red.
-    const train = await postBooking(trip.id, editor.accessToken, {
+    // `train` was the OTHER graced category; an 8h-inverted train used to
+    // insert. Post-revert it is a 400 like everything else — removing this
+    // arm is how the grace would quietly come back for rail only.
+    const invertedTrain = await postBooking(trip.id, editor.accessToken, {
       category: "train",
-      title: "Cross-zone rail",
+      title: "Inverted rail",
       details: {
         category: "train",
         departs_at: "2027-04-24T17:00:00Z",
         arrives_at: "2027-04-24T09:00:00Z",
       },
     });
-    expect(train.status).toBe(201);
+    expect(invertedTrain.status).toBe(400);
+    expect(((await invertedTrain.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
 
-    // REJECT SIDE: car_rental is deliberately EXCLUDED from the grace (B-9 —
-    // a one-way drop-off can cross zones but stays a hard error). A 1h
-    // inversion must 400 from the mirror; adding car_rental to the service
-    // set alone would pass the mirror and 500 on the unchanged constraint.
+    // `car_rental` was always excluded from the grace; unchanged, and now
+    // indistinguishable from the transport categories — which is the point.
     const rental = await postBooking(trip.id, editor.accessToken, {
       category: "car_rental",
       title: "1h inverted rental",
@@ -631,6 +634,21 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     });
     expect(rental.status).toBe(400);
     expect(((await rental.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Control, so the two rejections above are not vacuously green: the SAME
+    // wall clocks as the inverted train, but carrying real offsets
+    // (17:00+09:00 = 08:00Z → 10:00-07:00 = 17:00Z) — ordered, so it inserts.
+    // A blanket "reject transport" bug reds here.
+    const orderedTrain = await createBookingVia(trip.id, editor.accessToken, {
+      category: "train",
+      title: "Cross-zone rail (real offsets)",
+      details: {
+        category: "train",
+        departs_at: "2027-04-24T17:00:00+09:00",
+        arrives_at: "2027-04-24T10:00:00-07:00",
+      },
+    });
+    expect(Date.parse(orderedTrain.ends_at!)).toBeGreaterThan(Date.parse(orderedTrain.starts_at!));
   });
 
   it("POST: viewer 403 (R-ib-24 server-enforced)", async () => {
