@@ -2,6 +2,7 @@
 const { defineConfig } = require("eslint/config");
 const expoConfig = require("eslint-config-expo/flat");
 const prettierConfig = require("eslint-config-prettier");
+const globals = require("globals");
 
 // DS-4 / R-ds-7: token-only styling. Every color comes from theme tokens and
 // every style sheet goes through the createStyles(theme) factory, so literal
@@ -32,6 +33,19 @@ module.exports = defineConfig([
   expoConfig,
   {
     ignores: ["dist/*", ".expo/*"],
+  },
+  {
+    // jest.setup.js was never inside the lint gate (default scope is
+    // src/app/components; the file lives at the package root) — the old
+    // `/* eslint-env jest */` directive at its top is dead under flat config
+    // (ESLint stopped honoring `eslint-env` comments), so `jest.mock(...)`
+    // etc. read as 34 `no-undef` errors once the file IS linted (see the
+    // `lint` script below, which now includes it explicitly). Declare the
+    // jest globals here instead of disabling the rule.
+    files: ["jest.setup.js"],
+    languageOptions: {
+      globals: { ...globals.jest },
+    },
   },
   {
     // NAV-7 / R-nav-22: raw RN interactive elements in screens must carry a
