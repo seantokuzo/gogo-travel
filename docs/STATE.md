@@ -132,6 +132,63 @@ found **B-24**: PG 18 reclassified RESTRICT-delete FK violations 23503→23001 �
 (in review; must merge-from-main + reconcile per the B-24 row). **W4 (T-9.6 expense screens,
 T-9.7 settle + send-the-bill) is now dispatchable.** FX single-flight row filed (P3).
 
+#### SEAN DECISION PACK 2026-09-07 — four rulings landed
+
+① **ODbL CONFIRMED** → PR #50 (B-9 server half) cleared to merge (reconciliation vs
+moved main in flight; then merge → B-9 client half dispatchable → then the B-8
+grace + migration 0001 revert = B-8's DoD). Obligation: OSM/timezone-boundary-builder
+attribution in README (present) + an open-source-licenses screen entry at ship;
+NEVER bundle the airport+tz dataset into the app binary without revisiting ODbL
+share-alike (that would be redistribution). ② **ADR-006 RATIFIED** → PR #38 merged
+6a69fe5, Status flipped to Accepted. ③ **MAESTRO ADOPTED** → S-4 row + the handoff
+below. ④ **SESSION DOOR APPROVED** (auth bypass for E2E; env-gated per Sean).
+
+#### E2E LANE HANDOFF (for the next session) — self-contained; the research lives only here
+
+**Decision:** Maestro CLI, local-first, against a local Release-config simulator
+build; flows in `.maestro/` riding the lint-gated testID grammar (§2.7/§2.8 —
+Maestro's `id` selector maps to testID directly). Why: the official Expo E2E path
+(Expo's own docs document Maestro and only Maestro); free CLI, zero metered
+components (Law #5 clean); `openLink` does gogo:// cold-start first-class.
+**Detox disqualified on fact:** supported range RN 0.77–0.84; we ship RN 0.86.2
+(its v21 alpha chases newer RN — not a base). Homegrown AXe rig = rebuilding
+Maestro's wait/retry kernel; keep AXe as the escape hatch only.
+
+**Task breakdown, in order:**
+1. **ADR-007** — record the adoption + the Detox disqualifier + the constraints
+   (local-first; no metered CI; AXe stays escape-hatch). 2. **Install pinned**:
+   ⚠️ npm `maestro` (2.1.1) and homebrew-core `maestro` (0.17.3) are UNRELATED
+   SQUATTER packages — install ONLY via `mobile-dev-inc/tap` or the official
+   script, version-pinned (cli-2.10.x era, ~monthly cadence); JVM app, Java 17
+   is present; verify the `MAESTRO_CLI_NO_ANALYTICS` env opt-out at install.
+3. **The build lane**: `npx expo run:ios --configuration Release` per merge
+   candidate — dev-client builds are for flow AUTHORING only (black-box
+   `launchApp` lands on the dev launcher; `clearState:true` wipes the stored
+   Metro URL). Note: the installed sim app still carries the pre-#33 bundle id —
+   a rebuild is due regardless. 4. **Flows 1–4 (unauthed, buildable
+   immediately)**: `smoke-diagnostics-cold` (openLink gogo://diagnostics; handle
+   the iOS SpringBoard open-prompt with a conditional runFlow — approval persists
+   per sim), `deeplink-matrix` (codify the B-14 AXe matrix), `signin-renders`,
+   `signin-cancel-surface` (MED feasibility — the ASWebAuthenticationSession
+   sheet may resist accessibility taps; fall back to the door). 5. **The session
+   door (APPROVED — Autonomy trigger #4 satisfied 2026-09-07)**: an auth bypass
+   minting a test session, env-gated — Sean verbatim: "gated on env var such as
+   NODE_ENV 'development' or 'testing' or 'e2e' if we want to be more targeted."
+   Design at build (extend the `scripts/gen-test-env.mjs` throwaway-env pattern;
+   double-gate so prod builds cannot carry it); full review pipeline, security
+   lane mandatory. 6. **Flows 5–10 (the runsheet replacements)**:
+   `session-door-entry`, `create-trip-golden` (datetimepicker path),
+   `add-flight-dateline` (drive the REAL B-8 hostile-fixture wall times from
+   `@gogo/shared/testing`), `ideas-to-schedule`, `cancel-visibility`,
+   `cross-tab-state` (tab-bar presses ONLY — the vendored-navigator no-op rule).
+7. Wire a local pre-merge script (JUnit output); GH-macOS CI optional later.
+
+**Known limits (set expectations in ADR-007):** the @rnmapbox map canvas is
+pixel/gesture territory — assert AROUND it via marker testIDs; picker/keyboard
+FEEL stays a short human pass; flake posture = Maestro auto-wait (community
+reputation best-in-class; `maestro-runner` is a drop-in speed swap to watch,
+not adopt).
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**

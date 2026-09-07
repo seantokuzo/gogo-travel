@@ -1,6 +1,6 @@
 # ADR-006: Testing strategy overhaul — four layers above unit tests
 
-**Status:** Proposed
+**Status:** Accepted (ratified by Sean 2026-09-07, PR #38 merged 6a69fe5)
 **Date:** 2026-08-30
 **Supersedes:** none
 **Superseded by:** none
