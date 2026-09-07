@@ -763,9 +763,13 @@ describe("§2.8 testID inventory walk (R-cmoney-30 — shell scope)", () => {
       expect(screen.getByTestId(id)).toBeTruthy();
     }
     await fireEvent.press(screen.getByTestId("money-segment-expenses"));
+    // findBy for EVERY post-switch id: the FAB testID exists in BOTH the
+    // loading-arm skeleton and the settled branch, so a satisfied FAB
+    // findBy proves nothing about query settlement — a sync getBy on the
+    // settled-only ids races it (B-2 class under CI's 2-core contention).
     expect(await screen.findByTestId("money-fab-add-expense")).toBeTruthy();
-    expect(screen.getByTestId("money-expense-list")).toBeTruthy();
-    expect(screen.getByTestId("money-button-filter")).toBeTruthy();
+    expect(await screen.findByTestId("money-expense-list")).toBeTruthy();
+    expect(await screen.findByTestId("money-button-filter")).toBeTruthy();
     await fireEvent.press(screen.getByTestId("money-segment-balances"));
     expect(await screen.findByTestId("money-toggle-simplify")).toBeTruthy();
     expect(screen.getByTestId(`money-balance-list-item-${MEMBER_B_ID}`)).toBeTruthy();
