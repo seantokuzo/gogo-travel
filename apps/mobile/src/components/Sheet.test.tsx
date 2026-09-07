@@ -704,12 +704,7 @@ describe("Sheet", () => {
           }
           await view.rerender(
             themed(
-              <Sheet
-                visible={false}
-                onDismiss={() => undefined}
-                onExited={onExited}
-                testID="sheet"
-              >
+              <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
                 <AppText>x</AppText>
               </Sheet>,
             ),
