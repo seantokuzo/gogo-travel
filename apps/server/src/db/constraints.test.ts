@@ -621,6 +621,70 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
       );
     });
 
+    it("B-8 DoD: rejects inverted booking instants for EVERY category, and admits the correct date-line composition", async () => {
+      // The DB half of the `bookings_time_order_ck` lockstep, bypassing the
+      // service mirror (`bookings/service.ts` `derivedInstantsOf`) entirely.
+      // Migration 0001 widened this constraint with a 12h flight/train grace
+      // so pre-B-9 clients — which stamped `Z` on every wall time — could
+      // enter date-line flights at all; migration 0003 reverted it. The two
+      // halves are pinned in two files ON PURPOSE, because each catches the
+      // drift the other cannot: tighten the mirror but forget the migration
+      // and THIS file reds (the inverted flight inserts) while routes.db
+      // still answers 400; tighten the migration but forget the mirror and
+      // routes.db reds with 23514-driven 500s while this file stays green.
+      const user = await seedUser();
+      const trip = await seedTrip(user.id);
+
+      // Formerly ADMITTED by the grace: the device-QA Tokyo→LA flight as the
+      // pre-B-9 client sent it (17:00Z → 10:00Z, a 7h apparent inversion).
+      await expectPgError(
+        seedBooking(trip.id, user.id, {
+          category: "flight",
+          startsAt: new Date("2027-04-24T17:00:00Z"),
+          endsAt: new Date("2027-04-24T10:00:00Z"),
+        }),
+        /bookings_time_order_ck/,
+      );
+      // Formerly ADMITTED: `train` was the other graced category.
+      await expectPgError(
+        seedBooking(trip.id, user.id, {
+          category: "train",
+          startsAt: new Date("2027-04-24T17:00:00Z"),
+          endsAt: new Date("2027-04-24T09:00:00Z"),
+        }),
+        /bookings_time_order_ck/,
+      );
+      // Never graced, and still rejected — the rule is category-blind again.
+      await expectPgError(
+        seedBooking(trip.id, user.id, {
+          category: "lodging",
+          startsAt: new Date("2027-04-24T15:00:00Z"),
+          endsAt: new Date("2027-04-24T14:00:00Z"),
+        }),
+        /bookings_time_order_ck/,
+      );
+
+      // The discriminator (without it "reject every flight" would look
+      // identical): the SAME Tokyo→LA flight composed with real offsets —
+      // 17:00+09:00 = 08:00Z → 10:00-07:00 = 17:00Z — has ordered instants
+      // and must insert. This is what B-9's client half now sends, and the
+      // reason the grace could be deleted rather than merely narrowed.
+      const ordered = await seedBooking(trip.id, user.id, {
+        category: "flight",
+        startsAt: new Date("2027-04-24T08:00:00Z"),
+        endsAt: new Date("2027-04-24T17:00:00Z"),
+      });
+      expect(ordered.startsAt).not.toBeNull();
+
+      // Equal instants are legal (`<=`, not `<`) — a zero-length booking.
+      const instant = new Date("2027-04-24T08:00:00Z");
+      await seedBooking(trip.id, user.id, {
+        category: "activity",
+        startsAt: instant,
+        endsAt: instant,
+      });
+    });
+
     it("R-db-6: rejects custom places with a source_id, imports without one, and orphan customs", async () => {
       const creator = await seedUser();
       await expectPgError(

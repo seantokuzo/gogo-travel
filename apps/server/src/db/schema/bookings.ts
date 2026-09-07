@@ -64,25 +64,23 @@ export const bookings = pgTable(
       .where(sql`${t.captureId} IS NOT NULL`),
     index("bookings_place_id_idx").on(t.placeId),
     index("bookings_created_by_idx").on(t.createdBy),
-    // ⚠️ TEMPORARY WIDENING (B-8, 2026-08-29) — remove when B-8 is fixed.
-    // The strict rule is `starts_at <= ends_at`. The client currently stamps
-    // `Z` on every entered wall time (`form-model.ts:205`) instead of the real
-    // offset, so a legitimate eastbound flight — Tokyo 17:00 JST → LAX 10:00
-    // PDT — transmits as 17:00Z → 10:00Z and looks inverted. That made every
-    // date-line flight unenterable.
+    // Instants are ordered, for EVERY category — the schema spec's shape
+    // verbatim (`.specs/database/schema.spec.md`, bookings.ends_at).
+    // Migration 0001's temporary 12h flight/train widening (B-8, 2026-08-29)
+    // is reverted by migration 0003 (2026-09-06) now that B-9 gave the client
+    // an airport table with IANA zones: a date-line flight composes real
+    // offsets (Tokyo 17:00+09:00 → LAX 10:00-07:00) and its instants are
+    // ordered, so no window is needed to admit it. Mirrored as a 400 in
+    // `bookings/service.ts` `derivedInstantsOf` — change the two together.
     //
-    // Until the client sends real offsets, transport categories tolerate an
-    // apparent inversion of up to 12h. Scoped to `flight`/`train` on purpose:
-    // those are the only categories whose two endpoints can legitimately sit
-    // in different zones, so lodging check-out-before-check-in (etc.) stays a
-    // hard error. 12h covers the Tokyo→LA class (~7h apparent inversion); it
-    // does NOT cover the theoretical worst case (UTC+14 → UTC-11 ≈ 25h), which
-    // is accepted deliberately — this is a QA unblock, not the fix.
+    // Migration 0003 adds this NOT VALID on purpose: rows written DURING the
+    // grace hold genuinely inverted instants, and a validating ADD would fail
+    // to apply against them. New writes and updates are checked; the
+    // grandfathered rows are Sean's to re-enter (never a migration's to
+    // rewrite), after which `VALIDATE CONSTRAINT` can promote it.
     check(
       "bookings_time_order_ck",
-      sql`${t.startsAt} IS NULL OR ${t.endsAt} IS NULL OR ${t.startsAt} <= ${t.endsAt}
-        OR (${t.category} IN ('flight', 'train')
-            AND ${t.endsAt} >= ${t.startsAt} - interval '12 hours')`,
+      sql`${t.startsAt} IS NULL OR ${t.endsAt} IS NULL OR ${t.startsAt} <= ${t.endsAt}`,
     ),
     check("bookings_price_nonnegative_ck", sql`${t.priceCents} >= 0`),
     // R-db-13: a non-null price requires a currency.

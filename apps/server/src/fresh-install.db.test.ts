@@ -198,23 +198,37 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
 
   // ---- the first-run walk (file order = the journey) ------------------------
 
-  it("pristine clone carries the migrations: 0001's transport-grace constraint is present", async () => {
-    // Template proof: migration 0001 rewrote bookings_time_order_ck with the
-    // 12h flight/train grace disjunct; 0000's version had none. A template
-    // migrated only through 0000 (or not at all) goes RED here. (Postgres
-    // normalizes `interval '12 hours'` to `'12:00:00'::interval`.)
+  it("pristine clone carries the migrations THROUGH 0003: bookings_time_order_ck is strict again, and NOT VALID", async () => {
+    // Template proof, B-8 DoD (was: "0001's transport-grace constraint is
+    // present"). Migration 0001 widened bookings_time_order_ck with a 12h
+    // flight/train disjunct; migration 0003 reverted it. A template stopped at
+    // 0001/0002 still carries the grace and goes RED on the first assertion
+    // (Postgres normalizes `interval '12 hours'` to `'12:00:00'::interval`, so
+    // the substring is exact).
     const [constraint] = await suiteDb.client<
-      { def: string }[]
-    >`select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'bookings_time_order_ck'`;
+      { def: string; convalidated: boolean }[]
+    >`select pg_get_constraintdef(oid) as def, convalidated
+        from pg_constraint where conname = 'bookings_time_order_ck'`;
     expect(constraint).toBeDefined();
-    expect(constraint?.def).toContain("'12:00:00'::interval");
+    expect(constraint?.def).not.toContain("'12:00:00'::interval");
+    expect(constraint?.def).not.toContain("flight");
+    expect(constraint?.def).toContain("starts_at <= ends_at");
+
+    // The SAFETY half of 0003, pinned where it is observable: the constraint is
+    // added NOT VALID so the migration applies to a database holding rows
+    // written during the grace (genuinely inverted instants) instead of
+    // aborting with 23514 — new writes are still checked (constraints.test.ts +
+    // routes.db.test.ts pin the rejections), the old rows are grandfathered for
+    // a human to re-enter. Re-tightening 0003 into a validating ADD reds this.
+    expect(constraint?.convalidated).toBe(false);
+    expect(constraint?.def).toContain("NOT VALID");
 
     // The clone also carries the drizzle journal (idempotent re-migration —
     // db/constraints.test.ts pins the behavior; here we pin the substrate).
     const [journal] = await suiteDb.client<
       { n: string }[]
     >`select count(*) as n from drizzle.__drizzle_migrations`;
-    expect(Number(journal?.n)).toBeGreaterThanOrEqual(2);
+    expect(Number(journal?.n)).toBeGreaterThanOrEqual(4);
   });
 
   it("a fresh install is EMPTY: zero users, zero places, zero ingest regions", async () => {
