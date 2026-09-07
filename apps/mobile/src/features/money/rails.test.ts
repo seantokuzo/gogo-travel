@@ -114,7 +114,33 @@ describe("R-cmoney-28 — Venmo charge GATE (device test D1, P-14)", () => {
     expect(VENMO_TXN_CHARGE_ENABLED).toBe(false);
   });
 
-  it("no built URL ever carries txn=charge while the gate is off", () => {
+  it("txn DERIVES from the gate: charge iff enabled, pay otherwise (both states)", () => {
+    // R1: the flag is a REAL gate — at P-14 flipping the const flips the
+    // built URLs. Both states pinned through the injectable flags seam.
+    const on = buildRails({ ...NO_HANDLES, venmo_username: "alex-p_1" }, USD_CTX, {
+      venmoTxnCharge: true,
+    });
+    expect(on).toEqual([
+      {
+        kind: "venmo",
+        appUrl:
+          "venmo://paycharge?txn=charge&recipients=alex-p_1&amount=25.50&note=GoGo%3A%20Tokyo%20%26%20Back",
+        webUrl:
+          "https://account.venmo.com/pay?txn=charge&recipients=alex-p_1&amount=25.50&note=GoGo%3A%20Tokyo%20%26%20Back",
+      },
+    ]);
+    const off = buildRails({ ...NO_HANDLES, venmo_username: "alex-p_1" }, USD_CTX, {
+      venmoTxnCharge: false,
+    });
+    expect(off[0]).toMatchObject({
+      appUrl: expect.stringContaining("txn=pay&"),
+      webUrl: expect.stringContaining("txn=pay&"),
+    });
+  });
+
+  it("no DEFAULT-built URL ever carries txn=charge while the shipped gate is off", () => {
+    // Control: production callers pass no flags — the default derives from
+    // the module const, so today's behavior is byte-identical to txn=pay.
     const rails = buildRails(ALL_HANDLES, USD_CTX);
     const urls = rails.flatMap((rail) =>
       rail.kind === "venmo" ? [rail.appUrl, rail.webUrl] : rail.kind === "zelle" ? [] : [rail.url],
