@@ -508,6 +508,112 @@ describe("booking link (R-cmoney-11)", () => {
     expect(body.category).toBe("food");
     expect(body.amount_cents).toBe(12000);
   });
+
+  it("a booking link that CHANGES the currency drops a latched stored rate (edit mode — the latch×prefill interaction)", async () => {
+    // EDIT a JPY expense on a USD-base trip: the stored rate latches
+    // fxRateTouched at MOUNT (no manual typing needed). Linking a
+    // EUR-priced booking flips the currency — the stale JPY→USD rate must
+    // NOT survive to price a EUR amount (a €200 stay at 0.0067 would
+    // persist as ~$1.34 of base spend and the server's consistency check
+    // ACCEPTS the internally-consistent pair).
+    const bookingsPage: Paginated<ReturnType<typeof makeBooking>> = {
+      items: [
+        makeBooking({
+          id: BOOKING_ID,
+          category: "lodging",
+          title: "Tapas Hotel",
+          price_cents: 20000,
+          currency: "EUR",
+        }),
+      ],
+      nextCursor: null,
+    };
+    await renderScreen(
+      { expenseId: TEST_EXPENSE_ID },
+      {
+        overrides: {
+          "GET /trips/:tripId/expenses/:expenseId": () =>
+            Promise.resolve(
+              makeExpense({
+                amount_cents: 1500,
+                currency: "JPY",
+                fx_rate: "0.0067",
+                base_amount_cents: 1005,
+                effective_base_cents: 1005,
+                shares: [
+                  { user_id: ME, share_cents: 750 },
+                  { user_id: B, share_cents: 750 },
+                ],
+              }),
+            ),
+          "GET /trips/:tripId/bookings": () => Promise.resolve(bookingsPage),
+          "GET /fx/rate": () =>
+            Promise.resolve(makeFxRateRead({ base: "EUR", quote: "USD", rate: "1.08" })),
+        },
+      },
+    );
+    // The stored JPY→USD rate is prefilled and latched.
+    expect(screen.getByTestId("expense-new-input-fx-rate").props.value).toBe("0.0067");
+
+    await fireEvent.press(screen.getByTestId("expense-new-button-booking-link"));
+    await fireEvent.press(await screen.findByTestId(`expense-new-sheet-booking-${BOOKING_ID}`));
+    await settle();
+
+    // The latch dropped: the rate re-fetches for the NEW pair (EUR→USD)
+    // and the base re-derives from it — never from the stale JPY rate.
+    await waitFor(() =>
+      expect(screen.getByTestId("expense-new-input-fx-rate").props.value).toBe("1.08"),
+    );
+    // 20000 EUR-cents × 1.08 = 21600 base cents (the stale-rate corruption
+    // would read "USD 1.34").
+    expect(screen.getByTestId("expense-new-input-base-amount").props.value).toBe("USD 216.00");
+  });
+
+  it("a booking link in the SAME currency preserves a latched rate (the difference-guard control arm)", async () => {
+    const bookingsPage: Paginated<ReturnType<typeof makeBooking>> = {
+      items: [
+        makeBooking({
+          id: BOOKING_ID,
+          category: "restaurant",
+          title: "Menya Reservation",
+          price_cents: 3000,
+          currency: "JPY",
+        }),
+      ],
+      nextCursor: null,
+    };
+    await renderScreen(
+      { expenseId: TEST_EXPENSE_ID },
+      {
+        overrides: {
+          "GET /trips/:tripId/expenses/:expenseId": () =>
+            Promise.resolve(
+              makeExpense({
+                amount_cents: 1500,
+                currency: "JPY",
+                fx_rate: "0.0067",
+                base_amount_cents: 1005,
+                effective_base_cents: 1005,
+                shares: [
+                  { user_id: ME, share_cents: 750 },
+                  { user_id: B, share_cents: 750 },
+                ],
+              }),
+            ),
+          "GET /trips/:tripId/bookings": () => Promise.resolve(bookingsPage),
+        },
+      },
+    );
+    await fireEvent.press(screen.getByTestId("expense-new-button-booking-link"));
+    await fireEvent.press(await screen.findByTestId(`expense-new-sheet-booking-${BOOKING_ID}`));
+    await settle();
+
+    // Same currency — the stored manual rate is still meaningful: kept.
+    expect(screen.getByTestId("expense-new-input-fx-rate").props.value).toBe("0.0067");
+    // Base re-derives from the NEW amount at the preserved rate:
+    // 3000 JPY × 0.0067 = 2010 base cents.
+    expect(screen.getByTestId("expense-new-input-base-amount").props.value).toBe("USD 20.10");
+  });
 });
 
 describe("edit mode (R-cmoney-12 + the ex-member PATCH posture)", () => {

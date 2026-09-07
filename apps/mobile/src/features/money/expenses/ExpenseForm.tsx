@@ -555,6 +555,16 @@ export function ExpenseForm({
               setCategory(prefill.category);
               if (prefill.amountText !== null && prefill.currencyText !== null) {
                 setAmountText(prefill.amountText);
+                // A currency CHANGE invalidates any manual/stored rate —
+                // the same invariant the currency Input's handler pins (a
+                // stale JPY→USD rate against a EUR amount derives a corrupt
+                // base the server's consistency check would ACCEPT). The
+                // difference-guard preserves a legit matching-currency
+                // manual rate.
+                if (prefill.currencyText !== normalizedCurrency) {
+                  setFxRateTouched(false);
+                  setFxRateText("");
+                }
                 setCurrencyText(prefill.currencyText);
               }
               setBookingOpen(false);
