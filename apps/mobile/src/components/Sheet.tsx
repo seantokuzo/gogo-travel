@@ -243,9 +243,17 @@ export function Sheet({
   // via the React-docs "adjust state during render" pattern.
   const [exiting, setExiting] = useState(false);
   const [prevVisible, setPrevVisible] = useState(visible);
+  // Per-presentation `Modal` identity (B-19 round-1 hardening) — see the
+  // `key` on the `<Modal>` at the bottom of this file for the whole argument.
+  // Bumped on the hidden→visible edge, and ONLY when the previous exit has
+  // fully finished: a reopen MID-exit deliberately reuses the instance whose
+  // controller is still presented (remounting there would tear down and
+  // re-present a visible modal).
+  const [presentationId, setPresentationId] = useState(0);
   if (visible !== prevVisible) {
     setPrevVisible(visible);
     if (!visible) setExiting(true);
+    else if (!exiting) setPresentationId((id) => id + 1);
   }
   const mounted = visible || exiting;
 
@@ -286,9 +294,18 @@ export function Sheet({
     // 0 ⇒ the Modal has never been torn down (including a sheet that mounted
     // hidden and never opened). Nothing to report.
     if (modalGoneTick === 0 || firedExitTickRef.current === modalGoneTick) return;
+    // Consume the tick UNCONDITIONALLY, report it only while closed. A
+    // teardown observed while the sheet is on screen AGAIN belongs to a
+    // superseded presentation — the `key` below retires a stale `Modal`
+    // instance at reopen, and that unmount reaches this probe. Reporting it
+    // would push a modal ROUTE while a sheet is presented, the exact ordering
+    // `onExited` exists to prevent. Leaving it UNconsumed would be worse
+    // still: the next close would replay it at `mounted → false`, which is
+    // the naive timing that wedges the stack.
     firedExitTickRef.current = modalGoneTick;
+    if (mounted) return;
     onExited?.();
-  }, [modalGoneTick, onExited]);
+  }, [mounted, modalGoneTick, onExited]);
 
   useEffect(() => {
     const { duration, spring } = theme.motion;
@@ -386,7 +403,41 @@ export function Sheet({
       : { maxHeight: Math.round(windowHeight * 0.85) };
 
   return (
-    <Modal visible={mounted} transparent animationType="none" onRequestClose={guardedDismiss}>
+    /*
+     * `key={presentationId}` — one `Modal` INSTANCE per presentation (B-19
+     * round-1 hardening). RN's `Modal` keeps `isRendered` in component state
+     * and re-arms it only on the `visible` false→true edge
+     * (`Modal.js:266-270`), while the native `onDismiss` that clears it is
+     * emitted from `dismissViewControllerAnimated:completion:`. So a close's
+     * `onDismiss` can land 2-3 frames AFTER the controller is already off
+     * screen — and if the user reopens inside that window, `isRendered`
+     * settles on `false` while the modal is presented. The NEXT close would
+     * then unmount `ModalPresenceProbe` in the same commit as
+     * `mounted → false`, i.e. before the native dismissal — the naive timing
+     * B-19 exists to avoid, and enough to re-wedge the tab. A fresh instance
+     * cannot inherit that stale flag: `Modal`'s constructor seeds
+     * `isRendered: props.visible === true` (`Modal.js:236-238`).
+     *
+     * `animationType="none"` — the Sheet animates ITSELF (spring slide +
+     * scrim fade, and the R-ds-11 reduce-motion cross-fade at
+     * `duration.fast`). `"fade"` would give the dismissal a live
+     * `transitionCoordinator` and retire this whole hazard class in one word,
+     * but it maps to `UIModalTransitionStyleCrossDissolve` with
+     * `shouldAnimate: YES` (`RCTModalHostViewComponentView.mm:61-69`): a
+     * UIKit cross-dissolve of the WHOLE container layered on top of the
+     * Sheet's own motion (every sheet would fade AND slide, on two curves),
+     * at a fixed UIKit duration that no token drives and that reduce-motion
+     * cannot switch off. That is a design-system motion change for ~20
+     * consumers — a spec/ADR call, not a bug fix. Do not "simplify" the probe
+     * away in favor of it without one.
+     */
+    <Modal
+      key={presentationId}
+      visible={mounted}
+      transparent
+      animationType="none"
+      onRequestClose={guardedDismiss}
+    >
       {/* B-19: unmounts with the Modal itself — the only signal that the
           native modal controller is off screen. Renders nothing. */}
       <ModalPresenceProbe onGone={notifyModalGone} />

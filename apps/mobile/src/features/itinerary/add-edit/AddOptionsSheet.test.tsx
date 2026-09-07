@@ -50,7 +50,13 @@ function Host({
 
 it("renders all 10 options with §2.9 kebab ids; selection fires once and re-arms per presentation", async () => {
   const onSelect = jest.fn();
-  await renderWithTheme(<Host onSelect={onSelect} />);
+  // B-19: this is the only two-presentation harness in the file, so it is
+  // also where `onExited`'s PER-PRESENTATION re-arm gets pinned. Collapse the
+  // Sheet's per-tick latch to a once-ever boolean and the second cycle goes
+  // silent — every Sheet→modal-route flow in the app becomes a dead tap from
+  // the second use onward, with the whole suite still green.
+  const onExited = jest.fn();
+  await renderWithTheme(<Host onSelect={onSelect} onExited={onExited} />);
 
   for (const slug of EXPECTED_SLUGS) {
     expect(screen.getByTestId(`itinerary-add-option-${slug}`)).toBeOnTheScreen();
@@ -66,6 +72,10 @@ it("renders all 10 options with §2.9 kebab ids; selection fires once and re-arm
 
   // Drain the exit inside act (SHEET TAX).
   await waitFor(() => expect(screen.queryByTestId("itinerary-add-sheet")).toBeNull());
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(onExited).toHaveBeenCalledTimes(1);
 
   // Re-presented: the one-action gate is re-armed.
   await fireEvent.press(screen.getByTestId("reopen"));
@@ -78,6 +88,8 @@ it("renders all 10 options with §2.9 kebab ids; selection fires once and re-arm
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+  // …and so is the exit signal: the second presentation reports its own.
+  expect(onExited).toHaveBeenCalledTimes(2);
 });
 
 /**
