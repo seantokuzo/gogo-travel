@@ -4,23 +4,27 @@
  * from serialize.ts (T-9.3 owns the settlements-domain row aliases).
  *
  * LINK CONSTRUCTION (R-money-16; P-9 ruling 2026-08-25): the wire `link` is
- * the universal `https://<LINK_DOMAIN>/t/<tripId>/request/<requestId>` form —
- * `LINK_DOMAIN` is THE one shared placeholder constant (nav spec §1, Gate 2),
- * swapped for the real domain at P-14 as a one-config change (the invite
- * `url` precedent, trips/serialize.ts). The `gogo://` mirror of the same path
- * is client-composed from the shared `APP_SCHEME` per the nav §2.3 registry —
- * the "gogo:// primary" half of the ruling lives in the client share flow
- * (T-9.7), not on this wire field ([I-4] in the module-doc numbering,
- * requests-service.ts).
+ * the universal `https://<LINK_DOMAIN>/t/<tripId>/request/<requestId>` form,
+ * built by the SHARED template `settleRequestUrl` in
+ * `@gogo/shared/config/links` (T-9.7 hoist — the W4 obligation): one home
+ * for the path, beside the invite pair, swapped for the real domain at P-14
+ * as a one-config change. The `gogo://` mirror (`settleRequestDeepLink`,
+ * same shared template) is the client share flow's "primary" half of the
+ * ruling ([I-4] in the module-doc numbering, requests-service.ts) — deriving
+ * both forms from one template is what keeps a drifted dead-end share link
+ * unrepresentable.
  */
-import { LINK_DOMAIN } from "@gogo/shared/config/links";
+import { settleRequestUrl } from "@gogo/shared/config/links";
 import type { SettleRequest } from "@gogo/shared/domains/money";
 import type { SettlementRequestRow } from "./serialize.js";
 
-/** The universal settle-request link (nav §2.3 registry row). */
-export function settleRequestUrl(tripId: string, requestId: string): string {
-  return `https://${LINK_DOMAIN}/t/${tripId}/request/${requestId}`;
-}
+/**
+ * The universal settle-request link — HOISTED to the shared template
+ * (T-9.7 W4 obligation 1): `@gogo/shared/config/links` is the ONE home for
+ * the path, consumed here for the wire `link` and by the client's gogo://
+ * share composition. Re-exported so server consumers keep one import site.
+ */
+export { settleRequestUrl };
 
 /**
  * `resolved` is DERIVED per read (R-money-18/19) — the caller computes it
