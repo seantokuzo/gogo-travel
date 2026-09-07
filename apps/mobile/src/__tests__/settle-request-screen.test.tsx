@@ -338,6 +338,45 @@ describe("unknown id / load failure (R-cmoney-26, §2.9)", () => {
     });
   });
 
+  it("a failed BACKGROUND refetch with cached data keeps rendering the data (data-first guard)", async () => {
+    // R1 performance/correctness cross-lane: error precedence over data
+    // would blank an already-rendered screen the moment any refetch fails
+    // (SettleContent's data-first order is the precedent).
+    let calls = 0;
+    seedAuthenticated();
+    const trip = makeTrip({ id: TEST_TRIP_ID });
+    mockNavApi({
+      trips: [trip],
+      members: [
+        makeMember(),
+        makeMember({ user: { id: MEMBER_B_ID, display_name: "Blair" }, role: "editor" }),
+      ],
+      overrides: settleApiOverrides({
+        requestDetail: () => {
+          calls += 1;
+          return calls === 1
+            ? Promise.resolve(makeSettleRequestDetail())
+            : Promise.reject(new ApiRequestError(500, "INTERNAL", "boom"));
+        },
+      }),
+    });
+    const queryClient = makeTestQueryClient();
+    await renderWithProviders(<RequestContent trip={trip} requestId={TEST_REQUEST_ID} />, {
+      queryClient,
+    });
+    await settle();
+    expect(screen.getByText("Blair requests USD 25.50")).toBeTruthy();
+
+    // Background refetch fails → the query is error-state WITH cached data.
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+    await settle();
+    expect(screen.getByText("Blair requests USD 25.50")).toBeTruthy();
+    expect(screen.queryByTestId("settle-request-error")).toBeNull();
+    expect(screen.queryByTestId("settle-request-loading")).toBeNull();
+  });
+
   it("non-404 failure → error banner with retry (recovers to the real document)", async () => {
     let calls = 0;
     await renderRequest({

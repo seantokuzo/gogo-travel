@@ -155,50 +155,54 @@ export function RequestContent({ trip, requestId }: RequestContentProps) {
     router.replace({ pathname: "/[tripId]/money", params: { tripId: trip.id } });
   };
 
-  if (detail.isError) {
-    const notFound = detail.error instanceof ApiRequestError && detail.error.status === 404;
-    return (
-      <View style={s.screen} testID="settle-request-screen">
-        <PageHeader title="Settle request" leading="back" testID="settle-request-header" />
-        <View style={s.state}>
-          {notFound ? (
-            // Unknown id / non-member — indistinguishable by design
-            // (R-money-25); the registry's "missing request" row.
-            <EmptyState
-              icon="help-circle-outline"
-              title="This request isn't available"
-              body="It may have been removed, or the link is wrong."
-              action={{
-                label: "Back to money",
-                onPress: backToMoney,
-                testID: "settle-request-button-back",
-              }}
-              testID="settle-request-empty"
-            />
-          ) : (
-            <ErrorBanner
-              message="Couldn't load the request."
-              onRetry={() => void detail.refetch()}
-              testID="settle-request-error"
-            />
-          )}
-        </View>
-        {!notFound ? (
-          <View style={s.body}>
-            <Button
-              title="Back to money"
-              variant="ghost"
-              fullWidth
-              onPress={backToMoney}
-              testID="settle-request-button-back"
-            />
-          </View>
-        ) : null}
-      </View>
-    );
-  }
-
+  // DATA-FIRST precedence (R1 — SettleContent's order is the precedent):
+  // the error/404 states render only when there is NO cached document. With
+  // data present, a failed background refetch keeps the rendered screen —
+  // never blanks it into a banner.
   if (detail.data === undefined) {
+    if (detail.isError) {
+      const notFound = detail.error instanceof ApiRequestError && detail.error.status === 404;
+      return (
+        <View style={s.screen} testID="settle-request-screen">
+          <PageHeader title="Settle request" leading="back" testID="settle-request-header" />
+          <View style={s.state}>
+            {notFound ? (
+              // Unknown id / non-member — indistinguishable by design
+              // (R-money-25); the registry's "missing request" row.
+              <EmptyState
+                icon="help-circle-outline"
+                title="This request isn't available"
+                body="It may have been removed, or the link is wrong."
+                action={{
+                  label: "Back to money",
+                  onPress: backToMoney,
+                  testID: "settle-request-button-back",
+                }}
+                testID="settle-request-empty"
+              />
+            ) : (
+              <ErrorBanner
+                message="Couldn't load the request."
+                onRetry={() => void detail.refetch()}
+                testID="settle-request-error"
+              />
+            )}
+          </View>
+          {!notFound ? (
+            <View style={s.body}>
+              <Button
+                title="Back to money"
+                variant="ghost"
+                fullWidth
+                onPress={backToMoney}
+                testID="settle-request-button-back"
+              />
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+
     return (
       <View style={s.screen} testID="settle-request-screen">
         <PageHeader title="Settle request" leading="back" testID="settle-request-header" />
