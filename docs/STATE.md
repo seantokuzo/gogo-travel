@@ -189,6 +189,20 @@ FEEL stays a short human pass; flake posture = Maestro auto-wait (community
 reputation best-in-class; `maestro-runner` is a drop-in speed swap to watch,
 not adopt).
 
+#### P-9 BUILD-OUT COMPLETE 2026-09-07 — W4 closed; session winding down
+
+T-9.6 (PR #57) + T-9.7 (PR #56) merged through full payments panels (4 blocking each —
+real bugs: #56's cross-account/cross-trip settle-return guards, #57's FX-latch
+corruption — all kill-verified; the W2 merged-tree-gate obligation executed and
+verifier-reproduced, 170 suites / 1741 act-0 on the union). The money phase's 7 tasks
+are ALL on main across 8 PRs. **Queue head for the next build session: B-9 CLIENT half
+(typeahead/pickers/tz population + the flight-lookup gate) → then the B-8 grace +
+migration 0001 revert (B-8's DoD). The E2E lane (S-4) has its own handoff above.**
+Sean-gated: the P-9 spec-pass batch row (43+ interpretations incl. G1/G2) · the
+feature-spec batch (overnight flights, tz switcher, calendar views, ideas rework) ·
+Q1–Q4 · B-16b copy · diagnostics entry · B-7. Ledger flips (F-063..F-074 + the QA-wave
+features) ride the next device-QA run — the diagnostics panel + runsheet artifact stand ready.
+
 #### Sean device-QA checklist (ledger-exact wording — no paraphrase)
 
 - **F-043 criteria 1–2 (still untested; do NOT flip on less):**
