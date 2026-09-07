@@ -109,7 +109,12 @@ module.exports = defineConfig([
     // generators into the app bundle. Test files (their own test-infra home
     // included) still need it.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/**/*.test.*", "src/__tests__/**", "src/testing/**"],
+    ignores: [
+      "src/**/*.test.*",
+      "src/__tests__/**",
+      "src/testing/**",
+      "src/test-utils/**",
+    ],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -118,7 +123,7 @@ module.exports = defineConfig([
             {
               group: ["@gogo/shared/testing*"],
               message:
-                "@gogo/shared/testing is the hostile fixture pack (wrong-by-construction bug simulators) — test-only. Import it from a *.test.* file or src/testing/**, never shipped app code.",
+                "@gogo/shared/testing is the hostile fixture pack (wrong-by-construction bug simulators) — test-only. Import it from a *.test.* file, src/test-utils/**, or src/testing/**, never shipped app code.",
             },
           ],
         },
