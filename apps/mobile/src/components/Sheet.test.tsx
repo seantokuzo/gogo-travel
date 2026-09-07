@@ -120,8 +120,7 @@ describe("Sheet", () => {
         </Sheet>,
       );
       expect(
-        screen.getByTestId("sheet-container", { includeHiddenElements: true }).props
-          .pointerEvents,
+        screen.getByTestId("sheet-container", { includeHiddenElements: true }).props.pointerEvents,
       ).toBe("auto");
     });
 
@@ -283,6 +282,147 @@ describe("Sheet", () => {
         setValueSpy.mockRestore();
         __sheetExitCompletionForTests.current = null;
       }
+    });
+  });
+
+  /**
+   * B-19 — `onExited` is the seam every "close the sheet, then open a modal
+   * ROUTE" caller pushes from. Its whole value is WHEN it lands: a push that
+   * shares a commit with the dismiss (or that fires from the exit
+   * animation's completion, before the Modal has actually gone) presents an
+   * expo-router modal while the sheet's `RCTModalHostViewController` is
+   * still up, which latches `RNSScreenStackView._updatingModals` and wedges
+   * that tab's stack for the life of the process.
+   *
+   * So the load-bearing assertion is not "it was called" — it is that the
+   * Modal was ALREADY GONE at call time, captured inside the callback. That
+   * discriminates the naive fix (invoke it from `onExitComplete` next to
+   * `setExiting(false)`, where the unmount commit has not happened yet):
+   * moving the call there turns this RED.
+   */
+  describe("onExited — fires only once the RN Modal is off screen (B-19)", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it("stays silent through the exit window, then fires ONCE with the Modal already gone", async () => {
+      jest.useFakeTimers();
+      let sheetStillMountedAtCall: boolean | null = null;
+      const onExited = jest.fn(() => {
+        sheetStillMountedAtCall =
+          screen.queryByTestId("sheet", { includeHiddenElements: true }) !== null;
+      });
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} onExited={() => onExited()} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      expect(onExited).not.toHaveBeenCalled();
+
+      await view.rerender(
+        themed(
+          <Sheet
+            visible={false}
+            onDismiss={() => undefined}
+            onExited={() => onExited()}
+            testID="sheet"
+          >
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      // The exit window: still mounted, still PRESENTED natively — the exact
+      // interval in which a modal-route push wedges the stack.
+      expect(screen.getByTestId("sheet", { includeHiddenElements: true })).toBeTruthy();
+      expect(onExited).not.toHaveBeenCalled();
+
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(screen.queryByTestId("sheet", { includeHiddenElements: true })).toBeNull();
+      expect(onExited).toHaveBeenCalledTimes(1);
+      expect(sheetStillMountedAtCall).toBe(false);
+
+      // A later render with a FRESH callback identity (every consumer render
+      // makes one — the closure carries the pending intent) must not replay
+      // an exit that was already reported.
+      await view.rerender(
+        themed(
+          <Sheet
+            visible={false}
+            onDismiss={() => undefined}
+            onExited={() => onExited()}
+            testID="sheet"
+          >
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).toHaveBeenCalledTimes(1);
+    });
+
+    it("fires NOTHING when the consumer unmounts mid-exit", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={() => undefined} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      // Torn down before the exit completes — the Modal goes with it, and a
+      // callback landing after teardown would route a dead screen.
+      await view.unmount();
+      await jest.advanceTimersByTimeAsync(400);
+      expect(onExited).not.toHaveBeenCalled();
+    });
+
+    it("a sheet that never opened reports no exit", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      await renderWithTheme(
+        <Sheet visible={false} onDismiss={() => undefined} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).not.toHaveBeenCalled();
+    });
+
+    it("is a LIFECYCLE signal: a scrim/close dismissal fires it too", async () => {
+      jest.useFakeTimers();
+      const onExited = jest.fn();
+      const onDismiss = jest.fn();
+      const view = await renderWithTheme(
+        <Sheet visible onDismiss={onDismiss} onExited={onExited} testID="sheet">
+          <AppText>x</AppText>
+        </Sheet>,
+      );
+      await fireEvent.press(screen.getByTestId("sheet-close"));
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+      // The consumer owns `visible`; mirror what it does with that dismissal.
+      await view.rerender(
+        themed(
+          <Sheet visible={false} onDismiss={onDismiss} onExited={onExited} testID="sheet">
+            <AppText>x</AppText>
+          </Sheet>,
+        ),
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
+      expect(onExited).toHaveBeenCalledTimes(1);
     });
   });
 

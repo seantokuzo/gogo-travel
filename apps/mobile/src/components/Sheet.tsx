@@ -18,7 +18,7 @@
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -51,6 +51,30 @@ export interface SheetProps {
    * Callers own the bound: a gate with no ceiling reads as a frozen app.
    */
   dismissDisabled?: boolean;
+  /**
+   * Fired once per presentation, AFTER the sheet's RN `Modal` has actually
+   * left the screen (B-19) — not merely when the exit animation's timer
+   * lands.
+   *
+   * WHY IT EXISTS: a `presentation: "modal"` route pushed while this
+   * component's `Modal` is still presented wedges the tab's native stack
+   * permanently. `RNSScreenStackView.setModalViewControllers` sees a FOREIGN
+   * presented controller (`RCTModalHostViewController`); because this sheet
+   * uses `animationType="none"` the RN dismissal already in flight is
+   * `animated: NO`, so `firstModalToBeDismissed.transitionCoordinator` is
+   * `nil` and the `isBeingDismissed` branch's
+   * `animateAlongsideTransition:completion:^{ finish(); }` never runs —
+   * `_updatingModals` latches `YES` and every later modal update on that
+   * stack returns early forever (per-`RNSScreenStackView`, hence tab-local).
+   *
+   * So: any caller that closes a sheet in order to open a modal ROUTE must
+   * push from here, never from the same handler that flips `visible`.
+   *
+   * It is a LIFECYCLE signal, not an action callback — it fires for every
+   * exit, scrim/close/swipe/back included. Callers key off their own
+   * pending-intent state to decide whether the exit means anything.
+   */
+  onExited?: () => void;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -130,6 +154,30 @@ function createSheetPanResponder(opts: {
   });
 }
 
+/**
+ * "The RN Modal is really gone" probe (B-19) — rendered as a CHILD of the
+ * `Modal`, so its unmount IS the Modal's teardown, with each platform's own
+ * timing and no timer guesswork:
+ *
+ *  - iOS: `Modal.js` keeps rendering while `visible` is false
+ *    (`_shouldShowModal()` is `visible || isRendered`) and flips `isRendered`
+ *    only inside its `onDismiss` handler, which the native side emits from
+ *    the `dismissViewControllerAnimated:completion:` COMPLETION block
+ *    (`RCTModalHostViewComponentView.ensurePresentedOnlyIfNeeded`). So this
+ *    unmounts exactly when the `RCTModalHostViewController` has left the
+ *    screen — the precise moment after which pushing a modal route is safe.
+ *  - Android / jest (the preset's `Modal` mock): `render()` returns `null`
+ *    the moment `visible` is false, so this unmounts on that commit. Neither
+ *    has the iOS foreign-modal hazard, and the commit IS the teardown.
+ *
+ * `onGone` must be referentially STABLE — the cleanup is the signal, so an
+ * identity change would fire it spuriously.
+ */
+function ModalPresenceProbe({ onGone }: { onGone: () => void }) {
+  useEffect(() => () => onGone(), [onGone]);
+  return null;
+}
+
 const useStyles = createStyles((t) =>
   StyleSheet.create({
     scrim: { flex: 1, backgroundColor: t.color.bg.scrim, justifyContent: "flex-end" },
@@ -175,6 +223,7 @@ export function Sheet({
   snapPoints,
   children,
   dismissDisabled = false,
+  onExited,
   testID,
 }: SheetProps) {
   const { theme } = useTheme();
@@ -218,6 +267,28 @@ export function Sheet({
       unmountedRef.current = true;
     };
   }, []);
+
+  // B-19 exit-completion notification. The tick increments on each Modal
+  // teardown (see `ModalPresenceProbe`); the effect below turns that into ONE
+  // `onExited` call, in a commit strictly LATER than the teardown's.
+  //
+  // A stable notifier (the `useState` setter is stable, so the callback is
+  // too) is what keeps the probe's cleanup an unmount-only signal.
+  const [modalGoneTick, setModalGoneTick] = useState(0);
+  const notifyModalGone = useCallback(() => {
+    setModalGoneTick((tick) => tick + 1);
+  }, []);
+  // Latch per tick: `onExited`'s identity changes on nearly every consumer
+  // render (its closure carries the pending intent), and a dep change must
+  // re-run the effect without re-firing an exit that was already reported.
+  const firedExitTickRef = useRef(0);
+  useEffect(() => {
+    // 0 ⇒ the Modal has never been torn down (including a sheet that mounted
+    // hidden and never opened). Nothing to report.
+    if (modalGoneTick === 0 || firedExitTickRef.current === modalGoneTick) return;
+    firedExitTickRef.current = modalGoneTick;
+    onExited?.();
+  }, [modalGoneTick, onExited]);
 
   useEffect(() => {
     const { duration, spring } = theme.motion;
@@ -316,6 +387,9 @@ export function Sheet({
 
   return (
     <Modal visible={mounted} transparent animationType="none" onRequestClose={guardedDismiss}>
+      {/* B-19: unmounts with the Modal itself — the only signal that the
+          native modal controller is off screen. Renders nothing. */}
+      <ModalPresenceProbe onGone={notifyModalGone} />
       {/* Exit-window guard (QUEUE P1): the sheet stays MOUNTED through its
           ~duration.base exit animation but must not stay HIT-TESTABLE — a
           tap on the scrim/close/content during the exit re-fired handlers
