@@ -105,7 +105,7 @@ describe("reads (Q2/S2)", () => {
 
     expect(request).toHaveBeenCalledWith(
       expect.objectContaining({ method: "GET", path: "/trips/:tripId/settlements" }),
-      { params: { tripId: TEST_TRIP_ID } },
+      { params: { tripId: TEST_TRIP_ID }, query: {} },
       { signal: expect.any(AbortSignal) },
     );
   });

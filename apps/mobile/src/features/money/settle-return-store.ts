@@ -45,9 +45,19 @@ export interface SettleReturnRecord {
   timestamp: number;
 }
 
-/** Called at rail-tap time, before the URL opens externally. */
-export function recordSettleDeeplinkOut(record: SettleReturnRecord): void {
-  storage.set(SETTLE_RETURN_KEY, JSON.stringify(record));
+/**
+ * Called at rail-tap time, before the URL opens externally. The tap
+ * instant stamps HERE (callers may omit it) — an impure `Date.now()` in a
+ * component body trips the compiler's purity lint; the store is the
+ * natural clock owner anyway.
+ */
+export function recordSettleDeeplinkOut(
+  record: Omit<SettleReturnRecord, "timestamp"> & { timestamp?: number },
+): void {
+  storage.set(
+    SETTLE_RETURN_KEY,
+    JSON.stringify({ ...record, timestamp: record.timestamp ?? Date.now() }),
+  );
 }
 
 /** Clears the slot (open-failure rollback, sign-out hygiene, tests). */

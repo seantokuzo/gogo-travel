@@ -67,12 +67,24 @@ export function useSettleRequestDetail(
   });
 }
 
-/** `GET /trips/:tripId/settlements` — S2 first page (who-settled-when lookup). */
-export function useTripSettlements(tripId: string): UseQueryResult<Paginated<Settlement>, Error> {
+/**
+ * `GET /trips/:tripId/settlements` — S2 first page (who-settled-when
+ * lookup). `enabled` lets the request screen fetch only when a linked
+ * settlement actually exists to name.
+ */
+export function useTripSettlements(
+  tripId: string,
+  opts?: { enabled?: boolean },
+): UseQueryResult<Paginated<Settlement>, Error> {
   return useQuery({
     queryKey: queryKeys.tripSettlements(tripId),
+    enabled: opts?.enabled ?? true,
     queryFn: ({ signal }) =>
-      apiClient.request(moneyEndpoints.listSettlements, { params: { tripId } }, { signal }),
+      apiClient.request(
+        moneyEndpoints.listSettlements,
+        { params: { tripId }, query: {} },
+        { signal },
+      ),
   });
 }
 
