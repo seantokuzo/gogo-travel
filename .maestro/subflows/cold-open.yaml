@@ -1,0 +1,33 @@
+# Cold-start opener — the shared primitive behind every deeplink cell.
+#
+# `stopApp` first: without it `openLink` hands the URL to a RUNNING app as a
+# warm `url` event, which is a DIFFERENT code path (+native-intent `initial:
+# false`) and would silently turn every cold-start assertion into a warm one.
+# B-14 lived only on the cold path, so this kill is load-bearing.
+#
+# The `Open` conditional clears the iOS SpringBoard scheme-confirmation
+# ("Open in "gogo-travel"?"). Approval persists per simulator, so it is
+# conditional — an unconditional tap would fail on every run after the first.
+#
+# The trailing `extendedWaitUntil` is a BARRIER, not an assertion: it holds
+# until `sign-in-splash` (the AuthGate's hydration hold, R-nav-3) is gone, so
+# a caller's `assertNotVisible` cannot pass merely because the app is still on
+# the splash. It passes instantly when the splash never rendered.
+#
+# env: LINK — the URL to deliver.
+appId: app.gogotravel
+---
+- stopApp
+- openLink:
+    link: ${LINK}
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    notVisible:
+      id: "sign-in-splash"
+    timeout: 20000

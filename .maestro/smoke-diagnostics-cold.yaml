@@ -1,0 +1,42 @@
+# Flow 1 — cold-start deeplink smoke; the B-14 regression pin.
+#
+# B-14 (PR #46, merged 02f46b2): a signed-out cold boot of `gogo://diagnostics`
+# was STOMPED back to sign-in. The gate's first post-hydration route read
+# predated the navigator's committed cold-boot landing, so it decided off the
+# boot default "/" and redirected away from an (auth)-group route it was
+# supposed to render. The fix is the one-shot `routeReadSettled` latch in
+# AuthGate.tsx. Nothing in jest reproduced it — the renderRouter `serverUrl`
+# prefetch is a structural blind spot — which is the whole reason this lane
+# exists (ADR-007).
+#
+# WHY TWO ARMS. On a Release build the diagnostics panel renders `null` by
+# design (T-S3.5 `__DEV__` gate), so arm 2's screen is BLANK: there is nothing
+# positive to assert, and a lone `assertNotVisible: sign-in-screen` would also
+# pass if the app crashed, hung on the splash, or never launched. Arm 1 is the
+# control that removes those explanations — it proves, in this same run on this
+# same build, that a cold deeplink DOES reach the gate and that
+# `sign-in-screen` IS observable. Only then is arm 2's negative discriminating.
+#
+# Falsification: revert the AuthGate latch and arm 2 goes red while arm 1 stays
+# green. An arm-2-only flow cannot make that distinction.
+appId: app.gogotravel
+name: smoke-diagnostics-cold
+tags:
+  - smoke
+  - release
+---
+# ── ARM 1 (CONTROL) — a gated route cold-starts to sign-in ────────────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── ARM 2 (THE PIN) — an (auth)-group route is NOT stomped to sign-in ─────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://diagnostics"
+- assertNotVisible:
+    id: "sign-in-screen"

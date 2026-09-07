@@ -1,0 +1,106 @@
+# Flow 2 — the deeplink matrix (codifies the B-14 AXe QA matrix, 2026-09-04).
+#
+# Registry under test: `apps/mobile/src/navigation/deep-links.ts` (§2.3),
+# invoked by `app/+native-intent.tsx` for BOTH the cold-start initial URL
+# (`initial: true`) and warm `url` events (`initial: false`). Gate under test:
+# `AuthGate.tsx` — signed out, every non-(auth) destination stashes and
+# redirects to sign-in (R-nav-1); (auth)-group routes render.
+#
+# SIGNED OUT is the whole point of this flow, not a limitation of it: it is the
+# state B-14 broke in, and it is reachable without the session door.
+#
+# Discriminating cells are C6 / W1 (the (auth) route must NOT be stomped). The
+# other cells are controls that make those negatives mean something: they prove
+# on this same build, in this same run, that a cold/warm deeplink really does
+# traverse registry → gate → sign-in. Without them a green C6 is consistent
+# with "the app never launched".
+#
+# NOT COVERED HERE (documented, not silently skipped):
+#   • the `https://links.gogotravel.example/…` universal-link transport — the
+#     domain is a placeholder until the P-14 buy and serves no AASA, so iOS
+#     will not hand the URL to the app on a simulator. Same registry function,
+#     different transport; unit-covered in deep-links.test.ts.
+#   • the R-nav-17 link notice (C4/C5 raise it) — it renders on the trip-list
+#     screen, which is behind auth. Wave 2, via the session door.
+appId: app.gogotravel
+name: deeplink-matrix
+tags:
+  - release
+---
+# ── C1 · /t/[tripId] → /[tripId] · gated ──────────────────────────────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── C2 · /invite/[token] → /join/[token] · gated ──────────────────────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://invite/e2e-token-not-a-real-invite"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── C3 · /t/[tripId]/request/[requestId] → money/request · gated ──────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001/request/00000000-0000-4000-8000-000000000002"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── C4 · malformed shape UNDER a claimed namespace → FALLBACK → /(trips) ──────
+# `t` is the registry's on every transport, so a wrong arity there is a dead
+# link, never a router candidate: fallback → /(trips) → gate → sign-in.
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001/nope/leg"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── C5 · unknown path on the custom scheme → PASSTHROUGH → +not-found ─────────
+# Custom-scheme non-family paths pass through to the router (internal routes
+# must keep working); a true unknown lands on +not-found, which redirects to
+# /(trips) — and the gate takes it from there. Must not crash, must not hang.
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://definitely-not-a-route/xyz"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── C6 · (auth)-group route cold-starts and STAYS (the B-14 shape) ────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://diagnostics"
+- assertNotVisible:
+    id: "sign-in-screen"
+
+# ── W1 · WARM parity for C6 — from sign-in, without relaunching ───────────────
+# Get to sign-in warm (C6 left us on diagnostics), then deliver the same link
+# as a `url` event. Cold/warm parity is claimed to be structural; this is where
+# that claim can actually fail.
+- runFlow:
+    file: subflows/warm-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001"
+- assertVisible:
+    id: "sign-in-screen"
+- runFlow:
+    file: subflows/warm-open.yaml
+    env:
+      LINK: "gogo://diagnostics"
+- assertNotVisible:
+    id: "sign-in-screen"
+
+# ── W2 · WARM parity for C1 — a gated link still gates on the warm path ───────
+- runFlow:
+    file: subflows/warm-open.yaml
+    env:
+      LINK: "gogo://invite/e2e-token-not-a-real-invite"
+- assertVisible:
+    id: "sign-in-screen"

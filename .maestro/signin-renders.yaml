@@ -1,0 +1,43 @@
+# Flow 3 — sign-in renders on a real Release build.
+#
+# This is not a "does React work" test. T-5.7 shipped a screen-down crash past
+# all-green CI: `useGoogleSignIn()` calls expo-auth-session's
+# `useIdTokenAuthRequest`, which THROWS during render when no Google client id
+# is provisioned — and the screen test mocked `@/auth` wholesale, so nothing
+# saw it. The fix renders the hook-bearing button conditionally behind
+# `isGoogleConfigured()` and holds its place with a disabled placeholder.
+#
+# This build has no `EXPO_PUBLIC_GOOGLE_*` — i.e. it is EXACTLY the
+# unconfigured state that crashed. Asserting Apple and Google are both on
+# screen is asserting the render gate held, on the real native runtime, with
+# the real hook, in the state that broke.
+#
+# `clearState: true` guarantees signed-out: no stale session container, no
+# leftover stash from a previous flow.
+appId: app.gogotravel
+name: signin-renders
+tags:
+  - smoke
+  - release
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: "sign-in-screen"
+    timeout: 20000
+- assertVisible:
+    id: "sign-in-header"
+# Apple: the native ASAuthorization button (required on iOS, App-Review
+# favored). Present means the native module resolved and mounted.
+- assertVisible:
+    id: "sign-in-button-apple"
+# Google: the placeholder, standing in for the hook-bearing button. Its mere
+# presence is the T-5.7 pin — an unconfigured build that renders it has not
+# taken the screen down.
+- assertVisible:
+    id: "sign-in-button-google"
+# A freshly launched screen has no error banner. If this is visible, something
+# ran and failed before a single tap.
+- assertNotVisible:
+    id: "sign-in-error"
