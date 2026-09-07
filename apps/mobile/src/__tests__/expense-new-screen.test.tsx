@@ -463,6 +463,37 @@ describe("multi-currency entry (R-cmoney-10)", () => {
     await fireEvent.changeText(screen.getByTestId("expense-new-input-fx-rate"), "1.05");
     expect(screen.getByTestId("expense-new-button-save")).not.toBeDisabled();
   });
+
+  it("a sub-cent derived base shows visible error copy on the base field (never a silent dead Save)", async () => {
+    // 1 KRW on a USD-base trip at a real-scale rate: 1 × 0.00072 × 100 =
+    // 0.072 base cents — half-up rounds to 0, outside PositiveCents, so
+    // the derivation nulls and Save stays disabled. The WHY must be on
+    // screen: rate valid, amount valid, base field owns the explanation.
+    await renderScreen(
+      {},
+      {
+        overrides: {
+          "GET /fx/rate": () =>
+            Promise.resolve(makeFxRateRead({ base: "KRW", quote: "USD", rate: "0.00072" })),
+        },
+      },
+    );
+    await fireEvent.changeText(screen.getByTestId("expense-new-input-description"), "Gum");
+    await fireEvent.changeText(screen.getByTestId("expense-new-input-amount"), "1");
+    await fireEvent.changeText(screen.getByTestId("expense-new-picker-currency"), "KRW");
+    await settle();
+    await waitFor(() =>
+      expect(screen.getByTestId("expense-new-input-fx-rate").props.value).toBe("0.00072"),
+    );
+
+    // Both inputs individually valid — no error on either of them…
+    expect(screen.queryByTestId("expense-new-input-amount-error")).toBeNull();
+    expect(screen.queryByTestId("expense-new-input-fx-rate-error")).toBeNull();
+    // …the base field carries the sub-cent explanation, and Save is gated.
+    expect(screen.getByTestId("expense-new-input-base-amount-error")).toBeTruthy();
+    expect(screen.getByText("Too small to convert — under one cent in USD.")).toBeTruthy();
+    expect(screen.getByTestId("expense-new-button-save")).toBeDisabled();
+  });
 });
 
 describe("booking link (R-cmoney-11)", () => {

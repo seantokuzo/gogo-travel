@@ -394,6 +394,12 @@ export function ExpenseForm({
             onChangeText={() => undefined}
             editable={false}
             helper="Converted at the rate above — balances use this."
+            // Rate valid + amount valid but the derived base rounds to zero
+            // (outside PositiveCents): Save is gated with NO field at fault,
+            // so the base field must say WHY instead of a silent dead Save.
+            {...(fxRateValid && amountCents !== null && baseCents === null
+              ? { error: `Too small to convert — under one cent in ${trip.base_currency}.` }
+              : {})}
             testID="expense-new-input-base-amount"
           />
         </View>
