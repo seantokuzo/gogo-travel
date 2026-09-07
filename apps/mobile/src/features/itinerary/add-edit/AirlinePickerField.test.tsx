@@ -6,6 +6,7 @@
  */
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import { useState } from "react";
+import { Pressable } from "react-native";
 
 import { apiClient } from "@/auth";
 import { renderWithProviders } from "@/test-utils/render";
@@ -135,6 +136,69 @@ it("mirrors the wire cap and surfaces a field error", async () => {
   await renderField({ value: "NH", error: "Something" });
   expect(screen.getByTestId(TEST_ID).props.maxLength).toBe(200);
   expect(screen.getByTestId(`${TEST_ID}-error`)).toBeOnTheScreen();
+});
+
+/**
+ * The host writing a value into an ALREADY-MOUNTED empty field — BookingForm's
+ * "Use All Nippon Airways" suggestion. It must mount empty: a value present at
+ * mount is caught by the prefill guard (`picked`'s lazy init), so a harness
+ * that starts filled tests the wrong door and passes with `settledValue` gone.
+ */
+function ExternalCommitHarness() {
+  const [value, setValue] = useState("");
+  const [settled, setSettled] = useState<string | undefined>(undefined);
+  return (
+    <>
+      <Pressable
+        testID="host-suggestion"
+        accessibilityRole="button"
+        accessibilityLabel="Use All Nippon Airways"
+        onPress={() => {
+          setSettled("All Nippon Airways");
+          setValue("All Nippon Airways");
+        }}
+      />
+      <AirlinePickerField
+        label="Airline"
+        value={value}
+        onChangeText={setValue}
+        settledValue={settled}
+        maxLength={200}
+        testID={TEST_ID}
+      />
+    </>
+  );
+}
+
+it("a value the HOST commits into a mounted field is settled too — no search (B-9 R1)", async () => {
+  // `picked` is lazily initialized from the FIRST value and only this
+  // component's own interactions move it, so a value written from outside
+  // landed unsettled and went straight back out as a live query: a request
+  // against the shared reference limiter, and a dropdown, for text the user
+  // never typed. `settledValue` is the host saying "committed, not typed".
+  const request = mockSearch();
+  await renderWithProviders(<ExternalCommitHarness />);
+  expect(request).not.toHaveBeenCalled();
+
+  await fireEvent.press(screen.getByTestId("host-suggestion"));
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(screen.getByTestId(TEST_ID).props.value).toBe("All Nippon Airways");
+  expect(request).not.toHaveBeenCalled();
+  expect(screen.queryByTestId(`${TEST_ID}-result-NH`)).toBeNull();
+});
+
+it("…and typing over a host-committed value resumes the search — settled is the VALUE", async () => {
+  // Falsification for the arm above: a `settledValue` that permanently muted
+  // the field would pass it and break the picker. The moment the visible
+  // value diverges from the committed one, it is a query again.
+  const request = mockSearch();
+  await renderWithProviders(<ExternalCommitHarness />);
+  await fireEvent.press(screen.getByTestId("host-suggestion"));
+  await fireEvent.changeText(screen.getByTestId(TEST_ID), "All Nippon");
+  expect(await screen.findByTestId(`${TEST_ID}-result-NH`)).toBeOnTheScreen();
+  expect(request).toHaveBeenCalled();
 });
 
 it("a failed search never blocks typing", async () => {

@@ -7,25 +7,34 @@
  * offerable in the picker too, or a user who types an endpoint free-text
  * can't reach the zone their airport would have given them.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { DATE_LINE_EASTBOUND, DATE_LINE_EASTBOUND_EXTREME, MULTI_ZONE_TRIP } from "@gogo/shared/testing";
 
 import { DEFAULT_AIRPORTS } from "@/test-utils/reference-fixtures";
 
+import { TIME_ZONE_CATALOG_DATA } from "./time-zone-catalog.data";
 import {
   normalizeZoneQuery,
   searchTimeZones,
   timeZoneCatalog,
   timeZoneSlug,
 } from "./time-zone-catalog";
-import { isKnownTimeZone } from "./zoned-time";
 
 describe("timeZoneCatalog", () => {
-  it("is non-trivial, ICU-resolvable throughout, and includes UTC", () => {
+  it("offers the generated source IN FULL, plus UTC — nothing is filtered away", () => {
+    // B-9 R1 (tests lane): the old form of this arm looped the catalog
+    // asserting `isKnownTimeZone(entry.id)`, which is the very predicate
+    // `timeZoneCatalog()` FILTERS on — a filter checked against its own
+    // output, unfalsifiable on any engine. The regression it exists to
+    // catch (a platform whose ICU rejects most ids, collapsing the picker
+    // to a stub) sailed straight through it. Assert against the generated
+    // data instead, so ANY filtering reds. The engine-rejection half now
+    // lives where it can actually happen: `zoned-time.hermes.test.ts`.
     const catalog = timeZoneCatalog();
-    // tzdb's zone.tab carries ~400 canonical zones; a catalog that collapsed
-    // to a handful (a generator or filter regression) fails here.
+    expect(catalog.length).toBe(TIME_ZONE_CATALOG_DATA.length + 1);
     expect(catalog.length).toBeGreaterThan(300);
-    for (const entry of catalog) expect(isKnownTimeZone(entry.id)).toBe(true);
     expect(catalog.some((entry) => entry.id === "UTC")).toBe(true);
   });
 
@@ -47,6 +56,35 @@ describe("timeZoneCatalog", () => {
       ...MULTI_ZONE_TRIP.zones,
     ]);
     for (const tz of needed) expect(ids.has(tz)).toBe(true);
+  });
+
+  it("COVERAGE: every zone in the REAL seeded airport table is offerable (all 373, not 7 fixtures)", () => {
+    // B-9 R1 (tests lane): `time-zone-catalog.data.ts`'s generated header
+    // states "Every seeded airport zone is a member (pinned in
+    // time-zone-catalog.test.ts)" — but the arm above only checks the 7
+    // hand-written fixtures. This reads the actual ODbL snapshot the server
+    // seeds from, so the header's claim is the thing under test.
+    //
+    // The regression: refresh the snapshot with an airport in a zone newer
+    // than the catalog's generating tzdb (`America/Ciudad_Juarez`,
+    // `Asia/Qostanay`) and the PICK still works — the zone rides on the row
+    // — while the zone picker can never offer it, so the free-text fallback
+    // rung is unreachable and the field label degrades to a raw id, with
+    // every other suite green.
+    //
+    // Read straight off disk rather than imported: `@gogo/server` is not a
+    // dependency of this workspace and must not become one for a test. If
+    // the snapshot moves, this fails loudly rather than skipping — an
+    // invariant that can silently opt out is not an invariant.
+    const seedPath = join(__dirname, "../../../../../../apps/server/reference-data/airports.json");
+    const rows = JSON.parse(readFileSync(seedPath, "utf8")) as { tz: string }[];
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows.length).toBeGreaterThan(1000);
+
+    const catalogIds = new Set(TIME_ZONE_CATALOG_DATA.map(([id]) => id));
+    const seedZones = [...new Set(rows.map((row) => row.tz))].sort();
+    expect(seedZones.length).toBeGreaterThan(300);
+    expect(seedZones.filter((tz) => !catalogIds.has(tz))).toEqual([]);
   });
 });
 

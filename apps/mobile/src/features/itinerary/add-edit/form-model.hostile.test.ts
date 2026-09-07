@@ -52,6 +52,7 @@ import {
   parseMoneyToCents,
   stateFromDetails,
   TZ_MISSING_ERROR,
+  TZ_UNKNOWN_ERROR,
   type DetailsFormState,
 } from "./form-model";
 
@@ -229,6 +230,31 @@ describe("[B-9] the flight arm, fixed — the retired B-8 evidence pins' corrupt
       expect(built.errors["departs_at"]).toBe(TZ_MISSING_ERROR);
       expect(built.errors["arrives_at"]).toBe(TZ_MISSING_ERROR);
     }
+  });
+
+  it("a zone the DEVICE can't resolve is TZ_UNKNOWN_ERROR, not a fallback composition", () => {
+    // B-9 R1 (tests lane): `TZ_UNKNOWN_ERROR` had zero test references on
+    // this branch — a user-facing string that exists for exactly one thing
+    // (a zone id this engine cannot resolve) and was never exercised, while
+    // its sibling `TZ_MISSING_ERROR` was pinned twice. On Node the branch is
+    // hard to reach because every zone the picker offers resolves; a STORED
+    // row can carry one that does not — a newer tzdb id, or (on Hermes/iOS)
+    // a backward link the platform's own id table rejects. The two failures
+    // must stay distinguishable: "you didn't pick one" is a different fix
+    // from "this device doesn't have that one".
+    const built = buildDetails("flight", {
+      origin_iata: "NRT",
+      departs_at: { date: "2027-04-24", time: "17:00", tz: "Mars/Olympus_Mons" },
+    });
+    expect(built.details).toBeNull();
+    expect(built.errors["departs_at"]).toBe(TZ_UNKNOWN_ERROR);
+    expect(built.errors["departs_at"]).not.toBe(TZ_MISSING_ERROR);
+    // …and an EMPTY zone still says the other thing.
+    const missing = buildDetails("flight", {
+      origin_iata: "NRT",
+      departs_at: { date: "2027-04-24", time: "17:00", tz: "" },
+    });
+    expect(missing.errors["departs_at"]).toBe(TZ_MISSING_ERROR);
   });
 
   it("DISCRIMINATION: the same-zone control is byte-identical under Z-stamping — which is why naive fixtures never saw B-8", () => {

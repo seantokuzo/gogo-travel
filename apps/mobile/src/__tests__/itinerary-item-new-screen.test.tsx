@@ -241,6 +241,14 @@ it("B-20 R1: field traits reach the rendered Inputs — prop pins on the traits�
   expect(iata.props.maxLength).toBe(200);
   expect(iata.props.autoCapitalize).toBe("characters");
   expect(iata.props.autoCorrect).toBe(false);
+  // B-9 R1: the comment above claims these pins kill `keyboardType`, so
+  // assert it here too rather than trimming the claim. `AirportPickerField`
+  // passes none, which is RN's alphanumeric default; the regression this
+  // catches is a later `keyboardType="numeric"`/`"number-pad"` on the
+  // airport Input, which makes the LETTERS of an IATA code untypeable on
+  // device while every suite stays green (jest has no keyboards, and
+  // `changeText` bypasses the prop entirely).
+  expect(iata.props.keyboardType ?? "default").toBe("default");
 
   // Plain text detail field — the optionalString(200) wire-cap mirror.
   expect(screen.getByTestId("itinerary-item-new-input-airline").props.maxLength).toBe(200);
@@ -1120,7 +1128,14 @@ it("B-9/B-8: the REAL Tokyo→LA flight — airport picks carry the zones and th
 });
 
 it("B-9: the flight number infers the airline — OFFERED, never auto-applied", async () => {
-  await renderScreen({ category: "flight" });
+  const { request } = await renderScreen({ category: "flight" });
+  /** Every `/airlines/search` query fired so far. */
+  const airlineSearches = (): string[] =>
+    request.mock.calls
+      .filter(
+        (call: unknown[]) => (call[0] as { path?: string } | undefined)?.path === "/airlines/search",
+      )
+      .map((call: unknown[]) => (call[1] as { query?: { q?: string } } | undefined)?.query?.q ?? "");
 
   // Gate arm: input the SHARED parser rejects offers nothing (and, per
   // reference.test.tsx, fires no request — the PR #50 rider).
@@ -1157,6 +1172,23 @@ it("B-9: the flight number infers the airline — OFFERED, never auto-applied", 
       screen.queryByTestId("itinerary-item-new-input-flight-number-airline-suggestion"),
     ).toBeNull(),
   );
+
+  // B-9 R1 (correctness advisory): taking the suggestion is a COMMIT, not
+  // typing. `picked` inside the airline picker is lazily initialized and
+  // only its own interactions move it, so a host-written value used to land
+  // unsettled — firing `GET /airlines/search?q=All Nippon Airways` against
+  // the shared per-user reference limiter and dropping a result list under
+  // the airline field, for text the user never typed. Same defect class the
+  // PR already fixed for prefills, through the programmatic-fill door.
+  //
+  // Asserted on the REQUEST, not the rendered list: the request is the cost
+  // (a limiter unit), and a "no dropdown" assertion passes vacuously while
+  // the query is still in flight.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(airlineSearches()).not.toContain("All Nippon Airways");
+  expect(screen.queryByTestId("itinerary-item-new-input-airline-result-NH")).toBeNull();
 });
 
 it("B-9: trains reach a zone through the PICKER — no station table, same correct composition", async () => {
@@ -1303,9 +1335,13 @@ it("B-9: editing a LEGACY unzoned booking's time DEMANDS a zone instead of Z-sta
   await pickTime("itinerary-item-new-input-departs-at-time", 18, 0);
   await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
   expect(patched).toHaveLength(0);
-  expect(screen.getByTestId("itinerary-item-new-input-departs-at-error")).toHaveTextContent(
+  // B-9 R1: a ZONE message renders on the zone control that fixes it (the
+  // `-tz-error` node the §2.7 inventory claims), not on the date/time group
+  // — and only there, so the form never says it twice.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
     /Pick the time zone/,
   );
+  expect(screen.queryByTestId("itinerary-item-new-input-departs-at-error")).toBeNull();
 
   // Choosing the zone unblocks it, composed in the zone the user picked.
   await fireEvent.press(tzField);
@@ -1320,6 +1356,223 @@ it("B-9: editing a LEGACY unzoned booking's time DEMANDS a zone instead of Z-sta
   await waitFor(() => expect(patched).toHaveLength(1));
   const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
   expect(body.details).toMatchObject({
+    departs_at: "2027-04-24T18:00:00+09:00",
+    departs_tz: "Asia/Tokyo",
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-9 R1 — an airport swap INVALIDATES its zone (correctness lane, blocking).
+// A pick is the only thing that supplies a real IANA zone, so text that walks
+// away from the picked code leaves a zone nothing justifies. Both routes in
+// (create-then-retype, edit-then-retype) reached the wire silently.
+// ---------------------------------------------------------------------------
+
+/** The stored Tokyo→LA booking every edit-mode arm below opens. */
+function storedZonedFlight(details?: Record<string, unknown>): BookingWithItems {
+  return {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Tokyo to LA",
+      details: {
+        category: "flight",
+        origin_iata: "NRT",
+        destination_iata: "LAX",
+        departs_at: "2027-04-24T17:00:00+09:00",
+        departs_tz: "Asia/Tokyo",
+        arrives_at: "2027-04-24T10:00:00-07:00",
+        arrives_tz: "America/Los_Angeles",
+        ...details,
+      },
+    }),
+    items: [],
+  };
+}
+
+/** Open a stored booking for edit, capturing its PATCH bodies. */
+async function renderStoredFlight(existing: BookingWithItems) {
+  const patched: unknown[] = [];
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve(existing);
+        },
+      },
+    },
+  );
+  await screen.findByTestId("itinerary-item-new-input-title");
+  return { patched };
+}
+
+/** Drive the zone picker to a catalog entry. */
+async function pickZone(fieldTestID: string, query: string, slug: string) {
+  await fireEvent.press(screen.getByTestId(fieldTestID));
+  await fireEvent.changeText(screen.getByTestId(`${fieldTestID}-search`), query);
+  await fireEvent.press(await screen.findByTestId(`${fieldTestID}-result-${slug}`));
+}
+
+/** Let the typeahead's deferred query and its request settle. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+it("B-9 R1: clear a PICKED airport, hand-type another, and the zone goes with it", async () => {
+  // Scenario A. Pick NRT (departs_tz = Asia/Tokyo) → Clear "From (IATA)" →
+  // hand-type LAX (3 letters, so the save gate's IATA rule passes) → enter
+  // the times → Save. Pre-fix this wired `origin_iata: "LAX"` alongside
+  // `departs_at: "…+09:00"` and `departs_tz: "Asia/Tokyo"` — a ~16h-wrong
+  // instant with no error anywhere. B-8, through an ordinary "change the
+  // airport" flow.
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Tokyo to LA");
+  await pickAirport("itinerary-item-new-input-origin-iata", "Narita", "NRT");
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-origin-iata-clear"));
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "LAX");
+  await settle();
+  // The zone is gone the moment the code stops matching the pick — and the
+  // user can SEE it is gone, which is what the always-visible picker is for.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    /^Not set/,
+  );
+
+  await pickDate("itinerary-item-new-input-departs-at-date", 2027, 3, 24);
+  await pickTime("itinerary-item-new-input-departs-at-time", 17, 0);
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  // Loud, not silent: no write at all, and the message sits on the control
+  // that fixes it.
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /Pick the time zone/,
+  );
+
+  // …and it is not a dead end: picking the airport they typed supplies the
+  // zone, and the save composes in THAT zone.
+  await fireEvent.press(
+    await screen.findByTestId("itinerary-item-new-input-origin-iata-result-LAX"),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "LAX",
+    departs_at: "2027-04-24T17:00:00-07:00",
+    departs_tz: "America/Los_Angeles",
+  });
+});
+
+it("B-9 R1: retyping the origin of a STORED flight refuses to re-emit the old zone's instant", async () => {
+  // Scenario B, the worse one. `departs_at` still holds `raw`, so pre-fix
+  // `buildDetails` re-emitted the stored "+09:00" string AND
+  // `departs_tz: "Asia/Tokyo"` verbatim under an origin the user had just
+  // changed to London — a stored instant silently relabelled, not even
+  // recomposed. Dropping `raw` with the zone is what makes it fail loud.
+  const { patched } = await renderStoredFlight(storedZonedFlight());
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "LHR");
+  await settle();
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    /^Not set/,
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(patched).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /Pick the time zone/,
+  );
+
+  // Name the zone the new origin justifies and it recomposes there — the
+  // WALL clock the ticket says (17:00) with London's April offset, not
+  // Tokyo's instant relabelled.
+  await pickZone("itinerary-item-new-input-departs-at-tz", "London", "europe-london");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "LHR",
+    departs_at: "2027-04-24T17:00:00+01:00",
+    departs_tz: "Europe/London",
+    // The endpoint the user never touched still rides byte-for-byte.
+    arrives_at: "2027-04-24T10:00:00-07:00",
+    arrives_tz: "America/Los_Angeles",
+  });
+});
+
+it("B-9 R1: retyping the SAME code invalidates nothing — a divergence check, not a blanket", async () => {
+  // Falsification for both arms above. The guard compares the field's text
+  // against the code the zone came with; drop that comparison and ANY
+  // keystroke in an airport field nukes a correct zone — this pin (a
+  // byte-for-byte re-emit after retyping "NRT" over "NRT") is what reds.
+  const existing = storedZonedFlight();
+  const { patched } = await renderStoredFlight(existing);
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "NRT");
+  await settle();
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toEqual(existing.details);
+});
+
+it("B-9 R1: a stored zone THIS DEVICE can't resolve blocks the save with TZ_UNKNOWN_ERROR", async () => {
+  // The device-divergence path `TZ_UNKNOWN_ERROR` exists for, previously
+  // unreachable from any test: on Node every zone the form can produce
+  // resolves. A stored row can still carry one this engine doesn't know — a
+  // newer tzdb id, or (on Hermes/iOS) a backward link the platform's own id
+  // table rejects (facebook/hermes#1607). The field says so instead of
+  // inventing a label, and the save refuses instead of composing something.
+  const { patched } = await renderStoredFlight(
+    storedZonedFlight({ departs_tz: "Mars/Olympus_Mons" }),
+  );
+
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Mars/Olympus_Mons",
+  );
+
+  await pickTime("itinerary-item-new-input-departs-at-time", 18, 0);
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(patched).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /isn't available on this device/,
+  );
+
+  // Choosing a zone the device DOES know unblocks it.
+  await pickZone("itinerary-item-new-input-departs-at-tz", "Tokyo", "asia-tokyo");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const unblocked = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(unblocked.details).toMatchObject({
     departs_at: "2027-04-24T18:00:00+09:00",
     departs_tz: "Asia/Tokyo",
   });
