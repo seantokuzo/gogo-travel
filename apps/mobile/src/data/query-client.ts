@@ -139,6 +139,28 @@ export const queryKeys = {
    * convention) — never replace it.
    */
   tripExpensesRoot: (tripId: string) => ["trips", tripId, "expenses"] as const,
+  /**
+   * `GET /trips/:tripId/expenses` — the E2 infinite list (T-9.6 / CMON-2).
+   * Trailing-args extension of `tripExpensesRoot` (the frozen R-cmoney-32
+   * invalidation root — tripBookingsCancelled convention: extend the prefix,
+   * never replace it). The `"list"` discriminator keeps every filter variant
+   * out of the detail-key space (expense ids are UUIDs, `"list"` is not);
+   * filters ride as trailing values so each member/category combination is
+   * its own cache entry while ONE root invalidation reaches them all.
+   */
+  tripExpenses: (tripId: string, filter: { member?: string; category?: string }) =>
+    ["trips", tripId, "expenses", "list", filter.member ?? null, filter.category ?? null] as const,
+  /** `GET /trips/:tripId/expenses/:expenseId` — E3 detail (+ audit state). */
+  tripExpense: (tripId: string, expenseId: string) =>
+    ["trips", tripId, "expenses", expenseId] as const,
+  /**
+   * `GET /fx/rate` (T-9.6 / R-cmoney-10) — the ruling-③ proxy read. OWN ROOT
+   * on purpose (the `placeSearch`/`placeDetail` rationale): the endpoint is
+   * global — no trip in its path, no membership gate, per-day server cache —
+   * so trip access loss must NOT evict it and the guard's 404-scrub never
+   * needs to reach it.
+   */
+  fxRate: (base: string, quote: string) => ["fx-rate", base, quote] as const,
   /** `GET /trips/:tripId/balances` — computed nets + pairwise + simplified (B1). */
   tripBalances: (tripId: string) => ["trips", tripId, "balances"] as const,
   /** `GET /trips/:tripId/budgets` — full-taxonomy caps + computed spend (G1). */

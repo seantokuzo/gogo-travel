@@ -314,12 +314,14 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
         // without retry noise; real pin sets ride `overrides`.
         case "GET /trips/:tripId/saved-places":
           return Promise.resolve({ items: [], nextCursor: null });
-        // Money tab (T-9.5) — same empty-universe posture; real money
+        // Money tab (T-9.5/T-9.6) — same empty-universe posture; real money
         // universes ride `overrides` (money-fixtures.ts).
         case "GET /trips/:tripId/balances":
           return Promise.resolve(emptyBalancesRead());
         case "GET /trips/:tripId/budgets":
           return Promise.resolve(emptyBudgetsRead());
+        case "GET /trips/:tripId/expenses":
+          return Promise.resolve({ items: [], nextCursor: null });
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:
