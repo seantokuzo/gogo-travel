@@ -50,6 +50,7 @@ import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
 import type { DirtyDayMark } from "../bookings/dirty-days.js";
 import type { ItineraryItemRow } from "../bookings/serialize.js";
+import { rethrowTimeOrderCkMapped } from "../bookings/time-order.js";
 import type { TravelLegRow } from "./serialize.js";
 
 /** Gap unit for `sort_order` (schema §3.3.10 — app assigns 1024 steps). */
@@ -497,6 +498,17 @@ export async function updateItem(
  * deletes fence the rows with an ordered `FOR UPDATE` SELECT first (the
  * T-6.2 cascade-lock-order landmine; bookings-service precedent).
  * `null` = absent item (route folds into the indistinguishable 404).
+ *
+ * Round-1 B1 — the ONE user-visible cost of migration 0003's grandfathering:
+ * the `planned → idea` flip is an UPDATE of the parent booking, and Postgres
+ * re-checks `bookings_time_order_ck` (added `NOT VALID`) against the new
+ * tuple. On a grace-era parent whose STORED instants are inverted the
+ * statement raises 23514 and the whole transaction aborts — the item cannot
+ * be unscheduled at all until the booking's times are fixed. There is no
+ * service-side fix for that (widening the constraint or rewriting the row is
+ * Autonomy trigger #5); what we CAN do is answer an honest 400 naming the
+ * cause instead of a 500 "internal error", so the client can tell the user to
+ * re-enter the booking's times (or delete it — DELETE re-checks nothing).
  */
 export async function deleteItem(
   db: DbClient,
@@ -574,7 +586,7 @@ export async function deleteItem(
 
     await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, itemId));
     return { dirtyDays: marksFor(tripId, dirty) };
-  });
+  }).catch(rethrowTimeOrderCkMapped); // B1: grandfathered parent's 23514 → 400, never a 500
 }
 
 export interface DayOrderResultRows {

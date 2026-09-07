@@ -6,20 +6,22 @@
  * that rejects with `VALIDATION_FAILED` (sentinel untouched) did not. No
  * container, no fixtures seeded — this file needs no Docker.
  *
- * NOT a duplicate of `routes.db.test.ts`'s B-8 pins: those pin the 12h
- * boundary BOTH SIDES against the REAL `bookings_time_order_ck` constraint
- * (11h59m insert / 12h01m 400, grace-set membership). This file pins what
- * only the hostile PACK expresses — the correct-composition shape (which no
- * existing test sends, because no existing client can produce it) and the
- * pack's z-stamped shapes on either side of the grace.
+ * NOT a duplicate of `routes.db.test.ts`'s B-8 pins: those run the whole
+ * route against the REAL `bookings_time_order_ck` (correct composition
+ * inserts with ordered instants, z-stamped 400, no residual window, no
+ * graced category), and `db/constraints.test.ts` pins the constraint itself.
+ * This file pins what only the hostile PACK expresses — the
+ * correct-composition shapes and the pack's z-stamped shapes — with no
+ * container in the loop.
  *
- * GRACE-SENSITIVE PINS (spec §3.4 "grace-window-sensitive pins marked"):
- * tagged [GRACE] below. The 12h transport grace (`TZ_INVERSION_GRACE_MS` +
- * migration 0001) reverts together with B-9 (the QUEUE B-8 row's DoD);
- * each [GRACE] pin carries its flip instruction for that PR. The
- * correct-composition pin is the one that does NOT flip — it is the B-9
- * acceptance harness's server half and must stay green before, during and
- * after the revert.
+ * GRACE REVERTED 2026-09-06 (B-8 DoD): the 12h transport grace
+ * (`TZ_INVERSION_GRACE_MS` + migration 0001) is gone, reverted together with
+ * B-9's client half by migration 0003. [WAS-GRACE] marks the pins the revert
+ * rewrote: the two formerly-[GRACE] ones, flipped per the instructions they
+ * carried, plus the correct-composition arm added for the extreme hop (the
+ * flight the window could never admit). Nothing is window-sensitive now.
+ * The correct-composition pin is the one that never flipped: it was the B-9
+ * acceptance harness's server half, green before, during and after.
  *
  * Falsification (R-test-7): stated per test.
  */
@@ -78,45 +80,69 @@ describe("createBooking validation mirror × hostile pack (pure, stub db)", () =
     expect(transaction).toHaveBeenCalledTimes(1);
   });
 
-  it("[GRACE] the Z-stamped eastbound flight (7h apparent inversion) is admitted TODAY by the 12h transport grace — flips with B-9", async () => {
-    // Flip instruction (B-9 / grace-revert PR): when `TZ_INVERSION_GRACE_MS`
-    // + migration 0001 revert (B-8 DoD), this exact payload must become
-    // VALIDATION_FAILED with the transaction untouched — swap this pin's
-    // assertions for the extreme-fixture pin's shape below. Until then,
-    // GREEN here documents that the server knowingly stores wrong instants
-    // for current clients. Falsification (today): narrowing the grace below
-    // 7h, or dropping `flight` from the grace set, reds this.
+  it("[WAS-GRACE] the Z-stamped eastbound flight (7h apparent inversion) is REJECTED without touching the db — the 12h grace is gone (B-8 DoD)", async () => {
+    // FLIPPED 2026-09-06 exactly as the pin's own instruction directed: this
+    // payload used to be admitted by `TZ_INVERSION_GRACE_MS`, documenting
+    // that the server knowingly stored wrong instants for pre-B-9 clients.
+    // With the grace and migration 0001 reverted it must be
+    // VALIDATION_FAILED with the transaction untouched — the same shape as
+    // the extreme-fixture pin below. Nothing legitimate is lost: the
+    // CORRECT composition of this same flight is the first pin in this file
+    // and stayed green throughout. Falsification: reintroducing any window
+    // ≥7h for `flight` in `derivedInstantsOf` reds this.
     const { db, transaction } = stubDb();
     const error = await rejectionOf(
       create(db, {
         category: "flight",
-        title: "NRT-LAX (current client)",
+        title: "NRT-LAX (pre-B-9 client)",
         details: DATE_LINE_EASTBOUND.zStamped,
       }),
     );
-    expect(error).toBe(SENTINEL);
-    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as HttpError).code).toBe("VALIDATION_FAILED");
+    expect((error as HttpError).message).toBe(
+      "the category's primary end time precedes its start time",
+    );
+    expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("[GRACE] the Z-stamped extreme hop (AKL→PPT, 16h10m inversion) is REJECTED without touching the db — the grace is bounded, so this real flight is still unenterable", async () => {
-    // The pack's proof the grace is a partial unblock: a real ~6h flight
-    // whose z-inversion exceeds 12h. Stays a rejection FOREVER for this
-    // payload shape (after B-9 the fix is that clients stop producing it);
-    // listed [GRACE] because its message/mechanism cites the grace mirror.
-    // Falsification: widening the grace beyond 16h10m (or unbounding it)
-    // reds this — the drift the boundary pins in routes.db.test.ts guard at
-    // 12h exactly, guarded here at the pack's real-flight magnitude.
+  it("[WAS-GRACE] the Z-stamped extreme hop (AKL→PPT, 16h10m inversion) is REJECTED without touching the db — unchanged by the revert, now for the plain reason", async () => {
+    // This pin never needed to flip: 16h10m always exceeded the window. What
+    // changed is WHY — it is no longer "outside the grace" but simply
+    // inverted, the same verdict the 7h pin above now gets. Keeping both
+    // arms is what proves the magnitude no longer matters. Falsification:
+    // reintroducing an unbounded (or ≥16h10m) transport window reds this.
     const { db, transaction } = stubDb();
     const error = await rejectionOf(
       create(db, {
         category: "flight",
-        title: "AKL-PPT (current client)",
+        title: "AKL-PPT (pre-B-9 client)",
         details: DATE_LINE_EASTBOUND_EXTREME.zStamped,
       }),
     );
     expect(error).toBeInstanceOf(HttpError);
     expect((error as HttpError).code).toBe("VALIDATION_FAILED");
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("[WAS-GRACE] the CORRECT composition of the extreme hop (AKL→PPT with real offsets) is admitted — the revert costs no legitimate flight", async () => {
+    // The discriminator for the two rejections above: the AKL→PPT hop is a
+    // REAL Air Tahiti Nui route, and a post-B-9 client sends it with
+    // +12:00/-10:00 offsets, deriving an ordered 5h50m interval. Without
+    // this arm "reject everything with a big apparent inversion" would look
+    // identical to "reject only genuinely inverted instants" — and the
+    // extreme hop is precisely the flight the 12h grace could never admit,
+    // so the revert makes it enterable for the first time.
+    const { db, transaction } = stubDb();
+    const error = await rejectionOf(
+      create(db, {
+        category: "flight",
+        title: "AKL-PPT (real offsets)",
+        details: DATE_LINE_EASTBOUND_EXTREME.details,
+      }),
+    );
+    expect(error).toBe(SENTINEL);
+    expect(transaction).toHaveBeenCalledTimes(1);
   });
 
   it("the Z-stamped westbound flight is admitted with NO grace involved — silently corrupt instants are not a validation matter at all", async () => {

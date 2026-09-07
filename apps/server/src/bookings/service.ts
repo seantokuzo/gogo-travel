@@ -72,6 +72,11 @@ import { HttpError, NOT_FOUND_MESSAGE } from "../http/errors.js";
 import { resolvePlaceAccess } from "../places/visibility.js";
 import type { DirtyDayMark } from "./dirty-days.js";
 import type { BookingRow, ItineraryItemRow } from "./serialize.js";
+import {
+  assertStoredInstantsOrdered,
+  isTimeOrderCkViolation,
+  rethrowTimeOrderCkMapped,
+} from "./time-order.js";
 
 /** §3.2 transition matrix, verbatim. Anything absent is VALIDATION_FAILED. */
 export const BOOKING_STATUS_TRANSITIONS: Readonly<Record<BookingStatus, readonly BookingStatus[]>> =
@@ -112,25 +117,6 @@ type Reader = DbClient | Tx;
 /** Gap unit for `sort_order` (schema §3.3.10 — app assigns 1024 steps). */
 const SORT_GAP = 1024;
 
-/**
- * ⚠️ TEMPORARY (B-8, 2026-08-29) — delete with the B-8 fix and migration 0002.
- *
- * The client stamps `Z` on every entered wall time instead of the real offset
- * (`form-model.ts:205`), so a legitimate eastbound flight (Tokyo 17:00 JST →
- * LAX 10:00 PDT) transmits as 17:00Z → 10:00Z and reads as a 7h inversion.
- * Every date-line flight was therefore impossible to enter.
- *
- * Only `flight`/`train` get the grace: they are the sole categories whose two
- * endpoints can legitimately be in different zones. Lodging check-out before
- * check-in stays a hard error, which is the whole reason for scoping it.
- *
- * KEEP IN LOCKSTEP with `bookings_time_order_ck` (migration 0001). The DB
- * constraint is the authority; this mirror only exists so the answer is a 400
- * rather than a 23514-driven 500.
- */
-const TZ_INVERSION_GRACE_MS = 12 * 60 * 60 * 1000;
-const TZ_INVERSION_GRACE_CATEGORIES = new Set<BookingDetails["category"]>(["flight", "train"]);
-
 /** `HH:MM:SS[.ffffff]` (Postgres `time`) → `HH:MM` for §3.3 comparisons. */
 const wallHHMM = (value: string | null): string | null =>
   value === null ? null : value.slice(0, 5);
@@ -150,6 +136,23 @@ function marksFor(tripId: string, days: Iterable<string>): DirtyDayMark[] {
  * derived end precedes its start must fail validation, not 500 on the
  * constraint. Cross-field detail rules are server-side refiners by design
  * (contracts §3.7 — the detail shapes stay AI-reusable and rule-free).
+ *
+ * KEEP IN LOCKSTEP with `bookings_time_order_ck`. B-8 DoD (2026-09-06):
+ * migration 0001's temporary 12h flight/train grace is GONE — B-9 gave the
+ * client an airport table with IANA zones, so it composes real offsets and a
+ * date-line flight no longer arrives inverted. Migration 0003 re-tightened the
+ * constraint to plain `starts_at <= ends_at`, and this mirror matches it
+ * exactly again: every category, no window. The constraint is the authority;
+ * widening this mirror without a matching migration turns 400s into 23514
+ * 500s, which is the whole reason the mirror exists.
+ *
+ * NOT a full equivalence, in one direction (round-1 A1): 0003 adds the
+ * constraint `NOT VALID`, so on any database that ran 0001 the DB is
+ * strictly HARSHER than this mirror can see — grace-era rows hold inverted
+ * instants this function never gets to inspect, and Postgres re-checks them
+ * on every UPDATE of those rows. That asymmetry is `time-order.ts`'s job
+ * (`assertStoredInstantsOrdered` + the 23514 fallback), not this one's:
+ * "the mirror passed" does NOT imply "the DB will accept the write".
  */
 function derivedInstantsOf(details: BookingDetails): {
   startsAt: Date | null;
@@ -158,20 +161,12 @@ function derivedInstantsOf(details: BookingDetails): {
   const derived = deriveBookingInstants(details);
   const startsAt = derived.starts_at !== null ? new Date(derived.starts_at) : null;
   const endsAt = derived.ends_at !== null ? new Date(derived.ends_at) : null;
-  if (startsAt !== null && endsAt !== null) {
-    // Mirrors `bookings_time_order_ck` EXACTLY, including its temporary
-    // transport grace (migration 0001, B-8). Drift here re-introduces the
-    // 500-instead-of-400 this function exists to prevent, so the two must be
-    // changed together — the constraint is the authority, this is the mirror.
-    const inversionMs = startsAt.getTime() - endsAt.getTime();
-    const graceMs = TZ_INVERSION_GRACE_CATEGORIES.has(details.category) ? TZ_INVERSION_GRACE_MS : 0;
-    if (inversionMs > graceMs) {
-      throw new HttpError(
-        "VALIDATION_FAILED",
-        "the category's primary end time precedes its start time",
-        { details: "end before start" },
-      );
-    }
+  if (startsAt !== null && endsAt !== null && endsAt.getTime() < startsAt.getTime()) {
+    throw new HttpError(
+      "VALIDATION_FAILED",
+      "the category's primary end time precedes its start time",
+      { details: "end before start" },
+    );
   }
   return { startsAt, endsAt };
 }
@@ -598,6 +593,19 @@ export async function updateBooking(
       if (input.confirmation_code !== undefined) set.confirmationCode = input.confirmation_code;
       if (input.place_id !== undefined) set.placeId = input.place_id;
 
+      // Round-1 B1: the DB re-checks `bookings_time_order_ck` against the NEW
+      // tuple of every UPDATE — `NOT VALID` only exempts rows nobody touches.
+      // So the grace-era rows migration 0003 deliberately grandfathers are
+      // update-poison: a details-less PATCH copies their stored (inverted)
+      // instants into the SET above and raises 23514. `derivedInstantsOf`
+      // above never sees them (it validates payloads). Validate the MERGED
+      // instants whenever this update actually writes a column, so the answer
+      // is a specific 400 instead of an unmapped 500. Nothing here can make
+      // the write SUCCEED — that needs the row's times fixed, which a
+      // details-carrying PATCH does (B-9's re-entry flow) and a migration
+      // must never do (Autonomy trigger #5).
+      if (Object.keys(set).length > 0) assertStoredInstantsOrdered(nextStartsAt, nextEndsAt);
+
       const updated =
         Object.keys(set).length > 0
           ? (
@@ -657,7 +665,14 @@ export async function updateBooking(
         dirtyDays: marksFor(tripId, dirty),
       };
     })
-    .catch(rethrowPlaceFkMapped); // A2: race-window place-FK 23503 → canonical 404
+    // A2: race-window place-FK 23503 → canonical 404. Round-1 B1: the
+    // grandfathered-row 23514 → the same 400 the pre-write check answers, so
+    // no ordering of concurrent writes can turn this path into a 500.
+    // Constraint-precise, and UPDATE-only on purpose — see `time-order.ts`.
+    .catch((error: unknown) => {
+      if (isTimeOrderCkViolation(error)) rethrowTimeOrderCkMapped(error);
+      return rethrowPlaceFkMapped(error);
+    });
 }
 
 /**
@@ -807,6 +822,28 @@ export async function scheduleBooking(
 
     // R-ib-8: advance `idea → planned` (the schedule arm of the §3.2
     // matrix); `planned`/`booked` timeless bookings keep their status.
+    //
+    // Round-2 advisory: this is the one bookings-UPDATE with neither
+    // `assertStoredInstantsOrdered` nor `.catch(rethrowTimeOrderCkMapped)`
+    // (contrast `updateBooking` above and `itinerary/service.ts deleteItem`).
+    // Deliberately bare, not missed: `current.startsAt !== null` already
+    // threw 400 unconditionally, above, before this branch — a grandfathered
+    // row has non-null (inverted) instants by construction (0003's `NOT
+    // VALID` grandfathers rows the grace WROTE, and the grace only ever ran
+    // when both instants derived), so control never reaches here holding
+    // one. `startsAt` is therefore guaranteed `null`, this SET touches only
+    // `status`, and Postgres re-checks the CHECK against the OLD value of
+    // every untouched column — so the tuple it evaluates keeps `starts_at
+    // IS NULL`, which the constraint's own disjunct always admits. No
+    // real 23514 can originate here. Left undecorated rather than adding an
+    // unfalsifiable `.catch`: the one precondition that could make this
+    // statement dangerous (loosening the guard above) already breaks its
+    // OWN dedicated pin (`routes.db.test.ts` "schedule: timed booking 400;
+    // …") independently of anything added here, and faking the 23514 past a
+    // guard that structurally can't produce it would need a driver mock —
+    // exactly the mock-drift this codebase avoids in favor of real Postgres
+    // (see the Neon-HTTP `.transaction()` landmine). Add the fallback WHEN
+    // that guard changes, alongside a test that can actually exercise it.
     let booking = current;
     if (current.status === "idea") {
       const [advanced] = await tx
