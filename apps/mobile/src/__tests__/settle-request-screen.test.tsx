@@ -40,13 +40,41 @@ import { makeMember, makeTrip, makeUserProfile, mockNavApi } from "@/test-utils/
 import type { SettleRequestDetail, TripListItem } from "@gogo/shared";
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
-jest.mock("expo-linking", () => ({
-  canOpenURL: jest.fn(async () => true),
-  openURL: jest.fn(async () => true),
-}));
-jest.mock("expo-clipboard", () => ({
-  setStringAsync: jest.fn(async () => true),
-}));
+// Sealed against the ADR-006 parity contract (mock-shape-parity) — names ⊆
+// the real modules at typecheck, surface pinned at mock-factory time. The
+// REAL bite (iOS actually opening venmo:// — LSApplicationQueriesSchemes,
+// pinned in link-config-audit) is device test D1 at P-14.
+jest.mock("expo-linking", () => {
+  const shapes =
+    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+      "../testing/mock-shape-parity",
+    );
+  const stub = {
+    canOpenURL: jest.fn(async () => shapes.linkingDefaultResolutions.canOpenURL),
+    openURL: jest.fn(async () => shapes.linkingDefaultResolutions.openURL),
+  };
+  shapes.assertStubKeysExact(
+    "expo-linking (settle-request)",
+    Object.keys(stub),
+    shapes.linkingStubExports,
+  );
+  return stub;
+});
+jest.mock("expo-clipboard", () => {
+  const shapes =
+    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+      "../testing/mock-shape-parity",
+    );
+  const stub = {
+    setStringAsync: jest.fn(async () => shapes.clipboardDefaultResolutions.setStringAsync),
+  };
+  shapes.assertStubKeysExact(
+    "expo-clipboard (settle-request)",
+    Object.keys(stub),
+    shapes.clipboardStubExports,
+  );
+  return stub;
+});
 const mockReplace = jest.fn();
 jest.mock("expo-router", () => ({
   useRouter: () => ({
