@@ -157,32 +157,35 @@ Maestro's wait/retry kernel; keep AXe as the escape hatch only.
 **Task breakdown, in order:**
 
 1. **ADR-007** — record the adoption + the Detox disqualifier + the constraints
-   (local-first; no metered CI; AXe stays escape-hatch). 2. **Install pinned**:
-   ⚠️ npm `maestro` (2.1.1) and homebrew-core `maestro` (0.17.3) are UNRELATED
-   SQUATTER packages — install ONLY via `mobile-dev-inc/tap` or the official
-   script, version-pinned (cli-2.10.x era, ~monthly cadence); JVM app, Java 17
-   is present; verify the `MAESTRO_CLI_NO_ANALYTICS` env opt-out at install.
-2. **The build lane**: `npx expo run:ios --configuration Release` per merge
+   (local-first; no metered CI; AXe stays escape-hatch).
+2. **Install pinned**: ⚠️ npm `maestro` (2.1.1) and homebrew-core `maestro`
+   (0.17.3) are UNRELATED SQUATTER packages — install ONLY via
+   `mobile-dev-inc/tap` or the official script, version-pinned (cli-2.10.x era,
+   ~monthly cadence); JVM app, Java 17 is present; verify the
+   `MAESTRO_CLI_NO_ANALYTICS` env opt-out at install.
+3. **The build lane**: `npx expo run:ios --configuration Release` per merge
    candidate — dev-client builds are for flow AUTHORING only (black-box
    `launchApp` lands on the dev launcher; `clearState:true` wipes the stored
    Metro URL). Note: the installed sim app still carries the pre-#33 bundle id —
-   a rebuild is due regardless. 4. **Flows 1–4 (unauthed, buildable
-   immediately)**: `smoke-diagnostics-cold` (openLink gogo://diagnostics; handle
-   the iOS SpringBoard open-prompt with a conditional runFlow — approval persists
-   per sim), `deeplink-matrix` (codify the B-14 AXe matrix), `signin-renders`,
-   `signin-cancel-surface` (MED feasibility — the ASWebAuthenticationSession
-   sheet may resist accessibility taps; fall back to the door). 5. **The session
-   door (APPROVED — Autonomy trigger #4 satisfied 2026-09-07)**: an auth bypass
-   minting a test session, env-gated — Sean verbatim: "gated on env var such as
-   NODE_ENV 'development' or 'testing' or 'e2e' if we want to be more targeted."
-   Design at build (extend the `scripts/gen-test-env.mjs` throwaway-env pattern;
-   double-gate so prod builds cannot carry it); full review pipeline, security
-   lane mandatory. 6. **Flows 5–10 (the runsheet replacements)**:
-   `session-door-entry`, `create-trip-golden` (datetimepicker path),
-   `add-flight-dateline` (drive the REAL B-8 hostile-fixture wall times from
-   `@gogo/shared/testing`), `ideas-to-schedule`, `cancel-visibility`,
-   `cross-tab-state` (tab-bar presses ONLY — the vendored-navigator no-op rule).
-3. Wire a local pre-merge script (JUnit output); GH-macOS CI optional later.
+   a rebuild is due regardless.
+4. **Flows 1–4 (unauthed, buildable immediately)**: `smoke-diagnostics-cold`
+   (openLink gogo://diagnostics; handle the iOS SpringBoard open-prompt with a
+   conditional runFlow — approval persists per sim), `deeplink-matrix` (codify
+   the B-14 AXe matrix), `signin-renders`, `signin-cancel-surface` (MED
+   feasibility — the ASWebAuthenticationSession sheet may resist accessibility
+   taps; fall back to the door).
+5. **The session door (APPROVED — Autonomy trigger #4 satisfied 2026-09-07)**:
+   an auth bypass minting a test session, env-gated — Sean verbatim: "gated on
+   env var such as NODE_ENV 'development' or 'testing' or 'e2e' if we want to be
+   more targeted." Design at build (extend the `scripts/gen-test-env.mjs`
+   throwaway-env pattern; double-gate so prod builds cannot carry it); full
+   review pipeline, security lane mandatory.
+6. **Flows 5–10 (the runsheet replacements)**: `session-door-entry`,
+   `create-trip-golden` (datetimepicker path), `add-flight-dateline` (drive the
+   REAL B-8 hostile-fixture wall times from `@gogo/shared/testing`),
+   `ideas-to-schedule`, `cancel-visibility`, `cross-tab-state` (tab-bar presses
+   ONLY — the vendored-navigator no-op rule).
+7. Wire a local pre-merge script (JUnit output); GH-macOS CI optional later.
 
 **Known limits (set expectations in ADR-007):** the @rnmapbox map canvas is
 pixel/gesture territory — assert AROUND it via marker testIDs; picker/keyboard
