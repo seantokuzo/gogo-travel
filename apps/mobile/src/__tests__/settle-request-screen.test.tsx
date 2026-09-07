@@ -58,6 +58,7 @@ jest.mock("expo-router", () => ({
   useLocalSearchParams: () => ({}),
 }));
 
+const canOpenURLMock = Linking.canOpenURL as jest.Mock;
 const openURLMock = Linking.openURL as jest.Mock;
 
 async function renderRequest(opts?: {
@@ -103,6 +104,7 @@ afterEach(async () => {
   await settle();
   jest.restoreAllMocks();
   mockReplace.mockReset();
+  canOpenURLMock.mockReset().mockResolvedValue(true);
   openURLMock.mockReset().mockResolvedValue(true);
   clearSettleReturnRecord();
 });
@@ -170,6 +172,50 @@ describe("debtor view (R-cmoney-26 — the recipient pays)", () => {
       },
     ]);
     expect(request).toBe(second.request);
+  });
+
+  it("venmo: a THROWING canOpenURL folds to the probed web URL (Android no-<queries> arm)", async () => {
+    // R-cmoney-16's fallback arm covers a canOpenURL that REJECTS (Android
+    // with no <queries> manifest entry) — the rail must open the web URL,
+    // not die in the outer catch.
+    canOpenURLMock.mockRejectedValue(new Error("Unable to query scheme"));
+    await renderRequest();
+    await fireEvent.press(screen.getByTestId("settle-request-button-venmo"));
+    await settle();
+    expect(openURLMock).toHaveBeenCalledWith(
+      "https://account.venmo.com/pay?txn=pay&recipients=blair-v&amount=25.50&note=GoGo%3A%20Kyoto",
+    );
+    expect(screen.queryByTestId("settle-request-handoff-error")).toBeNull();
+  });
+
+  it("the return-prompt confirm's 409 gets ITS specific copy (raced request — R-money-18)", async () => {
+    // Same shape as the mark-settled 409 pin above: the raced return arm
+    // must surface the state-machine truth, never the generic banner.
+    recordSettleDeeplinkOut({
+      tripId: TEST_TRIP_ID,
+      counterpartyId: MEMBER_B_ID,
+      method: "venmo",
+      amountCents: 2550,
+      requestId: TEST_REQUEST_ID,
+    });
+    const { request } = await renderRequest({
+      overrides: {
+        "POST /trips/:tripId/settlements": () =>
+          Promise.reject(new ApiRequestError(409, "CONFLICT", "request is not open")),
+      },
+    });
+    expect(await screen.findByTestId("settle-request-sheet-return")).toBeTruthy();
+    await fireEvent.press(screen.getByTestId("settle-request-sheet-return-confirm"));
+    await settle();
+    expect(settlementPosts(request)).toHaveLength(1);
+    expect(await screen.findByTestId("settle-request-sheet-return-error")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This request was already settled or cancelled — the payment wasn't recorded through it.",
+      ),
+    ).toBeTruthy();
+    // The sheet stays dismissible — a failed record never traps the return.
+    expect(screen.getByTestId("settle-request-sheet-return-cancel")).toBeTruthy();
   });
 
   it("a stash from ANOTHER trip is dropped silently — no prompt, nothing posts (cross-trip guard)", async () => {

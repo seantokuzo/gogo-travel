@@ -16,11 +16,11 @@
  * the return prompt presenting once and posting the STASHED shape.
  */
 import { settleRequestDeepLink } from "@gogo/shared";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { fireEvent, screen, waitFor } from "@testing-library/react-native";
 import * as Linking from "expo-linking";
 import { Share } from "react-native";
 
-import { apiClient } from "@/auth";
+import { ApiRequestError } from "@/auth";
 import { SettleContent } from "@/features/money/SettleContent";
 import {
   clearSettleReturnRecord,
@@ -28,9 +28,17 @@ import {
   recordSettleDeeplinkOut,
 } from "@/features/money/settle-return-store";
 import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
-import { makeBalancesRead, makeSettleRequest } from "@/test-utils/money-fixtures";
+import {
+  makeBalancesRead,
+  makeSettledBalancesRead,
+  makeSettleRequest,
+} from "@/test-utils/money-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
-import { settleApiOverrides, makeHandlesProfile } from "@/test-utils/settle-fixtures";
+import {
+  settleApiOverrides,
+  makeHandlesProfile,
+  TEST_REQUEST_ID,
+} from "@/test-utils/settle-fixtures";
 import { settle } from "@/test-utils/settle";
 import { seedAuthenticated, TEST_USER } from "@/test-utils/session-fixtures";
 import { makeMember, makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
@@ -132,9 +140,20 @@ describe("headline + amount (R-cmoney-14)", () => {
     expect(screen.getByTestId("settle-input-amount").props.value).toBe("10");
   });
 
-  it("creditor: 'owes you' headline; settled pair reads all-settled", async () => {
+  it("creditor: 'owes you' headline", async () => {
     await renderSettle({ balances: makeBalancesRead() });
     expect(screen.getByText("Blair owes you USD 25.50")).toBeTruthy();
+  });
+
+  it("even pair (net 0): 'all settled up' headline; mark-as-settled stays reachable (R-cmoney-20)", async () => {
+    await renderSettle({ balances: makeSettledBalancesRead() });
+    expect(screen.getByText("You're all settled up with Blair")).toBeTruthy();
+    // R-cmoney-20 unconditional: enter an amount, settle up → the handoff
+    // sheet still carries mark-as-settled (framed caller → counterparty).
+    await fireEvent.changeText(screen.getByTestId("settle-input-amount"), "5");
+    await fireEvent.press(screen.getByTestId("settle-button-settle-up"));
+    await screen.findByTestId("settle-sheet-handoff");
+    expect(screen.getByTestId("settle-button-mark-settled")).toBeTruthy();
   });
 
   it("a value above the owed amount warns without blocking (partial settles legal)", async () => {
@@ -193,6 +212,21 @@ describe("handoff rails (R-cmoney-15..19, §2.5)", () => {
     expect(openURLMock).toHaveBeenCalledWith(
       "https://account.venmo.com/pay?txn=pay&recipients=blair-v&amount=25.50&note=GoGo%3A%20Kyoto",
     );
+  });
+
+  it("venmo: a THROWING canOpenURL folds to the probed web URL (Android no-<queries> arm)", async () => {
+    // R-cmoney-16's fallback arm covers a canOpenURL that REJECTS (Android
+    // with no <queries> manifest entry) — the rail must open the web URL,
+    // not die in the outer catch.
+    canOpenURLMock.mockRejectedValue(new Error("Unable to query scheme"));
+    await renderSettle();
+    await fireEvent.press(screen.getByTestId("settle-button-settle-up"));
+    await fireEvent.press(await screen.findByTestId("settle-button-venmo"));
+    await settle();
+    expect(openURLMock).toHaveBeenCalledWith(
+      "https://account.venmo.com/pay?txn=pay&recipients=blair-v&amount=25.50&note=GoGo%3A%20Kyoto",
+    );
+    expect(screen.queryByTestId("settle-handoff-error")).toBeNull();
   });
 
   it("rail open failure: stash rolled back, non-blocking error, screen fully usable (R-cmoney-22)", async () => {
@@ -378,6 +412,27 @@ describe("send the bill (R-cmoney-25, §2.7 steps 2–3; the W2 link ruling)", (
       `${settleRequestDeepLink(minted.trip_id, minted.id)} (web: ${minted.link})`,
     );
   });
+
+  it("Q1 409 (the debt evaporated) gets SPECIFIC copy, not the generic create failure", async () => {
+    await renderSettle({
+      balances: makeBalancesRead(),
+      overrides: {
+        "POST /trips/:tripId/settle-requests": () =>
+          Promise.reject(new ApiRequestError(409, "CONFLICT", "no positive debt")),
+      },
+    });
+    await fireEvent.press(screen.getByTestId("settle-button-request"));
+    await screen.findByTestId("settle-sheet-request");
+    await fireEvent.changeText(screen.getByTestId("settle-sheet-request-input-amount"), "25.50");
+    await fireEvent.press(screen.getByTestId("settle-sheet-request-send"));
+    await settle();
+    expect(await screen.findByTestId("settle-sheet-request-error")).toBeTruthy();
+    expect(
+      screen.getByText("Nothing to request — Blair doesn't owe you right now."),
+    ).toBeTruthy();
+    // Compose state survives — the user can retry without redrafting.
+    expect(screen.getByTestId("settle-sheet-request-send")).toBeTruthy();
+  });
 });
 
 describe("return prompt (R-cmoney-21)", () => {
@@ -402,6 +457,37 @@ describe("return prompt (R-cmoney-21)", () => {
       },
     ]);
     await waitFor(() => expect(screen.queryByTestId("settle-sheet-return")).toBeNull());
+  });
+
+  it("the return-arm 409 gets SPECIFIC copy — the linked request moved (R-money-18)", async () => {
+    // Same shape as the request screen's mark-settled 409 pin: the raced
+    // arm must never degrade to the generic "try again" banner (which would
+    // re-409 forever and push the user into an unlinked double-record).
+    recordSettleDeeplinkOut({
+      tripId: TEST_TRIP_ID,
+      counterpartyId: MEMBER_B_ID,
+      method: "venmo",
+      amountCents: 2550,
+      requestId: TEST_REQUEST_ID,
+    });
+    const { request } = await renderSettle({
+      overrides: {
+        "POST /trips/:tripId/settlements": () =>
+          Promise.reject(new ApiRequestError(409, "CONFLICT", "request is not open")),
+      },
+    });
+    expect(await screen.findByTestId("settle-sheet-return")).toBeTruthy();
+    await fireEvent.press(screen.getByTestId("settle-sheet-return-confirm"));
+    await settle();
+    expect(settlementPosts(request)).toHaveLength(1);
+    expect(await screen.findByTestId("settle-sheet-return-error")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "That request was already settled or cancelled, so it can't be paid through anymore.",
+      ),
+    ).toBeTruthy();
+    // The sheet stays dismissible — a failed record never traps the return.
+    expect(screen.getByTestId("settle-sheet-return-cancel")).toBeTruthy();
   });
 
   it("declining clears without posting, and a remount never re-presents (consume-once)", async () => {
