@@ -10,7 +10,10 @@
     "ios": {
       "icon": "./assets/images/gogo_logo-mint.png",
       "bundleIdentifier": "app.gogotravel",
-      "associatedDomains": ["applinks:links.gogotravel.example"]
+      "associatedDomains": ["applinks:links.gogotravel.example"],
+      "infoPlist": {
+        "LSApplicationQueriesSchemes": ["venmo"]
+      }
     },
     "android": {
       "adaptiveIcon": {

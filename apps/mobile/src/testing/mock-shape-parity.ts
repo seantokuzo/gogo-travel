@@ -51,6 +51,8 @@ import type * as Mapbox from "@rnmapbox/maps";
 import type * as AppleAuthentication from "expo-apple-authentication";
 import type { AuthSessionResult } from "expo-auth-session";
 import type * as GoogleProvider from "expo-auth-session/providers/google";
+import type * as Clipboard from "expo-clipboard";
+import type * as ExpoLinking from "expo-linking";
 import type * as Location from "expo-location";
 import type * as Network from "expo-network";
 
@@ -124,6 +126,44 @@ export type GoogleStubTupleMatchesRealHook = MustBeAssignable<
   GoogleIdTokenStubTuple,
   ReturnType<typeof GoogleProvider.useIdTokenAuthRequest>
 >;
+
+// ---------------------------------------------------------------------------
+// expo-clipboard / expo-linking — the T-9.7 settle suites' PER-SUITE mock
+// factories (rail deeplink-outs + Zelle copy). Same jest.fn-surface pattern
+// as the sealed globals: name lists type-checked ⊆ the real module here, the
+// suites' factories call `assertStubKeysExact` and resolve to the pinned
+// literals below (both return types are concrete, so `satisfies` bites).
+// NOTE the honest floor: parameter contracts and iOS's ACTUAL willingness to
+// open `venmo://` (LSApplicationQueriesSchemes — pinned by
+// link-config-audit.test.ts) are below it; the real bite is device test D1
+// at P-14.
+// ---------------------------------------------------------------------------
+
+/** Every name the settle suites' expo-clipboard stub exports. */
+export const clipboardStubExports = ["setStringAsync"] as const satisfies readonly (keyof typeof Clipboard)[];
+
+/** Default resolution — `setStringAsync` resolves the real boolean. */
+export const clipboardDefaultResolutions = {
+  setStringAsync: true,
+} satisfies {
+  setStringAsync: Awaited<ReturnType<typeof Clipboard.setStringAsync>>;
+};
+
+/** Every name the settle suites' expo-linking stub exports. */
+export const linkingStubExports = ["canOpenURL", "openURL"] as const satisfies readonly (keyof typeof ExpoLinking)[];
+
+/**
+ * Default resolutions — `openURL` resolves the real `true` literal;
+ * `canOpenURL` a boolean. Falsification: change `openURL` to `false` (the
+ * real type is `Promise<true>`) → typecheck RED.
+ */
+export const linkingDefaultResolutions = {
+  canOpenURL: true,
+  openURL: true,
+} satisfies {
+  canOpenURL: Awaited<ReturnType<typeof ExpoLinking.canOpenURL>>;
+  openURL: Awaited<ReturnType<typeof ExpoLinking.openURL>>;
+};
 
 // ---------------------------------------------------------------------------
 // expo-location — foreground-only stub (P-8 lock: background APIs are

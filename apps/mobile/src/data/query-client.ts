@@ -165,6 +165,17 @@ export const queryKeys = {
   tripBalances: (tripId: string) => ["trips", tripId, "balances"] as const,
   /** `GET /trips/:tripId/budgets` — full-taxonomy caps + computed spend (G1). */
   tripBudgets: (tripId: string) => ["trips", tripId, "budgets"] as const,
+  /**
+   * Settle keys (T-9.7 / CMON-5+CMON-6). DETAIL-SUBTREE keys (key-cache
+   * law — the money-key rationale above applies verbatim: membership-gated
+   * reads, R-money-25). `tripSettlements` is the S2 list (the request
+   * screen's who-settled-when lookup); `tripSettleRequest` is the Q2
+   * deep-link detail — no settle-request LIST endpoint exists on the wire
+   * (the flagged spec gap), so the detail key is the ONLY request key.
+   */
+  tripSettlements: (tripId: string) => ["trips", tripId, "settlements"] as const,
+  tripSettleRequest: (tripId: string, requestId: string) =>
+    ["trips", tripId, "settle-requests", requestId] as const,
 } as const;
 
 /**

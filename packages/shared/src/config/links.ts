@@ -34,3 +34,33 @@ export function inviteUrl(token: string): string {
 export function inviteDeepLink(token: string): string {
   return `${APP_SCHEME}://invite/${token}`;
 }
+
+/**
+ * THE settle-request path template (T-9.7 hoist rider; R-money-16 + nav §2.3
+ * registry row `/t/[tripId]/request/[requestId]`) — one home on purpose: the
+ * server's wire `link` (settlements/requests-serialize.ts) and the client's
+ * share composition (send-the-bill, gogo:// primary per the W2 ruling) BOTH
+ * derive from this template, so the two forms can never drift into a
+ * dead-end share link. The link carries the two UUIDs and NOTHING else
+ * (PR #32 security posture — no params).
+ */
+function settleRequestPath(tripId: string, requestId: string): string {
+  return `t/${tripId}/request/${requestId}`;
+}
+
+/**
+ * Universal settle-request link — the Q1/Q2 wire `link` field
+ * (`https://<LINK_DOMAIN>/t/<tripId>/request/<requestId>`, money spec §3.2).
+ */
+export function settleRequestUrl(tripId: string, requestId: string): string {
+  return `https://${LINK_DOMAIN}/${settleRequestPath(tripId, requestId)}`;
+}
+
+/**
+ * The `gogo://` mirror of the settle-request link (nav §2.3: scheme mirrors
+ * paths) — the client-composed "primary" half of the P-9 send-the-bill
+ * ruling (gogo:// primary + placeholder https until the P-14 domain buy).
+ */
+export function settleRequestDeepLink(tripId: string, requestId: string): string {
+  return `${APP_SCHEME}://${settleRequestPath(tripId, requestId)}`;
+}
