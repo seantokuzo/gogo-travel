@@ -320,6 +320,11 @@ export function mockNavApi(opts: NavApiOptions = {}): jest.Mock {
           return Promise.resolve(emptyBalancesRead());
         case "GET /trips/:tripId/budgets":
           return Promise.resolve(emptyBudgetsRead());
+        // Settle requests (T-9.7): unknown ids 404 — the wire's
+        // indistinguishable posture (R-money-25); real documents ride
+        // `overrides` (settle-fixtures.ts).
+        case "GET /trips/:tripId/settle-requests/:requestId":
+          return Promise.reject(new ApiRequestError(404, "NOT_FOUND", "not found"));
         case "POST /auth/logout":
           return Promise.resolve(undefined);
         default:
