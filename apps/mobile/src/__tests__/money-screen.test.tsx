@@ -122,7 +122,7 @@ describe("shell + segments (R-cmoney-1)", () => {
     expect(screen.getByTestId("money-segment-balances")).toBeTruthy();
     // Budget content mounts by default; the other segments' bodies don't.
     expect(await screen.findByTestId("money-budget-list-item-food")).toBeTruthy();
-    expect(screen.queryByTestId("money-expenses-placeholder")).toBeNull();
+    expect(screen.queryByTestId("money-expense-list")).toBeNull();
     expect(screen.queryByTestId("money-headline-balances")).toBeNull();
   });
 
@@ -465,11 +465,14 @@ describe("AI estimate CTA (MON-7 deferred — visible disabled stub)", () => {
   });
 });
 
-describe("expenses segment seam (T-9.6 fills; FAB ships now)", () => {
-  it("shows the placeholder and the add-expense FAB for every member — viewers included (R-cmoney-5)", async () => {
+describe("expenses segment (T-9.6 fills the frozen seam — deep pins in its own suites)", () => {
+  it("mounts the REAL list body and keeps the add-expense FAB for every member — viewers included (R-cmoney-5)", async () => {
     await renderMoney({ trip: makeTrip({ id: TEST_TRIP_ID, role: "viewer" }) });
     await fireEvent.press(screen.getByTestId("money-segment-expenses"));
-    expect(await screen.findByTestId("money-expenses-placeholder")).toBeTruthy();
+    // Empty universe (mockNavApi default) → the R-cmoney-29 EmptyState
+    // inside the real list, not the retired T-9.5 placeholder.
+    expect(await screen.findByTestId("money-expense-list")).toBeTruthy();
+    expect(await screen.findByTestId("money-expenses-empty")).toBeTruthy();
     await fireEvent.press(screen.getByTestId("money-fab-add-expense"));
     expect(mockPush).toHaveBeenCalledWith({
       pathname: "/[tripId]/money/expense/new",
@@ -761,6 +764,8 @@ describe("§2.8 testID inventory walk (R-cmoney-30 — shell scope)", () => {
     }
     await fireEvent.press(screen.getByTestId("money-segment-expenses"));
     expect(await screen.findByTestId("money-fab-add-expense")).toBeTruthy();
+    expect(screen.getByTestId("money-expense-list")).toBeTruthy();
+    expect(screen.getByTestId("money-button-filter")).toBeTruthy();
     await fireEvent.press(screen.getByTestId("money-segment-balances"));
     expect(await screen.findByTestId("money-toggle-simplify")).toBeTruthy();
     expect(screen.getByTestId(`money-balance-list-item-${MEMBER_B_ID}`)).toBeTruthy();
