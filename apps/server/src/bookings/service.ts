@@ -822,6 +822,28 @@ export async function scheduleBooking(
 
     // R-ib-8: advance `idea → planned` (the schedule arm of the §3.2
     // matrix); `planned`/`booked` timeless bookings keep their status.
+    //
+    // Round-2 advisory: this is the one bookings-UPDATE with neither
+    // `assertStoredInstantsOrdered` nor `.catch(rethrowTimeOrderCkMapped)`
+    // (contrast `updateBooking` above and `itinerary/service.ts deleteItem`).
+    // Deliberately bare, not missed: `current.startsAt !== null` already
+    // threw 400 unconditionally, above, before this branch — a grandfathered
+    // row has non-null (inverted) instants by construction (0003's `NOT
+    // VALID` grandfathers rows the grace WROTE, and the grace only ever ran
+    // when both instants derived), so control never reaches here holding
+    // one. `startsAt` is therefore guaranteed `null`, this SET touches only
+    // `status`, and Postgres re-checks the CHECK against the OLD value of
+    // every untouched column — so the tuple it evaluates keeps `starts_at
+    // IS NULL`, which the constraint's own disjunct always admits. No
+    // real 23514 can originate here. Left undecorated rather than adding an
+    // unfalsifiable `.catch`: the one precondition that could make this
+    // statement dangerous (loosening the guard above) already breaks its
+    // OWN dedicated pin (`routes.db.test.ts` "schedule: timed booking 400;
+    // …") independently of anything added here, and faking the 23514 past a
+    // guard that structurally can't produce it would need a driver mock —
+    // exactly the mock-drift this codebase avoids in favor of real Postgres
+    // (see the Neon-HTTP `.transaction()` landmine). Add the fallback WHEN
+    // that guard changes, alongside a test that can actually exercise it.
     let booking = current;
     if (current.status === "idea") {
       const [advanced] = await tx
