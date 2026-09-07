@@ -5,7 +5,7 @@
 #
 #   bash scripts/e2e.sh                      # release lane (excludes `dev`)
 #   bash scripts/e2e.sh --tags dev           # dev-build-only flows
-#   bash scripts/e2e.sh --flow .maestro/signin-renders.yaml
+#   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
 #   bash scripts/e2e.sh --device <udid>
 #   bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug   # passthrough
 #
@@ -54,6 +54,11 @@ while [[ $# -gt 0 ]]; do
     --flow)
       [[ $# -ge 2 ]] || die "--flow needs a path"
       FLOW_TARGET="$2"
+      # Same failure class as --tags above: leaving the default `dev`-exclude
+      # filter active while naming one explicit flow can filter out the very
+      # flow you asked for and silently run nothing. An explicit --flow target
+      # owns the filter completely, just like an explicit --tags selection.
+      EXCLUDE_TAGS=""
       shift 2
       ;;
     --device)
@@ -95,6 +100,50 @@ if ! command -v maestro >/dev/null 2>&1; then
   fi
 fi
 
+# `command -v` resolves whichever `maestro` comes first on $PATH — which may
+# be a same-named squatter (npm global package, or the homebrew-CORE formula;
+# both unrelated projects, see ADR-007 / .maestro/README.md) sitting ahead of
+# ~/.maestro/bin. A `--version` string match alone is not binary identity:
+# resolve the symlink chain and require the REAL path to be one this repo
+# recognizes before trusting anything the binary prints.
+RESOLVED_MAESTRO="$(command -v maestro)"
+REAL_MAESTRO="$RESOLVED_MAESTRO"
+while [[ -L "$REAL_MAESTRO" ]]; do
+  LINK="$(readlink "$REAL_MAESTRO")"
+  [[ "$LINK" == /* ]] || LINK="$(dirname "$REAL_MAESTRO")/$LINK"
+  REAL_MAESTRO="$LINK"
+done
+REAL_MAESTRO="$(cd "$(dirname "$REAL_MAESTRO")" && pwd -P)/$(basename "$REAL_MAESTRO")"
+
+MAESTRO_IDENTITY_OK=0
+if [[ -d "$HOME/.maestro/bin" ]]; then
+  # $HOME itself may sit behind a symlink (e.g. macOS's /var → /private/var),
+  # so canonicalize it the same way REAL_MAESTRO was, or a legitimate install
+  # fails this check on a path technicality.
+  HOME_MAESTRO_BIN_REAL="$(cd "$HOME/.maestro/bin" && pwd -P)"
+  case "$REAL_MAESTRO" in
+    "$HOME_MAESTRO_BIN_REAL/"*) MAESTRO_IDENTITY_OK=1 ;;
+  esac
+fi
+if [[ "$MAESTRO_IDENTITY_OK" -eq 0 ]] && command -v brew >/dev/null 2>&1; then
+  # The sanctioned brew source is the mobile-dev-inc tap specifically — not
+  # whatever formula named "maestro" brew happens to resolve.
+  TAP_PREFIX="$(brew --prefix mobile-dev-inc/tap/maestro 2>/dev/null || true)"
+  if [[ -n "$TAP_PREFIX" && -d "$TAP_PREFIX" ]]; then
+    TAP_REAL="$(cd "$TAP_PREFIX" && pwd -P)"
+    case "$REAL_MAESTRO" in
+      "$TAP_REAL"*) MAESTRO_IDENTITY_OK=1 ;;
+    esac
+  fi
+fi
+[[ "$MAESTRO_IDENTITY_OK" -eq 1 ]] || die "maestro on \$PATH resolves to $REAL_MAESTRO,
+  which is neither ~/.maestro/bin (the official installer) nor the
+  mobile-dev-inc/tap homebrew formula. This is very likely the npm package
+  'maestro' or the homebrew-CORE formula 'maestro' — unrelated projects that
+  share the name (ADR-007 / .maestro/README.md). Uninstall the squatter, or
+  fix \$PATH ordering so ~/.maestro/bin (or 'brew install
+  mobile-dev-inc/tap/maestro') resolves first."
+
 # `maestro --version` prints the version on the last non-empty line (a first
 # run may print an analytics notice above it).
 ACTUAL_VERSION="$(maestro --version 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)"
@@ -124,6 +173,69 @@ if ! xcrun simctl get_app_container "$DEVICE" "$APP_ID" >/dev/null 2>&1; then
   A Debug/dev build is for flow AUTHORING only — never the merge gate."
 fi
 
+# ── flow selection ───────────────────────────────────────────────────────────
+# Independently enumerate which top-level flows the current --tags/--flow
+# filter selects, using the same include/exclude semantics maestro's CLI
+# applies, so a filter that matches nothing is caught BEFORE invoking
+# maestro — not just after, from the JUnit report (belt-and-braces #2; the
+# JUnit-based guard below is the second layer for anything this misses). This
+# is also what catches a flow-layout change (e.g. a future wave nesting flows
+# under `.maestro/release/`, which `config.yaml`'s `flows: - "*.yaml"` does
+# not match) reducing the lane to zero tests — this enumeration reads the same
+# top-level layout `config.yaml` does, so it degrades the same way and fails
+# loudly instead of silently.
+flow_tags() {
+  # Tags sit in the flow's YAML header, one per `- <tag>` line under a
+  # top-level `tags:` key, before the `---` command-list separator.
+  awk '
+    /^---$/ { exit }
+    /^tags:/ { intags=1; next }
+    intags && /^  - / { sub(/^  - /, ""); printf "%s,", $0; next }
+    intags { intags=0 }
+  ' "$1"
+}
+
+SELECTED_FLOWS=()
+if [[ -f "$FLOW_TARGET" ]]; then
+  SELECTED_FLOWS=("$FLOW_TARGET")
+elif [[ -d "$FLOW_TARGET" ]]; then
+  for f in "$FLOW_TARGET"/*.yaml; do
+    [[ -e "$f" ]] || continue
+    [[ "$(basename "$f")" == "config.yaml" ]] && continue
+    TAGS=",$(flow_tags "$f")"
+    MATCHED=1
+    if [[ -n "$INCLUDE_TAGS" ]]; then
+      MATCHED=0
+      IFS=',' read -ra WANT <<<"$INCLUDE_TAGS"
+      for w in "${WANT[@]}"; do
+        [[ "$TAGS" == *",$w,"* ]] && MATCHED=1 && break
+      done
+    fi
+    if [[ "$MATCHED" -eq 1 && -n "$EXCLUDE_TAGS" ]]; then
+      IFS=',' read -ra EXCL <<<"$EXCLUDE_TAGS"
+      for x in "${EXCL[@]}"; do
+        [[ "$TAGS" == *",$x,"* ]] && MATCHED=0 && break
+      done
+    fi
+    [[ "$MATCHED" -eq 1 ]] && SELECTED_FLOWS+=("$f")
+  done
+fi
+
+echo "e2e: ${#SELECTED_FLOWS[@]} flow(s) selected (include=[${INCLUDE_TAGS:-*}] exclude=[${EXCLUDE_TAGS:-none}]):"
+for f in "${SELECTED_FLOWS[@]}"; do
+  echo "  - $f"
+  case ",$(flow_tags "$f")" in
+    *,env-no-apple-account,*)
+      echo "      NOTE: assumes the simulator is NOT signed into an Apple Account —"
+      echo "      its Apple-cancel cell goes red for environmental reasons otherwise."
+      ;;
+  esac
+done
+[[ "${#SELECTED_FLOWS[@]}" -gt 0 ]] || die "0 flows matched the current filter for $FLOW_TARGET
+  (include=[${INCLUDE_TAGS:-*}] exclude=[${EXCLUDE_TAGS:-none}]). Nothing would
+  run — refusing before even invoking maestro. Check --tags/--exclude-tags
+  against the flow's own tag header, or the --flow target path."
+
 # ── run ───────────────────────────────────────────────────────────────────────
 mkdir -p "$OUT_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -149,8 +261,22 @@ set -e
 echo
 if [[ -f "$REPORT" ]]; then
   echo "e2e: report $REPORT"
-  grep -o '<testsuite [^>]*>' "$REPORT" || true
+  SUITE_TAG="$(grep -o '<testsuite [^>]*>' "$REPORT" || true)"
+  [[ -n "$SUITE_TAG" ]] && echo "$SUITE_TAG"
+  # Belt-and-braces: a tag/flow filter that matches nothing makes maestro exit
+  # 0 with zero testcases run — a silent false pass, the worst failure mode a
+  # testing tool can have. Fail loudly instead of trusting a green exit code
+  # alone (this is what the --flow fix above prevents at the source; this
+  # guard catches every other way to reach the same empty-run state).
+  TEST_COUNT="$(sed -n 's/.*tests="\([0-9]*\)".*/\1/p' <<<"$SUITE_TAG")"
+  if [[ "$STATUS" -eq 0 && "${TEST_COUNT:-0}" -eq 0 ]]; then
+    die "0 testcases ran (JUnit tests=\"0\") but maestro exited 0 — the tag/flow
+  filter matched nothing. Check --tags/--exclude-tags against the --flow
+  target, or the workspace's tag headers, before treating this as a pass."
+  fi
 else
-  echo "e2e: no JUnit report was written (maestro exited $STATUS before reporting)" >&2
+  die "no JUnit report was written at $REPORT (maestro exited $STATUS before
+  reporting). There is nothing to verify a pass against — treat this as a
+  failure, not a warning."
 fi
 exit $STATUS
