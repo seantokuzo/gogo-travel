@@ -27,7 +27,7 @@ import {
   consumePendingSettleReturn,
   recordSettleDeeplinkOut,
 } from "@/features/money/settle-return-store";
-import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID } from "@/test-utils/ids";
+import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
 import { makeBalancesRead, makeSettleRequest } from "@/test-utils/money-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { settleApiOverrides, makeHandlesProfile } from "@/test-utils/settle-fixtures";
@@ -422,6 +422,23 @@ describe("return prompt (R-cmoney-21)", () => {
     const second = await renderSettle();
     expect(screen.queryByTestId("settle-sheet-return")).toBeNull();
     expect(settlementPosts(second.request)).toEqual([]);
+  });
+
+  it("a stash from ANOTHER trip is dropped silently — no prompt, nothing posts (cross-trip guard)", async () => {
+    // R1 correctness (probe-proven inverted): a rail tap on trip B's screen
+    // followed by a cold-start into THIS trip's screen must never post the
+    // stashed amount against this trip's ledger (wrong trip, wrong currency).
+    recordSettleDeeplinkOut({
+      tripId: TRIP_B_ID,
+      counterpartyId: MEMBER_C_ID,
+      method: "paypal",
+      amountCents: 9999,
+    });
+    const { request } = await renderSettle();
+    expect(screen.queryByTestId("settle-sheet-return")).toBeNull();
+    expect(settlementPosts(request)).toEqual([]);
+    // Dropped, never re-stashed: the consume-once slot is empty.
+    expect(consumePendingSettleReturn()).toBeNull();
   });
 
   it("a stale (>30 min) stash expires silently — no prompt", async () => {

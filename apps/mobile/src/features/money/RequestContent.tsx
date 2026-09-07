@@ -96,7 +96,7 @@ export function RequestContent({ trip, requestId }: RequestContentProps) {
   const settlements = useTripSettlements(trip.id, {
     enabled: typeof detail.data?.settlement_id === "string",
   });
-  const returnPrompt = useSettleReturnPrompt();
+  const returnPrompt = useSettleReturnPrompt(trip.id);
 
   const [sheet, setSheet] = useState<"none" | "mark-settled">("none");
   const [cancelConfirm, setCancelConfirm] = useState(false);

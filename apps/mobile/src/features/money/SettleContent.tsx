@@ -95,7 +95,7 @@ export function SettleContent({ trip, memberId }: SettleContentProps) {
   const balances = useTripBalances(trip.id);
   const members = useTripMembers(trip.id);
   const offline = useTripOffline(trip.id);
-  const returnPrompt = useSettleReturnPrompt();
+  const returnPrompt = useSettleReturnPrompt(trip.id);
 
   const [sheet, setSheet] = useState<SheetState>("none");
   /** null = untouched → prefill tracks the live owed amount (R-cmoney-14). */

@@ -22,8 +22,9 @@ import { RequestContent } from "@/features/money/RequestContent";
 import {
   clearSettleReturnRecord,
   consumePendingSettleReturn,
+  recordSettleDeeplinkOut,
 } from "@/features/money/settle-return-store";
-import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID } from "@/test-utils/ids";
+import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import {
   makeSettleRequestDetail,
@@ -169,6 +170,23 @@ describe("debtor view (R-cmoney-26 — the recipient pays)", () => {
       },
     ]);
     expect(request).toBe(second.request);
+  });
+
+  it("a stash from ANOTHER trip is dropped silently — no prompt, nothing posts (cross-trip guard)", async () => {
+    // R1 correctness (probe-proven inverted): a rail tap that left from trip
+    // B must never post through THIS trip's request screen — wrong trip,
+    // wrong currency, and (if linked) a foreign requestId.
+    recordSettleDeeplinkOut({
+      tripId: TRIP_B_ID,
+      counterpartyId: MEMBER_C_ID,
+      method: "paypal",
+      amountCents: 9999,
+    });
+    const { request } = await renderRequest();
+    expect(screen.queryByTestId("settle-request-sheet-return")).toBeNull();
+    expect(settlementPosts(request)).toEqual([]);
+    // Dropped, never re-stashed: the consume-once slot is empty.
+    expect(consumePendingSettleReturn()).toBeNull();
   });
 
   it("the S1 409 arm gets SPECIFIC copy and refetches the detail (state-machine truth)", async () => {
