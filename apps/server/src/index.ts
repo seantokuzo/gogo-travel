@@ -7,6 +7,7 @@ import { buildExpensesDeps } from "./expenses/wire.js";
 import { buildFxDeps } from "./fx/wire.js";
 import { buildItineraryDeps } from "./itinerary/wire.js";
 import { buildPlacesIngest, buildPlacesRouterDeps } from "./places/wire.js";
+import { buildReferenceRouterDeps } from "./reference/wire.js";
 import { buildSettlementsDeps } from "./settlements/wire.js";
 import { buildTravelLegs } from "./travel-legs/wire.js";
 import { buildTripsDeps } from "./trips/wire.js";
@@ -70,6 +71,9 @@ if (authDeps) {
     // Same queue instance as trips: destination + search-miss triggers feed
     // one serial drain (T-6.5).
     places: buildPlacesRouterDeps(placesIngest.trigger),
+    // Airports/airlines typeahead + flight-number inference (B-9) — global
+    // read-only reference data, seeded by migration 0002.
+    reference: buildReferenceRouterDeps(),
     // Booking service + router (T-7.1); mutations mark the LIVE leg worker
     // (T-7.3) post-commit.
     bookings: buildBookingsDeps(travelLegs.marker),

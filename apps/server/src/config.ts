@@ -142,6 +142,15 @@ export const RATE_LIMITS = {
    */
   placesSearch: { limit: 120, windowMs: MINUTE_MS },
   /**
+   * `GET /airports/search` + `GET /airlines/search` + `GET
+   * /airlines/flight-lookup` — ONE per-user bucket across the reference
+   * surface (B-9). Same posture and numbers as `placesSearch` (both are
+   * debounced-typeahead mouths); the cost ceiling here is lower still — the
+   * tables are seeded and bounded (~4k rows), with no ingest seam behind
+   * them — so the limiter is uniformity + abuse hygiene, not scan defense.
+   */
+  referenceSearch: { limit: 120, windowMs: MINUTE_MS },
+  /**
    * `POST /trips/:tripId/itinerary/refresh-legs` — per TRIP (§3.4: "rate-
    * limited per trip; window is config"; T-7.3). Keyed on the gate-proven
    * tripId, not the caller: refresh fans out provider quota per trip, so the
@@ -240,6 +249,14 @@ export const PLACES_SEARCH_PAGE_SIZE_DEFAULT = 20;
 /** `near` search radius when `radius_m` is omitted (spec §3.3: default
  * 2,000 m; the 50,000 m max is the shared schema's bound). */
 export const PLACES_SEARCH_RADIUS_M_DEFAULT = 2_000;
+
+/**
+ * Reference typeahead (`GET /airports/search`, `GET /airlines/search` — B-9)
+ * default page size when `limit` is omitted. The hard cap (20) lives in the
+ * shared `AirportSearchQuerySchema`/`AirlineSearchQuerySchema` — a picker
+ * consumes a handful of ranked rows, never a page cursor.
+ */
+export const REFERENCE_SEARCH_PAGE_SIZE_DEFAULT = 10;
 
 /** Max cells ONE search's coverage miss may enqueue (R-places-7 secondary
  * trigger). Center-out selection keeps the cells the user is looking at;

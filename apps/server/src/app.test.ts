@@ -9,6 +9,7 @@ import type { DbClient } from "./db/create-user.js";
 import type { FxRouterDeps } from "./fx/routes.js";
 import type { ItineraryRouterDeps } from "./itinerary/routes.js";
 import type { PlacesRouterDeps } from "./places/routes.js";
+import type { ReferenceRouterDeps } from "./reference/routes.js";
 import type { SettlementsRouterDeps } from "./settlements/routes.js";
 import type { TravelLegsRouterDeps } from "./travel-legs/routes.js";
 import type { TripsRouterDeps } from "./trips/routes.js";
@@ -89,6 +90,21 @@ describe("createApp wiring guard", () => {
     let error: unknown;
     try {
       createApp({ places: {} as PlacesRouterDeps });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("auth");
+    expect((error as Error).message).toContain("requireAuth");
+  });
+
+  it("throws when the reference router is mounted without auth deps", () => {
+    // Same pairing rule (B-9): the rows are global reference data, but the
+    // surface is Auth: Required (uniform — R-authz-1); reference-without-auth
+    // is a wiring bug, never a silently-unguarded route.
+    let error: unknown;
+    try {
+      createApp({ reference: {} as ReferenceRouterDeps });
     } catch (e) {
       error = e;
     }

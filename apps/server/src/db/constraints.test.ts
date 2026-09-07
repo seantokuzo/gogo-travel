@@ -192,7 +192,7 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
   // Migration baseline
   // ---------------------------------------------------------------------
   describe("migration baseline (R-db-12)", () => {
-    it("creates all 30 tables (27 schema-spec + 3 auth-spec)", async () => {
+    it("creates all 32 tables (27 schema-spec + 3 auth-spec + 2 B-9 reference)", async () => {
       const rows = await db.execute<{ table_name: string }>(sql`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
@@ -202,6 +202,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
         [
           "ai_cache",
           "ai_usage",
+          "airlines",
+          "airports",
           "apple_credentials",
           "auth_sessions",
           "bookings",
