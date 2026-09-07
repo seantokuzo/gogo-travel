@@ -21,6 +21,23 @@
 -- both paths (drizzle-orm's migrator and drizzle-kit's `migrate`), so a
 -- lock_timeout rolls the whole migration back, leaves the journal unwritten,
 -- and is safely retryable.
+--
+-- ROUND-2 (batch scope, documented not "fixed"): drizzle's migrator applies
+-- every PENDING migration for a run inside that SAME one transaction
+-- (`PgDialect.migrate` — one `session.transaction` wraps the whole loop over
+-- `migrations`, this file's statements included), so this `SET` also governs
+-- any LATER migration swept into the same batch (a future 0004 run alongside
+-- this one). A statement in that later migration waiting >3s on a lock would
+-- abort the WHOLE batch — retryable, same clean rollback as above, and
+-- arguably the right default; just not previously spelled out.
+-- `SET LOCAL` does NOT change this: scoped to "the current transaction", and
+-- the whole batch IS one transaction, so `SET LOCAL` here would govern every
+-- later statement in the batch identically to plain `SET`. The only real
+-- difference — `SET`'s value surviving on the session after COMMIT, `SET
+-- LOCAL`'s not — doesn't matter for either runner in this repo: `drizzle-kit
+-- migrate` is a one-shot CLI process, and the test harness's migration
+-- connection is explicitly torn down right after `migrate()` returns
+-- (`src/test/global-setup.ts`'s `templateClient.end()`). Left as plain `SET`.
 SET lock_timeout = '3s';--> statement-breakpoint
 ALTER TABLE "bookings" DROP CONSTRAINT "bookings_time_order_ck";--> statement-breakpoint
 ALTER TABLE "bookings" ADD CONSTRAINT "bookings_time_order_ck" CHECK ("bookings"."starts_at" IS NULL OR "bookings"."ends_at" IS NULL OR "bookings"."starts_at" <= "bookings"."ends_at") NOT VALID;
