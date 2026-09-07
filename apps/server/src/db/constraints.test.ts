@@ -1176,6 +1176,8 @@ describe.skipIf(!dockerAvailable)("DB-1 schema constraint suite", () => {
           // FK violation: entitlements for a user that doesn't exist.
           await tx.insert(schema.entitlements).values({ userId: randomUUID() });
         }),
+        // B-24-DELIBERATE: classic regex — green under PG 18 IS the proof
+        // insert-side stays 23503; do NOT loosen to the tolerant form.
         /violates foreign key constraint/,
       );
 

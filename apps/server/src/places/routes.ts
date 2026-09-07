@@ -397,8 +397,9 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
 
   // -------------------------------------------------------------------------
   // DELETE /places/:placeId — creator-only, unreferenced-only (R-places-10).
-  // The RESTRICT FKs are the authority: delete-then-map-23503 is race-free
-  // where a pre-check would TOCTOU; the 409 names the referencer.
+  // The RESTRICT FKs are the authority: delete-then-map the FK violation
+  // (23503, or 23001 on PG 18 — `isFkViolationCode`, db/pg-errors.ts) is
+  // race-free where a pre-check would TOCTOU; the 409 names the referencer.
   // -------------------------------------------------------------------------
   router.delete(placeEndpoints.deletePlace.path, async (c) => {
     const { userId } = authContextOf(c);
