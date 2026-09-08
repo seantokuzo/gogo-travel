@@ -28,6 +28,10 @@ import { queryClient } from "@/data/query-client";
 // Direct module import (not the feature barrel) — the barrel pulls the panel,
 // whose data hooks import this file's apiClient: a require cycle.
 import { clearDeeplinkOutRecord } from "@/features/deeplinks/return-prompt-store";
+// Concrete module, NOT the @/features/itinerary barrel — same cycle guard as
+// the deeplinks/money imports (the barrel pulls the forms, whose data hooks
+// import this file's apiClient).
+import { resetLastZones } from "@/features/itinerary/add-edit/last-zone-store";
 // Concrete modules, NOT the @/features/money barrel: the barrel pulls the
 // segment components, which import @/auth — the same cycle the query-client
 // import note guards against.
@@ -219,6 +223,11 @@ export const useSessionStore = create<SessionState>()(
       // return record at the NEXT account would leak the previous account's
       // payment AND let the confirm post a fabricated settlement.
       clearSettleReturnRecord();
+      // B-9 R1 (security): the per-TRIP last-used time zone is the same
+      // class again — keyed by trip, not by user, so on a shared device the
+      // next account's booking form would open on the previous account's
+      // zone for any trip they both collaborate on.
+      resetLastZones();
     },
   }),
 );

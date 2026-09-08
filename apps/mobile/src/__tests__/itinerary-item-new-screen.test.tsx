@@ -18,6 +18,7 @@
 import {
   BookingCreateSchema,
   BookingUpdateSchema,
+  deriveBookingInstants,
   ItineraryItemCreateSchema,
   ItineraryItemUpdateSchema,
   ScheduleBookingInputSchema,
@@ -232,10 +233,22 @@ it("B-20 R1: field traits reach the rendered Inputs — prop pins on the traits�
   await renderScreen({ category: "flight" });
 
   const iata = screen.getByTestId("itinerary-item-new-input-origin-iata");
-  expect(iata.props.maxLength).toBe(3);
+  // B-9 widened this cap from B-20's 3 to the WIRE cap (optionalString 200):
+  // the field is now the airport typeahead, so "Narita International" has to
+  // be typeable. Never tighter than the wire — the B-20 rule holds; the
+  // 3-letter narrowing moved to the SAVE gate (pinned above) where a picked
+  // airport, not a maxLength, is what produces a code.
+  expect(iata.props.maxLength).toBe(200);
   expect(iata.props.autoCapitalize).toBe("characters");
   expect(iata.props.autoCorrect).toBe(false);
-  expect(iata.props.keyboardType).toBe("default");
+  // B-9 R1: the comment above claims these pins kill `keyboardType`, so
+  // assert it here too rather than trimming the claim. `AirportPickerField`
+  // passes none, which is RN's alphanumeric default; the regression this
+  // catches is a later `keyboardType="numeric"`/`"number-pad"` on the
+  // airport Input, which makes the LETTERS of an IATA code untypeable on
+  // device while every suite stays green (jest has no keyboards, and
+  // `changeText` bypasses the prop entirely).
+  expect(iata.props.keyboardType ?? "default").toBe("default");
 
   // Plain text detail field — the optionalString(200) wire-cap mirror.
   expect(screen.getByTestId("itinerary-item-new-input-airline").props.maxLength).toBe(200);
@@ -1012,4 +1025,555 @@ it("custom item Day picker seeds from the trip start when no day is prefilled (B
     new Date(2027, 2, 1, 12).getTime(),
   );
   await fireEvent.press(screen.getByTestId("itinerary-item-new-input-day-sheet-close"));
+});
+
+// ---------------------------------------------------------------------------
+// B-9 client half — airport/airline pickers + the ZONED composition
+// (the B-8 fix, end to end through the real screen)
+// ---------------------------------------------------------------------------
+
+/** Drive a DateField through its picker to a wall date. */
+async function pickDate(testID: string, year: number, monthIndex: number, day: number) {
+  await fireEvent.press(screen.getByTestId(testID));
+  await fireEvent(screen.getByTestId(`${testID}-picker`), "onChange", {
+    nativeEvent: { timestamp: new Date(year, monthIndex, day, 12).getTime(), utcOffset: 0 },
+  });
+}
+
+/** Drive a TimeField through its picker to a wall time. */
+async function pickTime(testID: string, hour: number, minute: number) {
+  await fireEvent.press(screen.getByTestId(testID));
+  await fireEvent(screen.getByTestId(`${testID}-picker`), "onChange", {
+    nativeEvent: { timestamp: new Date(2000, 0, 1, hour, minute).getTime(), utcOffset: 0 },
+  });
+}
+
+/** Type into an airport typeahead and pick the offered row. */
+async function pickAirport(fieldTestID: string, query: string, iata: string) {
+  await fireEvent.changeText(screen.getByTestId(fieldTestID), query);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await fireEvent.press(await screen.findByTestId(`${fieldTestID}-result-${iata}`));
+}
+
+it("B-9/B-8: the REAL Tokyo→LA flight — airport picks carry the zones and the wire gets correct offsets", async () => {
+  // Sean's actual booking (device QA 2026-08-29), the entry B-8 made
+  // impossible: depart NRT Apr 24 17:00 JST, arrive LAX Apr 24 10:00 PDT —
+  // an arrival wall clock 7h "before" departure on the SAME date. Driven
+  // through the real screen: pick each airport, type each wall time, save.
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Tokyo to LA");
+  await pickAirport("itinerary-item-new-input-origin-iata", "Narita", "NRT");
+  await pickAirport("itinerary-item-new-input-destination-iata", "LAX", "LAX");
+
+  // The picks are VISIBLE as zones — the whole point of the fix is that the
+  // user can see what is about to be stamped. With no date entered yet the
+  // label describes the TRIP START (2027-03-01), so LA reads GMT-8: US DST
+  // has not begun. A label anchored on `Date.now()` would lie here.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-tz")).toHaveTextContent(
+    "Los Angeles — GMT-8",
+  );
+
+  await pickDate("itinerary-item-new-input-departs-at-date", 2027, 3, 24);
+  await pickTime("itinerary-item-new-input-departs-at-time", 17, 0);
+  await pickDate("itinerary-item-new-input-arrives-at-date", 2027, 3, 24);
+  await pickTime("itinerary-item-new-input-arrives-at-time", 10, 0);
+
+  // …and once the wall date IS April, the same zone reads GMT-7. Seasonal,
+  // per endpoint, exactly what the composition below will use.
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-tz")).toHaveTextContent(
+    "Los Angeles — GMT-7",
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    category: "flight",
+    origin_iata: "NRT",
+    destination_iata: "LAX",
+    // Each endpoint's OWN offset — the fix, byte for byte.
+    departs_at: "2027-04-24T17:00:00+09:00",
+    departs_tz: "Asia/Tokyo",
+    arrives_at: "2027-04-24T10:00:00-07:00",
+    arrives_tz: "America/Los_Angeles",
+  });
+  // …and the instants the server derives are ordered, 9h apart. Under B-8's
+  // `Z` composition this was a 7h INVERSION the 12h grace had to admit.
+  expect(body.details).toBeDefined();
+  if (body.details === undefined) return;
+  const derived = deriveBookingInstants(body.details);
+  expect(Date.parse(derived.ends_at ?? "") - Date.parse(derived.starts_at ?? "")).toBe(
+    9 * 3_600_000,
+  );
+});
+
+it("B-9: the flight number infers the airline — OFFERED, never auto-applied", async () => {
+  const { request } = await renderScreen({ category: "flight" });
+  /** Every `/airlines/search` query fired so far. */
+  const airlineSearches = (): string[] =>
+    request.mock.calls
+      .filter(
+        (call: unknown[]) => (call[0] as { path?: string } | undefined)?.path === "/airlines/search",
+      )
+      .map((call: unknown[]) => (call[1] as { query?: { q?: string } } | undefined)?.query?.q ?? "");
+
+  // Gate arm: input the SHARED parser rejects offers nothing (and, per
+  // reference.test.tsx, fires no request — the PR #50 rider).
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-flight-number"),
+    "ANA204",
+  );
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(
+    screen.queryByTestId("itinerary-item-new-input-flight-number-airline-suggestion"),
+  ).toBeNull();
+
+  // Parseable arm: the suggestion appears and the airline field stays
+  // UNTOUCHED until the user takes it (no clobber, no spurious dirty guard).
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-flight-number"),
+    "NH204",
+  );
+  const suggestion = await screen.findByTestId(
+    "itinerary-item-new-input-flight-number-airline-suggestion",
+  );
+  expect(suggestion).toHaveTextContent(/Use All Nippon Airways/);
+  expect(screen.getByTestId("itinerary-item-new-input-airline").props.value).toBe("");
+
+  await fireEvent.press(suggestion);
+  expect(screen.getByTestId("itinerary-item-new-input-airline").props.value).toBe(
+    "All Nippon Airways",
+  );
+  // Taken ⇒ the offer retires (it only ever offers what isn't already there).
+  await waitFor(() =>
+    expect(
+      screen.queryByTestId("itinerary-item-new-input-flight-number-airline-suggestion"),
+    ).toBeNull(),
+  );
+
+  // B-9 R1 (correctness advisory): taking the suggestion is a COMMIT, not
+  // typing. `picked` inside the airline picker is lazily initialized and
+  // only its own interactions move it, so a host-written value used to land
+  // unsettled — firing `GET /airlines/search?q=All Nippon Airways` against
+  // the shared per-user reference limiter and dropping a result list under
+  // the airline field, for text the user never typed. Same defect class the
+  // PR already fixed for prefills, through the programmatic-fill door.
+  //
+  // Asserted on the REQUEST, not the rendered list: the request is the cost
+  // (a limiter unit), and a "no dropdown" assertion passes vacuously while
+  // the query is still in flight.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(airlineSearches()).not.toContain("All Nippon Airways");
+  expect(screen.queryByTestId("itinerary-item-new-input-airline-result-NH")).toBeNull();
+});
+
+it("B-9: trains reach a zone through the PICKER — no station table, same correct composition", async () => {
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "train" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "train", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "To Kyoto");
+  // The picker is CITY-labelled, never a bare offset.
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-departs-at-tz"));
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-departs-at-tz-search"),
+    "Athens",
+  );
+  const athens = await screen.findByTestId(
+    "itinerary-item-new-input-departs-at-tz-result-europe-athens",
+  );
+  expect(athens).toHaveTextContent(/Athens — GMT\+\d/);
+  await fireEvent.press(athens);
+  // Labelled from the trip start (2027-03-01) until a date is entered — EET.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Athens — GMT+2",
+  );
+
+  await pickDate("itinerary-item-new-input-departs-at-date", 2027, 6, 4);
+  await pickTime("itinerary-item-new-input-departs-at-time", 8, 20);
+  // July ⇒ EEST. The label follows the entered date, not the device clock.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Athens — GMT+3",
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  // Athens is EEST (+03:00) in July — a fixed +02:00 table would be an hour out.
+  expect(body.details).toMatchObject({
+    category: "train",
+    departs_at: "2027-07-04T08:20:00+03:00",
+    departs_tz: "Europe/Athens",
+  });
+});
+
+it("B-9: a title-only edit of a zoned booking re-emits its times BYTE-FOR-BYTE", async () => {
+  // The edit-path guarantee: opening a stored booking reflects its zone and
+  // wall time with NO re-offset, and a save that never touched the times
+  // does not recompose them (seconds, rounding, or a re-resolved offset).
+  const patched: unknown[] = [];
+  const existing: BookingWithItems = {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Old name",
+      details: {
+        category: "flight",
+        origin_iata: "NRT",
+        destination_iata: "LAX",
+        departs_at: "2027-04-24T17:00:00+09:00",
+        departs_tz: "Asia/Tokyo",
+        arrives_at: "2027-04-24T10:00:00-07:00",
+        arrives_tz: "America/Los_Angeles",
+      },
+    }),
+    items: [],
+  };
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve(existing);
+        },
+      },
+    },
+  );
+
+  // Display: the WALL clock the ticket says, in the zone it was stored with —
+  // never re-offset into the device's zone.
+  const titleInput = await screen.findByTestId("itinerary-item-new-input-title");
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-time")).toHaveTextContent(
+    "17:00",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-tz")).toHaveTextContent(
+    "Los Angeles — GMT-7",
+  );
+
+  await fireEvent.changeText(titleInput, "New name");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toEqual(existing.details);
+});
+
+it("B-9: editing a LEGACY unzoned booking's time DEMANDS a zone instead of Z-stamping it", async () => {
+  // A row saved before zone capture has no `departs_tz`, so the picker says
+  // so rather than inventing one. Touch the time and the save BLOCKS on a
+  // field error — B-8's silent `Z` path is unreachable, not merely unused.
+  const patched: unknown[] = [];
+  const existing: BookingWithItems = {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Legacy flight",
+      details: { category: "flight", departs_at: "2027-04-24T17:00:00Z" },
+    }),
+    items: [],
+  };
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve(existing);
+        },
+      },
+    },
+  );
+
+  const tzField = await screen.findByTestId("itinerary-item-new-input-departs-at-tz");
+  expect(tzField).toHaveTextContent(/^Not set/);
+
+  await pickTime("itinerary-item-new-input-departs-at-time", 18, 0);
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(patched).toHaveLength(0);
+  // B-9 R1: a ZONE message renders on the zone control that fixes it (the
+  // `-tz-error` node the §2.7 inventory claims), not on the date/time group
+  // — and only there, so the form never says it twice.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /Pick the time zone/,
+  );
+  expect(screen.queryByTestId("itinerary-item-new-input-departs-at-error")).toBeNull();
+
+  // Choosing the zone unblocks it, composed in the zone the user picked.
+  await fireEvent.press(tzField);
+  await fireEvent.changeText(
+    screen.getByTestId("itinerary-item-new-input-departs-at-tz-search"),
+    "Tokyo",
+  );
+  await fireEvent.press(
+    await screen.findByTestId("itinerary-item-new-input-departs-at-tz-result-asia-tokyo"),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    departs_at: "2027-04-24T18:00:00+09:00",
+    departs_tz: "Asia/Tokyo",
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-9 R1 — an airport swap INVALIDATES its zone (correctness lane, blocking).
+// A pick is the only thing that supplies a real IANA zone, so text that walks
+// away from the picked code leaves a zone nothing justifies. Both routes in
+// (create-then-retype, edit-then-retype) reached the wire silently.
+// ---------------------------------------------------------------------------
+
+/** The stored Tokyo→LA booking every edit-mode arm below opens. */
+function storedZonedFlight(details?: Record<string, unknown>): BookingWithItems {
+  return {
+    ...makeBooking({
+      id: BOOKING_IDEA_ID,
+      category: "flight",
+      status: "idea",
+      starts_at: null,
+      title: "Tokyo to LA",
+      details: {
+        category: "flight",
+        origin_iata: "NRT",
+        destination_iata: "LAX",
+        departs_at: "2027-04-24T17:00:00+09:00",
+        departs_tz: "Asia/Tokyo",
+        arrives_at: "2027-04-24T10:00:00-07:00",
+        arrives_tz: "America/Los_Angeles",
+        ...details,
+      },
+    }),
+    items: [],
+  };
+}
+
+/** Open a stored booking for edit, capturing its PATCH bodies. */
+async function renderStoredFlight(existing: BookingWithItems) {
+  const patched: unknown[] = [];
+  await renderScreen(
+    { bookingId: BOOKING_IDEA_ID },
+    {
+      overrides: {
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve(existing),
+        "PATCH /trips/:tripId/bookings/:bookingId": (input) => {
+          patched.push(input);
+          return Promise.resolve(existing);
+        },
+      },
+    },
+  );
+  await screen.findByTestId("itinerary-item-new-input-title");
+  return { patched };
+}
+
+/** Drive the zone picker to a catalog entry. */
+async function pickZone(fieldTestID: string, query: string, slug: string) {
+  await fireEvent.press(screen.getByTestId(fieldTestID));
+  await fireEvent.changeText(screen.getByTestId(`${fieldTestID}-search`), query);
+  await fireEvent.press(await screen.findByTestId(`${fieldTestID}-result-${slug}`));
+}
+
+/** Let the typeahead's deferred query and its request settle. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+
+it("B-9 R1: clear a PICKED airport, hand-type another, and the zone goes with it", async () => {
+  // Scenario A. Pick NRT (departs_tz = Asia/Tokyo) → Clear "From (IATA)" →
+  // hand-type LAX (3 letters, so the save gate's IATA rule passes) → enter
+  // the times → Save. Pre-fix this wired `origin_iata: "LAX"` alongside
+  // `departs_at: "…+09:00"` and `departs_tz: "Asia/Tokyo"` — a ~16h-wrong
+  // instant with no error anywhere. B-8, through an ordinary "change the
+  // airport" flow.
+  const created: unknown[] = [];
+  await renderScreen(
+    { category: "flight" },
+    {
+      overrides: {
+        "POST /trips/:tripId/bookings": (input) => {
+          created.push(input);
+          return Promise.resolve(
+            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", starts_at: null }),
+          );
+        },
+      },
+    },
+  );
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Tokyo to LA");
+  await pickAirport("itinerary-item-new-input-origin-iata", "Narita", "NRT");
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-origin-iata-clear"));
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "LAX");
+  await settle();
+  // The zone is gone the moment the code stops matching the pick — and the
+  // user can SEE it is gone, which is what the always-visible picker is for.
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    /^Not set/,
+  );
+
+  await pickDate("itinerary-item-new-input-departs-at-date", 2027, 3, 24);
+  await pickTime("itinerary-item-new-input-departs-at-time", 17, 0);
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  // Loud, not silent: no write at all, and the message sits on the control
+  // that fixes it.
+  expect(created).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /Pick the time zone/,
+  );
+
+  // …and it is not a dead end: picking the airport they typed supplies the
+  // zone, and the save composes in THAT zone.
+  await fireEvent.press(
+    await screen.findByTestId("itinerary-item-new-input-origin-iata-result-LAX"),
+  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(created).toHaveLength(1));
+  const body = BookingCreateSchema.parse((created[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "LAX",
+    departs_at: "2027-04-24T17:00:00-07:00",
+    departs_tz: "America/Los_Angeles",
+  });
+});
+
+it("B-9 R1: retyping the origin of a STORED flight refuses to re-emit the old zone's instant", async () => {
+  // Scenario B, the worse one. `departs_at` still holds `raw`, so pre-fix
+  // `buildDetails` re-emitted the stored "+09:00" string AND
+  // `departs_tz: "Asia/Tokyo"` verbatim under an origin the user had just
+  // changed to London — a stored instant silently relabelled, not even
+  // recomposed. Dropping `raw` with the zone is what makes it fail loud.
+  const { patched } = await renderStoredFlight(storedZonedFlight());
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "LHR");
+  await settle();
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    /^Not set/,
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(patched).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /Pick the time zone/,
+  );
+
+  // Name the zone the new origin justifies and it recomposes there — the
+  // WALL clock the ticket says (17:00) with London's April offset, not
+  // Tokyo's instant relabelled.
+  await pickZone("itinerary-item-new-input-departs-at-tz", "London", "europe-london");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toMatchObject({
+    origin_iata: "LHR",
+    departs_at: "2027-04-24T17:00:00+01:00",
+    departs_tz: "Europe/London",
+    // The endpoint the user never touched still rides byte-for-byte.
+    arrives_at: "2027-04-24T10:00:00-07:00",
+    arrives_tz: "America/Los_Angeles",
+  });
+});
+
+it("B-9 R1: retyping the SAME code invalidates nothing — a divergence check, not a blanket", async () => {
+  // Falsification for both arms above. The guard compares the field's text
+  // against the code the zone came with; drop that comparison and ANY
+  // keystroke in an airport field nukes a correct zone — this pin (a
+  // byte-for-byte re-emit after retyping "NRT" over "NRT") is what reds.
+  const existing = storedZonedFlight();
+  const { patched } = await renderStoredFlight(existing);
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "NRT");
+  await settle();
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Tokyo — GMT+9",
+  );
+
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const body = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(body.details).toEqual(existing.details);
+});
+
+it("B-9 R1: a stored zone THIS DEVICE can't resolve blocks the save with TZ_UNKNOWN_ERROR", async () => {
+  // The device-divergence path `TZ_UNKNOWN_ERROR` exists for, previously
+  // unreachable from any test: on Node every zone the form can produce
+  // resolves. A stored row can still carry one this engine doesn't know — a
+  // newer tzdb id, or (on Hermes/iOS) a backward link the platform's own id
+  // table rejects (facebook/hermes#1607). The field says so instead of
+  // inventing a label, and the save refuses instead of composing something.
+  const { patched } = await renderStoredFlight(
+    storedZonedFlight({ departs_tz: "Mars/Olympus_Mons" }),
+  );
+
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
+    "Mars/Olympus_Mons",
+  );
+
+  await pickTime("itinerary-item-new-input-departs-at-time", 18, 0);
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  expect(patched).toHaveLength(0);
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz-error")).toHaveTextContent(
+    /isn't available on this device/,
+  );
+
+  // Choosing a zone the device DOES know unblocks it.
+  await pickZone("itinerary-item-new-input-departs-at-tz", "Tokyo", "asia-tokyo");
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  const unblocked = BookingUpdateSchema.parse((patched[0] as { body: unknown }).body);
+  expect(unblocked.details).toMatchObject({
+    departs_at: "2027-04-24T18:00:00+09:00",
+    departs_tz: "Asia/Tokyo",
+  });
 });

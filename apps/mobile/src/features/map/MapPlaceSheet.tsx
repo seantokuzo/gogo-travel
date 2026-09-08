@@ -17,7 +17,9 @@
  * `booking/[bookingId]` directly — MATCHING T-8.4's rerouted convention,
  * MAP-6 bullet 386 / PR #25 interp 17), Details (the §2.3 "full detail
  * PUSH", same-tab). Cross-tab actions dismiss the sheet FIRST, then jump
- * the tab, then push (mobile.md landmine — order pinned).
+ * the tab, then push (mobile.md landmine — order pinned) — and since B-19
+ * the jump+push waits for the sheet's RN Modal to actually leave the screen
+ * (`Sheet`'s `onExited`), instead of sharing a commit with the dismiss.
  *
  * NAVIGATE-OFFLINE POSTURE (T-8.7 reconciliation of PR #25 interp 15 +
  * A7): Navigate stays ENABLED offline on BOTH R-map-8 surfaces — Google
@@ -79,6 +81,12 @@ function coarseCategoryLabel(category: CoarseCategory): string {
   return category.charAt(0).toUpperCase() + category.slice(1);
 }
 
+/** B-19: the navigation an action owes once the sheet's Modal is gone. */
+type PendingRoute =
+  | { kind: "add-to-day"; place: Place }
+  | { kind: "item"; itemId: string }
+  | { kind: "booking"; bookingId: string };
+
 export interface MapPlaceSheetProps {
   tripId: string;
   /** Null ⇒ hidden — the LegModeSheet always-mounted pattern. */
@@ -134,10 +142,65 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
       ? undefined
       : itineraryQuery.data?.items.find((item) => item.id === itineraryItemId);
 
-  const dismiss = (): void => {
+  /**
+   * B-19: an action's destination, held from the tap until the sheet's RN
+   * Modal is off screen. `null` ⇒ the exit was a plain dismissal (close,
+   * scrim, swipe, Android back, or `Details`, which routes immediately) and
+   * must navigate nothing.
+   */
+  const [pendingRoute, setPendingRoute] = useState<PendingRoute | null>(null);
+
+  /**
+   * Every dismissal route funnels here, and `next` is the ONLY way an intent
+   * survives the close — so a plain `dismiss()` (including one arriving while
+   * an earlier intent is still parked, e.g. the sheet was reselected during
+   * the exit window) clears it rather than firing a stale jump later.
+   */
+  const dismiss = (next: PendingRoute | null = null): void => {
     setOpenFailed(false);
     setActionError(null);
+    setPendingRoute(next);
     onDismiss();
+  };
+
+  /**
+   * The deferred half of the cross-tab actions (B-19). Runs once the sheet's
+   * `RCTModalHostViewController` is gone — pushing `item/new` (a
+   * `presentation: "modal"` route) while it is still presented latches
+   * `RNSScreenStackView._updatingModals` on the ITINERARY tab's stack and
+   * wedges every later modal there. Mechanism: the `onExited` prop doc in
+   * `components/Sheet.tsx`.
+   *
+   * Order inside is unchanged (R-map-12 / mobile.md): tab jump first, push
+   * only if a navigator declaring the tab was found.
+   */
+  const handleExited = (): void => {
+    if (pendingRoute === null) return;
+    setPendingRoute(null);
+    if (!jumpToTripTab(navigation, tripId, "itinerary")) return;
+    if (pendingRoute.kind === "add-to-day") {
+      router.push({
+        pathname: "/[tripId]/itinerary/item/new",
+        params: {
+          tripId,
+          category: "place_visit",
+          placeId: pendingRoute.place.id,
+          placeName: pendingRoute.place.name,
+        },
+      });
+      return;
+    }
+    if (pendingRoute.kind === "booking") {
+      router.push({
+        pathname: "/[tripId]/itinerary/booking/[bookingId]",
+        params: { tripId, bookingId: pendingRoute.bookingId },
+      });
+      return;
+    }
+    router.push({
+      pathname: "/[tripId]/itinerary/item/[itemId]",
+      params: { tripId, itemId: pendingRoute.itemId },
+    });
   };
 
   const toggleSave = (target: Place): void => {
@@ -150,37 +213,19 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
     if (savedRowSettled) unsave.mutate(savedRow.id);
   };
 
-  /** R-map-12: dismiss → tab jump → prefilled item/new (module doc order). */
+  /** R-map-12: dismiss → (exit) → tab jump → prefilled item/new. */
   const handleAddToDay = (target: Place): void => {
-    dismiss();
-    if (!jumpToTripTab(navigation, tripId, "itinerary")) return;
-    router.push({
-      pathname: "/[tripId]/itinerary/item/new",
-      params: {
-        tripId,
-        category: "place_visit",
-        placeId: target.id,
-        placeName: target.name,
-      },
-    });
+    dismiss({ kind: "add-to-day", place: target });
   };
 
   /** R-map-23: per-kind destination (module doc — T-8.4's convention). */
   const handleViewInItinerary = (): void => {
     if (linkedItem === undefined) return;
-    dismiss();
-    if (!jumpToTripTab(navigation, tripId, "itinerary")) return;
     if (linkedItem.kind === "booking" && linkedItem.booking_id !== null) {
-      router.push({
-        pathname: "/[tripId]/itinerary/booking/[bookingId]",
-        params: { tripId, bookingId: linkedItem.booking_id },
-      });
+      dismiss({ kind: "booking", bookingId: linkedItem.booking_id });
       return;
     }
-    router.push({
-      pathname: "/[tripId]/itinerary/item/[itemId]",
-      params: { tripId, itemId: linkedItem.id },
-    });
+    dismiss({ kind: "item", itemId: linkedItem.id });
   };
 
   const handleNavigate = (target: Place): void => {
@@ -192,6 +237,14 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
     });
   };
 
+  /**
+   * NOT deferred like the two above, deliberately (B-19 scope): this is a
+   * same-tab PUSH onto the map stack, so `updateContainer`'s
+   * `setModalViewControllers` sees an UNCHANGED (empty) modal list and
+   * returns at its `isEqualToArray` check before `_updatingModals` is ever
+   * set. Only `presentation: "modal"` destinations reach the wedge, and
+   * delaying this one would add ~200 ms to a same-tab push for no bug.
+   */
   const handleDetails = (target: Place): void => {
     dismiss();
     router.push({
@@ -205,7 +258,8 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
   return (
     <Sheet
       visible={place !== null}
-      onDismiss={dismiss}
+      onDismiss={() => dismiss()}
+      onExited={handleExited}
       {...(place !== null ? { title: place.name } : null)}
       testID="map-sheet-place"
     >

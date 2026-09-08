@@ -1,4 +1,3 @@
-/* eslint-env jest */
 /**
  * Per-test-file setup (setupFilesAfterEnv — the jest-expo preset owns
  * `setupFiles`, so this file must NOT be listed there or it would clobber

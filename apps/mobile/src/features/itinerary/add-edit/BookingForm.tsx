@@ -25,6 +25,16 @@
  * `cancelled` is terminal — the form shows a static badge (cancel/delete
  * live on booking detail, R-itin-26). Concurrency is collab-v1 LWW
  * (R-ib-18) — no version token, no improvised conflict UI.
+ *
+ * B-9 (the B-8 fix): flight/train times are ZONED. Each such datetime row
+ * carries an always-visible `TimeZoneField` showing the zone its wall
+ * values will be stamped in, and an airport pick pushes that airport's IANA
+ * zone into the datetime field naming it in `tzFrom`. The ladder for a NEW
+ * form: airport pick → the picker → the last zone this trip's forms
+ * submitted → the device zone. On an EXISTING row the stored `*_tz` wins,
+ * and a row that predates zone capture renders honestly UNSET — see
+ * form-model's `raw` contract for why an untouched time is never
+ * re-stamped by a title-only edit.
  */
 import {
   BookingCreateSchema,
@@ -32,6 +42,7 @@ import {
   CurrencyCodeSchema,
   deriveAutoItems,
   minorUnitDigits,
+  type Airport,
   type BookingCategory,
   type BookingCreate,
   type BookingStatus,
@@ -58,17 +69,27 @@ import {
   deeplinkInputFor,
   emptyFormState,
   fieldInputTraits,
+  iataKeyText,
   kebab,
   parseMoneyToCents,
   stateFromDetails,
   statusOptionsFor,
+  TZ_MISSING_ERROR,
+  TZ_UNKNOWN_ERROR,
+  zonedDateTimeFields,
+  zoneSourceFromState,
   type DateTimeValue,
   type DetailsFormState,
 } from "./form-model";
+import { AirlinePickerField } from "./AirlinePickerField";
+import { AirportPickerField } from "./AirportPickerField";
 import { ConflictNotice } from "./ConflictNotice";
+import { FlightNumberField } from "./FlightNumberField";
+import { defaultZoneFor, rememberTripZone } from "./last-zone-store";
 import { OptionChips } from "./OptionChips";
 import { PlacePickerField } from "./PlacePickerField";
 import { TimeField } from "./TimeField";
+import { TimeZoneField } from "./TimeZoneField";
 import { useFormConflicts } from "./useFormConflicts";
 
 export interface BookingFormProps {
@@ -134,10 +155,29 @@ export function BookingForm({
   // wire-legal pre-B-20/capture) must not strand a title-only edit (B-20 R1).
   const [initialDetails] = useState<DetailsFormState>(() =>
     booking !== undefined
-      ? stateFromDetails(booking.details)
-      : emptyFormState(category, { day: prefillDay, time: prefillTime }),
+      ? // Edit: the STORED zones (and `raw` provenance) — never the ladder.
+        // A row saved before zone capture stays visibly unset rather than
+        // acquiring the device's zone behind the user's back (B-9).
+        stateFromDetails(booking.details)
+      : emptyFormState(category, {
+          day: prefillDay,
+          time: prefillTime,
+          // B-9 ladder rungs 3–4: the zone this trip's forms last submitted,
+          // else the device zone. Rungs 1–2 (airport pick, picker) overwrite it.
+          tz: defaultZoneFor(trip.id),
+        }),
   );
   const [details, setDetails] = useState<DetailsFormState>(initialDetails);
+  /**
+   * B-9 R1: per zoned datetime, the IATA text its CURRENT zone came with —
+   * seeded from the stored row on an edit, `""` on a new form (the ladder
+   * zone belongs to no airport). See `zoneSourceFromState`.
+   */
+  const [zoneSource, setZoneSource] = useState<Record<string, string>>(() =>
+    zoneSourceFromState(category, initialDetails),
+  );
+  /** B-9 R1: the airline name the flight-number suggestion last applied. */
+  const [settledAirline, setSettledAirline] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<BookingStatus>(booking?.status ?? "idea");
   const [priceText, setPriceText] = useState(
     booking !== undefined && booking.price_cents !== null
@@ -240,6 +280,127 @@ export function BookingForm({
     setFieldErrors((prev) => (prev[key] !== undefined ? { ...prev, [key]: "" } : prev));
   };
 
+  /** Current wall value of a datetime field, defaulted. */
+  const dateTimeAt = (state: DetailsFormState, key: string): DateTimeValue => {
+    const value = state[key];
+    return typeof value === "object" ? value : { date: "", time: "" };
+  };
+
+  /**
+   * B-9: rewrite a datetime's wall/zone parts and DROP `raw` — the value is
+   * now the user's, not the stored row's, so it must recompose on save.
+   */
+  const setDateTimePart = (key: string, patch: Partial<DateTimeValue>): void => {
+    const current = dateTimeAt(details, key);
+    setDetailField(key, {
+      date: patch.date ?? current.date,
+      time: patch.time ?? current.time,
+      ...(current.tz !== undefined || patch.tz !== undefined
+        ? { tz: patch.tz ?? current.tz ?? "" }
+        : {}),
+    });
+  };
+
+  /**
+   * B-9 R1: a zone the user chose EXPLICITLY belongs to whatever airport
+   * text is on screen right now — re-anchoring the provenance is what stops
+   * the next keystroke in the IATA field from throwing away a deliberate
+   * choice, while still invalidating it if the code then changes again.
+   */
+  const selectZone = (fieldKey: string, tzFrom: string | undefined, tz: string): void => {
+    setDateTimePart(fieldKey, { tz });
+    if (tzFrom === undefined) return;
+    const anchor = iataKeyText(details[tzFrom]);
+    setZoneSource((prev) => (prev[fieldKey] === anchor ? prev : { ...prev, [fieldKey]: anchor }));
+  };
+
+  /**
+   * B-9 R1 (correctness lane, blocking): editing an IATA field by hand.
+   *
+   * The pick is what supplies a real IANA zone, so text that walks away from
+   * the code the zone came with makes that zone unattributable — clearing
+   * "From (IATA)" after picking NRT and typing `LAX` used to keep
+   * `departs_tz: "Asia/Tokyo"` and wire a ~16h-wrong instant with no error,
+   * and on an EDIT the stored `raw` string re-emitted Tokyo's `+09:00`
+   * verbatim under a London origin.
+   *
+   * So drop the zone AND the `raw` provenance the moment the code diverges:
+   * `raw` is checked first in `buildDetails`, so leaving it would re-emit
+   * the old airport's offset regardless. What the user then sees is the wall
+   * clock they typed with an unset zone, and save raises `TZ_MISSING_ERROR`
+   * — the PR's fail-loud posture, never a silently re-stamped instant.
+   */
+  const editAirportText = (fieldKey: string, next: string): void => {
+    const code = iataKeyText(next);
+    const invalidated: string[] = [];
+    for (const zoned of zonedDateTimeFields(category)) {
+      if (zoned.tzFrom === fieldKey && zoneSource[zoned.key] !== code) invalidated.push(zoned.key);
+    }
+    if (invalidated.length === 0) {
+      setDetailField(fieldKey, next);
+      return;
+    }
+    onDirty();
+    setDetails((prev) => {
+      const nextState: DetailsFormState = { ...prev, [fieldKey]: next };
+      for (const key of invalidated) {
+        const current = prev[key];
+        const dt = typeof current === "object" ? current : { date: "", time: "" };
+        nextState[key] = { date: dt.date, time: dt.time, tz: "" };
+      }
+      return nextState;
+    });
+    setZoneSource((prev) => {
+      const nextSource = { ...prev };
+      for (const key of invalidated) nextSource[key] = code;
+      return nextSource;
+    });
+    setFieldErrors((prev) => {
+      const nextErrors = { ...prev };
+      nextErrors[fieldKey] = "";
+      // The stale zone message (if any) described the OLD code — clearing it
+      // keeps the form from accusing the user of the error it just created.
+      for (const key of invalidated) nextErrors[key] = "";
+      return nextErrors;
+    });
+  };
+
+  /**
+   * An airport PICK: commit the code and adopt its IANA zone for every
+   * datetime field that names this IATA field in `tzFrom`. This single hop
+   * is what turns "NRT 17:00" into `2027-04-24T17:00:00+09:00` (B-8).
+   */
+  const pickAirport = (fieldKey: string, airport: Airport): void => {
+    onDirty();
+    // Derived from the STATIC field config, never accumulated inside a
+    // `setState` updater — React may run an updater late or twice, so a list
+    // built in there is not safe to read on the next line.
+    const adopted = zonedDateTimeFields(category)
+      .filter((zoned) => zoned.tzFrom === fieldKey)
+      .map((zoned) => zoned.key);
+    setDetails((prev) => {
+      const next: DetailsFormState = { ...prev, [fieldKey]: airport.iata };
+      for (const key of adopted) {
+        const current = prev[key];
+        const dt = typeof current === "object" ? current : { date: "", time: "" };
+        next[key] = { date: dt.date, time: dt.time, tz: airport.tz };
+      }
+      return next;
+    });
+    // B-9 R1: the zone now belongs to THIS code. Retyping the field away
+    // from it invalidates the zone (see `editAirportText`).
+    setZoneSource((prev) => {
+      const next = { ...prev };
+      for (const key of adopted) next[key] = iataKeyText(airport.iata);
+      return next;
+    });
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      for (const key of [fieldKey, ...adopted]) next[key] = "";
+      return next;
+    });
+  };
+
   const save = (): void => {
     if (pending || savedToIdeas) return;
     const errors: Record<string, string> = {};
@@ -272,6 +433,14 @@ export function BookingForm({
     }
     setFieldErrors({});
     setFormError(null);
+
+    // B-9 ladder rung 3: remember the zone this trip's forms just used so
+    // the NEXT form opens there. The last zoned field wins — on a flight
+    // that is the ARRIVAL, which is where the next leg starts.
+    for (const zoned of zonedDateTimeFields(category)) {
+      const dt = dateTimeAt(details, zoned.key);
+      if (dt.date !== "" && dt.time !== "") rememberTripZone(trip.id, dt.tz ?? "");
+    }
 
     if (!editing) {
       const candidate: BookingCreate = {
@@ -382,6 +551,17 @@ export function BookingForm({
             const contextDate =
               sibling !== undefined && sibling.date !== "" ? sibling.date : trip.start_date;
             const error = fieldErrors[field.key];
+            // B-9 R1 (correctness advisory): a ZONE message belongs on the
+            // zone control that fixes it — that is what makes the `-tz-error`
+            // node in the §2.7 inventory reachable at all. Every other
+            // datetime message stays on the date/time group. Exactly one of
+            // the two renders, so the form never says it twice.
+            const zoneError =
+              field.tzKey !== undefined &&
+              (error === TZ_MISSING_ERROR || error === TZ_UNKNOWN_ERROR)
+                ? error
+                : undefined;
+            const groupError = zoneError === undefined ? error : undefined;
             return (
               <View key={field.key}>
                 <View style={s.row}>
@@ -393,9 +573,11 @@ export function BookingForm({
                       onSelect={(date) => {
                         // PR #49 R1: Done can re-commit the UNCHANGED value
                         // (B-15a) — a same-value commit must not arm the
-                        // dirty guard (setDetailField latches onDirty).
+                        // dirty guard (setDetailField latches onDirty), and
+                        // must not drop `raw` (B-9: that would re-stamp a
+                        // stored time the user never really changed).
                         if (date === value.date) return;
-                        setDetailField(field.key, { ...value, date });
+                        setDateTimePart(field.key, { date });
                       }}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-date`}
                     />
@@ -409,20 +591,35 @@ export function BookingForm({
                         // PR #49 R1: same-value Done commit — see the date
                         // field's guard above.
                         if (time === value.time) return;
-                        setDetailField(field.key, { ...value, time });
+                        setDateTimePart(field.key, { time });
                       }}
-                      onClear={() => setDetailField(field.key, { ...value, time: "" })}
+                      onClear={() => setDateTimePart(field.key, { time: "" })}
                       testID={`itinerary-item-new-input-${kebab(field.key)}-time`}
                     />
                   </View>
                 </View>
-                {error !== undefined && error !== "" ? (
+                {/* B-9: ALWAYS visible for a wire-zoned time — the B-8
+                    failure was a zone applied where nobody could see it. */}
+                {field.tzKey !== undefined ? (
+                  <TimeZoneField
+                    label={`${field.label} time zone`}
+                    value={value.tz ?? ""}
+                    referenceDate={value.date !== "" ? value.date : contextDate}
+                    onSelect={(tz) => {
+                      if (tz === value.tz) return;
+                      selectZone(field.key, field.tzFrom, tz);
+                    }}
+                    error={zoneError}
+                    testID={`itinerary-item-new-input-${kebab(field.key)}-tz`}
+                  />
+                ) : null}
+                {groupError !== undefined && groupError !== "" ? (
                   <AppText
                     role="caption"
                     accessibilityLiveRegion="polite"
                     testID={`itinerary-item-new-input-${kebab(field.key)}-error`}
                   >
-                    {error}
+                    {groupError}
                   </AppText>
                 ) : null}
               </View>
@@ -444,6 +641,76 @@ export function BookingForm({
           // derive from ONE traits table (form-model) — every field of a kind
           // behaves identically.
           const traits = fieldInputTraits(field);
+          const fieldText =
+            typeof details[field.key] === "string" ? (details[field.key] as string) : "";
+          // B-9: the IATA fields ARE the airport typeahead. The pick is what
+          // supplies the endpoint's IANA zone, so this is the field that
+          // makes a correct instant possible — not a nicety.
+          if (field.kind === "iata") {
+            const zoned = zonedDateTimeFields(category).find(
+              (candidate) => candidate.tzFrom === field.key,
+            );
+            const paired = zoned !== undefined ? dateTimeAt(details, zoned.key) : undefined;
+            return (
+              <AirportPickerField
+                key={field.key}
+                label={field.label}
+                value={fieldText}
+                onChangeText={(next) => editAirportText(field.key, next)}
+                onPickAirport={(airport) => pickAirport(field.key, airport)}
+                referenceDate={
+                  paired !== undefined && paired.date !== "" ? paired.date : trip.start_date
+                }
+                error={fieldErrors[field.key] || undefined}
+                testID={`itinerary-item-new-input-${kebab(field.key)}`}
+              />
+            );
+          }
+          if (field.kind === "airline") {
+            return (
+              <AirlinePickerField
+                key={field.key}
+                label={field.label}
+                value={fieldText}
+                onChangeText={(next) => setDetailField(field.key, next)}
+                settledValue={settledAirline}
+                maxLength={traits.maxLength}
+                error={fieldErrors[field.key] || undefined}
+                testID={`itinerary-item-new-input-${kebab(field.key)}`}
+              />
+            );
+          }
+          if (field.kind === "text" && field.inferAirline === true) {
+            const airlineField = CATEGORY_FIELDS[category].find(
+              (candidate) => candidate.kind === "airline",
+            );
+            const airlineText =
+              airlineField !== undefined && typeof details[airlineField.key] === "string"
+                ? (details[airlineField.key] as string)
+                : "";
+            return (
+              <FlightNumberField
+                key={field.key}
+                label={field.label}
+                value={fieldText}
+                onChangeText={(next) => setDetailField(field.key, traits.transform(next))}
+                airlineText={airlineText}
+                onUseAirline={(name) => {
+                  if (airlineField === undefined) return;
+                  // B-9 R1: mark it settled in the same hop that writes it —
+                  // otherwise the airline picker treats a name the user never
+                  // typed as a live query and searches for it.
+                  setSettledAirline(name);
+                  setDetailField(airlineField.key, name);
+                }}
+                autoCapitalize={traits.autoCapitalize}
+                autoCorrect={traits.autoCorrect}
+                maxLength={traits.maxLength}
+                error={fieldErrors[field.key] || undefined}
+                testID={`itinerary-item-new-input-${kebab(field.key)}`}
+              />
+            );
+          }
           return (
             <Input
               key={field.key}
