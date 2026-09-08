@@ -44,6 +44,21 @@ tags:
     id: "diagnostics-scroll"
 
 # The six legs (DiagnosticsScreen.tsx) — row + status badge for each.
+#
+# ONLY THE FIRST THREE ROWS FIT ON SCREEN (first real run, 2026-09-07, iPhone
+# 17 Pro / iOS 26.3). The panel is a ScrollView of six evidence-bearing cards;
+# `diagnostics-list-item-env` alone already ends at y=883 on an 874pt-tall
+# screen, and rows 4-6 are below the fold — absent from the accessibility
+# hierarchy entirely, so a bare `assertVisible` on them can never pass no
+# matter how long it retries. Maestro's auto-wait retries a *selector*, it
+# does not scroll. The rows are NOT conditional: `GoogleLegRow` renders in
+# both the configured and unconfigured arms (DiagnosticsScreen.tsx), so this
+# was never a build-state problem — the flow simply asserted things it had
+# not brought on screen.
+#
+# `scrollUntilVisible` does NOT weaken these assertions: each row still has
+# to exist and become visible, and the trailing `assertVisible` still runs.
+# It only makes the element reachable so the assertion can mean something.
 - assertVisible:
     id: "diagnostics-list-item-base-url"
 - assertVisible:
@@ -52,15 +67,38 @@ tags:
     id: "diagnostics-list-item-health"
 - assertVisible:
     id: "diagnostics-list-item-env"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-google-request"
+    direction: DOWN
+    timeout: 15000
 - assertVisible:
     id: "diagnostics-list-item-google-request"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-secure-store"
+    direction: DOWN
+    timeout: 15000
 - assertVisible:
     id: "diagnostics-list-item-secure-store"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-last-error"
+    direction: DOWN
+    timeout: 15000
 - assertVisible:
     id: "diagnostics-list-item-last-error"
 
 # Rerun is never disabled by design (rerunning a HUNG leg is a first-class
 # device scenario). Pressing it must leave the panel standing.
+#
+# The scrolls above left us at the BOTTOM of the panel, so the base-url rerun
+# button has to be brought back on screen before it can be tapped.
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-button-rerun-base-url"
+    direction: UP
+    timeout: 15000
 - tapOn:
     id: "diagnostics-button-rerun-base-url"
 - assertVisible:
