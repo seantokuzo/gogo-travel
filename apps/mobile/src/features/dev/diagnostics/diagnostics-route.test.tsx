@@ -13,6 +13,7 @@
  * console-tap.test.ts, its canonical home.
  */
 import { act, screen } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 
 import DiagnosticsRoute from "@/app/(auth)/diagnostics";
 import { parseDeepLink } from "@/navigation/deep-links";
@@ -74,12 +75,32 @@ describe("(auth)/diagnostics __DEV__ gate", () => {
     expect(screen.getByTestId("diagnostics-evidence-base-url")).toBeOnTheScreen();
   });
 
-  it("RELEASE ARM: renders NOTHING — with the live-flip control proving the pin could fail", async () => {
-    // Falsification: remove the `if (!__DEV__) return null` gate → the null
-    // assertion below goes red.
+  it("RELEASE ARM: renders an inert marker only — with the live-flip control proving the pin could fail", async () => {
+    // Falsification: remove the `if (!__DEV__) return <View .../>` gate →
+    // either assertion below goes red (the marker disappears, or the real
+    // panel's testID shows up in its place).
+    //
+    // The marker (not `null`) exists so the Maestro E2E lane
+    // (smoke-diagnostics-cold.yaml / deeplink-matrix.yaml C6+W1) has
+    // something positive to assert on a cold `gogo://diagnostics` launch —
+    // S-4 PR #61 round 1: a bare `null` gave the E2E pin nothing to
+    // distinguish "app is alive on this route" from "app crashed before this
+    // route ever mounted".
     devGlobal.__DEV__ = false;
     const result = await renderWithTheme(<DiagnosticsRoute />);
-    expect(result.toJSON()).toBeNull();
+    const marker = screen.getByTestId("diagnostics-screen-inert");
+    expect(marker).toBeOnTheScreen();
+    // 🔴 THE MARKER MUST OCCUPY A FRAME (S-4 PR #61, first real device run
+    // 2026-09-07). Shipped frameless, it is excluded from the XCUITest
+    // accessibility hierarchy entirely, so the E2E lane's `assertVisible`
+    // could never pass — the round-2 pin was unsatisfiable by construction.
+    // Device-falsified: frameless → FAILED, 40x40 → COMPLETED, frameless +
+    // `accessible` → FAILED (size, not a11y status). jest renders a
+    // zero-frame view happily and CANNOT see this class of bug, so this
+    // assertion is the only cheap guard against a tidy-up re-breaking the
+    // lane. Falsification: drop the `flex: 1` in `(auth)/diagnostics.tsx` →
+    // red here, and red on device.
+    expect(StyleSheet.flatten(marker.props.style)).toMatchObject({ flex: 1 });
     expect(screen.queryByTestId("diagnostics-screen")).toBeNull();
     // No leg ran: release mounts no probes at all.
     expect(fetchMock).not.toHaveBeenCalled();

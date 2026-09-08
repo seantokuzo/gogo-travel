@@ -68,6 +68,7 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
+    "e2e": "bash ../../scripts/e2e.sh",
     "build": "expo export --platform ios --output-dir dist"
   },
   "jest": {

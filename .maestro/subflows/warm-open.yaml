@@ -1,0 +1,22 @@
+# Warm-delivery opener — the app stays running, so `openLink` arrives as a
+# `url` event (+native-intent `initial: false`).
+#
+# Cold/warm parity (R-nav-16) is claimed to be STRUCTURAL — one `parseDeepLink`
+# serves both paths. This subflow is what makes that claim falsifiable on a
+# real device instead of only in a unit test: the same links run through both
+# openers and must land in the same place.
+#
+# No `stopApp`, and no splash barrier: a warm app is already hydrated.
+#
+# env: LINK — the URL to deliver.
+appId: app.gogotravel
+---
+- openLink:
+    link: ${LINK}
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"

@@ -21,7 +21,20 @@
  *
  * The console tap installs at module scope so B-6's dev surface is captured
  * from the moment the route tree loads, not first panel open.
+ *
+ * RELEASE ARM RENDERS AN INERT MARKER, NOT `null` (S-4 PR #61 round 1 /
+ * tests lane blocking finding). A bare `null` gives the Maestro E2E lane
+ * (`.maestro/smoke-diagnostics-cold.yaml`, `deeplink-matrix.yaml` C6/W1)
+ * nothing positive to assert on this route, so its cold-start pin could only
+ * ever assert `sign-in-screen` is NOT visible — which is equally satisfied
+ * by the app having crashed before this route ever mounted. The empty View
+ * below carries NO dev surface, NO probes, NO leg content (R-test-2's
+ * gate is untouched — `!__DEV__` still short-circuits before
+ * `DiagnosticsScreen` or any of its imports run); it exists purely so a
+ * cold `gogo://diagnostics` launch has a testID to assert IS visible,
+ * proving the app is alive and this route actually rendered.
  */
+import { View } from "react-native";
 import { DiagnosticsScreen, installConsoleTap } from "@/features/dev/diagnostics";
 
 // The __DEV__ gate lives INSIDE installConsoleTap (one canonical home,
@@ -30,7 +43,28 @@ import { DiagnosticsScreen, installConsoleTap } from "@/features/dev/diagnostics
 installConsoleTap();
 
 export default function DiagnosticsRoute() {
-  // Release: nothing mounts — no legs, no probes, no dev surface (R-test-2).
-  if (!__DEV__) return null;
+  // Release: no dev surface, no legs, no probes — just an inert liveness
+  // marker for the E2E lane (R-test-2 gate unchanged; DiagnosticsScreen and
+  // everything it imports still never runs in this arm).
+  //
+  // 🔴 THE `flex: 1` IS LOAD-BEARING — DO NOT DROP IT (S-4 PR #61, first real
+  // device run 2026-09-07). This marker shipped as a bare
+  // `<View testID="diagnostics-screen-inert" />`, which has a ZERO FRAME, and
+  // a zero-frame view is excluded from the XCUITest accessibility hierarchy
+  // outright — so `assertVisible` could never see it no matter how long it
+  // retried, and both `smoke-diagnostics-cold` and `deeplink-matrix` C6/W1
+  // failed on an assertion that was unsatisfiable by construction. Falsified
+  // three ways on device (iPhone 17 Pro / iOS 26.3, Maestro 2.10.0):
+  //   <View testID/>                          → assertVisible FAILED
+  //   <View testID style={{w:40,h:40}}/>      → assertVisible COMPLETED
+  //   <View testID accessible label="…"/>     → assertVisible FAILED
+  // i.e. the cause is SIZE, not accessibility-element status; adding
+  // `accessible`/`accessibilityLabel` does NOT fix it. The style is pinned by
+  // `diagnostics-route.test.tsx` so a tidy-up cannot silently re-break the
+  // lane — jest renders a frameless view happily, so only the device catches
+  // this class, and only once.
+  //
+  // Still inert: no children, no text, no legs, no probes, no dev strings.
+  if (!__DEV__) return <View style={{ flex: 1 }} testID="diagnostics-screen-inert" />;
   return <DiagnosticsScreen />;
 }
