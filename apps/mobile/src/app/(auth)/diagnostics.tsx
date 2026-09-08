@@ -46,6 +46,25 @@ export default function DiagnosticsRoute() {
   // Release: no dev surface, no legs, no probes — just an inert liveness
   // marker for the E2E lane (R-test-2 gate unchanged; DiagnosticsScreen and
   // everything it imports still never runs in this arm).
-  if (!__DEV__) return <View testID="diagnostics-screen-inert" />;
+  //
+  // 🔴 THE `flex: 1` IS LOAD-BEARING — DO NOT DROP IT (S-4 PR #61, first real
+  // device run 2026-09-07). This marker shipped as a bare
+  // `<View testID="diagnostics-screen-inert" />`, which has a ZERO FRAME, and
+  // a zero-frame view is excluded from the XCUITest accessibility hierarchy
+  // outright — so `assertVisible` could never see it no matter how long it
+  // retried, and both `smoke-diagnostics-cold` and `deeplink-matrix` C6/W1
+  // failed on an assertion that was unsatisfiable by construction. Falsified
+  // three ways on device (iPhone 17 Pro / iOS 26.3, Maestro 2.10.0):
+  //   <View testID/>                          → assertVisible FAILED
+  //   <View testID style={{w:40,h:40}}/>      → assertVisible COMPLETED
+  //   <View testID accessible label="…"/>     → assertVisible FAILED
+  // i.e. the cause is SIZE, not accessibility-element status; adding
+  // `accessible`/`accessibilityLabel` does NOT fix it. The style is pinned by
+  // `diagnostics-route.test.tsx` so a tidy-up cannot silently re-break the
+  // lane — jest renders a frameless view happily, so only the device catches
+  // this class, and only once.
+  //
+  // Still inert: no children, no text, no legs, no probes, no dev strings.
+  if (!__DEV__) return <View style={{ flex: 1 }} testID="diagnostics-screen-inert" />;
   return <DiagnosticsScreen />;
 }

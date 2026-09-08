@@ -13,6 +13,7 @@
  * console-tap.test.ts, its canonical home.
  */
 import { act, screen } from "@testing-library/react-native";
+import { StyleSheet } from "react-native";
 
 import DiagnosticsRoute from "@/app/(auth)/diagnostics";
 import { parseDeepLink } from "@/navigation/deep-links";
@@ -87,7 +88,19 @@ describe("(auth)/diagnostics __DEV__ gate", () => {
     // route ever mounted".
     devGlobal.__DEV__ = false;
     const result = await renderWithTheme(<DiagnosticsRoute />);
-    expect(screen.getByTestId("diagnostics-screen-inert")).toBeOnTheScreen();
+    const marker = screen.getByTestId("diagnostics-screen-inert");
+    expect(marker).toBeOnTheScreen();
+    // 🔴 THE MARKER MUST OCCUPY A FRAME (S-4 PR #61, first real device run
+    // 2026-09-07). Shipped frameless, it is excluded from the XCUITest
+    // accessibility hierarchy entirely, so the E2E lane's `assertVisible`
+    // could never pass — the round-2 pin was unsatisfiable by construction.
+    // Device-falsified: frameless → FAILED, 40x40 → COMPLETED, frameless +
+    // `accessible` → FAILED (size, not a11y status). jest renders a
+    // zero-frame view happily and CANNOT see this class of bug, so this
+    // assertion is the only cheap guard against a tidy-up re-breaking the
+    // lane. Falsification: drop the `flex: 1` in `(auth)/diagnostics.tsx` →
+    // red here, and red on device.
+    expect(StyleSheet.flatten(marker.props.style)).toMatchObject({ flex: 1 });
     expect(screen.queryByTestId("diagnostics-screen")).toBeNull();
     // No leg ran: release mounts no probes at all.
     expect(fetchMock).not.toHaveBeenCalled();

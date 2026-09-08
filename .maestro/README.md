@@ -66,9 +66,25 @@ Traps, all previously hit here:
   locale error.
 - **`npx expo run:ios` exits right after launch in a non-interactive shell.**
   That is fine — the app is built and installed; only the log stream ended.
-- **The sim may still carry the pre-PR-#33 bundle id `com.anonymous.gogo-travel`.**
-  The current id is **`app.gogotravel`** (`app.json`). A rebuild installs the
-  new one; the stale app is a separate icon and can be deleted.
+- **🔴 UNINSTALL the pre-PR-#33 `com.anonymous.gogo-travel` app before running —
+  it HIJACKS the `gogo:` scheme and breaks every `openLink` cell.** The current
+  id is **`app.gogotravel`** (`app.json`), but the stale app registers
+  `CFBundleURLSchemes: [gogo, com.anonymous.gogo-travel]` too, so with both
+  installed iOS may hand a `gogo://…` URL to the _stale_ one. It is a Debug
+  build with no embedded jsbundle, so it comes up on the RN redbox **"No script
+  URL provided … unsanitizedScriptURLString = (null)"** and every deeplink flow
+  fails on an assertion about a screen that was never in the app under test.
+  Cost 2/4 red on the first real S-4 run, 2026-09-07. The fix is one line:
+
+  ```bash
+  xcrun simctl uninstall <UDID> com.anonymous.gogo-travel
+  ```
+
+  General rule: the `openLink` cells are only meaningful when **exactly one**
+  installed app claims `gogo:`. Check with
+  `xcrun simctl get_app_container <UDID> com.anonymous.gogo-travel` — "No such
+  file or directory" is what you want.
+
 - **`expo run:ios` has no `--derived-data` flag** and finds the built product by
   scraping the default `~/Library/Developer/Xcode/DerivedData` path out of the
   build log. Derived data is still isolated per checkout because the key is a
