@@ -14,10 +14,12 @@
  * with `timeZone` + `formatToParts` on both platforms (Hermes
  * doc/IntlAPIs.md — DateTimeFormat is one of the three implemented
  * services; the iOS/Android option gaps are `numberingSystem` /
- * `formatMatcher` / `dayPeriod` / `fractionalSecondDigits`, none used
- * here). Hermes does NOT implement `Intl.supportedValuesOf`, which is why
- * the picker's zone list is a static tzdb catalog (`time-zone-catalog.ts`)
- * rather than a runtime enumeration.
+ * `formatMatcher` / `dayPeriod` / `fractionalSecondDigits` — `hourCycle` is
+ * NOT one of them, it IS honored on both platforms, confirmed at our pinned
+ * Hermes commit and on-device (see `isIntlFaithful`)). Hermes does NOT
+ * implement `Intl.supportedValuesOf`, which is why the picker's zone list
+ * is a static tzdb catalog (`time-zone-catalog.ts`) rather than a runtime
+ * enumeration.
  *
  * Offset resolution = "what wall clock does this zone show at instant X",
  * read back through the formatter and differenced against X. A wall time
@@ -35,11 +37,13 @@
  *
  * B-9 R1 — WRONG IS NOT AN OPTION HERE. jest runs Node/V8 with full ICU;
  * the app runs Hermes, whose iOS `Intl` is a Foundation reimplementation
- * (see `isIntlFaithful`). So every answer this module gives is gated three
- * ways, and each gate turns a divergence into `null` (→ `TZ_UNKNOWN_ERROR`)
- * rather than a believable instant: an engine self-check against known
- * truth, a tzdb-range check on every candidate offset, and a signature test
- * that tells a real spring-forward gap from an engine contradicting itself.
+ * (see `isIntlFaithful`). Verified FAITHFUL on our pinned Hermes commit and
+ * on-device — every answer this module gives is still gated three ways as
+ * belt-and-braces against a FUTURE regression, not a live one: an engine
+ * self-check against known truth, a tzdb-range check on every candidate
+ * offset, and a signature test that tells a real spring-forward gap from an
+ * engine contradicting itself. Each gate turns a divergence into `null`
+ * (→ `TZ_UNKNOWN_ERROR`) rather than a believable instant.
  * `zoned-time.hermes.test.ts` runs the whole module against a
  * Hermes-Apple-shaped `Intl` to keep those gates honest.
  */
@@ -101,9 +105,17 @@ function formatterFor(tz: string): Intl.DateTimeFormat {
 }
 
 /**
- * Whether the platform's ICU resolves `tz` (canonical ids AND backward
- * links — `Asia/Calcutta` resolves as well as `Asia/Kolkata`). Unknown ids
- * throw `RangeError` from the constructor; cached either way.
+ * Whether the platform's `Intl` resolves `tz` (canonical ids AND backward
+ * links — `Asia/Calcutta` resolves as well as `Asia/Kolkata`). On Android
+ * that's ICU's real tzdb link table. On iOS Hermes it is NOT an enumerated
+ * set that covers links: `PlatformIntlApple.mm`'s own known-names snapshot
+ * is a stale ~443-id list that does NOT contain `Asia/Kolkata`,
+ * `US/Eastern` or `Etc/UTC` — every India flight resolves only because the
+ * constructor falls back to `[[NSTimeZone alloc] initWithName:]` for any id
+ * outside that set (facebook/hermes#1611, landed as `8f9cf10fc`,
+ * 2025-03-17, fixing #1607; GitHub shows the PR itself as closed-not-merged
+ * because Meta lands via internal import). Unknown ids throw `RangeError`
+ * from the constructor; cached either way.
  */
 export function isKnownTimeZone(tz: string): boolean {
   if (tz === "") return false;
@@ -168,15 +180,38 @@ let intlFaithful: boolean | null = null;
  * HERMES, whose iOS `Intl` is a Foundation/`NSDateFormatter`
  * reimplementation rather than ICU: `PlatformIntlApple.mm` re-derives part
  * types by walking the resolved pattern's letters (falling back to
- * `literal` for anything unmapped), and `en-US`'s Apple-default hour cycle
- * is h12 — `hourCycle: "h23"` above is a REQUEST, not a guarantee.
+ * `literal` for anything unmapped).
  *
- * A uniformly shifted hour is INVISIBLE to `resolveWallTime`'s round-trip
- * filter whenever the sampled instant and the resolved instant land in the
- * same 12h half: both reads are wrong by the same 12h, the filter agrees
- * with itself, and the composition hands back a well-formed string up to
- * 12h wrong — no null, no throw. That is B-8 one layer down, and it cannot
- * be caught per-call because the wrong answer is self-consistent.
+ * The requested `hourCycle: "h23"` above IS honored on both engines —
+ * `PlatformIntlApple.mm` picks the hour pattern letter from the CALLER'S
+ * `hourCycle_` option when one is supplied; Apple's `en-US` h12 default
+ * (`getDefaultHourCycle`) only applies when the option is absent. Confirmed
+ * two ways: at our pinned Hermes commit
+ * (`HERMES_V1_VERSION_NAME=250829098.0.16`, facebook/hermes@90f2385) and by a
+ * probe run in the app's own Hermes runtime on the iOS simulator (Maestro
+ * probe, 2026-09-07), which reads back `hour=17` for a 17:05:09 UTC instant
+ * — not the `05` an h12 override would produce. `isIntlFaithful()` is `true`
+ * on the shipped build; these gates do not trip in production today.
+ *
+ * So why gate at all? Because IF a future engine (or a Hermes regression)
+ * silently fell back to a locale-default hour cycle, a uniformly shifted
+ * hour would be INVISIBLE to `resolveWallTime`'s round-trip filter whenever
+ * the sampled instant and the resolved instant land in the same 12h half:
+ * both reads are wrong by the same 12h, the filter agrees with itself, and
+ * the composition hands back a well-formed string up to 12h wrong — no
+ * null, no throw. That would be B-8 one layer down, and it cannot be caught
+ * per-call because the wrong answer is self-consistent. This is
+ * belt-and-braces against exactly that class of regression, not a live
+ * workaround: Hermes's iOS `Intl` has broken in this neighborhood three
+ * times already — `formatToParts` was disabled outright
+ * (facebook/hermes#1155) then reverted (#1567), the pre-#1611 build
+ * rejected tzdb backward links (#1607), and the `literal`-mistyping class
+ * (#1172) is still open upstream. That last one is open, not hypothetical
+ * like the h12 override — but it does not manifest for THIS module's option
+ * set: the same simulator probe (above) typed all six requested parts
+ * correctly (`…month=04|literal=/|day=24|…|hour=17|literal=:|minute=05|…`),
+ * which is what makes the gate below belt-and-braces rather than a live
+ * workaround.
  *
  * So ask the engine two questions whose answers we already know, in `UTC`
  * (no zone database involved), and refuse to compose ANYTHING if either

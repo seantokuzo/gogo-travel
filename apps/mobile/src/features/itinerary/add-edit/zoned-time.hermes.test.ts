@@ -8,26 +8,42 @@
  * Foundation/`NSDateFormatter` reimplementation (`PlatformIntlApple.mm`)
  * that does not enumerate ICU fields — it formats to a string and then
  * re-derives each part's type by walking the resolved pattern's letters,
- * with `literal` as the fallback for anything it doesn't map. Three known
- * divergences follow, and on Node every one of them is invisible:
+ * with `literal` as the fallback for anything it doesn't map. Three
+ * divergence classes this suite guards against — confirmed against our
+ * pinned Hermes commit and on-device (see `zoned-time.ts`'s
+ * `isIntlFaithful` doc) to be either fixed already or never live at all:
  *
- *  1. `en-US`'s Apple-default hour cycle is h12, so `hourCycle: "h23"` is a
- *     request the engine may not honor. A uniformly shifted hour is
- *     SELF-CONSISTENT: the round-trip filter in `resolveWallTime` compares
- *     two reads that are wrong by the same 12h, agrees with itself, and
- *     hands back a well-formed string up to 12h wrong — no null, no throw.
- *     That is B-8 one layer down.
- *  2. A part mapped to `literal` reads NaN, and the next
- *     `formatToParts(new Date(NaN))` throws `RangeError` — out of a
- *     function documented as "null, never a throw", through the save
- *     handler and (via `livePlacements`) the form's whole render.
- *  3. Zone validation goes through `NSTimeZone.knownTimeZoneNames`, which
- *     rejects tzdb backward links (facebook/hermes#1607, open).
+ *  1. HYPOTHETICAL, not observed: a locale-default hour cycle silently
+ *     overriding the requested `hourCycle: "h23"`. `PlatformIntlApple.mm`
+ *     actually honors the caller's option — Apple's `en-US` h12 default
+ *     applies only when no option is given at all. Modeled anyway as a
+ *     regression guard: a uniformly shifted hour would be SELF-CONSISTENT —
+ *     the round-trip filter in `resolveWallTime` compares two reads that
+ *     are wrong by the same 12h, agrees with itself, and hands back a
+ *     well-formed string up to 12h wrong — no null, no throw. That would be
+ *     B-8 one layer down.
+ *  2. STILL LIVE UPSTREAM, not for us: a part mapped to `literal` reads NaN,
+ *     and the next `formatToParts(new Date(NaN))` throws `RangeError` — out
+ *     of a function documented as "null, never a throw", through the save
+ *     handler and (via `livePlacements`) the form's whole render
+ *     (facebook/hermes#1172, still open). It does not manifest for this
+ *     module's option set: the simulator probe (see `zoned-time.ts`'s
+ *     `isIntlFaithful` doc) typed all six requested parts correctly
+ *     (`…month=04|literal=/|day=24|…|hour=17|literal=:|minute=05|…`) — the
+ *     gate below is belt-and-braces, not a live-bug reproduction.
+ *  3. FIXED, in our pinned build: zone validation used to go through
+ *     `NSTimeZone.knownTimeZoneNames` alone, which rejected tzdb backward
+ *     links (facebook/hermes#1607). #1611 (landed as `8f9cf10fc`,
+ *     2025-03-17, fixing #1607; GitHub shows the PR itself as
+ *     closed-not-merged because Meta lands via internal import) added the
+ *     `NSTimeZone` constructor fallback that resolves them — modeled here
+ *     as a regression guard, not a live bug.
  *
  * The stub below is that engine, not a strawman: it delegates the actual
  * date math to the real `Intl` (iOS does have a real zone database via
- * Foundation) and diverges ONLY where Hermes-Apple diverges — the hour
- * cycle, the part typing, and the id whitelist.
+ * Foundation) and diverges ONLY the way Hermes-Apple has diverged, at one
+ * point or another, across the three classes above — the hour cycle, the
+ * part typing, and the id whitelist.
  *
  * The bar every arm holds to: on a diverging engine the module either gives
  * the SAME answer full ICU gives, or it gives `null`. Never a plausible
@@ -49,13 +65,19 @@ const RealDateTimeFormat = Intl.DateTimeFormat;
 
 interface HermesIntlShape {
   /**
-   * The cycle the engine RESOLVES, whatever was requested. Apple's default
-   * for `en-US` is h12 — `hourCycle: "h23"` does not survive it.
+   * The cycle the STUB resolves, independent of what's requested — models
+   * the hypothetical, unobserved scenario where Apple's `en-US` h12 default
+   * would override `hourCycle: "h23"`. On the real pinned engine the
+   * request is honored; see `zoned-time.ts`'s `isIntlFaithful` doc.
    */
   resolvedHourCycle?: "h23" | "h12";
   /** Part types `returnTypeOfDate` fails to map — emitted as `literal`. */
   literalParts?: readonly Intl.DateTimeFormatPartTypes[];
-  /** `NSTimeZone.knownTimeZoneNames`: ids the constructor rejects (#1607). */
+  /**
+   * `NSTimeZone.knownTimeZoneNames`: ids the PRE-#1611 constructor
+   * rejected (#1607) — fixed and in our pinned build; modeled here for
+   * regression coverage, not because it's still live.
+   */
   rejectsZone?: (tz: string) => boolean;
   /** `resolvedOptions().timeZone` — what the device reports about itself. */
   deviceZone?: string;
@@ -162,8 +184,9 @@ afterEach(() => {
 
 describe("[hermes] h12 hour cycle — the silent 12h-wrong composition", () => {
   it("the engine self-check refuses the engine outright", () => {
-    // Real ICU answers `hourCycle: "h23"`; Apple's `en-US` answers h12 and
-    // the module has no way to make it stop, so it stops composing instead.
+    // Real ICU answers `hourCycle: "h23"`; this modeled (not observed) stub
+    // answers h12 regardless, and the module has no way to make it stop, so
+    // it stops composing instead.
     expect(isIntlFaithful()).toBe(true);
     restore = installHermesIntl({ resolvedHourCycle: "h12" });
     expect(isIntlFaithful()).toBe(false);
@@ -183,7 +206,7 @@ describe("[hermes] h12 hour cycle — the silent 12h-wrong composition", () => {
 
   it("the exact strings the pre-R1 algorithm composed here — all well-formed, all wrong", () => {
     // Not a hypothetical: MEASURED by reverting the three gates and running
-    // the arm above. 62 of those 120 wall hours composed a well-formed wrong
+    // the arm above. 60 of those 120 wall hours composed a well-formed wrong
     // offset — no null, no throw. A sample of what reached the wire:
     //
     //   Asia/Tokyo          08:00  →  -03:00   (ICU +09:00)
@@ -193,8 +216,19 @@ describe("[hermes] h12 hour cycle — the silent 12h-wrong composition", () => {
     //   Asia/Kathmandu      08:00  →  -06:15   (ICU +05:45)
     //
     // Note LA 07:00 → "+05:00": inside tzdb's legal range, indistinguishable
-    // from a real offset by inspection, 12h wrong. That one is why the
-    // engine self-check exists and why a range check alone is not enough.
+    // from a real offset by inspection, 12h wrong — but it's the
+    // GAP-SIGNATURE gate that catches this one, not the engine self-check
+    // (its round-trip fails and the failure doesn't match a real
+    // spring-forward's signature). The self-check is what's load-bearing
+    // for the other 12 wall hours nothing else catches — e.g. Tokyo
+    // 08:00 → -03:00 and Kathmandu 08:00 → -06:15 above, where the shifted
+    // read is still self-consistent and round-trips clean, so only knowing
+    // the UTC answer in advance catches it.
+    //
+    // The h12 override this stub models is itself now known NOT to occur on
+    // our shipped engine (`isIntlFaithful()` is verified `true` on-device,
+    // see `zoned-time.ts`) — this arm is a regression guard, not a
+    // live-bug reproduction.
     restore = installHermesIntl({ resolvedHourCycle: "h12" });
     expect(composeZonedDateTime("2027-04-24", "08:00", "Asia/Tokyo")).toBeNull();
     expect(composeZonedDateTime("2027-04-24", "15:00", "Asia/Tokyo")).toBeNull();
