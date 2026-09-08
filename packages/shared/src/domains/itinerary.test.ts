@@ -131,9 +131,9 @@ describe("ItineraryItemCreate (R-ib-14/15/17)", () => {
       ItineraryItemCreateSchema.safeParse({ kind: "place_visit", day: "2026-09-03" }).success,
     ).toBe(false);
     expect(ItineraryItemCreateSchema.safeParse({ ...visitBody, title: "x" }).success).toBe(false);
-    expect(
-      ItineraryItemCreateSchema.safeParse({ kind: "custom", day: "2026-09-03" }).success,
-    ).toBe(false);
+    expect(ItineraryItemCreateSchema.safeParse({ kind: "custom", day: "2026-09-03" }).success).toBe(
+      false,
+    );
     // place_id is additionally allowed on custom (R-ib-20 location resolution).
     expect(ItineraryItemCreateSchema.parse({ ...customBody, place_id: A }).place_id).toBe(A);
   });
@@ -270,14 +270,24 @@ describe("ItineraryRangeQuery / ItineraryRead", () => {
 describe("violatesSingleDayTimeOrder (shared with the server's merged-row check)", () => {
   it("fires only when single-day AND both times set AND inverted", () => {
     const base = { day: "2026-09-03" };
+    expect(violatesSingleDayTimeOrder({ ...base, start_time: "15:00", end_time: "11:00" })).toBe(
+      true,
+    );
     expect(
-      violatesSingleDayTimeOrder({ ...base, start_time: "15:00", end_time: "11:00" }),
+      violatesSingleDayTimeOrder({
+        ...base,
+        end_day: "2026-09-03",
+        start_time: "15:00",
+        end_time: "11:00",
+      }),
     ).toBe(true);
     expect(
-      violatesSingleDayTimeOrder({ ...base, end_day: "2026-09-03", start_time: "15:00", end_time: "11:00" }),
-    ).toBe(true);
-    expect(
-      violatesSingleDayTimeOrder({ ...base, end_day: "2026-09-04", start_time: "15:00", end_time: "11:00" }),
+      violatesSingleDayTimeOrder({
+        ...base,
+        end_day: "2026-09-04",
+        start_time: "15:00",
+        end_time: "11:00",
+      }),
     ).toBe(false);
     expect(violatesSingleDayTimeOrder({ ...base, start_time: "15:00", end_time: null })).toBe(
       false,
@@ -285,9 +295,9 @@ describe("violatesSingleDayTimeOrder (shared with the server's merged-row check)
     expect(violatesSingleDayTimeOrder({ ...base, start_time: null, end_time: "11:00" })).toBe(
       false,
     );
-    expect(
-      violatesSingleDayTimeOrder({ ...base, start_time: "11:00", end_time: "11:00" }),
-    ).toBe(false);
+    expect(violatesSingleDayTimeOrder({ ...base, start_time: "11:00", end_time: "11:00" })).toBe(
+      false,
+    );
   });
 });
 

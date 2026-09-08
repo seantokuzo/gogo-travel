@@ -153,11 +153,9 @@ describe("resolveApiBaseUrl", () => {
     it("tier 3 also reads the legacy constants-hoisted SourceCode.scriptURL property", () => {
       setHostUri(null);
       // Legacy-bridge shape: constants hoisted onto the module, no getConstants.
-      jest.replaceProperty(
-        NativeModules as { SourceCode: unknown },
-        "SourceCode",
-        { scriptURL: "http://10.0.0.7:8081/index.bundle?platform=ios&dev=true" },
-      );
+      jest.replaceProperty(NativeModules as { SourceCode: unknown }, "SourceCode", {
+        scriptURL: "http://10.0.0.7:8081/index.bundle?platform=ios&dev=true",
+      });
       expect(resolveApiBaseUrl()).toBe("http://10.0.0.7:3000/api");
     });
 

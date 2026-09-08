@@ -173,16 +173,16 @@ clients parsing).
 
 ### 3.3 Scalar conventions (`scalars.ts`)
 
-| Scalar | Definition | Notes |
-|---|---|---|
-| `Cents` | `z.number().int().nonnegative()` | Law #2. Sign conventions (who owes whom) are modeled structurally (`from`/`to`), never as negative amounts, except computed `Balance.net_cents` which is explicitly signed and documented. |
-| `PositiveCents` | `Cents` + `> 0` refinement | Expenses/settlements |
-| `CurrencyCode` | `z.string().length(3).regex(/^[A-Z]{3}$/)` | ISO-4217 |
-| `ISODate` | `z.string().date()` | `YYYY-MM-DD` (calendar days: `itinerary_items.day`, `expenses.spent_at`) |
-| `ISODateTime` | `z.string().datetime({ offset: true })` | Instants; serialized UTC by the server |
-| `ISOTime` | `z.string()` + `HH:MM` 24-hour regex | Wall-clock times of day (`itinerary_items.start_time`/`end_time` cross the wire as strings — added per itinerary-bookings spec §3.7). (Added 2026-07-09, Gate 2 sync) |
-| `Uuid` | `z.string().uuid()` | All ids |
-| `Lat` / `Lng` | number with range refinement (±90 / ±180) | Range refinements are server-side only when the schema is reused for AI output (§3.7) |
+| Scalar          | Definition                                 | Notes                                                                                                                                                                                      |
+| --------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Cents`         | `z.number().int().nonnegative()`           | Law #2. Sign conventions (who owes whom) are modeled structurally (`from`/`to`), never as negative amounts, except computed `Balance.net_cents` which is explicitly signed and documented. |
+| `PositiveCents` | `Cents` + `> 0` refinement                 | Expenses/settlements                                                                                                                                                                       |
+| `CurrencyCode`  | `z.string().length(3).regex(/^[A-Z]{3}$/)` | ISO-4217                                                                                                                                                                                   |
+| `ISODate`       | `z.string().date()`                        | `YYYY-MM-DD` (calendar days: `itinerary_items.day`, `expenses.spent_at`)                                                                                                                   |
+| `ISODateTime`   | `z.string().datetime({ offset: true })`    | Instants; serialized UTC by the server                                                                                                                                                     |
+| `ISOTime`       | `z.string()` + `HH:MM` 24-hour regex       | Wall-clock times of day (`itinerary_items.start_time`/`end_time` cross the wire as strings — added per itinerary-bookings spec §3.7). (Added 2026-07-09, Gate 2 sync)                      |
+| `Uuid`          | `z.string().uuid()`                        | All ids                                                                                                                                                                                    |
+| `Lat` / `Lng`   | number with range refinement (±90 / ±180)  | Range refinements are server-side only when the schema is reused for AI output (§3.7)                                                                                                      |
 
 ### 3.4 Domain schema inventory (contract highlights)
 
@@ -196,15 +196,15 @@ contract-specific notes listed here:
   `paypalme_username?`, `zelle_handle?`, `zelle_display_name?` with
   normalization refinements (strip `@`/`$`, E.164-or-email for Zelle).
   `UserPrefs`: `{ travel_style?: TravelStyle[], home_currency?: CurrencyCode,
-  units?: 'metric' | 'imperial', notifications?:
-  Partial<Record<NotificationCategory, boolean>> }` — an absent
+units?: 'metric' | 'imperial', notifications?:
+Partial<Record<NotificationCategory, boolean>> }` — an absent
   `notifications` key means enabled (notifications spec §3.2; field added
   2026-07-09, Gate 2 sync). Also gains `UserUpdate`,
   `PaymentHandlesUpdate`, `AvatarUploadRequest`/`AvatarUploadTicket`,
   `PushTokenCreate`/`PushToken` (auth-users spec §3.7).
   `travel_style` is **multi-tag** from the fixed, append-only wire-only tuple
   `TRAVEL_STYLES = ['budget', 'comfort', 'luxury', 'foodie', 'adventure',
-  'culture', 'nightlife', 'family', 'relaxation']` (lives in prefs JSONB —
+'culture', 'nightlife', 'family', 'relaxation']` (lives in prefs JSONB —
   no pgEnum). As an AI cache-key input it is canonicalized: sorted unique
   tags joined with `+`, empty → `'any'` — so tag order can never fork the
   cache. (Resolved 2026-07-09, Gate 2)
@@ -243,8 +243,8 @@ contract-specific notes listed here:
   notifications spec §3.3 (canonical for payload semantics).
   (Added 2026-07-09, Gate 2 sync)
 - **`offline.ts`** — `OfflineMutation` queue entry: `{ id: Uuid, trip_id:
-  Uuid, descriptor_key: string, params: object, payload: object, queued_at:
-  ISODateTime, attempts: int, status: 'pending' | 'failed' }` (today spec
+Uuid, descriptor_key: string, params: object, payload: object, queued_at:
+ISODateTime, attempts: int, status: 'pending' | 'failed' }` (today spec
   §2.7 owns enqueue/drain/conflict semantics; entries replay through the
   standard descriptor-addressed `ApiClient`, §3.6).
   (Added 2026-07-09, Gate 2 sync)
@@ -256,8 +256,8 @@ wrapper (R-shared-5). Lists: `Paginated<T> = { items: T[], nextCursor:
 string | null }` — opaque cursor, server-defined page size cap. Cursor
 round-trip: list endpoints take the previous page's `nextCursor` as the
 `?cursor` query param (`CursorQuerySchema` in `api/envelope.ts`; absent =
-first page). *(Synced 2026-07-22, post-T-5.1 — request-param convention
-pinned; already the shape used by the trips/photos route tables.)*
+first page). _(Synced 2026-07-22, post-T-5.1 — request-param convention
+pinned; already the shape used by the trips/photos route tables.)_
 
 **Error (every non-2xx):**
 
@@ -294,18 +294,18 @@ serialization. `@hono/zod-validator` failures are mapped to
 The seam that keeps hooks platform-agnostic (R-shared-9):
 
 - **`EndpointDescriptor`** (in shared): `{ method, path, // e.g. '/trips/:tripId/bookings'
-  params?: ZodSchema, query?: ZodSchema, body?: ZodSchema,
-  response: ZodSchema }`. Each domain module exports its endpoints'
+params?: ZodSchema, query?: ZodSchema, body?: ZodSchema,
+response: ZodSchema }`. Each domain module exports its endpoints'
   descriptors alongside its schemas (the API specs in `.specs/api/` define
-  the routes; descriptors are their machine-readable mirror). *(Synced
+  the routes; descriptors are their machine-readable mirror). _(Synced
   2026-07-22, post-T-5.2: descriptor `path`s are base-relative — e.g.
   `/auth/apple`. `apps/server` mounts the routers under an `/api` base
   (alongside `/api/health`), so the concrete URL is `/api/auth/apple`; the
   `apps/mobile` `ApiClient` base URL is therefore `origin + '/api'` and
-  prepends it to every descriptor `path`.)*
+  prepends it to every descriptor `path`.)_
 - **`ApiClient` interface** (in shared, types only):
   `request<D extends EndpointDescriptor>(d: D, input: InferInput<D>) =>
-  Promise<InferResponse<D>>` — implementations parse the response with
+Promise<InferResponse<D>>` — implementations parse the response with
   `d.response` before returning (runtime-validated wire, both directions).
 - **`apps/mobile`** implements `ApiClient` over `fetch` with an injected
   `TokenProvider` (`getAccessToken(): Promise<string | null>` — auth spec
@@ -343,14 +343,14 @@ convention + a unit test that walks each AI schema's definition:
 Per-feature output schemas (shapes finalized in the AI feature spec; this
 spec fixes their contracts):
 
-| Module | Output (summary) | Cached |
-|---|---|---|
-| `recommendations.ts` | ranked `Array<{ place_id, category, pitch, fit_reasons[] }>` | ai_cache, destination-keyed |
-| `expense-estimate.ts` | per-`expense_category` `Array<{ category, low_cents, high_cents, basis }>` (ints; ranges validated server-side) | ai_cache |
-| `tour-guide.ts` | `TourGuideBundle` (schema spec §3.4.3) — cite-or-retract source refs | tour_guide_bundles |
-| `packing-list.ts` | `Array<PackingItem>` minus `checked` | live / uncached (Gate 2, H2) |
-| `recap.ts` | `Recap` (schema spec §3.4.8: narrative sections + server-computed stats/trace/highlights) | `recaps` table (schema spec §3.3.26) |
-| `capture-extract.ts` | `ProposedBooking` (reuses `BookingDetails` shapes — flat by design) | never cached (per-email) |
+| Module                | Output (summary)                                                                                                | Cached                               |
+| --------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `recommendations.ts`  | ranked `Array<{ place_id, category, pitch, fit_reasons[] }>`                                                    | ai_cache, destination-keyed          |
+| `expense-estimate.ts` | per-`expense_category` `Array<{ category, low_cents, high_cents, basis }>` (ints; ranges validated server-side) | ai_cache                             |
+| `tour-guide.ts`       | `TourGuideBundle` (schema spec §3.4.3) — cite-or-retract source refs                                            | tour_guide_bundles                   |
+| `packing-list.ts`     | `Array<PackingItem>` minus `checked`                                                                            | live / uncached (Gate 2, H2)         |
+| `recap.ts`            | `Recap` (schema spec §3.4.8: narrative sections + server-computed stats/trace/highlights)                       | `recaps` table (schema spec §3.3.26) |
+| `capture-extract.ts`  | `ProposedBooking` (reuses `BookingDetails` shapes — flat by design)                                             | never cached (per-email)             |
 
 `config/ai-pricing.ts`: feature→model mapping + per-model token prices —
 the kill-switch job's cost math (`ai_usage` stores tokens, not dollars;
@@ -422,6 +422,6 @@ Checklist:
 
 ---
 
-*Trace: R-shared-N ↔ §3 sections inline. Zero open markers — the
+_Trace: R-shared-N ↔ §3 sections inline. Zero open markers — the
 `travel_style` taxonomy resolved 2026-07-09 (Gate 2); enum-content values
-remain canonical in the DB spec and flow here via §3.2.*
+remain canonical in the DB spec and flow here via §3.2._

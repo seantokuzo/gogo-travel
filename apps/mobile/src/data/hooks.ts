@@ -82,7 +82,8 @@ export function usePaymentHandlesUpdate(): UseMutationResult<
 export function useEntitlements(): UseQueryResult<EffectiveEntitlements, Error> {
   return useQuery({
     queryKey: queryKeys.entitlements,
-    queryFn: ({ signal }) => apiClient.request(entitlementEndpoints.getMyEntitlements, {}, { signal }),
+    queryFn: ({ signal }) =>
+      apiClient.request(entitlementEndpoints.getMyEntitlements, {}, { signal }),
   });
 }
 
@@ -90,7 +91,8 @@ export function useEntitlements(): UseQueryResult<EffectiveEntitlements, Error> 
 export function useSessions(): UseQueryResult<Paginated<AuthSessionInfo>, Error> {
   return useQuery({
     queryKey: queryKeys.sessions,
-    queryFn: ({ signal }) => apiClient.request(authEndpoints.listSessions, { query: {} }, { signal }),
+    queryFn: ({ signal }) =>
+      apiClient.request(authEndpoints.listSessions, { query: {} }, { signal }),
   });
 }
 
@@ -111,7 +113,11 @@ export function useTrips(options?: {
   return useQuery({
     queryKey: queryKeys.trips,
     queryFn: ({ signal }) =>
-      apiClient.request(tripEndpoints.listTrips, { query: { limit: TRIPS_PAGE_LIMIT } }, { signal }),
+      apiClient.request(
+        tripEndpoints.listTrips,
+        { query: { limit: TRIPS_PAGE_LIMIT } },
+        { signal },
+      ),
     enabled: options?.enabled ?? true,
   });
 }

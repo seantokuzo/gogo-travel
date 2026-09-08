@@ -50,10 +50,7 @@ import {
   UNAUTHENTICATED_MESSAGE,
   type RequestVars,
 } from "../http/errors.js";
-import {
-  expectUpdatedAtPrecondition,
-  throwGuardedUpdateMiss,
-} from "../http/expect-updated-at.js";
+import { expectUpdatedAtPrecondition, throwGuardedUpdateMiss } from "../http/expect-updated-at.js";
 import {
   decodeKeysetCursor,
   encodeKeysetCursor,
@@ -164,9 +161,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           .returning();
         if (!inserted) throw new HttpError("INTERNAL", "trip insert returned no row");
 
-        await tx
-          .insert(schema.tripMembers)
-          .values({ tripId: inserted.id, userId, role: "owner" });
+        await tx.insert(schema.tripMembers).values({ tripId: inserted.id, userId, role: "owner" });
 
         return inserted;
       });
@@ -276,10 +271,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     const { tripId, role } = tripContextOf(c);
     const { userId } = authContextOf(c);
 
-    const [trip] = await deps.db
-      .select()
-      .from(schema.trips)
-      .where(eq(schema.trips.id, tripId));
+    const [trip] = await deps.db.select().from(schema.trips).where(eq(schema.trips.id, tripId));
     // Gate raced a concurrent delete — the row is gone; converge (§3.5 rule 3).
     if (!trip) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
@@ -363,11 +355,9 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         const mergedStart = body.start_date ?? current.startDate;
         const mergedEnd = body.end_date ?? current.endDate;
         if (mergedStart > mergedEnd) {
-          throw new HttpError(
-            "VALIDATION_FAILED",
-            "start_date must be on or before end_date",
-            { end_date: "before start_date" },
-          );
+          throw new HttpError("VALIDATION_FAILED", "start_date must be on or before end_date", {
+            end_date: "before start_date",
+          });
         }
 
         // Base-currency LOCK (R-trips-22): a CHANGE (value differs) is
@@ -428,9 +418,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // row and answer the current (status-reconciled) row. A write-less
         // request must never move `updated_at`.
         const { expect_updated_at: _precondition, ...writableFields } = body;
-        const writableTouched = Object.values(writableFields).some(
-          (value) => value !== undefined,
-        );
+        const writableTouched = Object.values(writableFields).some((value) => value !== undefined);
         if (!writableTouched) {
           if (
             body.expect_updated_at !== undefined &&

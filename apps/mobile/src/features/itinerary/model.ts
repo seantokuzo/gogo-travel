@@ -203,7 +203,8 @@ function entryBase(item: ItineraryItem, bookingsById: ReadonlyMap<string, Bookin
       // an unknown parent (enrichment gap — see useItineraryBookings) falls
       // back generic and LOCKED (fail-safe: the server re-checks anyway).
       title: booking?.title ?? "Booking",
-      icon: booking !== undefined ? CATEGORY_ICONS[booking.category] : ("bookmark-outline" as IconName),
+      icon:
+        booking !== undefined ? CATEGORY_ICONS[booking.category] : ("bookmark-outline" as IconName),
       status: booking?.status ?? null,
       dayLocked: booking === undefined ? true : booking.starts_at !== null,
       category: booking?.category ?? null,

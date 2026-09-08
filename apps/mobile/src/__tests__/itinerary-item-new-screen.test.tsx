@@ -175,7 +175,12 @@ it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a 
         "POST /trips/:tripId/bookings": (input) => {
           created.push(input);
           return Promise.resolve(
-            makeBooking({ id: BOOKING_IDEA_ID, category: "flight", status: "idea", starts_at: null }),
+            makeBooking({
+              id: BOOKING_IDEA_ID,
+              category: "flight",
+              status: "idea",
+              starts_at: null,
+            }),
           );
         },
       },
@@ -186,23 +191,14 @@ it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a 
   // As-you-type normalization — lowercase in, uppercase rendered.
   await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-origin-iata"), "sfo");
   expect(screen.getByTestId("itinerary-item-new-input-origin-iata").props.value).toBe("SFO");
-  await fireEvent.changeText(
-    screen.getByTestId("itinerary-item-new-input-flight-number"),
-    "ua837",
-  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-flight-number"), "ua837");
   expect(screen.getByTestId("itinerary-item-new-input-flight-number").props.value).toBe("UA837");
-  await fireEvent.changeText(
-    screen.getByTestId("itinerary-item-new-input-confirmation"),
-    "abc123",
-  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-confirmation"), "abc123");
   expect(screen.getByTestId("itinerary-item-new-input-confirmation").props.value).toBe("ABC123");
 
   // Save-time IATA gate: 2 letters → FIELD error (never the generic banner),
   // no wire call.
-  await fireEvent.changeText(
-    screen.getByTestId("itinerary-item-new-input-destination-iata"),
-    "nr",
-  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-destination-iata"), "nr");
   await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
   expect(created).toHaveLength(0);
   expect(screen.getByTestId("itinerary-item-new-input-destination-iata-error")).toBeOnTheScreen();
@@ -277,7 +273,12 @@ it("B-20: lowercase currency normalizes as-you-type and reaches the wire upperca
         "POST /trips/:tripId/bookings": (input) => {
           created.push(input);
           return Promise.resolve(
-            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+            makeBooking({
+              id: BOOKING_IDEA_ID,
+              category: "activity",
+              status: "idea",
+              starts_at: null,
+            }),
           );
         },
       },
@@ -316,7 +317,12 @@ it("booking create: body is a valid BookingCreate — default idea status, Law #
         "POST /trips/:tripId/bookings": (input) => {
           created.push(input);
           return Promise.resolve(
-            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+            makeBooking({
+              id: BOOKING_IDEA_ID,
+              category: "activity",
+              status: "idea",
+              starts_at: null,
+            }),
           );
         },
       },
@@ -357,7 +363,12 @@ it("JPY price wires zero-decimal minor units WITH the picked currency (T-9.1 R1 
         "POST /trips/:tripId/bookings": (input) => {
           created.push(input);
           return Promise.resolve(
-            makeBooking({ id: BOOKING_IDEA_ID, category: "activity", status: "idea", starts_at: null }),
+            makeBooking({
+              id: BOOKING_IDEA_ID,
+              category: "activity",
+              status: "idea",
+              starts_at: null,
+            }),
           );
         },
       },
@@ -452,7 +463,12 @@ it("return-prompt landing pins source: 'deeplink_return' on the wire (R-ib-11)",
         "POST /trips/:tripId/bookings": (input) => {
           created.push(input);
           return Promise.resolve(
-            makeBooking({ id: BOOKING_IDEA_ID, category: "lodging", status: "idea", starts_at: null }),
+            makeBooking({
+              id: BOOKING_IDEA_ID,
+              category: "lodging",
+              status: "idea",
+              starts_at: null,
+            }),
           );
         },
       },
@@ -568,9 +584,7 @@ it("gap-tap prefill (day+time): primary start preset, auto-scheduled — NO sche
     },
   );
   await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen");
-  await fireEvent.press(
-    screen.getByTestId("itinerary-item-new-segment-status-planned"),
-  );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-segment-status-planned"));
   await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
 
   await waitFor(() => expect(created).toHaveLength(1));
@@ -747,9 +761,7 @@ it("an oversized ?placeName= renders CAPPED at 100 chars (R1 security review —
     placeId: PLACE.id,
     placeName: "x".repeat(500),
   });
-  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue(
-    "x".repeat(100),
-  );
+  expect(screen.getByTestId("itinerary-item-new-input-place")).toHaveDisplayValue("x".repeat(100));
 });
 
 it("custom block consumes day+time prefills into a valid ItineraryItemCreate", async () => {
@@ -857,7 +869,10 @@ describe("discard guard copy (nav §2.6; round-2 N2)", () => {
 
     // …but any later edit re-arms it (verifier N3: `dirty` correctly
     // re-arms — no data loss), and THEN the dialog must not lie.
-    await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "Onsen ryokan");
+    await fireEvent.changeText(
+      screen.getByTestId("itinerary-item-new-input-title"),
+      "Onsen ryokan",
+    );
     expect((await attemptDismiss()).prevented).toBe(true);
     expect(screen.getByText("Discard these changes?")).toBeOnTheScreen();
     expect(
@@ -932,13 +947,9 @@ describe("same-value Done leaves the dirty guard unarmed (PR #49 R1)", () => {
     await screen.findByTestId("itinerary-item-new-input-starts-at-date");
 
     await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-date"));
-    await fireEvent.press(
-      screen.getByTestId("itinerary-item-new-input-starts-at-date-sheet-done"),
-    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-date-sheet-done"));
     await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time"));
-    await fireEvent.press(
-      screen.getByTestId("itinerary-item-new-input-starts-at-time-sheet-done"),
-    );
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-input-starts-at-time-sheet-done"));
     expect((await attemptDismiss()).prevented).toBe(false);
 
     // Control: a genuinely different time still arms.
@@ -974,12 +985,10 @@ it("flight arrival seeds from the entered departure — trip start before that (
   // CONTROL ARM (no departure entered yet): the arrival DATE picker opens on
   // the trip's start date, not on today.
   await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date"));
-  expect(
-    screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date,
-  ).toBe(new Date(2027, 2, 1, 12).getTime());
-  await fireEvent.press(
-    screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"),
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date).toBe(
+    new Date(2027, 2, 1, 12).getTime(),
   );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"));
 
   // Enter the departure date + time through their pickers.
   await fireEvent.press(screen.getByTestId("itinerary-item-new-input-departs-at-date"));
@@ -997,19 +1006,17 @@ it("flight arrival seeds from the entered departure — trip start before that (
 
   // Arrival DATE now seeds from the departure's day…
   await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date"));
-  expect(
-    screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date,
-  ).toBe(new Date(2027, 2, 2, 12).getTime());
-  await fireEvent.press(
-    screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"),
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-date-picker").props.date).toBe(
+    new Date(2027, 2, 2, 12).getTime(),
   );
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-date-sheet-close"));
 
   // …and the arrival TIME spinner from the departure's time (17:05 on the
   // TimeField's fixed 2000-01-01 carrier date).
   await fireEvent.press(screen.getByTestId("itinerary-item-new-input-arrives-at-time"));
-  expect(
-    screen.getByTestId("itinerary-item-new-input-arrives-at-time-picker").props.date,
-  ).toBe(new Date(2000, 0, 1, 17, 5).getTime());
+  expect(screen.getByTestId("itinerary-item-new-input-arrives-at-time-picker").props.date).toBe(
+    new Date(2000, 0, 1, 17, 5).getTime(),
+  );
 });
 
 /**
@@ -1133,9 +1140,12 @@ it("B-9: the flight number infers the airline — OFFERED, never auto-applied", 
   const airlineSearches = (): string[] =>
     request.mock.calls
       .filter(
-        (call: unknown[]) => (call[0] as { path?: string } | undefined)?.path === "/airlines/search",
+        (call: unknown[]) =>
+          (call[0] as { path?: string } | undefined)?.path === "/airlines/search",
       )
-      .map((call: unknown[]) => (call[1] as { query?: { q?: string } } | undefined)?.query?.q ?? "");
+      .map(
+        (call: unknown[]) => (call[1] as { query?: { q?: string } } | undefined)?.query?.q ?? "",
+      );
 
   // Gate arm: input the SHARED parser rejects offers nothing (and, per
   // reference.test.tsx, fires no request — the PR #50 rider).
@@ -1152,10 +1162,7 @@ it("B-9: the flight number infers the airline — OFFERED, never auto-applied", 
 
   // Parseable arm: the suggestion appears and the airline field stays
   // UNTOUCHED until the user takes it (no clobber, no spurious dirty guard).
-  await fireEvent.changeText(
-    screen.getByTestId("itinerary-item-new-input-flight-number"),
-    "NH204",
-  );
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-flight-number"), "NH204");
   const suggestion = await screen.findByTestId(
     "itinerary-item-new-input-flight-number-airline-suggestion",
   );
@@ -1282,9 +1289,7 @@ it("B-9: a title-only edit of a zoned booking re-emits its times BYTE-FOR-BYTE",
   // Display: the WALL clock the ticket says, in the zone it was stored with —
   // never re-offset into the device's zone.
   const titleInput = await screen.findByTestId("itinerary-item-new-input-title");
-  expect(screen.getByTestId("itinerary-item-new-input-departs-at-time")).toHaveTextContent(
-    "17:00",
-  );
+  expect(screen.getByTestId("itinerary-item-new-input-departs-at-time")).toHaveTextContent("17:00");
   expect(screen.getByTestId("itinerary-item-new-input-departs-at-tz")).toHaveTextContent(
     "Tokyo — GMT+9",
   );

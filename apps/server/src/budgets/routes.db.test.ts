@@ -209,8 +209,18 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
     const owner = await seedUserWithToken();
     const trip = await createTripVia(owner.accessToken);
 
-    await seedExpense({ tripId: trip.id, userId: owner.userId, category: "food", amountCents: 700 });
-    await seedExpense({ tripId: trip.id, userId: owner.userId, category: "food", amountCents: 300 });
+    await seedExpense({
+      tripId: trip.id,
+      userId: owner.userId,
+      category: "food",
+      amountCents: 700,
+    });
+    await seedExpense({
+      tripId: trip.id,
+      userId: owner.userId,
+      category: "food",
+      amountCents: 300,
+    });
     // FX expense: 1000 EUR-cents at 1.08 → effective base 1080 (base column wins).
     await seedExpense({
       tripId: trip.id,
@@ -229,7 +239,9 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
       deleted: true,
     });
 
-    const doc = BudgetsReadSchema.parse(await (await getBudgets(trip.id, owner.accessToken)).json());
+    const doc = BudgetsReadSchema.parse(
+      await (await getBudgets(trip.id, owner.accessToken)).json(),
+    );
     expect(itemOf(doc, "food").spent_cents).toBe(1000);
     expect(itemOf(doc, "transport").spent_cents).toBe(1080);
     expect(itemOf(doc, "lodging").spent_cents).toBe(0);
@@ -327,7 +339,9 @@ describe.skipIf(!dockerAvailable)("T-9.4 budgets routes (integration)", () => {
       });
     }
 
-    const doc = BudgetsReadSchema.parse(await (await getBudgets(trip.id, owner.accessToken)).json());
+    const doc = BudgetsReadSchema.parse(
+      await (await getBudgets(trip.id, owner.accessToken)).json(),
+    );
     expect(doc.total.ai_estimate_cents).toBe(110_000);
   });
 

@@ -71,7 +71,10 @@ export function createSettleRequestsRouter(deps: SettlementsRouterDeps): Hono<Re
       const input = c.req.valid("json");
 
       const created = await createSettleRequest(deps.db, { tripId, callerId: userId, input });
-      return c.json(toSettleRequestWire(created.row, created.resolved) satisfies SettleRequest, 201);
+      return c.json(
+        toSettleRequestWire(created.row, created.resolved) satisfies SettleRequest,
+        201,
+      );
     },
   );
 

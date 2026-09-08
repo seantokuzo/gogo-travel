@@ -34,6 +34,7 @@ npx skills update           # Update all skills
 ### Step 1: Understand the Need
 
 Identify:
+
 1. The domain (React, testing, DevOps, etc.)
 2. The specific task (writing tests, deploying, reviewing code)
 3. Whether a skill likely exists for this
@@ -45,6 +46,7 @@ npx skills find [query]
 ```
 
 Examples:
+
 - "how do I optimize React?" → `npx skills find react performance`
 - "help with PR reviews" → `npx skills find pr review`
 - "need a changelog" → `npx skills find changelog`
@@ -52,6 +54,7 @@ Examples:
 ### Step 3: Present Options
 
 Show the user:
+
 1. Skill name and what it does
 2. Install command
 3. Link to learn more
@@ -66,14 +69,14 @@ npx skills add <owner/repo@skill> -g -y
 
 ## Common Categories
 
-| Category | Example Queries |
-|----------|----------------|
-| Web Dev | react, nextjs, typescript, tailwind |
-| Testing | testing, jest, playwright, e2e |
-| DevOps | deploy, docker, kubernetes, ci-cd |
-| Docs | docs, readme, changelog |
-| Quality | review, lint, refactor, best-practices |
-| Design | ui, ux, design-system, accessibility |
+| Category | Example Queries                        |
+| -------- | -------------------------------------- |
+| Web Dev  | react, nextjs, typescript, tailwind    |
+| Testing  | testing, jest, playwright, e2e         |
+| DevOps   | deploy, docker, kubernetes, ci-cd      |
+| Docs     | docs, readme, changelog                |
+| Quality  | review, lint, refactor, best-practices |
+| Design   | ui, ux, design-system, accessibility   |
 
 ## When No Skills Found
 

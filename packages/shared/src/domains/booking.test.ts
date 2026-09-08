@@ -240,9 +240,9 @@ describe("BookingDetails caps (B2 — T-6.1 DoS convention)", () => {
         segments: [{ departs_at: long }],
       }).success,
     ).toBe(false);
-    expect(
-      BookingDetailsSchema.safeParse({ category: "lodging", check_in: long }).success,
-    ).toBe(false);
+    expect(BookingDetailsSchema.safeParse({ category: "lodging", check_in: long }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -293,7 +293,11 @@ describe("§3.3 primary times per category", () => {
   it("maps every category's primary start/end fields (§3.3 table)", () => {
     const cases: Array<[BookingDetails, string | null, string | null]> = [
       [
-        { category: "flight", departs_at: "2026-09-01T11:05:00-07:00", arrives_at: "2026-09-02T14:25:00+09:00" },
+        {
+          category: "flight",
+          departs_at: "2026-09-01T11:05:00-07:00",
+          arrives_at: "2026-09-02T14:25:00+09:00",
+        },
         "2026-09-01T11:05:00-07:00",
         "2026-09-02T14:25:00+09:00",
       ],
@@ -303,12 +307,20 @@ describe("§3.3 primary times per category", () => {
         null,
       ],
       [
-        { category: "lodging", check_in: "2026-09-01T15:00:00+09:00", check_out: "2026-09-05T11:00:00+09:00" },
+        {
+          category: "lodging",
+          check_in: "2026-09-01T15:00:00+09:00",
+          check_out: "2026-09-05T11:00:00+09:00",
+        },
         "2026-09-01T15:00:00+09:00",
         "2026-09-05T11:00:00+09:00",
       ],
       [
-        { category: "car_rental", pickup_at: "2026-09-02T10:00:00+09:00", dropoff_at: "2026-09-04T18:00:00+09:00" },
+        {
+          category: "car_rental",
+          pickup_at: "2026-09-02T10:00:00+09:00",
+          dropoff_at: "2026-09-04T18:00:00+09:00",
+        },
         "2026-09-02T10:00:00+09:00",
         "2026-09-04T18:00:00+09:00",
       ],
@@ -318,14 +330,26 @@ describe("§3.3 primary times per category", () => {
         null,
       ],
       [
-        { category: "activity", starts_at: "2026-09-03T13:00:00+09:00", ends_at: "2026-09-03T16:00:00+09:00" },
+        {
+          category: "activity",
+          starts_at: "2026-09-03T13:00:00+09:00",
+          ends_at: "2026-09-03T16:00:00+09:00",
+        },
         "2026-09-03T13:00:00+09:00",
         "2026-09-03T16:00:00+09:00",
       ],
       // restaurant has NO primary end (§3.3 table: "—") even if extra keys existed
-      [{ category: "restaurant", reserved_at: "2026-09-03T19:00:00+09:00" }, "2026-09-03T19:00:00+09:00", null],
       [
-        { category: "other", starts_at: "2026-09-04T08:00:00+09:00", ends_at: "2026-09-04T09:00:00+09:00" },
+        { category: "restaurant", reserved_at: "2026-09-03T19:00:00+09:00" },
+        "2026-09-03T19:00:00+09:00",
+        null,
+      ],
+      [
+        {
+          category: "other",
+          starts_at: "2026-09-04T08:00:00+09:00",
+          ends_at: "2026-09-04T09:00:00+09:00",
+        },
         "2026-09-04T08:00:00+09:00",
         "2026-09-04T09:00:00+09:00",
       ],
@@ -338,7 +362,9 @@ describe("§3.3 primary times per category", () => {
   it("absent fields are null — an idea may know nothing (R-ib-4)", () => {
     expect(bookingPrimaryTimes({ category: "flight" })).toEqual({ start: null, end: null });
     // end may be known without start (independent sides)
-    expect(bookingPrimaryTimes({ category: "flight", arrives_at: "2026-09-02T14:25:00+09:00" })).toEqual({
+    expect(
+      bookingPrimaryTimes({ category: "flight", arrives_at: "2026-09-02T14:25:00+09:00" }),
+    ).toEqual({
       start: null,
       end: "2026-09-02T14:25:00+09:00",
     });
@@ -385,9 +411,9 @@ describe("§3.3 auto-item derivation (R-ib-5)", () => {
   it("no primary start ⇒ no items (timeless — the unscheduled bucket, I-3)", () => {
     expect(deriveAutoItems({ category: "activity" })).toEqual([]);
     // end-only is still timeless for the calendar
-    expect(deriveAutoItems({ category: "flight", arrives_at: "2026-09-02T14:25:00+09:00" })).toEqual(
-      [],
-    );
+    expect(
+      deriveAutoItems({ category: "flight", arrives_at: "2026-09-02T14:25:00+09:00" }),
+    ).toEqual([]);
   });
 
   it("flight/train: one item on the departure wall-date; same-day arrival sets no end_day", () => {
@@ -397,9 +423,7 @@ describe("§3.3 auto-item derivation (R-ib-5)", () => {
         departs_at: "2026-09-03T09:00:00+09:00",
         arrives_at: "2026-09-03T11:15:00+09:00",
       }),
-    ).toEqual([
-      { day: "2026-09-03", end_day: null, start_time: "09:00", end_time: "11:15" },
-    ]);
+    ).toEqual([{ day: "2026-09-03", end_day: null, start_time: "09:00", end_time: "11:15" }]);
   });
 
   it("cross-midnight point event: end_day = arrival wall-date (§2 Gate-2 resolution)", () => {
@@ -425,9 +449,9 @@ describe("§3.3 auto-item derivation (R-ib-5)", () => {
       { day: "2026-09-01", end_day: "2026-09-05", start_time: "15:00", end_time: "11:00" },
     ]);
     // check-out unknown: spanning item degrades to an open point event
-    expect(deriveAutoItems({ category: "lodging", check_in: "2026-09-01T15:00:00+09:00" })).toEqual([
-      { day: "2026-09-01", end_day: null, start_time: "15:00", end_time: null },
-    ]);
+    expect(deriveAutoItems({ category: "lodging", check_in: "2026-09-01T15:00:00+09:00" })).toEqual(
+      [{ day: "2026-09-01", end_day: null, start_time: "15:00", end_time: null }],
+    );
   });
 
   it("car/moped rental: pickup + dropoff POINT items; dropoff item only when dropoff_at set", () => {
@@ -554,9 +578,9 @@ describe("BookingCreateSchema (§3.4 POST)", () => {
     const parsed = BookingCreateSchema.parse({ ...valid, confirmation_code: sixtySharpS });
     expect(parsed.confirmation_code).toBe("SS".repeat(60));
     expect(parsed.confirmation_code).toHaveLength(120);
-    expect(
-      BookingUpdateSchema.parse({ confirmation_code: sixtySharpS }).confirmation_code,
-    ).toBe("SS".repeat(60));
+    expect(BookingUpdateSchema.parse({ confirmation_code: sixtySharpS }).confirmation_code).toBe(
+      "SS".repeat(60),
+    );
   });
 });
 
@@ -574,9 +598,7 @@ describe("BookingUpdateSchema (§3.4 PATCH)", () => {
       place_id: null,
     });
     expect(parsed.price_cents).toBeNull();
-    expect(
-      BookingUpdateSchema.safeParse({ price_cents: 100, currency: null }).success,
-    ).toBe(false);
+    expect(BookingUpdateSchema.safeParse({ price_cents: 100, currency: null }).success).toBe(false);
   });
 
   it("status accepts the full enum (legality is the service's §3.2 concern)", () => {
@@ -666,9 +688,7 @@ describe("BookingWithItemsSchema", () => {
 
 describe("booking endpoint descriptors (contracts §3.6)", () => {
   it("mirror the §3.4 routes exactly", () => {
-    expect(
-      Object.values(bookingEndpoints).map((d) => `${d.method} ${d.path}`),
-    ).toEqual([
+    expect(Object.values(bookingEndpoints).map((d) => `${d.method} ${d.path}`)).toEqual([
       "GET /trips/:tripId/bookings",
       "POST /trips/:tripId/bookings",
       "GET /trips/:tripId/bookings/:bookingId",

@@ -92,10 +92,7 @@ describe("itineraryFeaturesForFilter (R-map-3)", () => {
 
   describe("SPAN-AWARE matching (R1 review — hotel day 0→4)", () => {
     // A spanning stay (check-in day 0, check-out day 4) + a point sibling.
-    const spanning = collectionOf([
-      itineraryFeature("stay", 0, 4),
-      itineraryFeature("point", 2),
-    ]);
+    const spanning = collectionOf([itineraryFeature("stay", 0, 4), itineraryFeature("point", 2)]);
 
     it("a MID-STAY day keeps the spanning pin (the itinerary grid parity arm)", () => {
       // Filter day 1: inside the span, no point item — the stay alone.

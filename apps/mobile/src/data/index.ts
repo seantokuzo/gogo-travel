@@ -112,8 +112,4 @@ export {
   useTripBookings,
   useUpdateBooking,
 } from "./bookings";
-export type {
-  BookingMutationOptions,
-  BookingUpdateVars,
-  ScheduleBookingVars,
-} from "./bookings";
+export type { BookingMutationOptions, BookingUpdateVars, ScheduleBookingVars } from "./bookings";

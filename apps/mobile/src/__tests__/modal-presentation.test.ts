@@ -38,9 +38,9 @@ function declaredConfig(layout: () => ReactElement) {
   const candidates =
     root.type === Stack
       ? [root]
-      : (Children.toArray(
-          (root.props as { children?: ReactNode }).children,
-        ).filter((child) => isValidElement(child) && child.type === Stack) as StackElement[]);
+      : (Children.toArray((root.props as { children?: ReactNode }).children).filter(
+          (child) => isValidElement(child) && child.type === Stack,
+        ) as StackElement[]);
   expect(candidates).toHaveLength(1);
   const el = candidates[0] as StackElement;
   const screens = Children.toArray(el.props.children).filter(

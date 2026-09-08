@@ -140,7 +140,9 @@ export type GoogleStubTupleMatchesRealHook = MustBeAssignable<
 // ---------------------------------------------------------------------------
 
 /** Every name the settle suites' expo-clipboard stub exports. */
-export const clipboardStubExports = ["setStringAsync"] as const satisfies readonly (keyof typeof Clipboard)[];
+export const clipboardStubExports = [
+  "setStringAsync",
+] as const satisfies readonly (keyof typeof Clipboard)[];
 
 /** Default resolution — `setStringAsync` resolves the real boolean. */
 export const clipboardDefaultResolutions = {
@@ -150,7 +152,10 @@ export const clipboardDefaultResolutions = {
 };
 
 /** Every name the settle suites' expo-linking stub exports. */
-export const linkingStubExports = ["canOpenURL", "openURL"] as const satisfies readonly (keyof typeof ExpoLinking)[];
+export const linkingStubExports = [
+  "canOpenURL",
+  "openURL",
+] as const satisfies readonly (keyof typeof ExpoLinking)[];
 
 /**
  * Default resolutions — `openURL` resolves the real `true` literal;

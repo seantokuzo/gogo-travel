@@ -186,9 +186,7 @@ export function BookingForm({
         centsToMoneyText(booking.price_cents, booking.currency ?? trip.base_currency)
       : "",
   );
-  const [currencyText, setCurrencyText] = useState(
-    booking?.currency ?? trip.base_currency,
-  );
+  const [currencyText, setCurrencyText] = useState(booking?.currency ?? trip.base_currency);
   const [confirmation, setConfirmation] = useState(booking?.confirmation_code ?? "");
   const [place, setPlace] = useState<{ id: string; name: string } | null>(
     booking !== undefined && booking.place_id !== null
@@ -198,9 +196,7 @@ export function BookingForm({
         { id: booking.place_id, name: "Attached place" }
       : null,
   );
-  const [placeOpen, setPlaceOpen] = useState(
-    booking !== undefined && booking.place_id !== null,
-  );
+  const [placeOpen, setPlaceOpen] = useState(booking !== undefined && booking.place_id !== null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   /** Create+schedule chain: created but the day assignment failed (module doc). */
@@ -258,9 +254,7 @@ export function BookingForm({
     return deriveAutoItems(built.details).map((placement) => ({
       ...placement,
       spanning:
-        category === "lodging" &&
-        placement.end_day !== null &&
-        placement.end_day > placement.day,
+        category === "lodging" && placement.end_day !== null && placement.end_day > placement.day,
     }));
   })();
   const conflicts = useFormConflicts(trip.id, livePlacements, {

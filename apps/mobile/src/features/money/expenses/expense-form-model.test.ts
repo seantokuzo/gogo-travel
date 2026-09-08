@@ -54,9 +54,7 @@ describe("evaluateSplit — equal", () => {
     ]);
     // Preview parity with the pinned §3.3 algorithm — same function, same
     // inputs, byte-identical output.
-    expect(result.shares).toEqual(
-      computeShares(2551, { type: "equal", participants: [ME, B] }),
-    );
+    expect(result.shares).toEqual(computeShares(2551, { type: "equal", participants: [ME, B] }));
   });
 
   it("zero participants is invalid with the pick-someone readout", () => {
@@ -375,8 +373,12 @@ describe("bookingPrefill (§2.3 — the shared mapping, prefill only)", () => {
       currencyText: "USD",
     });
     expect(
-      bookingPrefill({ title: "Park Hyatt", category: "lodging", price_cents: null, currency: null })
-        .amountText,
+      bookingPrefill({
+        title: "Park Hyatt",
+        category: "lodging",
+        price_cents: null,
+        currency: null,
+      }).amountText,
     ).toBeNull();
   });
 

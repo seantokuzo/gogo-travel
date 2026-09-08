@@ -72,11 +72,7 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 it("tripSavedPlaces joins the trip-detail subtree (KEY-CACHE LAW)", () => {
-  expect(queryKeys.tripSavedPlaces(TEST_TRIP_ID)).toEqual([
-    "trips",
-    TEST_TRIP_ID,
-    "saved-places",
-  ]);
+  expect(queryKeys.tripSavedPlaces(TEST_TRIP_ID)).toEqual(["trips", TEST_TRIP_ID, "saved-places"]);
   // Prefix relationship the eviction machinery depends on: the detail key
   // is a strict prefix of the saved-places key.
   const detail = queryKeys.trip(TEST_TRIP_ID);
@@ -492,10 +488,10 @@ it("unsave success RE-ASSERTS removal — a mid-flight refetch resurrection is f
     // The scenario: while the DELETE is in flight, a concurrent refetch
     // (e.g. another save's 409-path invalidation) reads the server BEFORE
     // the delete commits and RESURRECTS the row into the cache.
-    client.setQueryData<Paginated<SavedPlaceWithPlace>>(
-      queryKeys.tripSavedPlaces(TEST_TRIP_ID),
-      { items: [row], nextCursor: null },
-    );
+    client.setQueryData<Paginated<SavedPlaceWithPlace>>(queryKeys.tripSavedPlaces(TEST_TRIP_ID), {
+      items: [row],
+      nextCursor: null,
+    });
     expect(listItems(client)).toEqual([row]);
   } finally {
     await act(async () => {

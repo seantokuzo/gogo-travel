@@ -450,9 +450,7 @@ export function stateFromDetails(details: BookingDetails): DetailsFormState {
         date: wallDate(value),
         time: wallTime(value),
         raw: value,
-        ...(field.tzKey !== undefined
-          ? { tz: typeof stored === "string" ? stored : "" }
-          : {}),
+        ...(field.tzKey !== undefined ? { tz: typeof stored === "string" ? stored : "" } : {}),
       };
       continue;
     }

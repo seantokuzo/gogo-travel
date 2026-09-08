@@ -55,10 +55,7 @@ async function renderScreen(
   const trip = makeTrip({ id: TEST_TRIP_ID, role: opts?.role ?? "owner" });
   const request = mockNavApi({
     trips: [trip],
-    members: [
-      makeMember(),
-      makeMember({ user: { id: B, display_name: "Blair" }, role: "editor" }),
-    ],
+    members: [makeMember(), makeMember({ user: { id: B, display_name: "Blair" }, role: "editor" })],
     overrides: {
       "GET /trips/:tripId/expenses/:expenseId": () => Promise.resolve(makeExpense()),
       ...opts?.overrides,
@@ -173,17 +170,13 @@ it("a soft-deleted expense renders the audit state — banner copy, no edit/dele
     {
       overrides: {
         "GET /trips/:tripId/expenses/:expenseId": () =>
-          Promise.resolve(
-            makeExpense({ deleted_at: "2026-08-29T10:00:00.000Z", deleted_by: B }),
-          ),
+          Promise.resolve(makeExpense({ deleted_at: "2026-08-29T10:00:00.000Z", deleted_by: B })),
       },
     },
   );
   const banner = await screen.findByTestId("expense-detail-deleted");
   expect(banner).toBeTruthy();
-  expect(
-    screen.getByText(/Blair deleted "Dinner at Menya \(USD 25\.50\)"/),
-  ).toBeTruthy();
+  expect(screen.getByText(/Blair deleted "Dinner at Menya \(USD 25\.50\)"/)).toBeTruthy();
   expect(screen.queryByTestId("expense-detail-button-edit")).toBeNull();
   expect(screen.queryByTestId("expense-detail-button-delete")).toBeNull();
 });

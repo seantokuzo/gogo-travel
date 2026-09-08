@@ -4,21 +4,24 @@
 
 <!-- What this PR accomplishes, in 2-4 sentences -->
 
-| Property | Value |
-| -------- | ----- |
-| **Item(s)** | P-N / T-N.M / B-N (stable IDs from `docs/QUEUE.md`) |
-| **Spec** | [.specs/path/to/spec.md](.specs/) or N/A |
-| **Sizing** | ~N LOC, N files (target 30–500 LOC / 2–15 files; bugs exempt) |
+| Property    | Value                                                         |
+| ----------- | ------------------------------------------------------------- |
+| **Item(s)** | P-N / T-N.M / B-N (stable IDs from `docs/QUEUE.md`)           |
+| **Spec**    | [.specs/path/to/spec.md](.specs/) or N/A                      |
+| **Sizing**  | ~N LOC, N files (target 30–500 LOC / 2–15 files; bugs exempt) |
 
 ## 📝 Changes
 
 ### Added
+
 -
 
 ### Changed
+
 -
 
 ### Removed
+
 -
 
 ## ✅ Acceptance criteria

@@ -19,10 +19,10 @@ A question must be answered before implementation can start safely · a spike (`
 1. **Context7** — authoritative library docs (HIGHEST). Resolve the ID, then query the topic.
 2. **Official docs** (WebFetch) — changelogs, migration guides, runtime/framework docs.
 3. **Registry** — `npm view <pkg> version` before recommending anything. Check peers.
-4. **The codebase** — Grep/Glob/Read for how it's *actually* done here. Reality beats docs when they conflict.
+4. **The codebase** — Grep/Glob/Read for how it's _actually_ done here. Reality beats docs when they conflict.
 5. **Web search** — community/ecosystem, MEDIUM/LOW; cross-check against the above.
 
-Watch for this repo's specific trap: code that *looks* wired isn't always run (server entry starts only HTTP; some workers are TODO stubs; some routes are Outlet-less; some E2E is `describe.skip`'d). When you report "X is implemented," verify it's actually reachable/executed — not just present.
+Watch for this repo's specific trap: code that _looks_ wired isn't always run (server entry starts only HTTP; some workers are TODO stubs; some routes are Outlet-less; some E2E is `describe.skip`'d). When you report "X is implemented," verify it's actually reachable/executed — not just present.
 
 ## Output
 
@@ -30,20 +30,26 @@ Watch for this repo's specific trap: code that *looks* wired isn't always run (s
 # Research: {topic}
 
 ## Summary
+
 {One-paragraph prescriptive answer — what to do and why.}
 
 ## Findings
+
 ### {finding}
+
 **Confidence:** HIGH | MEDIUM | LOW · **Source:** Context7 | Docs | Registry | Code | Web
 {Specifics — versions, signatures, file:line.}
 
 ## Recommendation
+
 {"Use X with Y because Z." Concrete enough to act on.}
 
 ## Unknowns
+
 {What you couldn't verify; what needs a spike or a runtime check.}
 
 ## Relevant files
+
 {Absolute paths that matter for the follow-on work.}
 ```
 

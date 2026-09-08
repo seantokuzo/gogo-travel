@@ -48,7 +48,12 @@ import {
 import { lightTheme, makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { settle } from "@/test-utils/settle";
-import { makePlace, makeSavedPlaceWithPlace, makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
+import {
+  makePlace,
+  makeSavedPlaceWithPlace,
+  makeTrip,
+  mockNavApi,
+} from "@/test-utils/trip-fixtures";
 
 /** Ordered cross-tab call log (E4) — the two-step contract is an ORDER claim. */
 const mockCallSequence: [string, unknown][] = [];
@@ -147,8 +152,7 @@ async function renderMap(opts?: {
     trips: [trip],
     overrides: {
       ...itineraryApiOverrides({ items: opts?.items ?? itemFixtures(), bookings: [] }),
-      "GET /trips/:tripId/saved-places": () =>
-        Promise.resolve({ items: saved, nextCursor: null }),
+      "GET /trips/:tripId/saved-places": () => Promise.resolve({ items: saved, nextCursor: null }),
       ...opts?.overrides,
     },
   });
@@ -856,7 +860,10 @@ describe("deliberate camera writes vs the initial fit (R1 corr B1)", () => {
       });
       expect(setCamera).toHaveBeenCalledTimes(1);
       expect(setCamera).toHaveBeenCalledWith(
-        expect.objectContaining({ centerCoordinate: [135.77, 35.01], zoomLevel: LOCATE_CAMERA_ZOOM }),
+        expect.objectContaining({
+          centerCoordinate: [135.77, 35.01],
+          zoomLevel: LOCATE_CAMERA_ZOOM,
+        }),
       );
     } finally {
       // The slow query settles LATE.

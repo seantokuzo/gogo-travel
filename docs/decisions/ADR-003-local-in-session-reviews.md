@@ -17,7 +17,7 @@ The-bach's ADR-002 verified the underlying facts: `anthropics/claude-code-action
 prefers an API key when both credentials are set (pay-per-use), OAuth/Max tokens
 in CI are unsupported/ToS-restricted and can silently bill as API usage — so
 there is **no supported way to bill GitHub-Action PR reviews to a Max plan.**
-Meanwhile the review *intelligence* (multi-specialist fan-out → deterministic
+Meanwhile the review _intelligence_ (multi-specialist fan-out → deterministic
 verdict aggregation → fix loop → impartial judge) runs fine in-session, billed
 to Max.
 

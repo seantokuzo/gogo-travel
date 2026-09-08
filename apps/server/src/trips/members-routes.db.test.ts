@@ -176,9 +176,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
       await db
         .select()
         .from(schema.tripMembers)
-        .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, userId)),
-        )
+        .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, userId)))
     )[0];
 
   // ===========================================================================
@@ -219,7 +217,9 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
       .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
       .where(eq(schema.users.id, ghost.userId));
 
-    const body = MemberListSchema.parse(await (await listMembers(tripId, owner.accessToken)).json());
+    const body = MemberListSchema.parse(
+      await (await listMembers(tripId, owner.accessToken)).json(),
+    );
     expect(body.items).toHaveLength(3);
     expect(body.items.some((m) => m.user.id === ghost.userId)).toBe(false);
   });
@@ -358,10 +358,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
         .update(schema.tripMembers)
         .set({ role: "owner" })
         .where(
-          and(
-            eq(schema.tripMembers.tripId, tripId),
-            eq(schema.tripMembers.userId, editor.userId),
-          ),
+          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, editor.userId)),
         );
       locksTaken();
       await gate;
@@ -646,9 +643,9 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
 
   it("PATCH role: member.role_changed → other members INCLUDING the target, minus the actor; ids-only", async () => {
     const { owner, editor, viewer, tripId } = await seedCollabTrip();
-    expect((await patchRole(tripId, editor.userId, owner.accessToken, { role: "viewer" })).status).toBe(
-      200,
-    );
+    expect(
+      (await patchRole(tripId, editor.userId, owner.accessToken, { role: "viewer" })).status,
+    ).toBe(200);
 
     const events = await pushEvents.eventsFor(tripId);
     expect(events.map((d) => d.payload.event)).toEqual(["member.role_changed"]);
@@ -656,19 +653,17 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     // wire — receivers refetch the member list.
     expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id", "entity_id"]);
     expect(events[0]!.payload.entity_id).toBe(editor.userId);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
   });
 
   it("PATCH role: failure paths never emit — 403 caller, owner target 400, unknown target 404", async () => {
     const { owner, editor, viewer, tripId } = await seedCollabTrip();
-    expect((await patchRole(tripId, viewer.userId, editor.accessToken, { role: "editor" })).status).toBe(
-      403,
-    );
-    expect((await patchRole(tripId, owner.userId, owner.accessToken, { role: "viewer" })).status).toBe(
-      400,
-    );
+    expect(
+      (await patchRole(tripId, viewer.userId, editor.accessToken, { role: "editor" })).status,
+    ).toBe(403);
+    expect(
+      (await patchRole(tripId, owner.userId, owner.accessToken, { role: "viewer" })).status,
+    ).toBe(400);
     expect(
       (await patchRole(tripId, NONEXISTENT_UUID, owner.accessToken, { role: "viewer" })).status,
     ).toBe(404);
@@ -684,9 +679,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     expect(events[0]!.payload.entity_id).toBe(editor.userId);
     // The removed user is no longer a member post-commit — their inclusion
     // can only come from the alsoNotify seam.
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
     expect(await memberRow(tripId, editor.userId)).toBeUndefined();
   });
 
@@ -697,9 +690,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     const events = await pushEvents.eventsFor(tripId);
     expect(events.map((d) => d.payload.event)).toEqual(["member.left"]);
     expect(events[0]!.payload.entity_id).toBe(editor.userId);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [owner.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([owner.userId, viewer.userId].sort());
   });
 
   it("DELETE: removing a GHOST's legacy row emits to remaining members but never to the ghost", async () => {
@@ -716,9 +707,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     expect(events.map((d) => d.payload.event)).toEqual(["member.removed"]);
     // alsoNotify carried the ghost, but the live filter dropped them —
     // ghosts don't get events (STATE P-6 live-member semantics).
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
   });
 
   it("DELETE: owner-leave 409s (both flavors) never emit", async () => {
@@ -740,9 +729,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 members routes (integration)", () => {
     const events = await pushEvents.eventsFor(tripId);
     expect(events.map((d) => d.payload.event)).toEqual(["ownership.transferred"]);
     expect(events[0]!.payload.entity_id).toBe(editor.userId);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
   });
 
   it("transfer: every 4xx path (404s, self 400, non-owner 403) never emits", async () => {

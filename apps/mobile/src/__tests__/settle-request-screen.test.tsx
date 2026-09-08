@@ -45,10 +45,9 @@ jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 // REAL bite (iOS actually opening venmo:// — LSApplicationQueriesSchemes,
 // pinned in link-config-audit) is device test D1 at P-14.
 jest.mock("expo-linking", () => {
-  const shapes =
-    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
-      "../testing/mock-shape-parity",
-    );
+  const shapes = jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+    "../testing/mock-shape-parity",
+  );
   const stub = {
     canOpenURL: jest.fn(async () => shapes.linkingDefaultResolutions.canOpenURL),
     openURL: jest.fn(async () => shapes.linkingDefaultResolutions.openURL),
@@ -61,10 +60,9 @@ jest.mock("expo-linking", () => {
   return stub;
 });
 jest.mock("expo-clipboard", () => {
-  const shapes =
-    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
-      "../testing/mock-shape-parity",
-    );
+  const shapes = jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+    "../testing/mock-shape-parity",
+  );
   const stub = {
     setStringAsync: jest.fn(async () => shapes.clipboardDefaultResolutions.setStringAsync),
   };

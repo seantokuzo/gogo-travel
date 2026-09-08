@@ -13,14 +13,8 @@ import {
 } from "@gogo/shared";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
-import {
-  readDeeplinkOutRecord,
-  recordDeeplinkOut,
-} from "@/features/deeplinks/return-prompt-store";
-import {
-  defaultZoneFor,
-  rememberTripZone,
-} from "@/features/itinerary/add-edit/last-zone-store";
+import { readDeeplinkOutRecord, recordDeeplinkOut } from "@/features/deeplinks/return-prompt-store";
+import { defaultZoneFor, rememberTripZone } from "@/features/itinerary/add-edit/last-zone-store";
 import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
 import { recallMoneySegment, rememberMoneySegment } from "@/features/money/segment-memory";
 import {

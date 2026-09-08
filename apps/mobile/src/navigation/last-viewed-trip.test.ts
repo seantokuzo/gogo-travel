@@ -3,11 +3,7 @@
  * Exercises the REAL adapter over react-native-mmkv's sanctioned in-memory
  * jest mock (same posture as theme storage).
  */
-import {
-  clearLastViewedTrip,
-  readLastViewedTrip,
-  stampLastViewedTrip,
-} from "./last-viewed-trip";
+import { clearLastViewedTrip, readLastViewedTrip, stampLastViewedTrip } from "./last-viewed-trip";
 
 afterEach(() => {
   clearLastViewedTrip();
@@ -34,9 +30,8 @@ describe("last-viewed-trip stamp (gogo.lastViewedTrip)", () => {
 
   it("corrupt persisted value → null, never a throw (boot path must not crash)", () => {
     // Reach through the same MMKV default instance the adapter writes.
-    const { createMMKV } = jest.requireActual<typeof import("react-native-mmkv")>(
-      "react-native-mmkv",
-    );
+    const { createMMKV } =
+      jest.requireActual<typeof import("react-native-mmkv")>("react-native-mmkv");
     createMMKV().set("gogo.lastViewedTrip", "{not json");
     expect(readLastViewedTrip()).toBeNull();
     createMMKV().set("gogo.lastViewedTrip", JSON.stringify({ nope: true }));

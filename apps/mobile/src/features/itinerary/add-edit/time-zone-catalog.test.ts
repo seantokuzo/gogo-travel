@@ -10,7 +10,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { DATE_LINE_EASTBOUND, DATE_LINE_EASTBOUND_EXTREME, MULTI_ZONE_TRIP } from "@gogo/shared/testing";
+import {
+  DATE_LINE_EASTBOUND,
+  DATE_LINE_EASTBOUND_EXTREME,
+  MULTI_ZONE_TRIP,
+} from "@gogo/shared/testing";
 
 import { DEFAULT_AIRPORTS } from "@/test-utils/reference-fixtures";
 

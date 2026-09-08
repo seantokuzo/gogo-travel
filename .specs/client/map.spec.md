@@ -83,7 +83,7 @@ Screen-level; every requirement names its testIDs (grammar: navigation spec
   render the full spine view with no error surface — premium fields
   appear when available, their absence is silent.
 - **R-map-11 (save/unsave):** WHEN save is tapped (`place-detail-button-
-  save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
+save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   optimistically and reconcile; a 409 duplicate-save is treated as success
   (places spec R-places-16). Viewers see state, not the control (role from
   trip context).
@@ -131,7 +131,7 @@ Screen-level; every requirement names its testIDs (grammar: navigation spec
 - **R-map-19 (manual management UI):** WHEN the user opens trip settings →
   Offline map (`trip-settings-list-item-offline` → section testIDs
   `offline-pack-*`) THE SYSTEM SHALL show pack state (`none / downloading
-  (progress) / ready (size, date) / stale / failed`) with actions:
+(progress) / ready (size, date) / stale / failed`) with actions:
   download (`offline-pack-button-download` — allowed on cellular after a
   size-estimate ConfirmDialog), refresh (`offline-pack-button-refresh` —
   packs don't auto-update; research), delete (`offline-pack-button-delete`,
@@ -325,15 +325,15 @@ photos.
 
 ### 2.8 testID inventory (grammar: navigation spec §2.7)
 
-| Surface | testIDs |
-|---|---|
-| Map root | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state` |
-| Search (R-map-25) | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear` |
-| Day filter | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}` |
-| Pins/clusters | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index) |
-| Place sheet | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details` |
-| Detail screen | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
-| Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec) |
+| Surface            | testIDs                                                                                                                                                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`                                                                                                                                          |
+| Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`                                                                                                                                        |
+| Day filter         | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}`                                                                                                                                                               |
+| Pins/clusters      | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index)                                                                                       |
+| Place sheet        | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details`                                                                                                     |
+| Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
+| Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec)                                                                                 |
 
 ### 2.9 Out of scope (explicit)
 
@@ -363,14 +363,14 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 `@rnmapbox/maps` dev-build scaffold (P-3; versions pinned then via
 `npm view` + Context7 — never training data).
 
-| ID | Task | Covers |
-|---|---|---|
-| MAP-1 | Map screen shell: MapView + themed styles, camera logic, attribution placement, ShapeSource layers + clustering for the three pin families, day filter. | R-map-1..3, R-map-6, R-map-7 |
-| MAP-2 | Pin selection + place sheet + photo-pin routing + external nav handoff + photo-visibility filtering + map search bar with temporary result pins. | R-map-4, R-map-5, R-map-8, R-map-25 |
-| MAP-3 | Place detail screen: spine view, fresh block w/ non-persistence contract, save/unsave, add-to-day, note editor, linked content, tour-guide hook, attribution. | R-map-9..14 |
-| MAP-4 | Foreground location: puck, lazy permission flow, locate-me, plist audit. | R-map-15..17 |
-| MAP-5 | Offline packs: state machine, activation auto-download (wifi-gated), management UI in trip settings, hygiene/ceiling purge, failure/retry, offline degrade states. | R-map-18..22 |
-| MAP-6 | Map↔itinerary linking params + cross-tab flows (+ today quick-action contract). | R-map-23, R-map-24 |
+| ID    | Task                                                                                                                                                               | Covers                              |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
+| MAP-1 | Map screen shell: MapView + themed styles, camera logic, attribution placement, ShapeSource layers + clustering for the three pin families, day filter.            | R-map-1..3, R-map-6, R-map-7        |
+| MAP-2 | Pin selection + place sheet + photo-pin routing + external nav handoff + photo-visibility filtering + map search bar with temporary result pins.                   | R-map-4, R-map-5, R-map-8, R-map-25 |
+| MAP-3 | Place detail screen: spine view, fresh block w/ non-persistence contract, save/unsave, add-to-day, note editor, linked content, tour-guide hook, attribution.      | R-map-9..14                         |
+| MAP-4 | Foreground location: puck, lazy permission flow, locate-me, plist audit.                                                                                           | R-map-15..17                        |
+| MAP-5 | Offline packs: state machine, activation auto-download (wifi-gated), management UI in trip settings, hygiene/ceiling purge, failure/retry, offline degrade states. | R-map-18..22                        |
+| MAP-6 | Map↔itinerary linking params + cross-tab flows (+ today quick-action contract).                                                                                    | R-map-23, R-map-24                  |
 
 **Tests required (minimum — component/E2E per testIDs above):**
 
@@ -387,9 +387,9 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 
 ---
 
-*Trace: every R-map-N cites its design section inline. All 3 markers
+_Trace: every R-map-N cites its design section inline. All 3 markers
 resolved at Gate 2 (2026-07-09): 2 at the schema spec (status derived +
 override; destination structured with guaranteed coords), 1 owned here
 (map discovery → spine-backed search bar, R-map-25); the public-photos
 surface resolved at the schema spec (place detail sheet only, photos spec
-renders it). Zero markers remain.*
+renders it). Zero markers remain._

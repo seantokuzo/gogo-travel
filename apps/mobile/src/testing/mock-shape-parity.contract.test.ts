@@ -51,7 +51,9 @@ describe("runtime stub surfaces equal their type-checked parity lists (independe
     );
     expect(surfaceOf(mapbox.offlineManager, [])).toEqual(sorted(mapboxOfflineManagerMethods));
     expect(surfaceOf(mapbox.__mock.camera, [])).toEqual(sorted(mapboxCameraHandleMethods));
-    expect(surfaceOf(mapbox.__mock.shapeSource, [])).toEqual(sorted(mapboxShapeSourceHandleMethods));
+    expect(surfaceOf(mapbox.__mock.shapeSource, [])).toEqual(
+      sorted(mapboxShapeSourceHandleMethods),
+    );
   });
 
   it("expo-location — module exports", () => {

@@ -88,9 +88,7 @@ export function ItemForm({
       : (prefillPlace ?? null),
   );
   const [day, setDay] = useState<string>(item?.day ?? prefillDay ?? "");
-  const [startTime, setStartTime] = useState<string>(
-    item?.start_time ?? prefillTime ?? "",
-  );
+  const [startTime, setStartTime] = useState<string>(item?.start_time ?? prefillTime ?? "");
   const [endTime, setEndTime] = useState<string>(item?.end_time ?? "");
   const [notes, setNotes] = useState(item?.notes ?? "");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});

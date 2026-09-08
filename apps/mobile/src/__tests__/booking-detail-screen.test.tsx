@@ -132,8 +132,7 @@ async function renderDetail(opts: RenderOpts = {}) {
   const request = mockNavApi({
     trips: [trip],
     overrides: {
-      "GET /trips/:tripId/bookings/:bookingId":
-        opts.getBooking ?? (() => Promise.resolve(detail)),
+      "GET /trips/:tripId/bookings/:bookingId": opts.getBooking ?? (() => Promise.resolve(detail)),
       "GET /trips/:tripId/bookings": () => Promise.resolve({ items: [], nextCursor: null }),
       "PATCH /trips/:tripId/bookings/:bookingId":
         opts.patchBooking ??
@@ -217,9 +216,9 @@ describe("R-itin-24 — the detail surface", () => {
     // CONTROL: a sibling on the SAME screen with a different role resolves to
     // a different weight — so the assertion above is reading the role, not a
     // constant every AppText happens to share.
-    const caption = StyleSheet.flatten(
-      screen.getByTestId("booking-detail-source").props.style,
-    ) as { fontWeight?: string };
+    const caption = StyleSheet.flatten(screen.getByTestId("booking-detail-source").props.style) as {
+      fontWeight?: string;
+    };
     expect(caption.fontWeight).not.toBe(lightTheme.type.mono.fontWeight);
   });
 

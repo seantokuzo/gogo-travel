@@ -284,15 +284,15 @@ query cache, the SQLite bundle is the durable offline source for active
 trips. One bundle per trip; schema mirrors the server rows it caches
 (same `@gogo/shared` shapes — no bespoke local types).
 
-| Bundle section | Source | Refresh |
-|---|---|---|
-| trip row, members (profiles) | `GET /trips/:tripId` + members | every sync |
-| itinerary items + bookings | itinerary/bookings endpoints | every sync + incremental on push invalidation |
-| saved places + `places` rows | places endpoints | every sync |
-| travel legs | legs endpoint (leg-ETA refresh job keeps them fresh server-side) | every sync |
-| tour-guide bundles (`ready`) | tour bundle manifest (`(trip_id, place_id)` unique read) | wifi sync only (heavy) |
-| weather snapshot | `GET /trips/:tripId/weather` | every sync, best-effort |
-| Mapbox tile pack | `offlineManager` (maps spec) | wifi sync only |
+| Bundle section               | Source                                                           | Refresh                                       |
+| ---------------------------- | ---------------------------------------------------------------- | --------------------------------------------- |
+| trip row, members (profiles) | `GET /trips/:tripId` + members                                   | every sync                                    |
+| itinerary items + bookings   | itinerary/bookings endpoints                                     | every sync + incremental on push invalidation |
+| saved places + `places` rows | places endpoints                                                 | every sync                                    |
+| travel legs                  | legs endpoint (leg-ETA refresh job keeps them fresh server-side) | every sync                                    |
+| tour-guide bundles (`ready`) | tour bundle manifest (`(trip_id, place_id)` unique read)         | wifi sync only (heavy)                        |
+| weather snapshot             | `GET /trips/:tripId/weather`                                     | every sync, best-effort                       |
+| Mapbox tile pack             | `offlineManager` (maps spec)                                     | wifi sync only                                |
 
 Sync orchestration ("what syncs when", R-sync-4):
 
@@ -350,7 +350,7 @@ Semantics:
   oldest-first eviction warning at 500 entries (config; hitting the cap in
   practice means days offline with heavy edits — warn, don't drop silently).
 - Photo binary uploads do NOT ride this queue (upload-url flows need
-  liveness); photo *metadata* edits do. Capture-inbox actions are
+  liveness); photo _metadata_ edits do. Capture-inbox actions are
   online-only (review requires server parse state).
 
 ### 2.8 Notification tap-routing table (R-route-3)
@@ -359,15 +359,15 @@ All routes resolve through the navigation deep-link registry (§2.3); this
 table is the registry's notification-category extension (navigation §2.8
 reserved the seam). Guards: R-route-2.
 
-| Category (companion §3.4) | Route target | Fallback when entity missing |
-|---|---|---|
-| `itinerary_change` (single item) | `/[tripId]/itinerary/item/[itemId]` | trip default tab (R-nav-7/8) |
-| `itinerary_change` (coalesced) | `/[tripId]` default tab | — |
-| `daily_digest` | `/[tripId]/today` | trip list if no longer a member (R-nav-15) |
-| `leave_by` (local) | `/[tripId]/today` + hero focus on `item_id` (R-route-4) | plain today tab |
-| `document_expiry` | `/[tripId]/more/documents` when trip-associated, else the documents vault via the profile home (trip-list header avatar — navigation §1, resolved Gate 2) | documents list |
-| `settle_up` | `/[tripId]/money/request/[requestId]` (navigation registry row) | money tab, request-resolved empty state |
-| `flight_status` | reserved — deferred to v2 (companion R-notif-6, resolved Gate 2) | — |
+| Category (companion §3.4)        | Route target                                                                                                                                              | Fallback when entity missing               |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `itinerary_change` (single item) | `/[tripId]/itinerary/item/[itemId]`                                                                                                                       | trip default tab (R-nav-7/8)               |
+| `itinerary_change` (coalesced)   | `/[tripId]` default tab                                                                                                                                   | —                                          |
+| `daily_digest`                   | `/[tripId]/today`                                                                                                                                         | trip list if no longer a member (R-nav-15) |
+| `leave_by` (local)               | `/[tripId]/today` + hero focus on `item_id` (R-route-4)                                                                                                   | plain today tab                            |
+| `document_expiry`                | `/[tripId]/more/documents` when trip-associated, else the documents vault via the profile home (trip-list header avatar — navigation §1, resolved Gate 2) | documents list                             |
+| `settle_up`                      | `/[tripId]/money/request/[requestId]` (navigation registry row)                                                                                           | money tab, request-resolved empty state    |
+| `flight_status`                  | reserved — deferred to v2 (companion R-notif-6, resolved Gate 2)                                                                                          | —                                          |
 
 Foreground arrivals: `itinerary_change` applies invalidation silently
 (R-sync-7) and shows no banner for the actor's own echo; other categories
@@ -378,24 +378,24 @@ notification while foregrounded.
 
 Root: `today-screen`. Interactive/asserted elements:
 
-| Element | testID |
-|---|---|
-| Offline/stale pill | `today-offline-pill` |
-| Weather strip | `today-weather-strip` |
-| Hero card (tap → detail) | `today-hero-card` |
-| Hero leave-by line | `today-hero-leave-by` |
-| Quick action: map | `today-button-map` |
-| Quick action: add expense | `today-button-add-expense` |
-| Quick action: add photo | `today-button-add-photo` |
-| Timeline list | `today-list` |
-| Timeline item (dynamic) | `today-list-item-{itemId}` |
-| Leg row (dynamic) | `today-leg-{fromItemId}-{toItemId}` |
-| Done-section toggle | `today-toggle-done` |
-| Empty-state add action | `today-button-add-item` |
-| Pre-trip packing nudge | `today-button-packing` |
-| Pre-trip documents nudge | `today-button-documents` |
-| Pre-trip offline-pack nudge | `today-button-offline-pack` |
-| Failed-changes banner | `today-banner-failed-changes` |
+| Element                        | testID                                           |
+| ------------------------------ | ------------------------------------------------ |
+| Offline/stale pill             | `today-offline-pill`                             |
+| Weather strip                  | `today-weather-strip`                            |
+| Hero card (tap → detail)       | `today-hero-card`                                |
+| Hero leave-by line             | `today-hero-leave-by`                            |
+| Quick action: map              | `today-button-map`                               |
+| Quick action: add expense      | `today-button-add-expense`                       |
+| Quick action: add photo        | `today-button-add-photo`                         |
+| Timeline list                  | `today-list`                                     |
+| Timeline item (dynamic)        | `today-list-item-{itemId}`                       |
+| Leg row (dynamic)              | `today-leg-{fromItemId}-{toItemId}`              |
+| Done-section toggle            | `today-toggle-done`                              |
+| Empty-state add action         | `today-button-add-item`                          |
+| Pre-trip packing nudge         | `today-button-packing`                           |
+| Pre-trip documents nudge       | `today-button-documents`                         |
+| Pre-trip offline-pack nudge    | `today-button-offline-pack`                      |
+| Failed-changes banner          | `today-banner-failed-changes`                    |
 | Failed-changes retry / discard | `today-banner-failed-changes-retry` / `-discard` |
 
 Static IDs stable across renders; dynamic qualifiers are entity ids, never
@@ -408,7 +408,7 @@ render indexes (navigation §2.7 rule 5).
 - **Tile-pack download mechanics + map rendering** — maps spec
   (`offlineManager`/TileStore per maps research); R-sync-3 only requires the
   pack rides the same wifi trigger.
-- **Tour-guide content UX** — AI spec (bundle *storage* is R-sync-3's
+- **Tour-guide content UX** — AI spec (bundle _storage_ is R-sync-3's
   concern; playback isn't).
 - **Leave-by local notification scheduling** — companion spec R-notif-3/
   NTF-4 (this spec consumes the same leave-by computation for display).
@@ -430,13 +430,13 @@ rows at build time. TDY-2/3 are cross-cutting infrastructure other during-
 trip surfaces (packing, money) will consume — they land before or with
 TDY-1.
 
-| ID | Task | Covers |
-|---|---|---|
-| TDY-1 | Today screen: layout zones, timeline composition (pure `compose()` + UI), hero/countdown/leave-by display, weather strip, quick actions, pre/post/empty/complete states, testIDs. | R-today-1..11, R-today-13 |
-| TDY-2 | Offline bundle infra: SQLite schema mirroring shared shapes, bundle download/refresh orchestrator (wifi trigger, manual trigger, incremental refresh), `synced_at` staleness plumbing, weather snapshot persistence. | R-sync-1..4, R-sync-8 |
-| TDY-3 | Mutation queue: shared `OfflineMutation` schema (`domains/offline.ts` — coordinated contracts-spec addition), persisted queue + optimistic updates, FIFO drain + backoff, failed-changes UI with retry/discard. | R-sync-5, R-sync-6 |
-| TDY-4 | Notification tap-routing: registry extension per §2.8 table, cold/warm parity, foreground banner behavior, `itinerary_change` → TQ invalidation mapping, hero focus for leave-by taps. | R-route-1..4, R-sync-7 |
-| ~~TDY-5~~ | REMOVED — ticker dropped from v1; activity feed deferred to v2 (§1.5, resolved Gate 2). | R-today-12 (deferred) |
+| ID        | Task                                                                                                                                                                                                                 | Covers                    |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| TDY-1     | Today screen: layout zones, timeline composition (pure `compose()` + UI), hero/countdown/leave-by display, weather strip, quick actions, pre/post/empty/complete states, testIDs.                                    | R-today-1..11, R-today-13 |
+| TDY-2     | Offline bundle infra: SQLite schema mirroring shared shapes, bundle download/refresh orchestrator (wifi trigger, manual trigger, incremental refresh), `synced_at` staleness plumbing, weather snapshot persistence. | R-sync-1..4, R-sync-8     |
+| TDY-3     | Mutation queue: shared `OfflineMutation` schema (`domains/offline.ts` — coordinated contracts-spec addition), persisted queue + optimistic updates, FIFO drain + backoff, failed-changes UI with retry/discard.      | R-sync-5, R-sync-6        |
+| TDY-4     | Notification tap-routing: registry extension per §2.8 table, cold/warm parity, foreground banner behavior, `itinerary_change` → TQ invalidation mapping, hero focus for leave-by taps.                               | R-route-1..4, R-sync-7    |
+| ~~TDY-5~~ | REMOVED — ticker dropped from v1; activity feed deferred to v2 (§1.5, resolved Gate 2).                                                                                                                              | R-today-12 (deferred)     |
 
 **Tests required (minimum):**
 
@@ -462,9 +462,9 @@ TDY-1.
 
 ---
 
-*Trace: R-today/R-sync/R-route cite design sections inline. All markers
+_Trace: R-today/R-sync/R-route cite design sections inline. All markers
 resolved at Gate 2 (2026-07-09): §1.4 at their canonical homes (multi-active
 launch → most-recently-viewed active trip; status derived + override;
 multi-day → one spanning item), §1.5 owned here (ticker dropped from v1;
 activity feed deferred to v2 — R-today-12 is a deferred tombstone). Zero
-markers remain.*
+markers remain._

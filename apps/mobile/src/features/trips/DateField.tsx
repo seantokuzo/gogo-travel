@@ -113,14 +113,7 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function DateField({
-  label,
-  value,
-  onSelect,
-  contextDate,
-  error,
-  testID,
-}: DateFieldProps) {
+export function DateField({ label, value, onSelect, contextDate, error, testID }: DateFieldProps) {
   const s = useStyles();
   const [open, setOpen] = useState(false);
   // PR #49 R1 capture invariant: the seed is computed ONCE, in the press

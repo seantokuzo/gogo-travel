@@ -154,7 +154,8 @@ describe("DST boundary fixtures", () => {
     const real = instantMs(stay.details.check_out ?? "") - instantMs(stay.details.check_in ?? "");
     expect(real).toBe(stay.realDurationMs);
     expect(stay.realDurationMs).toBe(21 * HOUR);
-    const naive = instantMs(stay.naiveUniformOffsetCheckOut) - instantMs(stay.details.check_in ?? "");
+    const naive =
+      instantMs(stay.naiveUniformOffsetCheckOut) - instantMs(stay.details.check_in ?? "");
     expect(naive).toBe(stay.naiveUniformOffsetDurationMs);
     expect(naive).not.toBe(real); // the discriminating hour
   });

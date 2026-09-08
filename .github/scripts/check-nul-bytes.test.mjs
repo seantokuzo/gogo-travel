@@ -150,10 +150,7 @@ test("trackedFiles(): enumerates the real repo, NUL-delimited", () => {
   const files = trackedFiles();
   assert.ok(files.length > 100, `expected a populated repo, got ${files.length}`);
   // `-z` output must not leave empty entries or embedded newlines behind.
-  assert.equal(
-    files.filter((f) => f === "" || f.includes("\n")).length,
-    0,
-  );
+  assert.equal(files.filter((f) => f === "" || f.includes("\n")).length, 0);
   assert.ok(files.includes("package.json"));
   assert.ok(files.includes(".github/scripts/check-nul-bytes.mjs"));
 });

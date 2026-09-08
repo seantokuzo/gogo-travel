@@ -97,7 +97,9 @@ export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) 
               key={trip.id}
               title={trip.name}
               subtitle={trip.destination_name}
-              trailing={trip.id === currentTrip.id ? <Icon name="checkmark" size={18} /> : undefined}
+              trailing={
+                trip.id === currentTrip.id ? <Icon name="checkmark" size={18} /> : undefined
+              }
               onPress={() => switchTo(trip.id)}
               testID={`trip-switcher-list-item-${trip.id}`}
             />

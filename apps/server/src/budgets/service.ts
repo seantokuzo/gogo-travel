@@ -94,9 +94,10 @@ export async function loadBudgetsDoc(db: Reader, args: { tripId: string }): Prom
   const spentRows = await db
     .select({
       category: schema.expenses.category,
-      spent: sql<number>`sum(coalesce(${schema.expenses.baseAmountCents}, ${schema.expenses.amountCents}))::bigint`.mapWith(
-        Number,
-      ),
+      spent:
+        sql<number>`sum(coalesce(${schema.expenses.baseAmountCents}, ${schema.expenses.amountCents}))::bigint`.mapWith(
+          Number,
+        ),
     })
     .from(schema.expenses)
     .where(and(eq(schema.expenses.tripId, tripId), isNull(schema.expenses.deletedAt)))

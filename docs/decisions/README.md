@@ -24,15 +24,15 @@ answered here.
 
 ## Index
 
-| ID | Title | Status |
-|----|-------|--------|
-| [ADR-001](ADR-001-naming-convention.md) | Stable IDs (P/T/B/S) + canonical plan-doc homes | Accepted |
-| [ADR-002](ADR-002-status-enum-lock.md) | Status enum lock (`queued/in-progress/blocked/done/deferred/cancelled`) | Accepted |
-| [ADR-003](ADR-003-local-in-session-reviews.md) | PR reviews run local in-session on Max, not in CI | Accepted |
-| [ADR-004](ADR-004-stack-expo-rn-hono-drizzle.md) | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first | Accepted |
-| [ADR-005](ADR-005-free-v1-entitlement-seams.md) | Free v1 + entitlement seams; offline/collab/splitting free forever | Accepted |
-| [ADR-006](ADR-006-testing-strategy-overhaul.md) | Testing strategy overhaul — four layers above unit tests | Accepted |
-| [ADR-007](ADR-007-maestro-e2e-lane.md) | Maestro is the E2E lane — local-first, Release simulator build | Accepted |
+| ID                                               | Title                                                                   | Status   |
+| ------------------------------------------------ | ----------------------------------------------------------------------- | -------- |
+| [ADR-001](ADR-001-naming-convention.md)          | Stable IDs (P/T/B/S) + canonical plan-doc homes                         | Accepted |
+| [ADR-002](ADR-002-status-enum-lock.md)           | Status enum lock (`queued/in-progress/blocked/done/deferred/cancelled`) | Accepted |
+| [ADR-003](ADR-003-local-in-session-reviews.md)   | PR reviews run local in-session on Max, not in CI                       | Accepted |
+| [ADR-004](ADR-004-stack-expo-rn-hono-drizzle.md) | Expo/RN + Hono + Drizzle/Postgres monorepo, iOS-first                   | Accepted |
+| [ADR-005](ADR-005-free-v1-entitlement-seams.md)  | Free v1 + entitlement seams; offline/collab/splitting free forever      | Accepted |
+| [ADR-006](ADR-006-testing-strategy-overhaul.md)  | Testing strategy overhaul — four layers above unit tests                | Accepted |
+| [ADR-007](ADR-007-maestro-e2e-lane.md)           | Maestro is the E2E lane — local-first, Release simulator build          | Accepted |
 
 ## See also
 

@@ -48,11 +48,7 @@ import {
   keysetCursorPredicate,
 } from "../http/keyset-cursor.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { toSavedPlaceWire } from "./serialize.js";
 import { resolvePlaceAccess } from "./visibility.js";
@@ -247,9 +243,7 @@ export function createSavedPlacesRouter(deps: SavedPlacesRouterDeps): Hono<Reque
       const [updated] = await deps.db
         .update(schema.savedPlaces)
         .set({ note: body.note })
-        .where(
-          and(eq(schema.savedPlaces.id, savedPlaceId), eq(schema.savedPlaces.tripId, tripId)),
-        )
+        .where(and(eq(schema.savedPlaces.id, savedPlaceId), eq(schema.savedPlaces.tripId, tripId)))
         .returning();
       if (!updated) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
@@ -273,25 +267,19 @@ export function createSavedPlacesRouter(deps: SavedPlacesRouterDeps): Hono<Reque
   // (R-places-15; owner/editor). Hard delete, no tombstone — a re-save
   // afterwards succeeds (§3.3 test contract). 204.
   // -------------------------------------------------------------------------
-  router.delete(
-    placeEndpoints.deleteSavedPlace.path,
-    requireTripMember("editor"),
-    async (c) => {
-      const { tripId } = tripContextOf(c);
-      const savedPlaceId = validSavedPlaceId(c.req.param("savedPlaceId"));
-      if (!savedPlaceId) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+  router.delete(placeEndpoints.deleteSavedPlace.path, requireTripMember("editor"), async (c) => {
+    const { tripId } = tripContextOf(c);
+    const savedPlaceId = validSavedPlaceId(c.req.param("savedPlaceId"));
+    if (!savedPlaceId) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      const deleted = await deps.db
-        .delete(schema.savedPlaces)
-        .where(
-          and(eq(schema.savedPlaces.id, savedPlaceId), eq(schema.savedPlaces.tripId, tripId)),
-        )
-        .returning({ id: schema.savedPlaces.id });
-      if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+    const deleted = await deps.db
+      .delete(schema.savedPlaces)
+      .where(and(eq(schema.savedPlaces.id, savedPlaceId), eq(schema.savedPlaces.tripId, tripId)))
+      .returning({ id: schema.savedPlaces.id });
+    if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      return c.body(null, 204);
-    },
-  );
+    return c.body(null, 204);
+  });
 
   return router;
 }

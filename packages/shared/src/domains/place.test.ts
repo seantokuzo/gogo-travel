@@ -85,9 +85,7 @@ describe("coarseCategory mapping (§3.2.3)", () => {
     expect(coarseCategory("fsq_os", "Dining and Drinking")).toBe("food");
     expect(coarseCategory("fsq_os", "Landmarks and Outdoors > Park")).toBe("outdoors");
     expect(coarseCategory("fsq_os", "Landmarks and Outdoors")).toBe("attraction");
-    expect(coarseCategory("fsq_os", "Travel and Transportation > Metro Station")).toBe(
-      "transport",
-    );
+    expect(coarseCategory("fsq_os", "Travel and Transportation > Metro Station")).toBe("transport");
     expect(coarseCategory("fsq_os", "Arts and Entertainment > Amusement Park")).toBe(
       "attraction", // amusement outranks both arts and park
     );
@@ -129,9 +127,9 @@ describe("PlaceCreate / PlaceUpdate (R-places-9/10; T-6.1 string-cap convention)
     expect(PlaceCreateSchema.safeParse({ ...valid, lat: 90.1 }).success).toBe(false);
     expect(PlaceCreateSchema.safeParse({ ...valid, lng: -180.5 }).success).toBe(false);
     expect(PlaceCreateSchema.safeParse({ ...valid, name: "x".repeat(201) }).success).toBe(false);
-    expect(
-      PlaceCreateSchema.safeParse({ ...valid, category: "x".repeat(201) }).success,
-    ).toBe(false);
+    expect(PlaceCreateSchema.safeParse({ ...valid, category: "x".repeat(201) }).success).toBe(
+      false,
+    );
   });
 
   it("accepts the cap boundaries exactly: 200-char name and category", () => {
@@ -233,12 +231,12 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
     expect(PlaceSearchQuerySchema.safeParse({ near: "91,-9" }).success).toBe(false);
     expect(PlaceSearchQuerySchema.safeParse({ near: "38.7" }).success).toBe(false);
     // The max itself is valid (boundary-accept).
-    expect(
-      PlaceSearchQuerySchema.parse({ near: "38.7,-9.14", radius_m: 50_000 }).radius_m,
-    ).toBe(50_000);
-    expect(
-      PlaceSearchQuerySchema.safeParse({ near: "38.7,-9.14", radius_m: 50_001 }).success,
-    ).toBe(false);
+    expect(PlaceSearchQuerySchema.parse({ near: "38.7,-9.14", radius_m: 50_000 }).radius_m).toBe(
+      50_000,
+    );
+    expect(PlaceSearchQuerySchema.safeParse({ near: "38.7,-9.14", radius_m: 50_001 }).success).toBe(
+      false,
+    );
     expect(PlaceSearchQuerySchema.safeParse({ near: "38.7,-9.14", radius_m: 0 }).success).toBe(
       false,
     );
@@ -251,9 +249,9 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
     expect(PlaceSearchQuerySchema.safeParse({ q: "belem", limit: 51 }).success).toBe(false);
     expect(PlaceSearchQuerySchema.safeParse({ q: "belem", limit: 0 }).success).toBe(false);
     expect(PlaceSearchQuerySchema.parse({ q: "belem", trip_id: UUID }).trip_id).toBe(UUID);
-    expect(
-      PlaceSearchQuerySchema.safeParse({ q: "belem", trip_id: "not-a-uuid" }).success,
-    ).toBe(false);
+    expect(PlaceSearchQuerySchema.safeParse({ q: "belem", trip_id: "not-a-uuid" }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -278,8 +276,7 @@ describe("PlaceDetails (§3.3 GET /places/:placeId)", () => {
       ).toBe(reason);
     }
     expect(
-      PlaceDetailsSchema.safeParse({ place: spinePlace, fresh_unavailable_reason: "nope" })
-        .success,
+      PlaceDetailsSchema.safeParse({ place: spinePlace, fresh_unavailable_reason: "nope" }).success,
     ).toBe(false);
   });
 
@@ -447,12 +444,8 @@ describe("T-8.1 endpoint descriptors (§3.3 route mirror)", () => {
     expect(placeEndpoints.createSavedPlace.method).toBe("POST");
     expect(placeEndpoints.createSavedPlace.path).toBe("/trips/:tripId/saved-places");
     expect(placeEndpoints.updateSavedPlace.method).toBe("PATCH");
-    expect(placeEndpoints.updateSavedPlace.path).toBe(
-      "/trips/:tripId/saved-places/:savedPlaceId",
-    );
+    expect(placeEndpoints.updateSavedPlace.path).toBe("/trips/:tripId/saved-places/:savedPlaceId");
     expect(placeEndpoints.deleteSavedPlace.method).toBe("DELETE");
-    expect(placeEndpoints.deleteSavedPlace.path).toBe(
-      "/trips/:tripId/saved-places/:savedPlaceId",
-    );
+    expect(placeEndpoints.deleteSavedPlace.path).toBe("/trips/:tripId/saved-places/:savedPlaceId");
   });
 });

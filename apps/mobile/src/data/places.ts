@@ -219,11 +219,7 @@ export function isOptimisticSavedPlaceId(savedPlaceId: string): boolean {
  * untouched) is preserved; untouched rows keep identity via setQueryData's
  * structural sharing, which the map screen's memo chain rides.
  */
-function reconcileSavedPlaceRow(
-  qc: QueryClient,
-  tripId: string,
-  row: SavedPlaceWithPlace,
-): void {
+function reconcileSavedPlaceRow(qc: QueryClient, tripId: string, row: SavedPlaceWithPlace): void {
   qc.setQueryData<Paginated<SavedPlaceWithPlace>>(queryKeys.tripSavedPlaces(tripId), (old) => {
     if (old === undefined) return old;
     const index = old.items.findIndex((existing) => existing.place_id === row.place_id);

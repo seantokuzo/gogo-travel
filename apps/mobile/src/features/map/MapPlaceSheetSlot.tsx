@@ -103,9 +103,7 @@ export function MapPlaceSheetSlot({
   const savedQuery = useSavedPlaces(tripId);
 
   const screenPlace =
-    selectedPlaceId === null
-      ? null
-      : savedPlaceRowFor(savedQuery.data?.items, selectedPlaceId);
+    selectedPlaceId === null ? null : savedPlaceRowFor(savedQuery.data?.items, selectedPlaceId);
   // Precedence: the screen's pin selection wins (module doc).
   const sheetPlace = selectedPlaceId !== null ? screenPlace : searchPlace;
 
@@ -126,7 +124,10 @@ export function MapPlaceSheetSlot({
   return (
     <>
       <View
-        style={[s.searchOverlay, { paddingTop: insets.top + theme.space[2] + DAY_FILTER_CLEARANCE }]}
+        style={[
+          s.searchOverlay,
+          { paddingTop: insets.top + theme.space[2] + DAY_FILTER_CLEARANCE },
+        ]}
         pointerEvents="box-none"
       >
         <MapSearch

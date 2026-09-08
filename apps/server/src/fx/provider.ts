@@ -164,8 +164,7 @@ export function createFrankfurterPort(deps: FrankfurterPortDeps = {}): FxProvide
       const date = ISODateSchema.safeParse(record.date);
       if (!date.success) return { kind: "unavailable", detail: "invalid provider date" };
 
-      const rate =
-        typeof record.rate === "number" ? rateNumberToDecimalString(record.rate) : null;
+      const rate = typeof record.rate === "number" ? rateNumberToDecimalString(record.rate) : null;
       if (rate === null) return { kind: "unavailable", detail: "invalid provider rate" };
 
       return {

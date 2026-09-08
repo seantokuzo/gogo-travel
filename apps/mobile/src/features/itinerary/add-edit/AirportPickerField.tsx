@@ -57,7 +57,9 @@ export interface AirportPickerFieldProps {
 
 /** "NRT · Tokyo" — short enough for the field row after a pick. */
 export function pickedAirportLabel(airport: Airport): string {
-  return airport.city !== null && airport.city !== "" ? `${airport.iata} · ${airport.city}` : airport.iata;
+  return airport.city !== null && airport.city !== ""
+    ? `${airport.iata} · ${airport.city}`
+    : airport.iata;
 }
 
 /** "Narita International Airport · Tokyo, JP" — the row's second line. */
@@ -179,7 +181,10 @@ export function AirportPickerField({
               <ListItem
                 key={airport.iata}
                 title={`${airport.iata} — ${airport.name}`}
-                subtitle={airportSubtitle(airport, describeTimeZone(airport.tz, atUtcMs)?.gmt ?? null)}
+                subtitle={airportSubtitle(
+                  airport,
+                  describeTimeZone(airport.tz, atUtcMs)?.gmt ?? null,
+                )}
                 onPress={() => {
                   setPicked(true);
                   setQuery(pickedAirportLabel(airport));

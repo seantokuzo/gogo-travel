@@ -171,12 +171,18 @@ describe("Mapbox Directions adapter", () => {
     await expect(badPort.route(QUERY, "driving")).rejects.toThrow(/code InvalidInput/);
 
     const broken = stubFetch(() => ({ rawBody: "<html>not json</html>" }));
-    const brokenPort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: broken.fetchImpl });
+    const brokenPort = createMapboxDirectionsPort({
+      accessToken: TOKEN,
+      fetchImpl: broken.fetchImpl,
+    });
     await expect(brokenPort.route(QUERY, "driving")).rejects.toThrow(/invalid JSON/);
 
     const unreadable: FetchLike = () =>
       Promise.resolve({ ok: true, status: 200, text: () => Promise.reject(new Error("nope")) });
-    const unreadablePort = createMapboxDirectionsPort({ accessToken: TOKEN, fetchImpl: unreadable });
+    const unreadablePort = createMapboxDirectionsPort({
+      accessToken: TOKEN,
+      fetchImpl: unreadable,
+    });
     await expect(unreadablePort.route(QUERY, "driving")).rejects.toThrow(/unreadable body/);
   });
 

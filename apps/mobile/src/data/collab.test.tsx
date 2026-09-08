@@ -140,10 +140,7 @@ describe("handleCollabEvent", () => {
       handleCollabEvent({ event: "money.expense_added", trip_id: TEST_TRIP_ID }, deps),
     ).toEqual({ handled: false, forcedExit: false });
     expect(
-      handleCollabEvent(
-        { event: "trip.updated", trip_id: TEST_TRIP_ID, name: "smuggled" },
-        deps,
-      ),
+      handleCollabEvent({ event: "trip.updated", trip_id: TEST_TRIP_ID, name: "smuggled" }, deps),
     ).toEqual({ handled: false, forcedExit: false });
     expect(handleCollabEvent(undefined, deps)).toEqual({ handled: false, forcedExit: false });
 

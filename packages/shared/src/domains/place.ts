@@ -95,7 +95,10 @@ export type SavedPlaceWithPlace = z.infer<typeof SavedPlaceWithPlaceSchema>;
  * "Barbershop" is not a bar.
  */
 export function coarseCategoryTokens(category: string): string[] {
-  return category.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  return category
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
 }
 
 /**

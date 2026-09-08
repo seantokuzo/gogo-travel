@@ -124,9 +124,7 @@ describe("TimeField iOS presentation in the shared PickerCard (B-15b)", () => {
     // Card `accessibilityViewIsModal` hides SIBLINGS from a11y — RNTL models
     // that, so the scrim needs `includeHiddenElements` (mobile.md Sheet-scrim
     // rule; on device it is plainly tappable).
-    await fireEvent.press(
-      screen.getByTestId("t-sheet-scrim", { includeHiddenElements: true }),
-    );
+    await fireEvent.press(screen.getByTestId("t-sheet-scrim", { includeHiddenElements: true }));
     expect(screen.queryByTestId("t-sheet")).toBeNull();
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -152,9 +150,7 @@ describe("opening the picker dismisses the keyboard (B-15c)", () => {
   // handler → red. Control arms: no call on render; no second call when the
   // same press toggles the picker closed.
   it("row press that OPENS calls Keyboard.dismiss; the closing toggle does not", async () => {
-    await renderWithTheme(
-      <TimeField label="Start time" value="" onSelect={onSelect} testID="t" />,
-    );
+    await renderWithTheme(<TimeField label="Start time" value="" onSelect={onSelect} testID="t" />);
     expect(dismissSpy).not.toHaveBeenCalled();
 
     await fireEvent.press(screen.getByTestId("t"));

@@ -204,15 +204,15 @@ StoragePort {
 the base key `photos/{trip_id}/{photo_id}`. Renditions derive
 deterministically — no extra columns, no schema drift:
 
-| Object | Key | Access |
-|---|---|---|
-| Original (as uploaded, EXIF intact) | `{storage_key}/orig` | Owner only — full quality + metadata |
-| Display (long edge ≤ 2048 px, JPEG, EXIF-stripped) | `{storage_key}/display` | Anyone passing `canViewPhoto` |
-| Thumb (long edge ≤ 400 px, JPEG, EXIF-stripped) | `{storage_key}/thumb` | Anyone passing `canViewPhoto` |
+| Object                                             | Key                     | Access                               |
+| -------------------------------------------------- | ----------------------- | ------------------------------------ |
+| Original (as uploaded, EXIF intact)                | `{storage_key}/orig`    | Owner only — full quality + metadata |
+| Display (long edge ≤ 2048 px, JPEG, EXIF-stripped) | `{storage_key}/display` | Anyone passing `canViewPhoto`        |
+| Thumb (long edge ≤ 400 px, JPEG, EXIF-stripped)    | `{storage_key}/thumb`   | Anyone passing `canViewPhoto`        |
 
 The trip-id prefix makes trip-cascade GC a single `list('photos/{trip_id}/')`
 sweep. Buckets are private; **every** byte served to a client flows through
-a per-request `presignGet` minted *after* the `canViewPhoto` check
+a per-request `presignGet` minted _after_ the `canViewPhoto` check
 (R-photo-6). No public bucket, no permanent URLs.
 
 ### 3.2 Upload flow (two-phase, stateless between phases)
@@ -289,14 +289,14 @@ Inputs: photo `lat`/`lng` (when consented) and `taken_at`. Config:
    only write path.
 
 No `lat`/`lng` → no suggestions (empty object). Suggestions are computed
-against data the *owner* can see (their own trip), so no visibility
+against data the _owner_ can see (their own trip), so no visibility
 question arises.
 
 ### 3.6 Visibility semantics
 
 - Levels + truth table are canonical elsewhere: `photo_visibility` enum
   (schema spec §3.2), `canViewPhoto(viewer: {isOwner, isTripMember},
-  visibility)` (contracts spec §3.4) — owner sees all; member sees
+visibility)` (contracts spec §3.4) — owner sees all; member sees
   `trip` + `public`; stranger sees `public` only. This spec adds no new
   levels and no bypass paths.
 - Transitions: any → any, owner-only (R-photo-7/8). Widening to `public` is
@@ -338,12 +338,13 @@ Mint 1–`MAX_UPLOAD_SLOTS_PER_REQUEST` upload slots. **Auth**: Required
 ticket: string, expires_at: ISODateTime }> }`
 
 **Errors**: 400 `VALIDATION_FAILED` — unaccepted type, zero/negative size,
->20 items; 413 `PAYLOAD_TOO_LARGE` — declared size over cap; 429
+`>20 items`; 413 `PAYLOAD_TOO_LARGE` — declared size over cap; 429
 `RATE_LIMITED` — slot budget exhausted; 404 `NOT_FOUND` — non-member/no trip.
 
 **Requirements covered**: R-photo-1, R-photo-14
 
 **Tests required**:
+
 - [ ] Happy path: N slots minted, distinct keys under `photos/{trip_id}/`
 - [ ] Unaccepted MIME + oversize + >20 items rejected
 - [ ] Rate limit trips at configured budget
@@ -373,6 +374,7 @@ non-member.
 R-photo-14
 
 **Tests required**:
+
 - [ ] Happy path: row inserted, blurhash/width/height set, renditions exist,
       EXIF-stripped display/thumb verified
 - [ ] `extract_location: false` ⇒ lat/lng NULL even with GPS EXIF present
@@ -390,7 +392,7 @@ Trip gallery list. **Auth**: Required (member).
 **Request** query: `taken_after?`/`taken_before?` (ISODateTime — clients
 compute trip-local day windows; the server stays tz-agnostic),
 `place_id?`, `user_id?`, `unpinned?` (no place AND no item),
-`visibility?` (filters *within* the authz floor, never widens it),
+`visibility?` (filters _within_ the authz floor, never widens it),
 `order?` = `taken_at_asc | taken_at_desc` (default asc; NULL `taken_at`
 sorts by `created_at` into position), `cursor?`, `limit?`
 
@@ -402,6 +404,7 @@ sorts by `created_at` into position), `cursor?`, `limit?`
 **Requirements covered**: R-photo-6, R-photo-9, R-photo-10
 
 **Tests required**:
+
 - [ ] Member A never receives member B's `private` rows; own `private`
       rows included (canViewPhoto truth table, Law #3)
 - [ ] `place_id` filter + time-window filter + `unpinned` behave
@@ -421,6 +424,7 @@ Single photo detail. **Auth**: Required (member + `canViewPhoto`).
 **Requirements covered**: R-photo-6, R-photo-9
 
 **Tests required**:
+
 - [ ] Owner gets `original_url`; member does not
 - [ ] Member fetching another's `private` photo → 404 (not 403)
 - [ ] Non-member → 404; URLs expire per TTL
@@ -444,6 +448,7 @@ trip.
 **Requirements covered**: R-photo-5 (confirm path), R-photo-7, R-photo-8
 
 **Tests required**:
+
 - [ ] Owner sets/clears pins; cross-trip pin target rejected
 - [ ] Non-owner member PATCH → 404; trip owner PATCHing another's
       visibility → 404 (R-photo-7)
@@ -464,6 +469,7 @@ new place). **Auth**: Required (photo owner).
 **Requirements covered**: R-photo-5
 
 **Tests required**:
+
 - [ ] Suggests newly saved place for an old unpinned photo
 - [ ] No location ⇒ empty object; non-owner 404
 
@@ -479,6 +485,7 @@ moderation — R-photo-15, resolved Gate 2).
 **Requirements covered**: R-photo-12, R-photo-15
 
 **Tests required**:
+
 - [ ] Row gone; objects scheduled for deletion (all three renditions)
 - [ ] Trip owner deletes another member's photo → 204 (R-photo-15); editor
       deleting another's photo → 404
@@ -507,6 +514,7 @@ per the §2 resolution), no `lat`/`lng` (R-photo-9). Only
 **Requirements covered**: R-photo-6, R-photo-9, R-photo-11
 
 **Tests required**:
+
 - [ ] Returns ONLY public rows across multiple trips; `trip` and `private`
       rows at the same place never appear (Law #3 boundary test — blocking
       review criterion per PLANNING § Review Pipeline)
@@ -535,19 +543,19 @@ per the §2 resolution), no `lat`/`lng` (R-photo-9). Only
 
 ### 3.9 Limits & config (server config unless noted)
 
-| Constant | Value (v1) | Notes |
-|---|---|---|
-| `ACCEPTED_PHOTO_MIME` | `image/jpeg`, `image/png`, `image/heic`, `image/heif`, `image/webp` | Exported from `@gogo/shared/domains/photo.ts` (client mirrors it) |
-| `MAX_PHOTO_BYTES` | 25 MB | Shared constant; covers 48 MP HEIC; RAW/DNG excluded v1 |
-| `MAX_UPLOAD_SLOTS_PER_REQUEST` | 20 | Shared constant; client batches above it |
-| `PUT_URL_TTL` | 30 min | Ticket `exp` matches |
-| `GET_URL_TTL` | 15 min | Retraction convergence bound (R-photo-8) |
-| `PHOTO_ASSOC_RADIUS_M` | 250 m | §3.5 |
-| `SLOT_RATE_LIMIT` | 500 slots/user/day | Storage-abuse guard; `RATE_LIMITED` |
-| `GC_ORPHAN_THRESHOLD` | 24 h | > PUT TTL by design |
-| Display / thumb long edge | 2048 px / 400 px | JPEG, EXIF-stripped |
+| Constant                       | Value (v1)                                                          | Notes                                                             |
+| ------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `ACCEPTED_PHOTO_MIME`          | `image/jpeg`, `image/png`, `image/heic`, `image/heif`, `image/webp` | Exported from `@gogo/shared/domains/photo.ts` (client mirrors it) |
+| `MAX_PHOTO_BYTES`              | 25 MB                                                               | Shared constant; covers 48 MP HEIC; RAW/DNG excluded v1           |
+| `MAX_UPLOAD_SLOTS_PER_REQUEST` | 20                                                                  | Shared constant; client batches above it                          |
+| `PUT_URL_TTL`                  | 30 min                                                              | Ticket `exp` matches                                              |
+| `GET_URL_TTL`                  | 15 min                                                              | Retraction convergence bound (R-photo-8)                          |
+| `PHOTO_ASSOC_RADIUS_M`         | 250 m                                                               | §3.5                                                              |
+| `SLOT_RATE_LIMIT`              | 500 slots/user/day                                                  | Storage-abuse guard; `RATE_LIMITED`                               |
+| `GC_ORPHAN_THRESHOLD`          | 24 h                                                                | > PUT TTL by design                                               |
+| Display / thumb long edge      | 2048 px / 400 px                                                    | JPEG, EXIF-stripped                                               |
 
-No per-user/per-trip photo *quota*: storage quotas would be a new
+No per-user/per-trip photo _quota_: storage quotas would be a new
 entitlement seam, and ADR-005 says nothing grows a seam without an ADR —
 the abuse guards above are deliberately not product limits.
 
@@ -583,13 +591,13 @@ the abuse guards above are deliberately not product limits.
 Each sized to one agent session; queued as `T-N.M` rows at build time.
 Depends on DB-1 (photos table) + SH-1 (`domains/photo.ts`, envelope).
 
-| ID | Task | Covers |
-|---|---|---|
-| PH-1 | `@gogo/shared` photo wire shapes + constants + endpoint descriptors (`Photo`, `PublicPlacePhoto`, upload slot/finalize/patch schemas; `ACCEPTED_PHOTO_MIME`, size/batch constants) — extends `domains/photo.ts` beside the existing `canViewPhoto`. | R-photo-1..5, 9 (shapes) |
-| PH-2 | StoragePort + provider adapter stub + upload pipeline: slot mint (ticket HMAC, rate limit), finalize (HEAD verify, EXIF chain, blurhash, renditions, insert). **Provider selection is the P-3 escalation — adapter lands behind the port.** | R-photo-1..4, 14 |
-| PH-3 | Gallery + detail + PATCH + suggestions + DELETE (uploader or trip-owner moderation) with `canViewPhoto` enforcement and URL minting; suggestion engine. | R-photo-5..10, 12, 15, 16 |
-| PH-4 | Public-by-place endpoint (surface resolved Gate 2: place detail sheet only v1). | R-photo-11 |
-| PH-5 | GC job: orphan sweep, missing-object flagging, trip-prefix sweep; scheduling wiring. | R-photo-13 |
+| ID   | Task                                                                                                                                                                                                                                                | Covers                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| PH-1 | `@gogo/shared` photo wire shapes + constants + endpoint descriptors (`Photo`, `PublicPlacePhoto`, upload slot/finalize/patch schemas; `ACCEPTED_PHOTO_MIME`, size/batch constants) — extends `domains/photo.ts` beside the existing `canViewPhoto`. | R-photo-1..5, 9 (shapes)  |
+| PH-2 | StoragePort + provider adapter stub + upload pipeline: slot mint (ticket HMAC, rate limit), finalize (HEAD verify, EXIF chain, blurhash, renditions, insert). **Provider selection is the P-3 escalation — adapter lands behind the port.**         | R-photo-1..4, 14          |
+| PH-3 | Gallery + detail + PATCH + suggestions + DELETE (uploader or trip-owner moderation) with `canViewPhoto` enforcement and URL minting; suggestion engine.                                                                                             | R-photo-5..10, 12, 15, 16 |
+| PH-4 | Public-by-place endpoint (surface resolved Gate 2: place detail sheet only v1).                                                                                                                                                                     | R-photo-11                |
+| PH-5 | GC job: orphan sweep, missing-object flagging, trip-prefix sweep; scheduling wiring.                                                                                                                                                                | R-photo-13                |
 
 **Cross-cutting tests required** (beyond per-endpoint lists): the
 `canViewPhoto` truth table exercised end-to-end (owner/member/stranger ×
@@ -598,9 +606,9 @@ sensitive path (PLANNING § Review Pipeline: auto-escalate).
 
 ---
 
-*Requirements → design trace inline. All six markers resolved at Gate 2
+_Requirements → design trace inline. All six markers resolved at Gate 2
 (2026-07-09): two at schema spec §3.3.17 (caption is the v1 review
 surface; public surface = place detail sheet only), one at schema spec
 §3.7 (`recaps` table approved), three owned here (owner moderation →
 R-photo-15; departed members' photos remain → R-photo-16; per-upload
-location consent with remembered default). Zero markers remain.*
+location consent with remembered default). Zero markers remain._

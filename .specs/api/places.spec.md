@@ -47,7 +47,7 @@ Out of scope: §3.6.
   block on, or fail because of, ingestion.
 - **R-places-2 (idempotent upsert, no deletes):** WHEN the pipeline ingests
   or re-ingests a region THE SYSTEM SHALL upsert rows on `(source,
-  source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
+source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   of refresh (spine rows are referenced with `ON DELETE RESTRICT`; upstream
   disappearance is not row removal).
 - **R-places-3 (cross-source dedup):** WHEN a record from a lower-priority
@@ -154,9 +154,7 @@ Out of scope: §3.6.
   (`overture > fsq_os`). Both attribution strings ship. (Resolved
   2026-07-09, Gate 2)
 - **`place_ingest_regions` table (§3.1.2) + the `places-ingest` job —
-  APPROVED** as entity-list additions: the table folds into schema.spec.md
-  + migration (Law #6; schema spec is picking it up) and the job joins
-  PLANNING § Component map. (Resolved 2026-07-09, Gate 2)
+  APPROVED** as entity-list additions: the table folds into schema.spec.md + migration (Law #6; schema spec is picking it up) and the job joins PLANNING § Component map. (Resolved 2026-07-09, Gate 2)
 - **Foursquare premium fresh details — DEFERRED from MVP** (revisit
   post-launch): MVP is spine-data-only ($0) — no Foursquare developer
   account, no metered billing. R-places-11..14 land as a dormant seam
@@ -176,10 +174,10 @@ Out of scope: §3.6.
 
 #### 3.1.1 Strategy: region-scoped on demand — **decided**, global preload rejected
 
-| Option | Verdict | Why |
-|---|---|---|
-| **Region-scoped, on demand (trip-driven)** | **CHOSEN** | Storage/ingest cost proportional to real trips (a few metros ≈ 10⁴–10⁵ rows each); first ingest per destination runs async in minutes; Neon stays small; no standing jobs. |
-| Global preload (75–100M+ POIs) | Rejected | Tens of GB in Neon before the first user; hours-long import; ~all rows never queried; violates the keep-spend-proportional posture for zero user-visible gain (search still works per region either way). |
+| Option                                     | Verdict    | Why                                                                                                                                                                                                       |
+| ------------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Region-scoped, on demand (trip-driven)** | **CHOSEN** | Storage/ingest cost proportional to real trips (a few metros ≈ 10⁴–10⁵ rows each); first ingest per destination runs async in minutes; Neon stays small; no standing jobs.                                |
+| Global preload (75–100M+ POIs)             | Rejected   | Tens of GB in Neon before the first user; hours-long import; ~all rows never queried; violates the keep-spend-proportional posture for zero user-visible gain (search still works per region either way). |
 
 Never marked `[NEEDS CLARIFICATION]`: given Neon + the no-idle-spend
 posture there is one sane answer; the formerly open parts (source set,
@@ -187,15 +185,15 @@ region table approval, trigger inputs) are resolved in §2.
 
 #### 3.1.2 Region tracking — `place_ingest_regions` (approved table — Gate 2, 2026-07-09)
 
-| Column | Type | Notes |
-|---|---|---|
-| `region_key` | `text` PK | Canonical key from the region grid (§3.1.3) |
-| `min_lat` / `min_lng` / `max_lat` / `max_lng` | `numeric(9,6)` | The ingested bbox |
-| `source` | `place_source` | One row per (region, source); PK is `(region_key, source)` |
-| `status` | `text` | `pending` / `running` / `ready` / `failed` |
-| `error` | `text` NULL | Last failure, visible in ops queries (R-places-4) |
-| `ingested_at` | `timestamptz` NULL | Last success — drives the 90-day refresh window (R-places-5) |
-| `row_count` | `integer` NULL | Observability |
+| Column                                        | Type               | Notes                                                        |
+| --------------------------------------------- | ------------------ | ------------------------------------------------------------ |
+| `region_key`                                  | `text` PK          | Canonical key from the region grid (§3.1.3)                  |
+| `min_lat` / `min_lng` / `max_lat` / `max_lng` | `numeric(9,6)`     | The ingested bbox                                            |
+| `source`                                      | `place_source`     | One row per (region, source); PK is `(region_key, source)`   |
+| `status`                                      | `text`             | `pending` / `running` / `ready` / `failed`                   |
+| `error`                                       | `text` NULL        | Last failure, visible in ops queries (R-places-4)            |
+| `ingested_at`                                 | `timestamptz` NULL | Last success — drives the 90-day refresh window (R-places-5) |
+| `row_count`                                   | `integer` NULL     | Observability                                                |
 
 Follows every schema-spec convention (§1 there); approved Gate 2 — the
 schema spec is folding it in verbatim with its migration.
@@ -245,30 +243,30 @@ schema spec is folding it in verbatim with its migration.
 Per contracts spec §3.1: snake_case, mirrors of schema §3.3.7/§3.3.8.
 
 - **`Place`** — `{ id, source, source_id, name, lat, lng, category,
-  coarse_category, wiki_ref, created_by, created_at, updated_at }`
+coarse_category, wiki_ref, created_by, created_at, updated_at }`
   (`coarse_category` is derived, §3.2.3, not a DB column).
 - **`PlaceCreate`** — `{ name, lat, lng, category? }` (server sets
   `source='custom'`, `created_by`).
 - **`SavedPlace`** — `{ id, trip_id, place_id, note, created_by,
-  created_at, updated_at }`; list/read endpoints return
+created_at, updated_at }`; list/read endpoints return
   **`SavedPlaceWithPlace`** = `SavedPlace & { place: Place }` (one round
   trip renders the map pins + list).
 - **`FreshPlaceDetails`** (never persisted anywhere — R-places-11):
   `{ fetched_at, attribution: { text, logo_required: boolean, url },
-  fields: { hours?, open_now?, rating?, price_level?, photos?: string[],
-  tips?: Array<{ text, created_at }>, website?, phone? } }`. Field-exact
+fields: { hours?, open_now?, rating?, price_level?, photos?: string[],
+tips?: Array<{ text, created_at }>, website?, phone? } }`. Field-exact
   mapping from FSQ responses pinned at implementation against current FSQ
   docs (fields are Premium-tier: hours/rating/photos/tips — research).
 - **§3.2.3 Coarse categories** — shared pure mapping
   `coarseCategory(source, category)` → `'food' | 'drink' | 'lodging' |
-  'attraction' | 'culture' | 'outdoors' | 'shopping' | 'nightlife' |
-  'transport' | 'other'` (append-only tuple in `enums.ts`). Consumed by
+'attraction' | 'culture' | 'outdoors' | 'shopping' | 'nightlife' |
+'transport' | 'other'` (append-only tuple in `enums.ts`). Consumed by
   search filters and map-pin icons (map spec §2.2). Source-taxonomy →
   coarse tables live in shared config; schema stays raw (schema §3.3.7:
   normalization is a places-domain concern).
 - **§3.2.4 Attribution registry** (R-places-17) — shared config:
   `ATTRIBUTION: Record<'overture' | 'fsq_os' | 'foursquare_api' | 'mapbox',
-  { text, url, logo_required }>`; strings verified at implementation.
+{ text, url, logo_required }>`; strings verified at implementation.
 
 ### 3.3 Endpoints
 
@@ -300,6 +298,7 @@ stability).
 **Requirements covered**: R-places-6, R-places-7, R-places-8
 
 **Tests required**:
+
 - [ ] Happy path: text hit, geo hit, text+geo blend, pagination cursor
 - [ ] Coverage miss returns partial results AND enqueues throttled ingest (R-places-7)
 - [ ] Error cases: no criteria, bad bbox, oversized radius
@@ -320,6 +319,7 @@ Create a user-custom place. **Auth**: Required
 **Requirements covered**: R-places-9
 
 **Tests required**:
+
 - [ ] Happy path: created with `source='custom'`, `source_id NULL`, `created_by=caller`
 - [ ] Error cases: invalid coords, blank name
 - [ ] Authz: unauthenticated → 401
@@ -347,6 +347,7 @@ cap (R-places-14)
 R-places-14, R-places-17
 
 **Tests required**:
+
 - [ ] Happy path: spine-only; fresh happy path (FSQ stubbed) with attribution present
 - [ ] Fresh degrade: FSQ timeout/500 → 200 with `fresh` omitted + reason (R-places-13)
 - [ ] Zero persistence: after a fresh request, no FSQ content exists in DB or logs (assert on stub payload sentinel string) (R-places-11)
@@ -369,6 +370,7 @@ unknown/invisible; 400 — validation
 **Requirements covered**: R-places-10
 
 **Tests required**:
+
 - [ ] Happy path: creator edits name/coords
 - [ ] Error cases: spine place rejected; invalid coords
 - [ ] Authz: non-creator → 403
@@ -388,6 +390,7 @@ by saved places / itinerary items / bundles (RESTRICT surfaced cleanly);
 **Requirements covered**: R-places-10
 
 **Tests required**:
+
 - [ ] Happy path: unreferenced custom place deleted
 - [ ] Error cases: referenced → 409 with reason (not 500)
 - [ ] Authz: non-creator → 403
@@ -408,6 +411,7 @@ pin set in one page for typical trips)
 **Requirements covered**: R-places-15
 
 **Tests required**:
+
 - [ ] Happy path: member lists; embedded `place` present
 - [ ] Authz: non-member → 404; viewer can read
 
@@ -427,6 +431,7 @@ posture, or `place_id` unknown/invisible; 403 — viewer role
 **Requirements covered**: R-places-15, R-places-16
 
 **Tests required**:
+
 - [ ] Happy path: save with/without note; `created_by = caller`
 - [ ] Error cases: duplicate → 409; unknown place → 404
 - [ ] Authz: viewer → 403; non-member → 404
@@ -446,6 +451,7 @@ Edit the note. **Auth**: Required (owner/editor)
 **Requirements covered**: R-places-15
 
 **Tests required**:
+
 - [ ] Happy path: note set + cleared
 - [ ] Authz: viewer → 403; non-member → 404 (wrong trip in path → 404)
 
@@ -462,6 +468,7 @@ Unsave. **Auth**: Required (owner/editor)
 **Requirements covered**: R-places-15
 
 **Tests required**:
+
 - [ ] Happy path: unsave; re-save afterwards succeeds (no tombstone)
 - [ ] Authz: viewer → 403; non-member → 404
 
@@ -514,12 +521,12 @@ about what "the destination area" means).
 Each sized to one agent session; queued as `T-N.M` rows at build time.
 Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
-| ID | Task | Covers |
-|---|---|---|
-| PL-1 | `place_ingest_regions` migration (approved Gate 2) + region grid in shared + ingest job for both sources, `overture > fsq_os` dedup (GeoParquet read → normalize → batch upsert → dedup → region bookkeeping) + trip-create/search-miss triggers with throttle. | R-places-1..5, R-places-7 (enqueue half), R-places-18 |
-| PL-2 | Search endpoint (text/geo/blend, custom-place visibility, pagination) + custom place create/patch/delete + coarse-category mapping in shared. | R-places-6..10 |
-| PL-3 | Details endpoint: spine read + attribution registry in shared. FSQ fetch-fresh client (no-store, degrade, entitlement check, per-user/global guards) is DEFERRED with the premium feature (Gate 2) — ship the spine read + `fresh_unavailable_reason` plumbing only. | R-places-11..14 (dormant seam), R-places-17 |
-| PL-4 | Saved-places CRUD (4 routes) with role authz + 404 posture + conflict semantics. | R-places-15, R-places-16 |
+| ID   | Task                                                                                                                                                                                                                                                                 | Covers                                                |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| PL-1 | `place_ingest_regions` migration (approved Gate 2) + region grid in shared + ingest job for both sources, `overture > fsq_os` dedup (GeoParquet read → normalize → batch upsert → dedup → region bookkeeping) + trip-create/search-miss triggers with throttle.      | R-places-1..5, R-places-7 (enqueue half), R-places-18 |
+| PL-2 | Search endpoint (text/geo/blend, custom-place visibility, pagination) + custom place create/patch/delete + coarse-category mapping in shared.                                                                                                                        | R-places-6..10                                        |
+| PL-3 | Details endpoint: spine read + attribution registry in shared. FSQ fetch-fresh client (no-store, degrade, entitlement check, per-user/global guards) is DEFERRED with the premium feature (Gate 2) — ship the spine read + `fresh_unavailable_reason` plumbing only. | R-places-11..14 (dormant seam), R-places-17           |
+| PL-4 | Saved-places CRUD (4 routes) with role authz + 404 posture + conflict semantics.                                                                                                                                                                                     | R-places-15, R-places-16                              |
 
 **Tests required** roll up from each endpoint's checklist plus:
 
@@ -529,8 +536,8 @@ Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
 ---
 
-*Trace: every R-places-N cites its section/endpoint inline. All 4 markers
+_Trace: every R-places-N cites its section/endpoint inline. All 4 markers
 resolved at Gate 2 (2026-07-09): destination input (structured, canonical
 at schema spec) · source set (both, `overture > fsq_os` → R-places-18) ·
 `place_ingest_regions` (approved) · FSQ premium (deferred from MVP). Zero
-markers remain.*
+markers remain._

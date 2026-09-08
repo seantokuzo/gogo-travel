@@ -154,8 +154,7 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
   const [scheduleTarget, setScheduleTarget] = useState<Booking | null>(null);
 
   const unscheduled = useMemo(
-    () =>
-      unscheduledBookings(bookingsQuery.data?.items ?? [], itineraryQuery.data?.items ?? []),
+    () => unscheduledBookings(bookingsQuery.data?.items ?? [], itineraryQuery.data?.items ?? []),
     [bookingsQuery.data, itineraryQuery.data],
   );
   const cancelled = useMemo(() => cancelledQuery.data?.items ?? [], [cancelledQuery.data]);

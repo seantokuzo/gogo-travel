@@ -22,6 +22,7 @@ that could ever be gated (AI call caps, alerts, premium detail fields).
 Gating later is config, not migration.
 
 Standing product posture (from research, binding on future pricing):
+
 - **Offline, collaboration, and expense splitting are free forever.**
 - Candidates for future gating: AI usage above free caps, proactive alerts,
   premium place details.

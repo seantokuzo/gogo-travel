@@ -339,7 +339,7 @@ describe("R-itin-29 — the DETAIL screens degrade from cache (R1 B2)", () => {
     expect(screen.queryByTestId("itinerary-item-banner-offline")).toBeNull();
   });
 
-  it("booking detail with NO cache says OFFLINE, not \"couldn't load\"", async () => {
+  it('booking detail with NO cache says OFFLINE, not "couldn\'t load"', async () => {
     await renderBookingDegrade({ cached: false, error: NETWORK });
     const banner = await screen.findByTestId("booking-detail-error");
     expect(banner).toHaveTextContent(/offline/i);
@@ -353,7 +353,7 @@ describe("R-itin-29 — the DETAIL screens degrade from cache (R1 B2)", () => {
     expect(banner).not.toHaveTextContent(/offline/i);
   });
 
-  it("item detail with NO cache says OFFLINE, not \"couldn't load\"", async () => {
+  it('item detail with NO cache says OFFLINE, not "couldn\'t load"', async () => {
     await renderItemDegrade({ cached: false, error: NETWORK });
     const banner = await screen.findByTestId("itinerary-item-error");
     expect(banner).toHaveTextContent(/offline/i);

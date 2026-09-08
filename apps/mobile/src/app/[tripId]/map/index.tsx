@@ -220,7 +220,10 @@ export default function MapScreen() {
   const bookings = bookingsQuery.data?.items;
 
   const placeIndex = useMemo(() => buildPlaceIndex(savedPlaces ?? []), [savedPlaces]);
-  const savedPins = useMemo(() => savedPinFeatures(savedPlaces ?? [], colors), [savedPlaces, colors]);
+  const savedPins = useMemo(
+    () => savedPinFeatures(savedPlaces ?? [], colors),
+    [savedPlaces, colors],
+  );
   const itineraryPins = useMemo(
     () =>
       itineraryPinFeatures({
@@ -240,7 +243,10 @@ export default function MapScreen() {
   );
   // R-map-25 temp pins (E1): mirrors the search list exactly — empty input
   // (cleared / offline / error / sub-floor) empties the source.
-  const searchPins = useMemo(() => searchPinFeatures(searchResults, colors), [searchResults, colors]);
+  const searchPins = useMemo(
+    () => searchPinFeatures(searchResults, colors),
+    [searchResults, colors],
+  );
 
   const chips = useMemo(
     () => dayFilterChips({ start_date: trip.start_date, end_date: trip.end_date }, dayColors),
@@ -265,8 +271,7 @@ export default function MapScreen() {
   // §2.1 initial ladder resolved synchronously: destination z12 until pins land.
   const initialStop = useMemo(() => cameraStopFor(cameraTargetFor([], destination)), [destination]);
 
-  const settled =
-    !savedQuery.isPending && !itineraryQuery.isPending && !bookingsQuery.isPending;
+  const settled = !savedQuery.isPending && !itineraryQuery.isPending && !bookingsQuery.isPending;
   const fittedRef = useRef(false);
   useEffect(() => {
     // One initial fit when the pin data first settles (§2.1 "fit all visible
@@ -511,8 +516,7 @@ export default function MapScreen() {
 
   // §2.1 world arm — structurally dormant while destination coords are
   // schema-guaranteed; kept total so a malformed row degrades, never crashes.
-  const showEmpty =
-    settled && cameraTargetFor(allPinCoordinates, destination).kind === "world";
+  const showEmpty = settled && cameraTargetFor(allPinCoordinates, destination).kind === "world";
 
   // Layer styles are memoized on their actual inputs (R1 review, perf A6):
   // a fresh object per render re-sends reactStyle across the bridge and
@@ -567,11 +571,7 @@ export default function MapScreen() {
             filter={CLUSTERED_FILTER}
             style={clusterCount}
           />
-          <CircleLayer
-            id="map-layer-photo-pin"
-            filter={UNCLUSTERED_FILTER}
-            style={photoPinStyle}
-          />
+          <CircleLayer id="map-layer-photo-pin" filter={UNCLUSTERED_FILTER} style={photoPinStyle} />
         </ShapeSource>
 
         <ShapeSource
@@ -654,7 +654,10 @@ export default function MapScreen() {
         </View>
       ) : null}
 
-      <View style={[s.topOverlay, { paddingTop: insets.top + theme.space[2] }]} pointerEvents="box-none">
+      <View
+        style={[s.topOverlay, { paddingTop: insets.top + theme.space[2] }]}
+        pointerEvents="box-none"
+      >
         <MapDayFilterStrip
           chips={chips}
           value={dayFilter}

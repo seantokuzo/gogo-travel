@@ -308,7 +308,9 @@ describe("[B-8 residual] the categories B-9 did NOT cover — GREEN means the lo
     expect(stay.errors).toEqual({});
     if (stay.details === null || stay.details.category !== "lodging") return;
     // Z-stamped, exactly as before B-9 — the out-of-scope arm.
-    expect(stay.details.check_out).toBe(composeLocalDateTime(wallDate(checkout), wallTime(checkout)));
+    expect(stay.details.check_out).toBe(
+      composeLocalDateTime(wallDate(checkout), wallTime(checkout)),
+    );
 
     const composed = [
       stay.details.check_out ?? "",

@@ -224,8 +224,6 @@ it("cancel → confirm → off the calendar, visible under Show cancelled", asyn
   expect(screen.queryByTestId(`itinerary-cancelled-item-${BOOKING_LODGING_ID}`)).toBeNull();
   await fireEvent.press(cancelledToggle);
   await settle();
-  expect(
-    await screen.findByTestId(`itinerary-cancelled-item-${BOOKING_LODGING_ID}`),
-  ).toBeTruthy();
+  expect(await screen.findByTestId(`itinerary-cancelled-item-${BOOKING_LODGING_ID}`)).toBeTruthy();
   expect(screen.getByText("Park Hyatt Tokyo")).toBeTruthy();
 });

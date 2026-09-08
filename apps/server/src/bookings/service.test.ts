@@ -18,9 +18,9 @@ function driverError(fields: Record<string, unknown>): Error {
 
 describe("isPlaceFkViolation (place-FK 23503 walker, both driver shapes)", () => {
   it("reads pg-protocol DatabaseError's `constraint` — the PROD (Neon serverless) shape", () => {
-    expect(
-      isPlaceFkViolation(driverError({ code: "23503", constraint: BOOKINGS_PLACE_FK })),
-    ).toBe(true);
+    expect(isPlaceFkViolation(driverError({ code: "23503", constraint: BOOKINGS_PLACE_FK }))).toBe(
+      true,
+    );
   });
 
   it("reads postgres-js's `constraint_name` — the TEST driver shape", () => {
@@ -35,9 +35,9 @@ describe("isPlaceFkViolation (place-FK 23503 walker, both driver shapes)", () =>
   });
 
   it("accepts 23001 — PG 18's RESTRICT reclassification (one-home inheritance) [B-24]", () => {
-    expect(
-      isPlaceFkViolation(driverError({ code: "23001", constraint: BOOKINGS_PLACE_FK })),
-    ).toBe(true);
+    expect(isPlaceFkViolation(driverError({ code: "23001", constraint: BOOKINGS_PLACE_FK }))).toBe(
+      true,
+    );
   });
 
   it("OTHER FK constraints on the write path stay loud (constraint-precise)", () => {
@@ -50,9 +50,9 @@ describe("isPlaceFkViolation (place-FK 23503 walker, both driver shapes)", () =>
   });
 
   it("non-FK errors and non-errors answer false (rethrow path)", () => {
-    expect(
-      isPlaceFkViolation(driverError({ code: "23505", constraint: BOOKINGS_PLACE_FK })),
-    ).toBe(false);
+    expect(isPlaceFkViolation(driverError({ code: "23505", constraint: BOOKINGS_PLACE_FK }))).toBe(
+      false,
+    );
     expect(isPlaceFkViolation(new Error("plain"))).toBe(false);
     expect(isPlaceFkViolation("not an error")).toBe(false);
     expect(isPlaceFkViolation(undefined)).toBe(false);

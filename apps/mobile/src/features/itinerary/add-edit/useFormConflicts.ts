@@ -19,11 +19,7 @@ import { useMemo } from "react";
 
 import { useItinerary, useItineraryBookings } from "@/data";
 
-import {
-  findPlacementConflicts,
-  type ConflictHit,
-  type PlacementCandidate,
-} from "../conflicts";
+import { findPlacementConflicts, type ConflictHit, type PlacementCandidate } from "../conflicts";
 
 export interface FormConflictExclusions {
   /** Edit mode: the item being edited can't conflict with itself. */

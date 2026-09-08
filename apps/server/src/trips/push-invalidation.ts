@@ -277,9 +277,7 @@ export function createTripEventEmitter(deps: TripEventEmitterDeps): WiredTripEve
       } catch (err) {
         // emit() itself must never throw into a request handler.
         try {
-          logger.warn(
-            `push-invalidation: emit failed synchronously: ${redactedDropMessage(err)}`,
-          );
+          logger.warn(`push-invalidation: emit failed synchronously: ${redactedDropMessage(err)}`);
         } catch {
           // Even a throwing logger can't break the request.
         }

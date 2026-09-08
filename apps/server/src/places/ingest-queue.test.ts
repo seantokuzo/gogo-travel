@@ -30,7 +30,10 @@ function recordingDeps(overrides: { fail?: Set<string> } = {}) {
 describe("createPlacesIngestQueue", () => {
   it("destination trigger runs the 9 destination cells, center first, serially", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
 
     queue.enqueueDestination(LISBON.lat, LISBON.lng);
     await queue.idle();
@@ -43,7 +46,10 @@ describe("createPlacesIngestQueue", () => {
 
   it("collapses duplicate cells while queued (two trips, one metro)", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
 
     // Same destination twice, synchronously — before the drain can finish.
     queue.enqueueDestination(LISBON.lat, LISBON.lng);
@@ -60,7 +66,10 @@ describe("createPlacesIngestQueue", () => {
     const cells = regionCellsForDestination(LISBON.lat, LISBON.lng);
     const failing = cells[1]!.key;
     const deps = recordingDeps({ fail: new Set([failing]) });
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
 
     queue.enqueueDestination(LISBON.lat, LISBON.lng);
     await queue.idle();
@@ -72,7 +81,10 @@ describe("createPlacesIngestQueue", () => {
 
   it("NEVER throws from enqueueDestination — invalid coords log-and-drop (R-places-1)", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
 
     expect(() => queue.enqueueDestination(Number.NaN, 999)).not.toThrow();
     await queue.idle();
@@ -110,7 +122,10 @@ describe("createPlacesIngestQueue", () => {
 
   it("destination cells outrank queued search-miss cells (two-tier drain)", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
     const backfillA = regionCellAt(41.9028, 12.4964); // Rome
     const backfillB = regionCellAt(-33.8688, 151.2093); // Sydney
 
@@ -126,7 +141,10 @@ describe("createPlacesIngestQueue", () => {
 
   it("a destination enqueue PROMOTES a cell already queued as search-miss (no double run)", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
     const blocker = regionCellAt(41.9028, 12.4964); // keeps the drain busy
     const lisbonCenter = regionCellAt(LISBON.lat, LISBON.lng);
 
@@ -141,7 +159,10 @@ describe("createPlacesIngestQueue", () => {
 
   it("throttle is per cell — a second cell is not blocked by the first", async () => {
     const deps = recordingDeps();
-    const queue = createPlacesIngestQueue({ ingestCell: deps.ingestCell, logger: { warn: deps.warn } });
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn },
+    });
     const a = regionCellAt(38.6, -9.4);
     const b = regionCellAt(48.85, 2.35);
 

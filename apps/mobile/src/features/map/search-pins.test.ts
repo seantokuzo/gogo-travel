@@ -51,10 +51,10 @@ describe("classifySearchPinPress", () => {
   it("ignores empty presses and foreign families", () => {
     expect(classifySearchPinPress({ features: [] })).toBeNull();
     expect(
-      classifySearchPinPress({ features: [{ properties: { family: "saved", placeId: PLACE_ID } }] }),
+      classifySearchPinPress({
+        features: [{ properties: { family: "saved", placeId: PLACE_ID } }],
+      }),
     ).toBeNull();
-    expect(
-      classifySearchPinPress({ features: [{ properties: { point_count: 3 } }] }),
-    ).toBeNull();
+    expect(classifySearchPinPress({ features: [{ properties: { point_count: 3 } }] })).toBeNull();
   });
 });

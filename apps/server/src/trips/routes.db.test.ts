@@ -205,10 +205,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       .select()
       .from(schema.tripMembers)
       .where(
-        and(
-          eq(schema.tripMembers.tripId, trip.id),
-          eq(schema.tripMembers.userId, owner.userId),
-        ),
+        and(eq(schema.tripMembers.tripId, trip.id), eq(schema.tripMembers.userId, owner.userId)),
       );
     expect(membership?.role).toBe("owner");
   });
@@ -325,9 +322,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       .set({ deletedAt: FROZEN_NOW, googleSub: null, email: `deleted:${ghost.userId}` })
       .where(eq(schema.users.id, ghost.userId));
 
-    const page = PaginatedTripListSchema.parse(
-      await (await listTrips(owner.accessToken)).json(),
-    );
+    const page = PaginatedTripListSchema.parse(await (await listTrips(owner.accessToken)).json());
     expect(page.items.find((t) => t.id === trip.id)?.member_count).toBe(3);
   });
 
@@ -336,14 +331,9 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     await db
       .delete(schema.tripMembers)
       .where(
-        and(
-          eq(schema.tripMembers.tripId, trip.id),
-          eq(schema.tripMembers.userId, editor.userId),
-        ),
+        and(eq(schema.tripMembers.tripId, trip.id), eq(schema.tripMembers.userId, editor.userId)),
       );
-    const page = PaginatedTripListSchema.parse(
-      await (await listTrips(editor.accessToken)).json(),
-    );
+    const page = PaginatedTripListSchema.parse(await (await listTrips(editor.accessToken)).json());
     expect(page.items).toEqual([]);
   });
 
@@ -481,9 +471,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     const owner = await seedUserWithToken();
     const seeded = await seedDriftedTrip(owner.userId);
 
-    const page = PaginatedTripListSchema.parse(
-      await (await listTrips(owner.accessToken)).json(),
-    );
+    const page = PaginatedTripListSchema.parse(await (await listTrips(owner.accessToken)).json());
     expect(page.items.find((t) => t.id === seeded.id)?.status).toBe("past");
     expect((await dbTrip(seeded.id))?.status).toBe("past");
   });
@@ -497,9 +485,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       endDate: "2026-07-30", // spans frozen today → 'active'
     });
 
-    const page = PaginatedTripListSchema.parse(
-      await (await listTrips(owner.accessToken)).json(),
-    );
+    const page = PaginatedTripListSchema.parse(await (await listTrips(owner.accessToken)).json());
     expect(page.items.find((t) => t.id === toPast.id)?.status).toBe("past");
     expect(page.items.find((t) => t.id === toActive.id)?.status).toBe("active");
 
@@ -531,9 +517,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       .returning();
     await addMember(row!.id, owner.userId, "owner");
 
-    const body = TripWithRoleSchema.parse(
-      await (await getTrip(row!.id, owner.accessToken)).json(),
-    );
+    const body = TripWithRoleSchema.parse(await (await getTrip(row!.id, owner.accessToken)).json());
     expect(body.status).toBe("planning");
     expect(body.status_override).toBe("planning");
     expect((await dbTrip(row!.id))?.status).toBe("planning");
@@ -821,9 +805,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
 
     const noop = await patchTrip(trip.id, editor.accessToken, {});
     expect(noop.status).toBe(200);
-    expect((await dbTrip(trip.id))?.updatedAt.toISOString()).toBe(
-      before?.updatedAt.toISOString(),
-    );
+    expect((await dbTrip(trip.id))?.updatedAt.toISOString()).toBe(before?.updatedAt.toISOString());
 
     const fresh = await patchTrip(trip.id, editor.accessToken, {
       expect_updated_at: trip.updated_at,
@@ -936,9 +918,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     const delivery = events[0]!;
     // Ids only (R-trips-18): no name, no content, no PII — exact key set.
     expect(Object.keys(delivery.payload)).toEqual(["event", "trip_id"]);
-    expect(pushEvents.recipientIdsOf(delivery)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(delivery)).toEqual([editor.userId, viewer.userId].sort());
     // Device fan-out via push_tokens (API-TRIPS-4): registered tokens ride
     // along; token-less members stay user-grained recipients.
     const editorRecipient = delivery.recipients.find((r) => r.userId === editor.userId);
@@ -953,9 +933,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     expect((await patchTrip(trip.id, editor.accessToken, { theme: "sunset" })).status).toBe(200);
     const events = await pushEvents.eventsFor(trip.id);
     expect(events.map((d) => d.payload.event)).toEqual(["trip.updated"]);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [owner.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([owner.userId, viewer.userId].sort());
   });
 
   it("PATCH: failure and no-op paths NEVER emit — 403, stale 409, gate 404, write-less body", async () => {
@@ -975,8 +953,7 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     // Write-less request: 200, but no mutation committed → no event
     // (R-trips-18 fires "WHEN any mutation ... commits").
     expect(
-      (await patchTrip(trip.id, editor.accessToken, { expect_updated_at: trip.updated_at }))
-        .status,
+      (await patchTrip(trip.id, editor.accessToken, { expect_updated_at: trip.updated_at })).status,
     ).toBe(200);
 
     expect(await pushEvents.eventsFor(trip.id)).toEqual([]);
@@ -995,15 +972,13 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     const { owner, editor, viewer, trip } = await seedCollabTrip(); // 08-01..10 → 'planning' at frozen 07-25
     // Pull start_date behind frozen today: derived planning → active — the
     // §3.5 "stored status changes" trigger with NO override involved.
-    expect(
-      (await patchTrip(trip.id, owner.accessToken, { start_date: "2026-07-20" })).status,
-    ).toBe(200);
+    expect((await patchTrip(trip.id, owner.accessToken, { start_date: "2026-07-20" })).status).toBe(
+      200,
+    );
 
     const events = await pushEvents.eventsFor(trip.id);
     expect(events.map((d) => d.payload.event)).toEqual(["trip.updated", "trip.status_changed"]);
-    expect(pushEvents.recipientIdsOf(events[1]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[1]!)).toEqual([editor.userId, viewer.userId].sort());
     expect((await dbTrip(trip.id))?.status).toBe("active");
   });
 
@@ -1069,16 +1044,11 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     const events = await pushEvents.eventsFor(trip.id);
     expect(events.map((d) => d.payload.event)).toEqual(["trip.deleted"]);
     expect(Object.keys(events[0]!.payload)).toEqual(["event", "trip_id"]);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
     // The recipients could ONLY have come from the pre-delete snapshot
     // (R-trips-8 "captured before the delete") — the rows are cascade-gone.
     expect(
-      await db
-        .select()
-        .from(schema.tripMembers)
-        .where(eq(schema.tripMembers.tripId, trip.id)),
+      await db.select().from(schema.tripMembers).where(eq(schema.tripMembers.tripId, trip.id)),
     ).toEqual([]);
   });
 

@@ -18,9 +18,7 @@ describe("keyset cursor codec (shared helper — T-6.2 extraction)", () => {
     // No separator.
     expect(decodeKeysetCursor(Buffer.from("garbage", "utf8").toString("base64url"))).toBeNull();
     // Non-integer micros.
-    expect(
-      decodeKeysetCursor(Buffer.from(`12a34|${ID}`, "utf8").toString("base64url")),
-    ).toBeNull();
+    expect(decodeKeysetCursor(Buffer.from(`12a34|${ID}`, "utf8").toString("base64url"))).toBeNull();
     // Negative micros (sign char fails the digits-only rule).
     expect(decodeKeysetCursor(Buffer.from(`-5|${ID}`, "utf8").toString("base64url"))).toBeNull();
     // 19-digit micros would overflow-risk the ::bigint cast — rejected.

@@ -238,8 +238,7 @@ export function itineraryApiOverrides(
   const bookings = opts.bookings ?? defaultBookings();
   const byId = new Map(items.map((item) => [item.id, item]));
   return {
-    "GET /trips/:tripId/itinerary": () =>
-      Promise.resolve({ items, legs: opts.legs ?? [] }),
+    "GET /trips/:tripId/itinerary": () => Promise.resolve({ items, legs: opts.legs ?? [] }),
     "GET /trips/:tripId/bookings": (input) => {
       // Query-aware (T-7.6): the cancelled list rides the same route with
       // `status=cancelled` (R-ib-10 excludes cancelled from the default).

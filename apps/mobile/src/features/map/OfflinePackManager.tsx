@@ -177,14 +177,13 @@ export function OfflinePackManager() {
       ) : null}
       {state.phase === "none" && estimate !== null ? (
         <AppText role="caption" color="muted">
-          Maps for {trip.destination_name} work without a connection once saved. Estimated
-          download: ~{estimate}.
+          Maps for {trip.destination_name} work without a connection once saved. Estimated download:
+          ~{estimate}.
         </AppText>
       ) : null}
       {state.phase === "stale" ? (
         <AppText role="caption" color="muted">
-          The map style or trip destination changed since this was saved — refresh to update
-          it.
+          The map style or trip destination changed since this was saved — refresh to update it.
         </AppText>
       ) : null}
       {pastTripOffer ? (

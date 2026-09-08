@@ -207,10 +207,7 @@ describe("itineraryPinFeatures", () => {
 
 describe("photoPinFeatures (fixture-tested, EMPTY-IN-PROD until P-12)", () => {
   it("builds ring-colored features from fixture rows", () => {
-    const collection = photoPinFeatures(
-      [{ id: "photo-1", lat: 35.01, lng: 135.77 }],
-      colors,
-    );
+    const collection = photoPinFeatures([{ id: "photo-1", lat: 35.01, lng: 135.77 }], colors);
     expect(collection.features).toHaveLength(1);
     expect(collection.features[0]?.properties).toEqual({
       family: "photo",

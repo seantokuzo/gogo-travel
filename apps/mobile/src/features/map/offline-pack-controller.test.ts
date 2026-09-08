@@ -48,8 +48,9 @@ interface OfflineManagerMock {
   deletePack: MockFn;
   unsubscribe: MockFn;
 }
-const om = (jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } })
-  .__mock.offlineManager;
+const om = (
+  jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
+).__mock.offlineManager;
 const network = (
   jest.requireMock("expo-network") as {
     __mock: { getNetworkStateAsync: MockFn; addNetworkStateListener: MockFn };
@@ -408,10 +409,9 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
       completedAt: "2026-08-18T00:00:00.000Z",
       sizeBytes: 7_000_000,
     });
-    const { result, unmount } = await renderHook(
-      () => useOfflinePackController(activeTrip()),
-      { wrapper },
-    );
+    const { result, unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+      wrapper,
+    });
     expect(result.current).toEqual({
       phase: "ready",
       sizeBytes: 7_000_000,
@@ -436,10 +436,9 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
       completedAt: "2026-08-01T00:00:00.000Z",
       sizeBytes: 7_000_000,
     });
-    const { result, unmount } = await renderHook(
-      () => useOfflinePackController(activeTrip()),
-      { wrapper },
-    );
+    const { result, unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+      wrapper,
+    });
     expect(result.current.phase).toBe("stale");
     await act(flush);
     expect(om.createPack).not.toHaveBeenCalled();

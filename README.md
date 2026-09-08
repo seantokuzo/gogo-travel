@@ -14,17 +14,17 @@ planning docs land first, then specs (P-2), then the build.
 
 ## Where things live
 
-| Thing | Where |
-|-------|-------|
-| Constitution (laws, autonomy contract) | `CLAUDE.md` |
-| Roadmap + architecture | `docs/PLANNING.md` |
-| Work queue | `docs/QUEUE.md` |
-| Current state | `docs/STATE.md` |
-| Locked decisions | `docs/decisions/` |
-| How sessions work | `docs/SESSION-GUIDE.md` |
-| Feature specs | `.specs/` |
-| Review pipeline | `.agents/skills/pr-review-pipeline/` |
-| Autonomous chain mode | `scripts/run-loop.sh` + `.agents/skills/autonomous-loop/` |
+| Thing                                  | Where                                                     |
+| -------------------------------------- | --------------------------------------------------------- |
+| Constitution (laws, autonomy contract) | `CLAUDE.md`                                               |
+| Roadmap + architecture                 | `docs/PLANNING.md`                                        |
+| Work queue                             | `docs/QUEUE.md`                                           |
+| Current state                          | `docs/STATE.md`                                           |
+| Locked decisions                       | `docs/decisions/`                                         |
+| How sessions work                      | `docs/SESSION-GUIDE.md`                                   |
+| Feature specs                          | `.specs/`                                                 |
+| Review pipeline                        | `.agents/skills/pr-review-pipeline/`                      |
+| Autonomous chain mode                  | `scripts/run-loop.sh` + `.agents/skills/autonomous-loop/` |
 
 ## Provenance
 

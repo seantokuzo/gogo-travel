@@ -6,3 +6,26 @@ coverage/
 .turbo/
 pnpm-lock.yaml
 feature-ledger.json
+
+# drizzle-kit owns these: it rewrites meta/_journal.json in full on every
+# `drizzle-kit generate` and writes each snapshot verbatim. Prettier
+# reformatting them breaks byte-reproducibility from the generator — the next
+# migration would silently revert them to drizzle-kit's own style, replaying
+# the exact drift this sweep exists to clean up.
+apps/server/drizzle/meta/*.json
+# Same generator-ownership reason, plus 0003_outstanding_doctor_spectrum.sql
+# is hand-edited with a `NOT VALID` clause drizzle-kit cannot emit. No SQL
+# prettier plugin is installed today so these aren't reformatted regardless —
+# ignored explicitly so a future plugin can't reintroduce the drift.
+apps/server/drizzle/*.sql
+
+# apps/server/scripts/generate-reference-data.ts owns these: its
+# `toJsonLines()` deliberately writes one record per line ("compact but
+# diffable" — its own comment). Reformatting to multi-line-per-object now
+# would revert on the next generator run, replaying the exact drift this
+# sweep exists to clean up.
+apps/server/reference-data/*.json
+
+# Icon Composer owns this file and rewrites it (its own dense/ordered style)
+# on every save from the macOS app. Same generator-ownership reason.
+apps/mobile/assets/expo.icon/icon.json

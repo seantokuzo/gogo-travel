@@ -75,7 +75,11 @@ export function useItinerary(tripId: string): UseQueryResult<ItineraryRead, Erro
   return useQuery({
     queryKey: queryKeys.tripItinerary(tripId),
     queryFn: ({ signal }) =>
-      apiClient.request(itineraryEndpoints.getItinerary, { params: { tripId }, query: {} }, { signal }),
+      apiClient.request(
+        itineraryEndpoints.getItinerary,
+        { params: { tripId }, query: {} },
+        { signal },
+      ),
   });
 }
 
@@ -171,12 +175,7 @@ export function reconcileDayOrder(
 export function useDayOrder(
   tripId: string,
   options?: ItineraryMutationOptions<DayOrderResult>,
-): UseMutationResult<
-  DayOrderResult,
-  Error,
-  DayOrderVars,
-  { previous: ItineraryRead | undefined }
-> {
+): UseMutationResult<DayOrderResult, Error, DayOrderVars, { previous: ItineraryRead | undefined }> {
   const qc = useQueryClient();
   const key = queryKeys.tripItinerary(tripId);
   return useMutation({
