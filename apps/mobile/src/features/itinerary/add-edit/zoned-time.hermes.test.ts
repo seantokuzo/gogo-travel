@@ -22,14 +22,20 @@
  *     are wrong by the same 12h, agrees with itself, and hands back a
  *     well-formed string up to 12h wrong — no null, no throw. That would be
  *     B-8 one layer down.
- *  2. STILL LIVE: a part mapped to `literal` reads NaN, and the next
- *     `formatToParts(new Date(NaN))` throws `RangeError` — out of a
- *     function documented as "null, never a throw", through the save
+ *  2. STILL LIVE UPSTREAM, not for us: a part mapped to `literal` reads NaN,
+ *     and the next `formatToParts(new Date(NaN))` throws `RangeError` — out
+ *     of a function documented as "null, never a throw", through the save
  *     handler and (via `livePlacements`) the form's whole render
- *     (facebook/hermes#1172, open).
+ *     (facebook/hermes#1172, still open). It does not manifest for this
+ *     module's option set: the simulator probe (see `zoned-time.ts`'s
+ *     `isIntlFaithful` doc) typed all six requested parts correctly
+ *     (`…month=04|literal=/|day=24|…|hour=17|literal=:|minute=05|…`) — the
+ *     gate below is belt-and-braces, not a live-bug reproduction.
  *  3. FIXED, in our pinned build: zone validation used to go through
  *     `NSTimeZone.knownTimeZoneNames` alone, which rejected tzdb backward
- *     links (facebook/hermes#1607). #1611 (merged 2025-03-13) added the
+ *     links (facebook/hermes#1607). #1611 (landed as `8f9cf10fc`,
+ *     2025-03-17, fixing #1607; GitHub shows the PR itself as
+ *     closed-not-merged because Meta lands via internal import) added the
  *     `NSTimeZone` constructor fallback that resolves them — modeled here
  *     as a regression guard, not a live bug.
  *

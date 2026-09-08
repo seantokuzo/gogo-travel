@@ -112,9 +112,10 @@ function formatterFor(tz: string): Intl.DateTimeFormat {
  * is a stale ~443-id list that does NOT contain `Asia/Kolkata`,
  * `US/Eastern` or `Etc/UTC` — every India flight resolves only because the
  * constructor falls back to `[[NSTimeZone alloc] initWithName:]` for any id
- * outside that set (facebook/hermes#1611, merged 2025-03-13 fixing #1607,
- * in our pinned build). Unknown ids throw `RangeError` from the
- * constructor; cached either way.
+ * outside that set (facebook/hermes#1611, landed as `8f9cf10fc`,
+ * 2025-03-17, fixing #1607; GitHub shows the PR itself as closed-not-merged
+ * because Meta lands via internal import). Unknown ids throw `RangeError`
+ * from the constructor; cached either way.
  */
 export function isKnownTimeZone(tz: string): boolean {
   if (tz === "") return false;
@@ -186,11 +187,11 @@ let intlFaithful: boolean | null = null;
  * `hourCycle_` option when one is supplied; Apple's `en-US` h12 default
  * (`getDefaultHourCycle`) only applies when the option is absent. Confirmed
  * two ways: at our pinned Hermes commit
- * (`HERMES_V1_VERSION_NAME=250829098.0.16`, facebook/hermes@90f2385) and by
- * a probe run in the app's own on-device Hermes runtime, which reads back
- * `hour=17` for a 17:05:09 UTC instant — not the `05` an h12 override would
- * produce. `isIntlFaithful()` is `true` on the shipped build; these gates
- * do not trip in production today.
+ * (`HERMES_V1_VERSION_NAME=250829098.0.16`, facebook/hermes@90f2385) and by a
+ * probe run in the app's own Hermes runtime on the iOS simulator (Maestro
+ * probe, 2026-09-07), which reads back `hour=17` for a 17:05:09 UTC instant
+ * — not the `05` an h12 override would produce. `isIntlFaithful()` is `true`
+ * on the shipped build; these gates do not trip in production today.
  *
  * So why gate at all? Because IF a future engine (or a Hermes regression)
  * silently fell back to a locale-default hour cycle, a uniformly shifted
@@ -201,11 +202,16 @@ let intlFaithful: boolean | null = null;
  * null, no throw. That would be B-8 one layer down, and it cannot be caught
  * per-call because the wrong answer is self-consistent. This is
  * belt-and-braces against exactly that class of regression, not a live
- * workaround: Hermes's iOS `Intl` has regressed in this neighborhood three
+ * workaround: Hermes's iOS `Intl` has broken in this neighborhood three
  * times already — `formatToParts` was disabled outright
  * (facebook/hermes#1155) then reverted (#1567), the pre-#1611 build
  * rejected tzdb backward links (#1607), and the `literal`-mistyping class
- * (#1172) is still open.
+ * (#1172) is still open upstream. That last one is open, not hypothetical
+ * like the h12 override — but it does not manifest for THIS module's option
+ * set: the same simulator probe (above) typed all six requested parts
+ * correctly (`…month=04|literal=/|day=24|…|hour=17|literal=:|minute=05|…`),
+ * which is what makes the gate below belt-and-braces rather than a live
+ * workaround.
  *
  * So ask the engine two questions whose answers we already know, in `UTC`
  * (no zone database involved), and refuse to compose ANYTHING if either
