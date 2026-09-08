@@ -1,0 +1,107 @@
+# Flow 1b — the diagnostics PANEL itself. DEV BUILD ONLY (tag: dev).
+#
+# ⚠️ This flow CANNOT pass on the Release build the merge lane uses, and that
+# is by design on both sides, not a bug on either:
+#   • T-S3.5 gated the panel to `__DEV__` — a release build renders `null`,
+#     with both arms pinned. The device-smoke panel must not ship inert-but-
+#     reachable in production.
+#   • ADR-007 gates the merge lane to Release — a dev-client `launchApp` lands
+#     on the dev launcher and `clearState: true` wipes the stored Metro URL.
+# The intersection is real and unresolvable without weakening one of them. So
+# the coverage splits: `smoke-diagnostics-cold.yaml` pins the B-14 invariant on
+# Release (the actual regression), and this flow pins the panel's own surface
+# on a Debug build.
+#
+# DO NOT "fix" this by making one flow that passes on both configurations —
+# a conditional that is satisfied by a blank screen is a vacuous pin, and this
+# repo has burned cycles on exactly that shape (T-7.6, T-7.9).
+#
+# HOW TO RUN:
+#   terminal 1:  pnpm --filter @gogo/mobile start
+#   terminal 2:  bash scripts/e2e.sh --tags dev
+#   (against a Debug build: `npx expo run:ios` with no --configuration flag)
+#
+# Assertions are structure only — presence of every leg row and its status
+# badge. Leg OUTCOMES are environment-dependent (`/health` needs a server, the
+# env leg reads whatever `EXPO_PUBLIC_*` the build inlined), so asserting them
+# here would make the flow a weather report.
+appId: app.gogotravel
+name: diagnostics-panel-dev
+tags:
+  - dev
+---
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://diagnostics"
+- extendedWaitUntil:
+    visible:
+      id: "diagnostics-screen"
+    timeout: 20000
+- assertVisible:
+    id: "diagnostics-header"
+- assertVisible:
+    id: "diagnostics-scroll"
+
+# The six legs (DiagnosticsScreen.tsx) — row + status badge for each.
+#
+# ONLY THE FIRST THREE ROWS FIT ON SCREEN (first real run, 2026-09-07, iPhone
+# 17 Pro / iOS 26.3). The panel is a ScrollView of six evidence-bearing cards;
+# `diagnostics-list-item-env` alone already ends at y=883 on an 874pt-tall
+# screen, and rows 4-6 are below the fold — absent from the accessibility
+# hierarchy entirely, so a bare `assertVisible` on them can never pass no
+# matter how long it retries. Maestro's auto-wait retries a *selector*, it
+# does not scroll. The rows are NOT conditional: `GoogleLegRow` renders in
+# both the configured and unconfigured arms (DiagnosticsScreen.tsx), so this
+# was never a build-state problem — the flow simply asserted things it had
+# not brought on screen.
+#
+# `scrollUntilVisible` does NOT weaken these assertions: each row still has
+# to exist and become visible, and the trailing `assertVisible` still runs.
+# It only makes the element reachable so the assertion can mean something.
+- assertVisible:
+    id: "diagnostics-list-item-base-url"
+- assertVisible:
+    id: "diagnostics-status-base-url"
+- assertVisible:
+    id: "diagnostics-list-item-health"
+- assertVisible:
+    id: "diagnostics-list-item-env"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-google-request"
+    direction: DOWN
+    timeout: 15000
+- assertVisible:
+    id: "diagnostics-list-item-google-request"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-secure-store"
+    direction: DOWN
+    timeout: 15000
+- assertVisible:
+    id: "diagnostics-list-item-secure-store"
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-list-item-last-error"
+    direction: DOWN
+    timeout: 15000
+- assertVisible:
+    id: "diagnostics-list-item-last-error"
+
+# Rerun is never disabled by design (rerunning a HUNG leg is a first-class
+# device scenario). Pressing it must leave the panel standing.
+#
+# The scrolls above left us at the BOTTOM of the panel, so the base-url rerun
+# button has to be brought back on screen before it can be tapped.
+- scrollUntilVisible:
+    element:
+      id: "diagnostics-button-rerun-base-url"
+    direction: UP
+    timeout: 15000
+- tapOn:
+    id: "diagnostics-button-rerun-base-url"
+- assertVisible:
+    id: "diagnostics-status-base-url"
+- assertVisible:
+    id: "diagnostics-screen"
