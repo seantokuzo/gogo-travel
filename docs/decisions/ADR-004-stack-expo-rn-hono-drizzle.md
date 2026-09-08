@@ -37,8 +37,7 @@ platform failures).
 - **Targets:** iOS first (simulator-driven dev; Apple dev account deferred until
   push-on-device/TestFlight). Android stays compilable; verification pass
   pre-launch.
-- **Exact package versions:** pinned at P-3 scaffold via `npm view <pkg> version`
-  - `npx expo-doctor` — never from training data.
+- **Exact package versions:** pinned at P-3 scaffold via `npm view <pkg> version` + `npx expo-doctor` — never from training data.
 - **Maps SDK and AI provider:** chosen in S-2 research (separate ADRs if
   non-obvious).
 - **CI gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.

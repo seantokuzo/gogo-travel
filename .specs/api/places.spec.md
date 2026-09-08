@@ -154,9 +154,7 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   (`overture > fsq_os`). Both attribution strings ship. (Resolved
   2026-07-09, Gate 2)
 - **`place_ingest_regions` table (§3.1.2) + the `places-ingest` job —
-  APPROVED** as entity-list additions: the table folds into schema.spec.md
-  - migration (Law #6; schema spec is picking it up) and the job joins
-    PLANNING § Component map. (Resolved 2026-07-09, Gate 2)
+  APPROVED** as entity-list additions: the table folds into schema.spec.md + migration (Law #6; schema spec is picking it up) and the job joins PLANNING § Component map. (Resolved 2026-07-09, Gate 2)
 - **Foursquare premium fresh details — DEFERRED from MVP** (revisit
   post-launch): MVP is spine-data-only ($0) — no Foursquare developer
   account, no metered billing. R-places-11..14 land as a dormant seam

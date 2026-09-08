@@ -163,7 +163,7 @@ Failures visible, never silent (R-db-7).
 - **R-cap-15 (parse-reply email — the TripIt trust mechanism):** WHEN an
   email capture reaches a terminal parse state THE SYSTEM SHALL send a reply
   email to the sender within 60 seconds (p95) of webhook receipt stating the
-  outcome — filed ("Added to _Tokyo_ — Park Hyatt, May 3–7" + deep link to
+  outcome — filed ("Added to `Tokyo` — Park Hyatt, May 3–7" + deep link to
   the booking), needs review ("We couldn't read everything — review it in
   GoGo" + deep link to the queue), or failed (reason + queue link). Links go
   through the deep-link registry (navigation spec §2.3; universal-link

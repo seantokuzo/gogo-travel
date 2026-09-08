@@ -4,8 +4,7 @@
 > (P-2 gate 3). Not approvable until zero `[NEEDS CLARIFICATION]` markers
 > remain.
 >
-> **Sources:** `CLAUDE.md` Law #2 (integer cents) · `docs/PLANNING.md
-§ Architecture` (money entities; P-7) ·
+> **Sources:** `CLAUDE.md` Law #2 (integer cents) · `docs/PLANNING.md § Architecture` (money entities; P-7) ·
 > `.specs/database/schema.spec.md` §§3.3.12–3.3.15, 3.3.18–3.3.19 (**CANONICAL**
 > — `expenses`, `expense_shares`, `settlements`, `budgets`, `ai_usage`,
 > `ai_cache`; R-db-2/5/10/13/14/16) · `.specs/shared/contracts.spec.md`

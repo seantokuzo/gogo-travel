@@ -338,9 +338,8 @@ Mint 1–`MAX_UPLOAD_SLOTS_PER_REQUEST` upload slots. **Auth**: Required
 ticket: string, expires_at: ISODateTime }> }`
 
 **Errors**: 400 `VALIDATION_FAILED` — unaccepted type, zero/negative size,
-
-> 20 items; 413 `PAYLOAD_TOO_LARGE` — declared size over cap; 429
-> `RATE_LIMITED` — slot budget exhausted; 404 `NOT_FOUND` — non-member/no trip.
+`>20 items`; 413 `PAYLOAD_TOO_LARGE` — declared size over cap; 429
+`RATE_LIMITED` — slot budget exhausted; 404 `NOT_FOUND` — non-member/no trip.
 
 **Requirements covered**: R-photo-1, R-photo-14
 

@@ -65,8 +65,7 @@ Expo app → Hono (auth + rate limit) → cache check → [Places grounding] →
   (hours, prices, open-now) render from Places data at display time, never
   from LLM text. Even grounded products ship _reasoning_ errors over correct
   data (Kayak nightly-vs-total price) — unit/date logic needs test coverage.
-- Places pricing (HIGH): $32/1K Text Search Pro AFTER 5,000 free Pro calls/mo
-  - 10,000 free Essentials calls (the $200 credit died March 2025). With
+- Places pricing (HIGH): $32/1K Text Search Pro AFTER 5,000 free Pro calls/mo + 10,000 free Essentials calls (the $200 credit died March 2025). With
   destination caching (~400–500 grounding calls/mo) → **$0 at our scale.**
 - Wikipedia/Wikidata free for tour-guide trivia (use authenticated requests —
   anonymous now 10 req/min). Foursquare paid tier worse at our scale, but
@@ -77,9 +76,8 @@ Expo app → Hono (auth + rate limit) → cache check → [Places grounding] →
 
 - **v1 = foreground-only location** (`watchPositionAsync` + distanceInterval,
   balanced accuracy, while tour screen active) — GuideAlong/VoiceMap pattern.
-  Background geofencing deferred: iOS 20-region cap, needs "Always" permission
-  - dev build, App Store friction. (Sean signed off implicitly via extras
-    approval; re-confirm at P-2 spec gate.)
+  Background geofencing deferred: iOS 20-region cap, needs "Always" permission + dev build, App Store friction. (Sean signed off implicitly via extras
+  approval; re-confirm at P-2 spec gate.)
 - **Offline bundles**: at trip creation, Batch-API fan-out per POI (grounded
   facts in-prompt) → server-validate → client downloads bundle keyed by
   `place_id` into expo-sqlite over wifi. On-tour lookup local, zero network.

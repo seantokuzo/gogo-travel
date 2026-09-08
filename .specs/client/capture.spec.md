@@ -106,7 +106,7 @@ assigned/guessed trip.
   an expired signed URL is refetched transparently once before surfacing an
   error.
 - **R-capc-16 (auto-file visibility):** WHEN a capture was auto-filed THE
-  SYSTEM SHALL render it in landed history as "Filed to _<trip>_" linking
+  SYSTEM SHALL render it in landed history as "Filed to `<trip>`" linking
   to the booking — auto-filing is never invisible in-app. Auto-file is
   decided behavior — Resolved at `.specs/api/capture.spec.md`:§R-cap-13
   (Gate 2, 2026-07-09): high-confidence parses auto-file + push
@@ -179,7 +179,7 @@ registry's share-sheet row (navigation §2.3), after upload kickoff.
 | `parsed`, unlanded             | proposal summary + "Pick a trip" chip (or trip_guess name) | review screen                           |
 | `needs_review`                 | proposal summary + "Needs review" badge                    | review screen                           |
 | `failed`                       | error line + "Failed" badge                                | review screen (failure mode, R-capc-14) |
-| landed (any, `booking_id` set) | "Filed to _<trip>_" + checkmark (history segment)          | booking detail                          |
+| landed (any, `booking_id` set) | "Filed to `<trip>`" + checkmark (history segment)          | booking detail                          |
 
 ### 2.3 State & data
 
