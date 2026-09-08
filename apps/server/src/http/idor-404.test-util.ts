@@ -50,9 +50,7 @@ export function withoutRequestId(body: ErrorEnvelope): Omit<ErrorEnvelope["error
  * Callers pass ≥ 2 responses covering at least "exists, not yours" and
  * "does not exist"; adding malformed-id probes is encouraged.
  */
-export async function expectIndistinguishable404s(
-  responses: readonly Response[],
-): Promise<void> {
+export async function expectIndistinguishable404s(responses: readonly Response[]): Promise<void> {
   expect(responses.length).toBeGreaterThanOrEqual(2);
 
   const canonical = { code: "NOT_FOUND", message: "not found" };

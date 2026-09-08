@@ -104,9 +104,7 @@ describe("DateField iOS presentation (B-10a) + contextual seed (B-10b)", () => {
   it("an empty value seeds the picker from contextDate (wrapper's `date` ms translation)", async () => {
     await renderField({ contextDate: "2027-04-24" });
     await fireEvent.press(screen.getByTestId("f"));
-    expect(screen.getByTestId("f-picker").props.date).toBe(
-      new Date(2027, 3, 24, 12).getTime(),
-    );
+    expect(screen.getByTestId("f-picker").props.date).toBe(new Date(2027, 3, 24, 12).getTime());
   });
 
   it("no context seeds today (the pre-B-10 anchor stays the fallback)", async () => {
@@ -119,9 +117,7 @@ describe("DateField iOS presentation (B-10a) + contextual seed (B-10b)", () => {
   it("a set value beats the context (control arm for the seed)", async () => {
     await renderField({ value: "2027-05-08", contextDate: "2027-04-24" });
     await fireEvent.press(screen.getByTestId("f"));
-    expect(screen.getByTestId("f-picker").props.date).toBe(
-      new Date(2027, 4, 8, 12).getTime(),
-    );
+    expect(screen.getByTestId("f-picker").props.date).toBe(new Date(2027, 4, 8, 12).getTime());
   });
 
   it("selecting a day reports the ISO date and closes the card", async () => {
@@ -148,9 +144,7 @@ describe("DateField iOS presentation (B-10a) + contextual seed (B-10b)", () => {
     // The card's `accessibilityViewIsModal` hides SIBLINGS from a11y — RNTL
     // models that, so the scrim needs `includeHiddenElements` (the mobile.md
     // Sheet-scrim rule; on device it is plainly tappable).
-    await fireEvent.press(
-      screen.getByTestId("f-sheet-scrim", { includeHiddenElements: true }),
-    );
+    await fireEvent.press(screen.getByTestId("f-sheet-scrim", { includeHiddenElements: true }));
     expect(screen.queryByTestId("f-sheet")).toBeNull();
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -247,9 +241,7 @@ describe("opening the picker dismisses the keyboard (B-15c)", () => {
   // call when the same press toggles the picker CLOSED (the call is tied to
   // opening, not to every row tap).
   it("row press that OPENS calls Keyboard.dismiss; the closing toggle does not", async () => {
-    await renderWithTheme(
-      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
-    );
+    await renderWithTheme(<DateField label="Start date" value="" onSelect={onSelect} testID="f" />);
     expect(dismissSpy).not.toHaveBeenCalled();
 
     await fireEvent.press(screen.getByTestId("f"));
@@ -282,14 +274,12 @@ describe("Done commits the open-time captured seed (PR #49 R1)", () => {
   // so the assertion discriminates commit-vs-display, not clock mocking.
   it("across midnight, Done commits the displayed pre-midnight day", async () => {
     jest.useFakeTimers({ now: new Date(2027, 5, 14, 23, 59, 50) });
-    await renderWithTheme(
-      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
-    );
+    await renderWithTheme(<DateField label="Start date" value="" onSelect={onSelect} testID="f" />);
     await fireEvent.press(screen.getByTestId("f"));
     // Control arm: the card is displaying June 14.
-    expect(
-      new Date(screen.getByTestId("f-picker").props.date as number).toDateString(),
-    ).toBe(new Date(2027, 5, 14).toDateString());
+    expect(new Date(screen.getByTestId("f-picker").props.date as number).toDateString()).toBe(
+      new Date(2027, 5, 14).toDateString(),
+    );
 
     jest.setSystemTime(new Date(2027, 5, 15, 0, 0, 5));
     await fireEvent.press(screen.getByTestId("f-sheet-done"));
@@ -300,9 +290,7 @@ describe("Done commits the open-time captured seed (PR #49 R1)", () => {
   // close/reopen (kill-mutation: capture once at mount → red).
   it("reopening recaptures: a later open on a new day seeds the new day", async () => {
     jest.useFakeTimers({ now: new Date(2027, 5, 14, 23, 59, 50) });
-    await renderWithTheme(
-      <DateField label="Start date" value="" onSelect={onSelect} testID="f" />,
-    );
+    await renderWithTheme(<DateField label="Start date" value="" onSelect={onSelect} testID="f" />);
     await fireEvent.press(screen.getByTestId("f"));
     await fireEvent.press(screen.getByTestId("f-sheet-close"));
 

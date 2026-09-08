@@ -739,9 +739,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     expect(byRange.items.map((e) => e.description)).toEqual(["food-split"]);
 
     // Bad query values are a documented 400 (§3.2).
-    expect((await listExpenses(trip.id, owner.accessToken, "?member=not-a-uuid")).status).toBe(
-      400,
-    );
+    expect((await listExpenses(trip.id, owner.accessToken, "?member=not-a-uuid")).status).toBe(400);
     expect((await listExpenses(trip.id, owner.accessToken, "?limit=101")).status).toBe(400);
   });
 
@@ -754,9 +752,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     const b = await seedCollabTrip();
 
     const created = ExpenseSchema.parse(
-      await (
-        await postExpense(a.trip.id, a.owner.accessToken, expenseBody(a.owner.userId))
-      ).json(),
+      await (await postExpense(a.trip.id, a.owner.accessToken, expenseBody(a.owner.userId))).json(),
     );
 
     const res = await getExpense(a.trip.id, created.id, a.owner.accessToken);
@@ -824,9 +820,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
   it("PATCH: amount + shares move together; merged FX rules re-run (currency change needs the pair; pair dies when back to base)", async () => {
     const { owner, trip } = await seedCollabTrip(); // base USD
     const created = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId))
-      ).json(),
+      await (await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId))).json(),
     );
 
     // Currency → EUR without the pair: merged row violates R-money-6.
@@ -884,9 +878,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
 
     // Viewer creates their own expense…
     const viewersExpense = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, viewer.accessToken, expenseBody(viewer.userId))
-      ).json(),
+      await (await postExpense(trip.id, viewer.accessToken, expenseBody(viewer.userId))).json(),
     );
     // …and CAN edit it (creator of any role).
     const ownEdit = await patchExpense(trip.id, viewersExpense.id, viewer.accessToken, {
@@ -917,9 +909,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
   it("PATCH: ex-member history stays editable — description-only PATCH on a departed payer's expense → 200 (R-money-5 incoming-only, interp #4)", async () => {
     const { owner, editor, trip } = await seedCollabTrip();
     const created = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, editor.accessToken, expenseBody(editor.userId))
-      ).json(),
+      await (await postExpense(trip.id, editor.accessToken, expenseBody(editor.userId))).json(),
     );
 
     // The payer leaves the trip; their expense/share rows survive (R-money-28).
@@ -998,7 +988,14 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     const { owner, editor, trip } = await seedCollabTrip();
     const created = ExpenseSchema.parse(
       await (
-        await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId, { amount_cents: 1000, shares: [{ user_id: owner.userId, share_cents: 1000 }] }))
+        await postExpense(
+          trip.id,
+          owner.accessToken,
+          expenseBody(owner.userId, {
+            amount_cents: 1000,
+            shares: [{ user_id: owner.userId, share_cents: 1000 }],
+          }),
+        )
       ).json(),
     );
 
@@ -1020,10 +1017,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     expect(resA.status).toBe(200);
     expect(resB.status).toBe(200);
 
-    const [row] = await db
-      .select()
-      .from(schema.expenses)
-      .where(eq(schema.expenses.id, created.id));
+    const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, created.id));
     const shares = await dbSharesOf(created.id);
     const sum = shares.reduce((acc, share) => acc + share.shareCents, 0);
     if (!row) throw new Error("expense vanished");
@@ -1046,7 +1040,11 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     const { owner, editor, trip } = await seedCollabTrip();
     const keep = ExpenseSchema.parse(
       await (
-        await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId, { description: "keeper" }))
+        await postExpense(
+          trip.id,
+          owner.accessToken,
+          expenseBody(owner.userId, { description: "keeper" }),
+        )
       ).json(),
     );
     const doomed = ExpenseSchema.parse(
@@ -1062,10 +1060,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     expect(res.status).toBe(204);
 
     // Row + shares SURVIVE with the audit pair set (never a hard delete).
-    const [row] = await db
-      .select()
-      .from(schema.expenses)
-      .where(eq(schema.expenses.id, doomed.id));
+    const [row] = await db.select().from(schema.expenses).where(eq(schema.expenses.id, doomed.id));
     expect(row?.deletedAt).not.toBeNull();
     expect(row?.deletedBy).toBe(editor.userId);
     expect(await dbSharesOf(doomed.id)).toHaveLength(1);
@@ -1107,23 +1102,15 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
   it("DELETE authz matrix: creator (any role) deletes own; owner deletes any; editor/viewer on another's → 403", async () => {
     const { owner, editor, viewer, trip } = await seedCollabTrip();
     const viewersExpense = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, viewer.accessToken, expenseBody(viewer.userId))
-      ).json(),
+      await (await postExpense(trip.id, viewer.accessToken, expenseBody(viewer.userId))).json(),
     );
 
-    expect((await deleteExpense(trip.id, viewersExpense.id, editor.accessToken)).status).toBe(
-      403,
-    );
+    expect((await deleteExpense(trip.id, viewersExpense.id, editor.accessToken)).status).toBe(403);
     // Viewer deletes their OWN.
-    expect((await deleteExpense(trip.id, viewersExpense.id, viewer.accessToken)).status).toBe(
-      204,
-    );
+    expect((await deleteExpense(trip.id, viewersExpense.id, viewer.accessToken)).status).toBe(204);
 
     const ownersExpense = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, editor.accessToken, expenseBody(editor.userId))
-      ).json(),
+      await (await postExpense(trip.id, editor.accessToken, expenseBody(editor.userId))).json(),
     );
     // Viewer on ANOTHER's → 403.
     expect((await deleteExpense(trip.id, ownersExpense.id, viewer.accessToken)).status).toBe(403);
@@ -1139,9 +1126,7 @@ describe.skipIf(!dockerAvailable)("T-9.2 expenses routes (integration)", () => {
     const { owner, trip } = await seedCollabTrip();
     const stranger = await seedUserWithToken();
     const created = ExpenseSchema.parse(
-      await (
-        await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId))
-      ).json(),
+      await (await postExpense(trip.id, owner.accessToken, expenseBody(owner.userId))).json(),
     );
 
     // List.

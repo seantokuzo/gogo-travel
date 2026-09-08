@@ -220,7 +220,7 @@ test("10. most-recent sentinel wins across rounds", () => {
     mk(
       "SECURITY",
       { verdict: "rethink", blocking_count: 1, advisory_count: 0, sensitive_paths_touched: false },
-      "2027-01-01T00:00:00Z"
+      "2027-01-01T00:00:00Z",
     ),
   ];
   const r = aggregate({ comments, prMeta: META });
@@ -230,7 +230,7 @@ test("10. most-recent sentinel wins across rounds", () => {
 
 test("11. self-poisoning guard: a sticky quoting a sentinel marker is not parsed", () => {
   const poison = raw(
-    "<!-- GOGO-VERDICT-STICKY -->\n<!-- VERDICT_ROUND: 1 -->\n\nExample: <!-- GOGO-REVIEW-SECURITY verdict: ship -->"
+    "<!-- GOGO-VERDICT-STICKY -->\n<!-- VERDICT_ROUND: 1 -->\n\nExample: <!-- GOGO-REVIEW-SECURITY verdict: ship -->",
   );
   const comments = [poison, ...full().filter((_, i) => i !== 1)];
   const r = aggregate({ comments, prMeta: META });
@@ -255,7 +255,7 @@ test("13. sticky byte-exactness: markers present and `|` survives in the output"
   assert.match(r.stickyBody, /<!-- VERDICT_ROUND: 1 -->/);
   assert.ok(
     r.stickyBody.includes("**Blocking**: 0 | **Advisory**: 0"),
-    "the `|` survives verbatim"
+    "the `|` survives verbatim",
   );
 });
 
@@ -283,10 +283,10 @@ test("16. line parsing: whitespace-tolerant keys/values, extra keys ignored, mis
   const sec = extractSentinel(
     [
       raw(
-        "<!-- GOGO-REVIEW-SECURITY\n   verdict :   ship  \nblocking:0\nrationale: looks fine\n-->"
+        "<!-- GOGO-REVIEW-SECURITY\n   verdict :   ship  \nblocking:0\nrationale: looks fine\n-->",
       ),
     ],
-    "SECURITY"
+    "SECURITY",
   ).sentinel;
   assert.equal(sec.verdict, "ship");
   assert.equal(sec.blocking, "0");
@@ -413,7 +413,7 @@ test("26. escalation is a RECOMMENDATION (no label) pointing at /code-review ult
   assert.equal(
     r.applyLabel,
     undefined,
-    "no label is applied — in-session, user-triggered deep review"
+    "no label is applied — in-session, user-triggered deep review",
   );
   assert.match(r.stickyBody, /Escalation criteria met \(reason: rethink-verdict\)/);
   assert.match(r.stickyBody, /\/code-review ultra/);
@@ -436,7 +436,7 @@ test("27. sentinel marker boundary: no cross-lane bleed, no prefix mis-match", (
   assert.equal(
     extractSentinel([raw("<!-- GOGO-REVIEW-SECURITYEXTRA\nverdict: ship\n-->")], "SECURITY")
       .sentinel,
-    null
+    null,
   );
 });
 
@@ -454,7 +454,7 @@ test("28. round override: explicit round wins over computed; 0/invalid falls bac
     assert.equal(
       aggregate({ comments: full(), prMeta: META, round: bad }).round,
       1,
-      "fallback for " + JSON.stringify(bad)
+      "fallback for " + JSON.stringify(bad),
     );
   }
   // Override coexists with a sticky-derived round, taking precedence.

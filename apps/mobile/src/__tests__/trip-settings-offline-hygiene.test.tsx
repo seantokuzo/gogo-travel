@@ -32,8 +32,9 @@ interface OfflineManagerMock {
   deletePack: jest.Mock;
   getPack: jest.Mock;
 }
-const om = (jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } })
-  .__mock.offlineManager;
+const om = (
+  jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
+).__mock.offlineManager;
 
 beforeEach(() => {
   resetOfflinePacksForTests();
@@ -72,8 +73,6 @@ it("deleting the trip deletes its pack + annotation (R-map-20)", async () => {
 
   // Exit lands on the list; the pack + annotation went with the trip.
   expect(await screen.findByTestId("trip-list-screen")).toBeOnTheScreen();
-  await waitFor(() =>
-    expect(om.deletePack).toHaveBeenCalledWith(packNameFor(TEST_TRIP_ID)),
-  );
+  await waitFor(() => expect(om.deletePack).toHaveBeenCalledWith(packNameFor(TEST_TRIP_ID)));
   expect(readPackAnnotation(TEST_TRIP_ID)).toBeUndefined();
 });

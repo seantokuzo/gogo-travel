@@ -614,14 +614,14 @@ describe("balances segment (R-cmoney-6/29)", () => {
     expect(await screen.findByText("You're all settled up")).toBeTruthy();
     // Control arm: the default universe renders rows, not the EmptyState
     // (asserted throughout the sibling tests).
-    expect(screen.queryByTestId(`money-transfer-list-item-${MEMBER_B_ID}-${TEST_USER.id}`)).toBeNull();
+    expect(
+      screen.queryByTestId(`money-transfer-list-item-${MEMBER_B_ID}-${TEST_USER.id}`),
+    ).toBeNull();
   });
 
   it("the caller's own chip is INERT — press navigates nowhere (control: another chip navigates) (R1-6)", async () => {
     await openBalances();
-    await fireEvent.press(
-      await screen.findByTestId(`money-balance-list-item-${TEST_USER.id}`),
-    );
+    await fireEvent.press(await screen.findByTestId(`money-balance-list-item-${TEST_USER.id}`));
     expect(mockPush).not.toHaveBeenCalled();
     // Ungated control arm from the SAME render: a member chip navigates.
     await fireEvent.press(screen.getByTestId(`money-balance-list-item-${MEMBER_B_ID}`));

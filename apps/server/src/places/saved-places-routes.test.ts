@@ -226,9 +226,11 @@ describe("POST 23503 catch arm — live through the router (r1 A3)", () => {
           insert: () => Promise.reject(thrown),
         }),
       );
-      responses.push(await jsonRequest(app, "POST", `/api/trips/${TRIP_ID}/saved-places`, {
-        place_id: PLACE_ID,
-      }));
+      responses.push(
+        await jsonRequest(app, "POST", `/api/trips/${TRIP_ID}/saved-places`, {
+          place_id: PLACE_ID,
+        }),
+      );
     }
     // Canonical NOT_FOUND envelope, byte-identical across both shapes — the
     // race residue is indistinguishable from a place that never existed.
@@ -258,9 +260,14 @@ describe("PATCH-note race arm — live through the router (r1 A1)", () => {
     // The canonical savedPlaceId-door 404 from the same harness (malformed
     // id short-circuits before any db write) — the race arm must be
     // byte-identical to it, never a 500, never a distinguishable body.
-    const idDoor = await jsonRequest(app, "PATCH", `/api/trips/${TRIP_ID}/saved-places/not-a-uuid`, {
-      note: "still here?",
-    });
+    const idDoor = await jsonRequest(
+      app,
+      "PATCH",
+      `/api/trips/${TRIP_ID}/saved-places/not-a-uuid`,
+      {
+        note: "still here?",
+      },
+    );
     await expectIndistinguishable404s([raced, idDoor]);
   });
 });

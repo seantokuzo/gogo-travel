@@ -9,11 +9,11 @@
 
 [ADR-001](./ADR-001-naming-convention.md) locked the stable-ID convention and the 6-home plan-doc layout. It also declared that execution order is **derived** from three fields: `status + priority + depends_on`. But ADR-001's listing of status values — `open / in-progress / blocked / done / cancelled` — turned out not to match what the other surfaces actually use:
 
-| Surface | Status values shipped |
-|---------|----------------------|
+| Surface                                                                      | Status values shipped                             |
+| ---------------------------------------------------------------------------- | ------------------------------------------------- |
 | `docs/decisions/ADR-001-naming-convention.md` § "Execution order is derived" | `open / in-progress / blocked / done / cancelled` |
-| `docs/PLANNING.md` § "Phase Roadmap" legend | `backlog · active · done · deferred` |
-| `.agents/skills/roadmap-management/SKILL.md` (status comment + examples) | `in-progress / queued / done` |
+| `docs/PLANNING.md` § "Phase Roadmap" legend                                  | `backlog · active · done · deferred`              |
+| `.agents/skills/roadmap-management/SKILL.md` (status comment + examples)     | `in-progress / queued / done`                     |
 
 Three surfaces, three different sets. Any tooling that greps for `status: done` works everywhere — every set has `done` — but tooling that greps for `status: queued`, `status: deferred`, or `status: blocked` returns inconsistent results depending on which doc the project followed. A consumer cloning the template doesn't know which list is canonical.
 
@@ -31,14 +31,14 @@ queued | in-progress | blocked | done | deferred | cancelled
 
 Semantics:
 
-| Status | Means | Typical transition out |
-|--------|-------|------------------------|
-| `queued` | Not started. Dependencies may or may not be met (tracked separately in `depends_on`). | `in-progress` (start work) or `cancelled` (won't ship) |
-| `in-progress` | Active work in flight. A branch / PR exists or is imminent. | `done` (merged) or `blocked` (external blocker hit) |
-| `blocked` | External blocker — not just an unmet `depends_on`. Examples: waiting on customer decision, third-party API change, infra access. | `in-progress` (blocker cleared) or `cancelled` |
-| `done` | Merged and verified. Terminal. | none |
-| `deferred` | Valid work, intentionally pushed to a later phase. Keeps its stable ID; not auto-requeued. | `queued` (re-pulled in a later phase) |
-| `cancelled` | Abandoned; will not ship. Terminal. Stable ID stays burned (never reused). | none |
+| Status        | Means                                                                                                                            | Typical transition out                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `queued`      | Not started. Dependencies may or may not be met (tracked separately in `depends_on`).                                            | `in-progress` (start work) or `cancelled` (won't ship) |
+| `in-progress` | Active work in flight. A branch / PR exists or is imminent.                                                                      | `done` (merged) or `blocked` (external blocker hit)    |
+| `blocked`     | External blocker — not just an unmet `depends_on`. Examples: waiting on customer decision, third-party API change, infra access. | `in-progress` (blocker cleared) or `cancelled`         |
+| `done`        | Merged and verified. Terminal.                                                                                                   | none                                                   |
+| `deferred`    | Valid work, intentionally pushed to a later phase. Keeps its stable ID; not auto-requeued.                                       | `queued` (re-pulled in a later phase)                  |
+| `cancelled`   | Abandoned; will not ship. Terminal. Stable ID stays burned (never reused).                                                       | none                                                   |
 
 `backlog` (from the prior PLANNING.md set) and `open` (from the prior ADR-001 set) both collapse into `queued`. Distinguishing them produced no value — both meant "not started" and the actual dependency information lives in `depends_on`.
 
@@ -46,17 +46,17 @@ Semantics:
 
 ### Migration mapping
 
-| Prior value | New canonical value |
-|-------------|---------------------|
-| `open` (ADR-001) | `queued` |
-| `backlog` (PLANNING.md) | `queued` |
-| `queued` (roadmap-management) | `queued` |
-| `in-progress` (ADR-001, roadmap-management) | `in-progress` |
-| `active` (PLANNING.md) | `in-progress` |
-| `blocked` (ADR-001) | `blocked` |
-| `done` (all surfaces) | `done` |
-| `deferred` (PLANNING.md) | `deferred` |
-| `cancelled` (ADR-001) | `cancelled` |
+| Prior value                                 | New canonical value |
+| ------------------------------------------- | ------------------- |
+| `open` (ADR-001)                            | `queued`            |
+| `backlog` (PLANNING.md)                     | `queued`            |
+| `queued` (roadmap-management)               | `queued`            |
+| `in-progress` (ADR-001, roadmap-management) | `in-progress`       |
+| `active` (PLANNING.md)                      | `in-progress`       |
+| `blocked` (ADR-001)                         | `blocked`           |
+| `done` (all surfaces)                       | `done`              |
+| `deferred` (PLANNING.md)                    | `deferred`          |
+| `cancelled` (ADR-001)                       | `cancelled`         |
 
 ### Surfaces updated in the T-4.4 PR that lands this ADR
 

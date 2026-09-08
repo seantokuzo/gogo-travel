@@ -51,10 +51,9 @@ jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 // REAL bite (iOS actually opening venmo:// — LSApplicationQueriesSchemes,
 // pinned in link-config-audit) is device test D1 at P-14.
 jest.mock("expo-linking", () => {
-  const shapes =
-    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
-      "../testing/mock-shape-parity",
-    );
+  const shapes = jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+    "../testing/mock-shape-parity",
+  );
   const stub = {
     canOpenURL: jest.fn(async () => shapes.linkingDefaultResolutions.canOpenURL),
     openURL: jest.fn(async () => shapes.linkingDefaultResolutions.openURL),
@@ -63,10 +62,9 @@ jest.mock("expo-linking", () => {
   return stub;
 });
 jest.mock("expo-clipboard", () => {
-  const shapes =
-    jest.requireActual<typeof import("../testing/mock-shape-parity")>(
-      "../testing/mock-shape-parity",
-    );
+  const shapes = jest.requireActual<typeof import("../testing/mock-shape-parity")>(
+    "../testing/mock-shape-parity",
+  );
   const stub = {
     setStringAsync: jest.fn(async () => shapes.clipboardDefaultResolutions.setStringAsync),
   };
@@ -101,7 +99,12 @@ function debtorBalances(): BalancesRead {
       { user_id: MEMBER_B_ID, net_cents: 2550 },
     ],
     pairwise: [
-      { trip_id: TEST_TRIP_ID, user_id: TEST_USER.id, counterparty_id: MEMBER_B_ID, net_cents: -2550 },
+      {
+        trip_id: TEST_TRIP_ID,
+        user_id: TEST_USER.id,
+        counterparty_id: MEMBER_B_ID,
+        net_cents: -2550,
+      },
     ],
     simplified: [{ from_user_id: TEST_USER.id, to_user_id: MEMBER_B_ID, amount_cents: 2550 }],
   });
@@ -123,8 +126,7 @@ async function renderSettle(opts?: {
       makeMember({ user: { ...makeHandlesProfile(opts?.counterparty) }, role: "editor" }),
     ],
     overrides: {
-      "GET /trips/:tripId/balances": () =>
-        Promise.resolve(opts?.balances ?? debtorBalances()),
+      "GET /trips/:tripId/balances": () => Promise.resolve(opts?.balances ?? debtorBalances()),
       ...settleApiOverrides(),
       ...opts?.overrides,
     },
@@ -412,9 +414,7 @@ describe("send the bill (R-cmoney-25, §2.7 steps 2–3; the W2 link ruling)", (
     const posts = request.mock.calls
       .filter(([d]) => (d as { path: string }).path === "/trips/:tripId/settle-requests")
       .map(([, input]) => (input as { body: Record<string, unknown> }).body);
-    expect(posts).toEqual([
-      { from_user_id: MEMBER_B_ID, amount_cents: 2550, note: "hostel" },
-    ]);
+    expect(posts).toEqual([{ from_user_id: MEMBER_B_ID, amount_cents: 2550, note: "hostel" }]);
 
     // The share message: amount + trip name + the CLIENT-COMPOSED gogo://
     // primary (SHARED template — the drift pin: a template mutation reds
@@ -451,9 +451,7 @@ describe("send the bill (R-cmoney-25, §2.7 steps 2–3; the W2 link ruling)", (
     await fireEvent.press(screen.getByTestId("settle-sheet-request-send"));
     await settle();
     expect(await screen.findByTestId("settle-sheet-request-error")).toBeTruthy();
-    expect(
-      screen.getByText("Nothing to request — Blair doesn't owe you right now."),
-    ).toBeTruthy();
+    expect(screen.getByText("Nothing to request — Blair doesn't owe you right now.")).toBeTruthy();
     // Compose state survives — the user can retry without redrafting.
     expect(screen.getByTestId("settle-sheet-request-send")).toBeTruthy();
   });

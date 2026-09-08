@@ -18,8 +18,8 @@ Load and run `.agents/skills/pr-review-pipeline/SKILL.md` end-to-end:
 
 ## Which review surface?
 
-| Use | When |
-|-----|------|
-| **`/review`** (this) | **Default** gate for any real functional PR — 5 lanes + judge + autonomous merge. |
-| `/code-review` (built-in) | Quick single-pass gut-check of the working diff pre-PR, or a trivial change. Max-billed. |
-| `/code-review ultra` | Deep multi-agent **cloud** review. When the aggregator escalates, the PR is big/security-sensitive, or Sean asks. User-triggered. |
+| Use                       | When                                                                                                                              |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **`/review`** (this)      | **Default** gate for any real functional PR — 5 lanes + judge + autonomous merge.                                                 |
+| `/code-review` (built-in) | Quick single-pass gut-check of the working diff pre-PR, or a trivial change. Max-billed.                                          |
+| `/code-review ultra`      | Deep multi-agent **cloud** review. When the aggregator escalates, the PR is big/security-sensitive, or Sean asks. User-triggered. |

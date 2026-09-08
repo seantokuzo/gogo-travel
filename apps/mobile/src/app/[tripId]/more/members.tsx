@@ -128,9 +128,7 @@ export default function MembersScreen() {
         try {
           // R-tripui-16: OS share sheet with the returned url. iOS shares
           // the url payload; Android's Share only carries `message`.
-          await Share.share(
-            Platform.OS === "ios" ? { url: invite.url } : { message: invite.url },
-          );
+          await Share.share(Platform.OS === "ios" ? { url: invite.url } : { message: invite.url });
         } catch {
           setBanner("Couldn't open the share sheet — the invite link was still created.");
         }

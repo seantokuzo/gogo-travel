@@ -91,9 +91,7 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     );
 
     // Leg 3 — env roster (names only).
-    expect(screen.getByTestId("diagnostics-evidence-env")).toHaveTextContent(
-      /EXPO_PUBLIC_API_URL/,
-    );
+    expect(screen.getByTestId("diagnostics-evidence-env")).toHaveTextContent(/EXPO_PUBLIC_API_URL/);
 
     // Leg 4 — google: REAL isGoogleConfigured() is false under jest (no
     // client id env), so the real render gate takes the unconfigured arm —

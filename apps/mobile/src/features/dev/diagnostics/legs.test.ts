@@ -140,7 +140,11 @@ describe("leg 2 — /health round-trip", () => {
   it("passes on 200 {ok:true} with status + latency + body in evidence", async () => {
     const result = await runHealthLeg({
       baseUrl: () => "http://192.168.1.69:3000/api",
-      fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, version: "0.0.1" }) }),
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, version: "0.0.1" }),
+      }),
       now,
     });
     expect(result.status).toBe("pass");
@@ -363,7 +367,11 @@ describe("leg 4 — Google auth-request shape (B-4)", () => {
 });
 
 describe("leg 5 — secure-store round-trip", () => {
-  function makeMemoryStore(): { store: SecureStoreLike; map: Map<string, string>; keysTouched: Set<string> } {
+  function makeMemoryStore(): {
+    store: SecureStoreLike;
+    map: Map<string, string>;
+    keysTouched: Set<string>;
+  } {
     const map = new Map<string, string>();
     const keysTouched = new Set<string>();
     return {
@@ -472,7 +480,10 @@ describe("leg 6 — last dev error (B-6 read-back)", () => {
         installed: true,
         installedAt: 1700000000000,
         count: 3,
-        last: { at: 1700000005000, text: "[api] transport failure: GET http://localhost:3000/api/health TypeError: Network request failed" },
+        last: {
+          at: 1700000005000,
+          text: "[api] transport failure: GET http://localhost:3000/api/health TypeError: Network request failed",
+        },
       }),
     });
     expect(result.status).toBe("pass");

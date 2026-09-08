@@ -152,10 +152,7 @@ it("an editor's rename sends ONLY {name, expect_updated_at} — owner-only keys 
   await drainNotify();
 
   await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
-  expect(Object.keys(patchBodies(request)[0] ?? {}).sort()).toEqual([
-    "expect_updated_at",
-    "name",
-  ]);
+  expect(Object.keys(patchBodies(request)[0] ?? {}).sort()).toEqual(["expect_updated_at", "name"]);
   // Wait out the success settle inside act (reconcile writes the new row).
   await waitFor(() =>
     expect(client.getQueryData<Trip>(queryKeys.trip(TEST_TRIP_ID))?.name).toBe("Kyoto II"),
@@ -271,9 +268,7 @@ it("dismissing the conflict notice consumes the latch too — no silent re-seed 
   // visible; dismissal consumes both).
   await fireEvent.press(screen.getByTestId("trip-settings-banner-conflict-dismiss"));
   await view.rerender(
-    <TripProvider
-      trip={{ ...trip, name: "Remote Rename", updated_at: "2026-07-22T09:00:00.000Z" }}
-    >
+    <TripProvider trip={{ ...trip, name: "Remote Rename", updated_at: "2026-07-22T09:00:00.000Z" }}>
       <TripSettingsScreen />
     </TripProvider>,
   );
@@ -346,7 +341,9 @@ it("destination edit rides the CT-2 structured search: pick required, all three 
   expect(await screen.findByText(/Pick a destination from the search results/)).toBeOnTheScreen();
 
   // Pick from the typeahead, then save: name/lat/lng travel TOGETHER.
-  await fireEvent.press(await screen.findByTestId(`trip-settings-list-item-destination-${osaka.id}`));
+  await fireEvent.press(
+    await screen.findByTestId(`trip-settings-list-item-destination-${osaka.id}`),
+  );
   await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
   await drainNotify();
 
@@ -428,7 +425,9 @@ it("void-pick-on-edit: editing the text after a pick voids it — save blocks wi
   await renderSettings(trip, client);
 
   await fireEvent.changeText(screen.getByTestId("trip-settings-input-destination"), "Osaka");
-  await fireEvent.press(await screen.findByTestId(`trip-settings-list-item-destination-${osaka.id}`));
+  await fireEvent.press(
+    await screen.findByTestId(`trip-settings-list-item-destination-${osaka.id}`),
+  );
   // Editing after the pick VOIDS it (lat/lng must match the visible text) —
   // deleting setSelectedPlace(null) from onChangeText turns this red.
   await fireEvent.changeText(screen.getByTestId("trip-settings-input-destination"), "Osaka?");

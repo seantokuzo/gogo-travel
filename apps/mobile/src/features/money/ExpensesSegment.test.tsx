@@ -17,7 +17,12 @@ import { fireEvent, screen } from "@testing-library/react-native";
 
 import { ApiRequestError } from "@/auth";
 import { MEMBER_B_ID, MEMBER_C_ID, TEST_TRIP_ID } from "@/test-utils/ids";
-import { EXPENSE_B_ID, makeExpense, makeExpensesPage, TEST_EXPENSE_ID } from "@/test-utils/money-fixtures";
+import {
+  EXPENSE_B_ID,
+  makeExpense,
+  makeExpensesPage,
+  TEST_EXPENSE_ID,
+} from "@/test-utils/money-fixtures";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { settle } from "@/test-utils/settle";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
@@ -53,8 +58,7 @@ async function renderSegment(opts?: {
       opts?.expenses !== undefined
         ? { "GET /trips/:tripId/expenses": opts.expenses }
         : {
-            "GET /trips/:tripId/expenses": () =>
-              Promise.resolve(makeExpensesPage([makeExpense()])),
+            "GET /trips/:tripId/expenses": () => Promise.resolve(makeExpensesPage([makeExpense()])),
           },
   });
   const view = await renderWithProviders(<ExpensesSegment trip={trip} />, {

@@ -59,11 +59,7 @@ import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
-import {
-  inviteEndpoints,
-  type InviteAccept,
-  type InviteState,
-} from "@gogo/shared/domains/member";
+import { inviteEndpoints, type InviteAccept, type InviteState } from "@gogo/shared/domains/member";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import type { InviteListItem } from "@gogo/shared/domains/member";
 import {
@@ -88,11 +84,7 @@ import {
 } from "../http/keyset-cursor.js";
 import { clientIp, rateLimit } from "../http/rate-limit.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { generateInviteToken, INVITE_TOKEN_RE, inviteState } from "./invite-token.js";
 import { emitTripEvent } from "./push-invalidation.js";
@@ -392,10 +384,7 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         .select({ userId: schema.tripMembers.userId })
         .from(schema.tripMembers)
         .where(
-          and(
-            eq(schema.tripMembers.tripId, probe.tripId),
-            eq(schema.tripMembers.role, "owner"),
-          ),
+          and(eq(schema.tripMembers.tripId, probe.tripId), eq(schema.tripMembers.role, "owner")),
         )
         .for("share");
 
@@ -418,10 +407,7 @@ export function createInvitesRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         .select()
         .from(schema.tripMembers)
         .where(
-          and(
-            eq(schema.tripMembers.tripId, invite.tripId),
-            eq(schema.tripMembers.userId, userId),
-          ),
+          and(eq(schema.tripMembers.tripId, invite.tripId), eq(schema.tripMembers.userId, userId)),
         );
       if (existing) return { membership: existing, alreadyMember: true };
 

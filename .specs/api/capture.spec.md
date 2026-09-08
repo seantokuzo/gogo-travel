@@ -81,7 +81,7 @@ Failures visible, never silent (R-db-7).
 - **R-cap-4 (durable ingest):** WHEN an inbound capture (email or share) is
   accepted THE SYSTEM SHALL persist the raw payload to object storage
   (`raw_ref`) and insert the `capture_inbox` row with `parse_status
-  'pending'` before acknowledging success; acknowledgement implies the
+'pending'` before acknowledging success; acknowledgement implies the
   capture cannot be lost by a subsequent crash of the parse worker.
 - **R-cap-5 (idempotent delivery):** WHEN the same email is delivered more
   than once (webhook retry, duplicate forward of the identical message) THE
@@ -96,7 +96,7 @@ Failures visible, never silent (R-db-7).
 - **R-cap-7 (share upload):** WHEN an authenticated user submits a supported
   payload — PDF, image (JPEG/PNG/HEIC/WebP), plain text, or URL — THE SYSTEM
   SHALL store the raw payload, insert a `capture_inbox` row (`source
-  'share'`, attributed via session), enqueue parsing, and respond 202 with
+'share'`, attributed via session), enqueue parsing, and respond 202 with
   the created `CaptureItem`.
 - **R-cap-8 (share limits):** WHEN a share upload exceeds 10 MB THE SYSTEM
   SHALL respond 413 `PAYLOAD_TOO_LARGE`; WHEN the content type is unsupported
@@ -137,7 +137,7 @@ Failures visible, never silent (R-db-7).
   range — and SHALL set `ProposedBooking.trip_guess` iff exactly one
   candidate exists (0 or 2+ candidates → no guess; user assigns at review).
 - **R-cap-13 (auto-file — decided):** WHEN a capture reaches `parse_status
-  'parsed'` (JSON-LD or high-confidence LLM, R-cap-11) AND `trip_guess` is
+'parsed'` (JSON-LD or high-confidence LLM, R-cap-11) AND `trip_guess` is
   set THE SYSTEM SHALL create the booking automatically in the same
   transaction — via the same internal booking-creation path as the bookings
   API (so itinerary-item side effects live in one place) — with `source` =
@@ -163,7 +163,7 @@ Failures visible, never silent (R-db-7).
 - **R-cap-15 (parse-reply email — the TripIt trust mechanism):** WHEN an
   email capture reaches a terminal parse state THE SYSTEM SHALL send a reply
   email to the sender within 60 seconds (p95) of webhook receipt stating the
-  outcome — filed ("Added to *Tokyo* — Park Hyatt, May 3–7" + deep link to
+  outcome — filed ("Added to _Tokyo_ — Park Hyatt, May 3–7" + deep link to
   the booking), needs review ("We couldn't read everything — review it in
   GoGo" + deep link to the queue), or failed (reason + queue link). Links go
   through the deep-link registry (navigation spec §2.3; universal-link
@@ -274,6 +274,7 @@ R-cap-5).
 **Errors** (CloudMailin converts non-2xx into a bounce to the sender — the
 visible-failure channel; exact status semantics verified against CloudMailin
 docs at build):
+
 - 401 — webhook credential/signature invalid (no bounce concern; attacker)
 - 404 — recipient slug unknown (R-cap-2)
 - 403 — sender not registered for the slug's user (R-cap-3)
@@ -282,6 +283,7 @@ docs at build):
 **Requirements covered**: R-cap-1..6, R-cap-4
 
 **Tests required**:
+
 - [ ] Happy path: valid slug + registered sender → 200, pending row, raw object stored
 - [ ] Unverified request → 401, no row, no object
 - [ ] Unknown slug → 404, no row; mismatched sender → 403, no row
@@ -309,6 +311,7 @@ R-cap-3).
 **Requirements covered**: R-cap-2 (slug provisioning side)
 
 **Tests required**:
+
 - [ ] First call creates slug; second call returns identical address
 - [ ] Slug uniqueness collision retried transparently
 
@@ -319,6 +322,7 @@ R-cap-3).
 Share-sheet ingestion. **Auth**: Required.
 
 **Request**: `multipart/form-data` with exactly one of:
+
 - `file` — `application/pdf`, `image/jpeg`, `image/png`, `image/heic`,
   `image/webp` (≤ 10 MB)
 - `text` — plain text (≤ 100 KB)
@@ -332,6 +336,7 @@ type / zero or multiple parts; 413 `PAYLOAD_TOO_LARGE`; 429 `RATE_LIMITED`.
 **Requirements covered**: R-cap-7, R-cap-8, R-cap-4
 
 **Tests required**:
+
 - [ ] Happy path per payload kind (PDF, image, text, URL) → 202 + pending row
 - [ ] Oversize file → 413; unsupported type → 400; both create no row
 - [ ] Rate limit → 429
@@ -353,6 +358,7 @@ The review-queue list. **Auth**: Required.
 **Requirements covered**: R-cap-17, R-cap-18
 
 **Tests required**:
+
 - [ ] `open` excludes landed rows; `landed` returns only rows with a `booking_id`
 - [ ] Only caller's rows ever returned (authz: second user sees nothing)
 - [ ] Pagination cursor round-trip
@@ -371,6 +377,7 @@ short-lived signed URL (R-cap-23).
 **Requirements covered**: R-cap-17, R-cap-23
 
 **Tests required**:
+
 - [ ] Owner gets detail + working signed URL; URL expires ≤ 5 min
 - [ ] Other user → 404 (not 403)
 
@@ -383,6 +390,7 @@ user's edits; there is deliberately no separate persisted "draft edit" state).
 **Auth**: Required (owner).
 
 **Request**:
+
 ```
 {
   trip_id: Uuid,
@@ -392,6 +400,7 @@ user's edits; there is deliberately no separate persisted "draft edit" state).
   }
 }
 ```
+
 Merge order: `parsed` proposal ← overrides; merged result validated as a
 booking create (shared schemas; `details` union must match final `category`).
 
@@ -405,6 +414,7 @@ landed.
 **Requirements covered**: R-cap-19, R-cap-20, R-cap-17
 
 **Tests required**:
+
 - [ ] Happy path: proposal + trip → booking created, `capture_id` linked, one transaction
 - [ ] Overrides applied; category/details mismatch rejected 400
 - [ ] Second confirm → 409
@@ -429,6 +439,7 @@ booking was since edited/deleted.
 **Requirements covered**: R-cap-28, R-cap-17
 
 **Tests required**:
+
 - [ ] Undo deletes booking + derived items and reverts capture to `needs_review` in one transaction
 - [ ] Undo on a manually confirmed capture → 409; on an edited auto-filed booking → 409
 - [ ] Other user → 404
@@ -449,6 +460,7 @@ R-cap-3 matching. **Auth**: Required (owner-scoped).
 **Requirements covered**: R-cap-27, R-cap-3
 
 **Tests required**:
+
 - [ ] Add → unverified row + verification email sent; From-match still bounces until verified
 - [ ] Verify with correct code → registered; R-cap-3 accepts that sender
 - [ ] Delete → sender no longer matches; per-user cap enforced
@@ -469,6 +481,7 @@ Required (owner).
 **Requirements covered**: R-cap-22, R-cap-16
 
 **Tests required**:
+
 - [ ] Failed capture reparsed from retained raw; terminal state re-reached
 - [ ] Landed/pending capture → 409
 - [ ] Rate limit → 429; LLM usage recorded on reparse
@@ -487,6 +500,7 @@ Reject/dismiss — hard-deletes row + raw object (R-cap-21). **Auth**: Required
 **Requirements covered**: R-cap-21, R-cap-17
 
 **Tests required**:
+
 - [ ] Row and raw object both gone after delete
 - [ ] Rejecting a landed capture leaves the booking with `capture_id = NULL`
 - [ ] Other user → 404
@@ -529,15 +543,15 @@ Reject/dismiss — hard-deletes row + raw object (R-cap-21). **Auth**: Required
 
 ### 3.3 schema.org type → `booking_category` mapping
 
-| JSON-LD `@type` | `booking_category` |
-|---|---|
-| `FlightReservation` | `flight` |
-| `LodgingReservation` | `lodging` |
-| `TrainReservation` | `train` |
-| `RentalCarReservation` | `car_rental` |
-| `EventReservation` | `activity` |
-| `FoodEstablishmentReservation` | `restaurant` |
-| any other `Reservation` subtype | `other` |
+| JSON-LD `@type`                 | `booking_category` |
+| ------------------------------- | ------------------ |
+| `FlightReservation`             | `flight`           |
+| `LodgingReservation`            | `lodging`          |
+| `TrainReservation`              | `train`            |
+| `RentalCarReservation`          | `car_rental`       |
+| `EventReservation`              | `activity`         |
+| `FoodEstablishmentReservation`  | `restaurant`       |
+| any other `Reservation` subtype | `other`            |
 
 Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
 
@@ -551,7 +565,7 @@ Unmapped/malformed JSON-LD is treated as a miss → stage 2 (never a hard fail).
   `POST /trips/:tripId/bookings` (bookings spec owns it) so
   itinerary-item creation and `starts_at`/`ends_at` denormalization stay a
   single code path.
-- The capture row stays `parsed` and becomes queue *history* (landed) via the
+- The capture row stays `parsed` and becomes queue _history_ (landed) via the
   reverse FK — auto-file is never invisible: push notification with one-tap
   undo (R-cap-13/28; notifications spec owns transport), parse-reply email
   (email source), and the landed row in the queue. Undo is the one-tap
@@ -678,6 +692,7 @@ tests (private/link-local/metadata targets rejected; redirect re-check).
 - [ ] Failure writes (`failed`/`needs_review` + `error`) for every stage
 
 **Tests required**:
+
 - [ ] JSON-LD fixtures per reservation type → correct category/details, `parser 'jsonld'`
 - [ ] Booking/Agoda-style no-JSON-LD fixture → LLM path invoked
 - [ ] LLM high/medium/low confidence → parsed vs needs_review (threshold pinned)
@@ -700,15 +715,16 @@ tests (private/link-local/metadata targets rejected; redirect re-check).
       (transport provider escalated at build)
 
 **Tests required**: all listed under the queue endpoints in §3.1, plus:
+
 - [ ] Parse-reply fires once per email capture, correct template per outcome,
       within budget in the test harness (timer faked)
 - [ ] No reply email for share captures
 
 ---
 
-*Trace: every R-cap-N cites its endpoint/stage inline. All markers resolved
+_Trace: every R-cap-N cites its endpoint/stage inline. All markers resolved
 at Gate 2 (2026-07-09): canonical repeats — `ai_feature` (capture outside
 the AI cap; 20/day structural ceiling), raw retention (delete on confirm or
 30 days); owned here — registered senders (verified `capture_senders` table
 approved → R-cap-27), auto-file (high-confidence auto-file + push with
-one-tap undo → R-cap-13/28). Zero markers remain.*
+one-tap undo → R-cap-13/28). Zero markers remain._

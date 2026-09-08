@@ -25,14 +25,14 @@ everywhere, including Splitwise.
 
 ## Exact link formats (implement these)
 
-| Rail | Format | Confidence |
-|------|--------|------------|
-| Venmo (mobile) | `venmo://paycharge?txn=pay&recipients=<user>&amount=25.50&note=<urlenc>` — `txn=charge` to request | HIGH (pay) / MED-HIGH (charge — device-test pre-ship) |
-| Venmo (web fallback) | `https://account.venmo.com/pay?txn=pay&recipients=<user>&amount=25.50&note=<enc>`; profile `https://account.venmo.com/u/<user>` | HIGH (probed) |
-| Cash App | `https://cash.app/$<cashtag>/25.50` — dot-decimal 2dp; **no note support**; nonexistent cashtag → 404 (**free handle validation via HEAD**) | HIGH (probed) |
-| PayPal.me | `https://paypal.me/<user>/25.50USD` — **always pin USD** or recipient's default currency applies | HIGH (probed) |
-| Zelle | No link, no API, no scheme (standalone app died 2025-04). Copyable email/phone handle + amount shown adjacent. Optional QR `https://enroll.zellepay.com/qr-codes?data=<b64 JSON {token,name}>` — works today but unofficial, no amount field | HIGH today / LOW stability (QR) |
-| Apple Cash | **Dead end** — no third-party write path (FinanceKit read-only, Tap to Cash no API, `shoebox://` = App Review rejection). Ceiling: instruction card + optional `sms:` handoff. Skip v1 | HIGH |
+| Rail                 | Format                                                                                                                                                                                                                                       | Confidence                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Venmo (mobile)       | `venmo://paycharge?txn=pay&recipients=<user>&amount=25.50&note=<urlenc>` — `txn=charge` to request                                                                                                                                           | HIGH (pay) / MED-HIGH (charge — device-test pre-ship) |
+| Venmo (web fallback) | `https://account.venmo.com/pay?txn=pay&recipients=<user>&amount=25.50&note=<enc>`; profile `https://account.venmo.com/u/<user>`                                                                                                              | HIGH (probed)                                         |
+| Cash App             | `https://cash.app/$<cashtag>/25.50` — dot-decimal 2dp; **no note support**; nonexistent cashtag → 404 (**free handle validation via HEAD**)                                                                                                  | HIGH (probed)                                         |
+| PayPal.me            | `https://paypal.me/<user>/25.50USD` — **always pin USD** or recipient's default currency applies                                                                                                                                             | HIGH (probed)                                         |
+| Zelle                | No link, no API, no scheme (standalone app died 2025-04). Copyable email/phone handle + amount shown adjacent. Optional QR `https://enroll.zellepay.com/qr-codes?data=<b64 JSON {token,name}>` — works today but unofficial, no amount field | HIGH today / LOW stability (QR)                       |
+| Apple Cash           | **Dead end** — no third-party write path (FinanceKit read-only, Tap to Cash no API, `shoebox://` = App Review rejection). Ceiling: instruction card + optional `sms:` handoff. Skip v1                                                       | HIGH                                                  |
 
 - `venmo://users/<username>` is DEAD (numeric-ID only) — skip.
 - Venmo `recipients=` takes usernames only (strip `@`).

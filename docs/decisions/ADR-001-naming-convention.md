@@ -32,12 +32,12 @@ We will adopt a Jira-lite stable-ID convention with a strictly bounded set of pl
 
 ### Item types and ID prefixes
 
-| Prefix | Type | Notes |
-|--------|------|-------|
-| `P-N` | Phase | Ship-able capability. Has a history file on completion. |
-| `T-N` | Task | Atomic implementation. Belongs to a phase. Bundles with sibling tasks into a reviewable-unit PR (see PR sizing). |
-| `B-N` | Bug | Gets its own PR regardless of size. Tracked separately so they don't get buried in phase backlogs. |
-| `S-N` | Spike | Research / investigation. **No ship-able code, no PR.** Output is an ADR or a STATE update. |
+| Prefix | Type  | Notes                                                                                                            |
+| ------ | ----- | ---------------------------------------------------------------------------------------------------------------- |
+| `P-N`  | Phase | Ship-able capability. Has a history file on completion.                                                          |
+| `T-N`  | Task  | Atomic implementation. Belongs to a phase. Bundles with sibling tasks into a reviewable-unit PR (see PR sizing). |
+| `B-N`  | Bug   | Gets its own PR regardless of size. Tracked separately so they don't get buried in phase backlogs.               |
+| `S-N`  | Spike | Research / investigation. **No ship-able code, no PR.** Output is an ADR or a STATE update.                      |
 
 Tasks within a phase use a dotted form for clarity in cross-references: `T-001.3` reads as "task 3 of phase 1". The dotted form is display sugar — the canonical task ID is still `T-N` and is unique across the whole project. Use whichever form is clearer in context; they refer to the same item.
 
@@ -77,14 +77,14 @@ Above the upper bound, split. Below the lower bound, consider whether it should 
 
 There are exactly six places where planning content lives. Anything outside this list is a smell:
 
-| Path | Purpose | Mutability |
-|------|---------|------------|
-| `docs/PLANNING.md` | Current roadmap: phase list with stable IDs, links, summary status | Mutable, lean |
-| `docs/QUEUE.md` | Active task queue: open / in-progress tasks with priority + depends_on | Mutable, churn-heavy |
-| `docs/STATE.md` | In-flux decisions, current focus, open questions; loose advisory cap ~800–1000 lines | Mutable, archive when heavy |
-| `docs/decisions/ADR-NNN-<slug>.md` | Locked decisions | **Append-only / immutable** |
-| `docs/history/P-NNN-<slug>.md` | Completed phase archives | **Append-only / immutable** |
-| `docs/SESSION-GUIDE.md` | How to run a working session in this repo | Mutable, low churn |
+| Path                               | Purpose                                                                              | Mutability                  |
+| ---------------------------------- | ------------------------------------------------------------------------------------ | --------------------------- |
+| `docs/PLANNING.md`                 | Current roadmap: phase list with stable IDs, links, summary status                   | Mutable, lean               |
+| `docs/QUEUE.md`                    | Active task queue: open / in-progress tasks with priority + depends_on               | Mutable, churn-heavy        |
+| `docs/STATE.md`                    | In-flux decisions, current focus, open questions; loose advisory cap ~800–1000 lines | Mutable, archive when heavy |
+| `docs/decisions/ADR-NNN-<slug>.md` | Locked decisions                                                                     | **Append-only / immutable** |
+| `docs/history/P-NNN-<slug>.md`     | Completed phase archives                                                             | **Append-only / immutable** |
+| `docs/SESSION-GUIDE.md`            | How to run a working session in this repo                                            | Mutable, low churn          |
 
 No other planning files. No `ROADMAP.md`, no `TODO.md`, no `NOTES.md`, no `IDEAS.md`. If a thought needs a home and none of these six fit, it doesn't have a home yet — drop it in STATE.md until it earns one.
 

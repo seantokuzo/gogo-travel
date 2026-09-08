@@ -42,12 +42,18 @@ export const IanaTimeZoneSchema = z.string().min(1).max(64);
 
 export const AirportSchema = z.object({
   iata: IataAirportCodeSchema,
-  icao: z.string().regex(/^[A-Z0-9]{4}$/).nullable(),
+  icao: z
+    .string()
+    .regex(/^[A-Z0-9]{4}$/)
+    .nullable(),
   name: z.string().max(200),
   /** Municipality served — the typeahead's second search axis. */
   city: z.string().max(200).nullable(),
   /** ISO 3166-1 alpha-2, display disambiguation only. */
-  country: z.string().regex(/^[A-Z]{2}$/).nullable(),
+  country: z
+    .string()
+    .regex(/^[A-Z]{2}$/)
+    .nullable(),
   lat: LatSchema,
   lng: LngSchema,
   /** The point of the table (B-8): the zone that turns wall times into instants. */
@@ -158,7 +164,10 @@ export type FlightAirlineLookupQueryInput = z.input<typeof FlightAirlineLookupQu
  * resolves is the dataset's call, not the parser's.
  */
 export function parseFlightNumber(input: string): ParsedFlightNumber | null {
-  const compact = input.trim().toUpperCase().replace(/[\s-]+/g, "");
+  const compact = input
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, "");
   if (compact.length === 0 || compact.length > 12) return null;
   const match = /^([A-Z][A-Z0-9]|[0-9][A-Z])([0-9]{1,4})[A-Z]?$/.exec(compact);
   if (!match) return null;

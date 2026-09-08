@@ -424,7 +424,9 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
       }
       subscription = Network.addNetworkStateListener((event) => {
         if (!isWifiState(event)) return;
-        if (shouldAutoDownloadPack({ tripStatus: status, phase: offlinePackStateFor(tripId).phase })) {
+        if (
+          shouldAutoDownloadPack({ tripStatus: status, phase: offlinePackStateFor(tripId).phase })
+        ) {
           startPackDownload(target);
         }
         subscription?.remove();

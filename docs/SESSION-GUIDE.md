@@ -8,16 +8,16 @@
 
 ## Docs topology
 
-| Doc | What | Read when |
-|-----|------|-----------|
-| [`STATE.md`](STATE.md) | Current truth + `CURRENT DIRECTION` (auto-injected, ~1 page) | every session start |
-| [`QUEUE.md`](QUEUE.md) | Work queue — IDs, status, deps | every session start |
-| [`PLANNING.md`](PLANNING.md) | Roadmap + phase narrative + open questions | planning a phase |
-| [`SECURITY.md`](SECURITY.md) | Security findings + fix order | security work |
-| [`decisions/`](decisions/) | ADRs — locked, append-only | "why did we do X?" |
-| [`history/`](history/) | Completed-phase archives, append-only | post-mortems |
-| `.specs/` | Feature/impl specs — build contracts | before building the thing |
-| `CLAUDE.md` | Lean constitution: laws, autonomy contract, loop | always (auto) |
+| Doc                          | What                                                         | Read when                 |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------- |
+| [`STATE.md`](STATE.md)       | Current truth + `CURRENT DIRECTION` (auto-injected, ~1 page) | every session start       |
+| [`QUEUE.md`](QUEUE.md)       | Work queue — IDs, status, deps                               | every session start       |
+| [`PLANNING.md`](PLANNING.md) | Roadmap + phase narrative + open questions                   | planning a phase          |
+| [`SECURITY.md`](SECURITY.md) | Security findings + fix order                                | security work             |
+| [`decisions/`](decisions/)   | ADRs — locked, append-only                                   | "why did we do X?"        |
+| [`history/`](history/)       | Completed-phase archives, append-only                        | post-mortems              |
+| `.specs/`                    | Feature/impl specs — build contracts                         | before building the thing |
+| `CLAUDE.md`                  | Lean constitution: laws, autonomy contract, loop             | always (auto)             |
 
 One canonical home per concept. Cross-reference, never duplicate.
 
@@ -35,18 +35,21 @@ One canonical home per concept. Cross-reference, never duplicate.
 ## Kickoff prompts
 
 **Continue (the usual):**
+
 ```
 Read CLAUDE.md, docs/STATE.md, docs/QUEUE.md. We're in P-N.
 Pull the top of the queue and keep going.
 ```
 
 **Plan a phase:**
+
 ```
 Read CLAUDE.md, docs/PLANNING.md, docs/QUEUE.md. Plan P-N — decompose into
 tasks, queue them, surface decisions. Wait for buy-in before building.
 ```
 
 **A spike:**
+
 ```
 Run S-N — research, present options + a recommendation, output an ADR.
 ```
@@ -95,11 +98,11 @@ A good handoff is "a note to a competent stranger":
 
 ## Context discipline
 
-| Metric | Target | Split signal |
-|--------|--------|--------------|
-| Files per task | 5–8 | 15+ → spawn a subagent |
-| Tasks per session | 2–3 | 5+ → parallelize / fresh session |
-| Context feel | light | heavy → finish task, hand off, fresh session |
+| Metric            | Target | Split signal                                 |
+| ----------------- | ------ | -------------------------------------------- |
+| Files per task    | 5–8    | 15+ → spawn a subagent                       |
+| Tasks per session | 2–3    | 5+ → parallelize / fresh session             |
+| Context feel      | light  | heavy → finish task, hand off, fresh session |
 
 Thin orchestrator: pass **paths** to subagents, not contents. Context-exhaustion
 signals (forgetting decisions, repeating searches, quality dropping) → finish the

@@ -5,7 +5,12 @@
  * (`useSessionStore`, `apiClient`, `secureTokenStorage`) are the app wiring.
  */
 export { createApiClient, ApiRequestError, REQUEST_TIMEOUT_MS } from "./api-client";
-export type { ApiClientBridge, ApiClientConfig, MobileApiClient, RequestOptions } from "./api-client";
+export type {
+  ApiClientBridge,
+  ApiClientConfig,
+  MobileApiClient,
+  RequestOptions,
+} from "./api-client";
 export {
   resolveApiBaseUrl,
   explainApiBaseUrl,

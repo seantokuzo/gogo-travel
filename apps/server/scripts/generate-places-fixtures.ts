@@ -42,13 +42,43 @@ interface OvertureRow {
 // Center cell r:77:-19 (lat [38.5,39), lng [-9.5,-9)) unless noted.
 const OVERTURE_ROWS: OvertureRow[] = [
   // NFD on purpose ("Bele" + combining acute) — ingest must store NFC.
-  { id: "ovt-belem-tower", name: "Belém Tower", category: "tourist_attraction", lat: 38.6916, lng: -9.216 },
+  {
+    id: "ovt-belem-tower",
+    name: "Belém Tower",
+    category: "tourist_attraction",
+    lat: 38.6916,
+    lng: -9.216,
+  },
   // Cross-source dedup anchor (see fsq-time-out below).
-  { id: "ovt-time-out-market", name: "Time Out Market Lisboa", category: "food_court", lat: 38.70673, lng: -9.14592 },
-  { id: "ovt-castelo", name: "Castelo de São Jorge", category: "castle", lat: 38.7139, lng: -9.1335 },
-  { id: "ovt-null-category", name: "Miradouro da Senhora do Monte", category: null, lat: 38.7184, lng: -9.1307 },
+  {
+    id: "ovt-time-out-market",
+    name: "Time Out Market Lisboa",
+    category: "food_court",
+    lat: 38.70673,
+    lng: -9.14592,
+  },
+  {
+    id: "ovt-castelo",
+    name: "Castelo de São Jorge",
+    category: "castle",
+    lat: 38.7139,
+    lng: -9.1335,
+  },
+  {
+    id: "ovt-null-category",
+    name: "Miradouro da Senhora do Monte",
+    category: null,
+    lat: 38.7184,
+    lng: -9.1307,
+  },
   // East-neighbor cell r:77:-18.
-  { id: "ovt-setubal", name: "Livraria Culsete", category: "bookstore", lat: 38.5243, lng: -8.8926 },
+  {
+    id: "ovt-setubal",
+    name: "Livraria Culsete",
+    category: "bookstore",
+    lat: 38.5243,
+    lng: -8.8926,
+  },
   // Porto — OUTSIDE the 9-cell destination coverage; must never ingest.
   { id: "ovt-porto", name: "Livraria Lello", category: "bookstore", lat: 41.1469, lng: -8.6147 },
   // Normalize-drop rows (inside the center cell, so the bbox filter passes).
@@ -67,18 +97,48 @@ interface FsqRow {
 const FSQ_ROWS: FsqRow[] = [
   // DUPLICATE of ovt-time-out-market: ~3 m away, trigram similarity ≈ 0.70
   // ≥ 0.6 → skipped by cross-source dedup (R-places-3).
-  { id: "fsq-time-out", name: "Time Out Market", labels: ["Dining and Drinking > Food Hall"], lat: 38.70671, lng: -9.1459 },
+  {
+    id: "fsq-time-out",
+    name: "Time Out Market",
+    labels: ["Dining and Drinking > Food Hall"],
+    lat: 38.70671,
+    lng: -9.1459,
+  },
   // NFD again — FSQ side of the NFC rule.
-  { id: "fsq-pasteis", name: "Pastéis de Belém", labels: ["Dining and Drinking > Bakery"], lat: 38.69745, lng: -9.2032 },
+  {
+    id: "fsq-pasteis",
+    name: "Pastéis de Belém",
+    labels: ["Dining and Drinking > Bakery"],
+    lat: 38.69745,
+    lng: -9.2032,
+  },
   // ~6 m from the Time Out anchor but name-dissimilar → NOT a dupe
   // (proves the similarity half of the predicate matters).
-  { id: "fsq-ribeira", name: "Mercado da Ribeira", labels: ["Retail > Market"], lat: 38.70668, lng: -9.14588 },
+  {
+    id: "fsq-ribeira",
+    name: "Mercado da Ribeira",
+    labels: ["Retail > Market"],
+    lat: 38.70668,
+    lng: -9.14588,
+  },
   // Same-name venue ~5 km away → NOT a dupe (proves the distance half).
-  { id: "fsq-timeout-far", name: "Time Out Market", labels: ["Dining and Drinking > Food Hall"], lat: 38.75, lng: -9.1 },
+  {
+    id: "fsq-timeout-far",
+    name: "Time Out Market",
+    labels: ["Dining and Drinking > Food Hall"],
+    lat: 38.75,
+    lng: -9.1,
+  },
   // Normalize-drop: empty name (passes the SQL bbox filter first).
   { id: "fsq-empty-name", name: "", labels: ["Landmarks"], lat: 38.705, lng: -9.15 },
   // East-neighbor cell r:77:-18.
-  { id: "fsq-setubal-cafe", name: "Café Central Setúbal", labels: ["Dining and Drinking > Cafe"], lat: 38.525, lng: -8.89 },
+  {
+    id: "fsq-setubal-cafe",
+    name: "Café Central Setúbal",
+    labels: ["Dining and Drinking > Cafe"],
+    lat: 38.525,
+    lng: -8.89,
+  },
   // NULL label list → category NULL.
   { id: "fsq-null-cats", name: "Jardim da Estrela", labels: null, lat: 38.7135, lng: -9.1604 },
 ];

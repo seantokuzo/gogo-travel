@@ -108,9 +108,7 @@ export function buildDirectionsUrl(input: DirectionsInput): DeeplinkBuild {
   if (gaps.length > 0) return { status: "missing", missing: gaps };
 
   const origin = encodeURIComponent(withContext(input.origin as string, input.context));
-  const destination = encodeURIComponent(
-    withContext(input.destination as string, input.context),
-  );
+  const destination = encodeURIComponent(withContext(input.destination as string, input.context));
   const travelmode = DIRECTIONS_TRAVEL_MODE[input.mode];
   return {
     status: "ready",

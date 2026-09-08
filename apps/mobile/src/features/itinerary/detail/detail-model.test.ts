@@ -44,9 +44,7 @@ describe("statusActionsFor (§3.2 status machine)", () => {
     const offered = statusActionsFor(from);
     // R-itin-26 owns `→ cancelled` (ConfirmDialog), so the button list is the
     // spec row MINUS that column.
-    const expected = ALL_STATUSES.filter(
-      (to) => SPEC_TABLE[from][to] && to !== "cancelled",
-    );
+    const expected = ALL_STATUSES.filter((to) => SPEC_TABLE[from][to] && to !== "cancelled");
     expect(offered).toEqual(expected);
   });
 
@@ -135,9 +133,7 @@ describe("detailFieldRows (R-itin-24 labeled grid)", () => {
     const stray = { category: "restaurant", flight_number: "UA837" } as unknown as BookingDetails;
     expect(detailFieldRows(stray)).toEqual([]);
     const real = { category: "restaurant", party_size: 4 } as unknown as BookingDetails;
-    expect(detailFieldRows(real)).toEqual([
-      { key: "party_size", label: "Party size", value: "4" },
-    ]);
+    expect(detailFieldRows(real)).toEqual([{ key: "party_size", label: "Party size", value: "4" }]);
   });
 });
 

@@ -384,7 +384,10 @@ export function gmtLabelOf(offsetMinutes: number): string {
  * offset when a field carries a date but the exact instant isn't composed
  * yet ("GMT-7" in April, "GMT-8" in January). Falls back to `now`.
  */
-export function referenceInstantFor(date: string | undefined, now: () => number = Date.now): number {
+export function referenceInstantFor(
+  date: string | undefined,
+  now: () => number = Date.now,
+): number {
   if (date === undefined) return now();
   const ms = wallAsUtcMs(date, "12:00");
   return ms ?? now();

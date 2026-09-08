@@ -49,10 +49,7 @@ import {
 import { useTripExpenses, useTripMembers, useTripOffline, type ExpenseListFilters } from "@/data";
 import { Fab } from "@/features/trips";
 
-import {
-  EXPENSE_CATEGORY_LABELS,
-  EXPENSE_CATEGORY_OPTIONS,
-} from "./expenses/expense-form-model";
+import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORY_OPTIONS } from "./expenses/expense-form-model";
 import { moneyLabel } from "./money-format";
 
 const useStyles = createStyles((t) =>
@@ -156,7 +153,8 @@ export function ExpensesSegment({ trip }: ExpensesSegmentProps) {
     [expenses.data],
   );
   const filtersActive = filters.member !== undefined || filters.category !== undefined;
-  const filterCount = (filters.member !== undefined ? 1 : 0) + (filters.category !== undefined ? 1 : 0);
+  const filterCount =
+    (filters.member !== undefined ? 1 : 0) + (filters.category !== undefined ? 1 : 0);
 
   const openNew = () => {
     router.push({
@@ -232,15 +230,11 @@ export function ExpensesSegment({ trip }: ExpensesSegmentProps) {
         style={[s.filterButton, filtersActive && s.filterOn]}
         onPress={() => setFilterOpen(true)}
         accessibilityRole="button"
-        accessibilityLabel={
-          filtersActive ? `Filters, ${filterCount} active` : "Filter expenses"
-        }
+        accessibilityLabel={filtersActive ? `Filters, ${filterCount} active` : "Filter expenses"}
         testID="money-button-filter"
       >
         <Icon name="filter" size={16} color={theme.color.text.secondary} />
-        <AppText role="caption">
-          {filtersActive ? `Filters (${filterCount})` : "Filters"}
-        </AppText>
+        <AppText role="caption">{filtersActive ? `Filters (${filterCount})` : "Filters"}</AppText>
       </Pressable>
     </View>
   );

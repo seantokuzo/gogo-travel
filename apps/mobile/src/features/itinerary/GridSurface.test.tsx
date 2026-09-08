@@ -110,9 +110,7 @@ describe("GridSurface", () => {
   it("captions a rental's derived blocks Pickup / Drop off — and nothing else (B-18)", async () => {
     await renderGrid({
       items: [...defaultItineraryItems(), ...rentalItems()],
-      bookingsById: new Map(
-        [...defaultBookings(), rentalBooking()].map((b) => [b.id, b]),
-      ),
+      bookingsById: new Map([...defaultBookings(), rentalBooking()].map((b) => [b.id, b])),
     });
     // Two blocks, one booking title — the caption is the discriminator.
     expect(
@@ -230,7 +228,9 @@ describe("GridSurface", () => {
     // Labeled at the check-in/check-out edges only (§2.6).
     expect(screen.getAllByText("Park Hyatt Tokyo")).toHaveLength(2);
     // Every segment routes to the SAME booking detail.
-    await fireEvent.press(screen.getByTestId(`itinerary-grid-span-${ITEM_LODGING_ID}-${TRIP_DAY_2}`));
+    await fireEvent.press(
+      screen.getByTestId(`itinerary-grid-span-${ITEM_LODGING_ID}-${TRIP_DAY_2}`),
+    );
     expect(handlers.onOpenBooking).toHaveBeenCalledWith(BOOKING_LODGING_ID);
   });
 
@@ -242,9 +242,10 @@ describe("GridSurface", () => {
     // the "~15-min-item size" ask.
     const checkIn = screen.getByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}-check-in`);
     expect(checkIn).toHaveStyle({ top: 900, height: MIN_BLOCK_HEIGHT });
-    expect(
-      screen.getByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}-check-out`),
-    ).toHaveStyle({ top: 660, height: MIN_BLOCK_HEIGHT });
+    expect(screen.getByTestId(`itinerary-grid-item-${ITEM_LODGING_ID}-check-out`)).toHaveStyle({
+      top: 660,
+      height: MIN_BLOCK_HEIGHT,
+    });
     expect(screen.getByText("Check-in")).toBeOnTheScreen();
     expect(screen.getByText("Check-out")).toBeOnTheScreen();
     // Same destination as the all-day lane segment — booking detail.
@@ -254,8 +255,18 @@ describe("GridSurface", () => {
   });
 
   it("splits overlapping blocks side-by-side with an overlap Badge on each (R-itin-15)", async () => {
-    const a = makeItineraryItem({ id: "ov-a", title: "Brunch", start_time: "09:00", end_time: "11:00" });
-    const b = makeItineraryItem({ id: "ov-b", title: "Tour", start_time: "10:00", end_time: "12:00" });
+    const a = makeItineraryItem({
+      id: "ov-a",
+      title: "Brunch",
+      start_time: "09:00",
+      end_time: "11:00",
+    });
+    const b = makeItineraryItem({
+      id: "ov-b",
+      title: "Tour",
+      start_time: "10:00",
+      end_time: "12:00",
+    });
     await renderGrid({ items: [a, b] });
     expect(screen.getByTestId("itinerary-grid-item-ov-a")).toHaveStyle({ width: "50%" });
     expect(screen.getByTestId("itinerary-grid-item-ov-b")).toHaveStyle({ width: "50%" });

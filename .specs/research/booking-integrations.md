@@ -23,14 +23,14 @@ dashboard.
 
 ## One-page verdict
 
-| Category | v1 (zero approvals) | v2 (monetize/deepen) |
-|----------|--------------------|-----------------------|
-| Flights | Kayak + Skyscanner deeplinks | Kayak affiliate, Travelpayouts; Duffel Links if in-app booking becomes a goal ($3/order + 1%) |
-| Lodging | Airbnb/Booking/Expedia/Vrbo deeplinks | Expedia Travel Creator Program (open signup, 4% hotels/2% Vrbo, covers 3 brands), Trip.com (7%), Agoda |
-| Trains | Trainline (open URN lookup API + deeplink), Omio links, plain Amtrak link (no API, SPA, no prefill) | Partnerize (Trainline) + Travelpayouts (Omio 6%, 12Go 50% rev — SE Asia trains/buses/ferries) |
-| Cars/mopeds | Kayak cars + Turo deeplinks; manual moped entry | **DiscoverCars (70% of rental profit, 365-day cookie — best terms in report)**, BikesBooking (mopeds, 4%), Klook |
-| Activities | **Viator Basic API + Ticketmaster Discovery API DAY ONE** (both instant-approve, real APIs) | Tiqets API (no minimums), GetYourGuide links (API needs 100k monthly visits), Viator Full Access |
-| Import | Forward-address + share-sheet → schema.org-then-LLM pipeline | AwardWallet parsing API (contact-sales), OAuth inbox sync post-traction |
+| Category    | v1 (zero approvals)                                                                                 | v2 (monetize/deepen)                                                                                             |
+| ----------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Flights     | Kayak + Skyscanner deeplinks                                                                        | Kayak affiliate, Travelpayouts; Duffel Links if in-app booking becomes a goal ($3/order + 1%)                    |
+| Lodging     | Airbnb/Booking/Expedia/Vrbo deeplinks                                                               | Expedia Travel Creator Program (open signup, 4% hotels/2% Vrbo, covers 3 brands), Trip.com (7%), Agoda           |
+| Trains      | Trainline (open URN lookup API + deeplink), Omio links, plain Amtrak link (no API, SPA, no prefill) | Partnerize (Trainline) + Travelpayouts (Omio 6%, 12Go 50% rev — SE Asia trains/buses/ferries)                    |
+| Cars/mopeds | Kayak cars + Turo deeplinks; manual moped entry                                                     | **DiscoverCars (70% of rental profit, 365-day cookie — best terms in report)**, BikesBooking (mopeds, 4%), Klook |
+| Activities  | **Viator Basic API + Ticketmaster Discovery API DAY ONE** (both instant-approve, real APIs)         | Tiqets API (no minimums), GetYourGuide links (API needs 100k monthly visits), Viator Full Access                 |
+| Import      | Forward-address + share-sheet → schema.org-then-LLM pipeline                                        | AwardWallet parsing API (contact-sales), OAuth inbox sync post-traction                                          |
 
 ## Key deeplink formats
 

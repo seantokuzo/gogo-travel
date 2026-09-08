@@ -183,7 +183,12 @@ async function buildAirports(): Promise<AirportSeed[]> {
       skipped.push(`${iata}: unusable name`);
       continue;
     }
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      Math.abs(lat) > 90 ||
+      Math.abs(lng) > 180
+    ) {
       skipped.push(`${iata}: unusable coordinates`);
       continue;
     }

@@ -520,159 +520,161 @@ export async function updateBooking(
 ): Promise<BookingWriteResult> {
   const { tripId, bookingId, userId, input } = args;
 
-  return db
-    .transaction(async (tx) => {
-      const [current] = await tx
-        .select()
-        .from(schema.bookings)
-        .where(and(eq(schema.bookings.id, bookingId), eq(schema.bookings.tripId, tripId)))
-        .for("update");
-      if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
+  return (
+    db
+      .transaction(async (tx) => {
+        const [current] = await tx
+          .select()
+          .from(schema.bookings)
+          .where(and(eq(schema.bookings.id, bookingId), eq(schema.bookings.tripId, tripId)))
+          .for("update");
+        if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
-      // B1: every non-null `place_id` write runs the visibility gate. NOTE the
-      // scope honestly (round-2 A3): on a SAME-VALUE rewrite this booking's own
-      // row already references the place in a trip the caller is a proven
-      // member of, so the reference rule is satisfied by construction — that is
-      // the documented grant rule (an existing reference keeps granting
-      // visibility; the revoked-membership walk in routes.db.test.ts pins the
-      // rule's real edge), not a replay-revocation check. The gate BITES on
-      // place_id CHANGES. Lock order holds: the booking row is already held
-      // FOR UPDATE; places/members are plain reads.
-      if (input.place_id !== undefined && input.place_id !== null) {
-        await assertPlaceVisible(tx, { placeId: input.place_id, userId });
-      }
+        // B1: every non-null `place_id` write runs the visibility gate. NOTE the
+        // scope honestly (round-2 A3): on a SAME-VALUE rewrite this booking's own
+        // row already references the place in a trip the caller is a proven
+        // member of, so the reference rule is satisfied by construction — that is
+        // the documented grant rule (an existing reference keeps granting
+        // visibility; the revoked-membership walk in routes.db.test.ts pins the
+        // rule's real edge), not a replay-revocation check. The gate BITES on
+        // place_id CHANGES. Lock order holds: the booking row is already held
+        // FOR UPDATE; places/members are plain reads.
+        if (input.place_id !== undefined && input.place_id !== null) {
+          await assertPlaceVisible(tx, { placeId: input.place_id, userId });
+        }
 
-      // R-ib-1: the details discriminant must match the ROW's (immutable)
-      // category — the wire schema can only check body-internal consistency.
-      if (input.details !== undefined && input.details.category !== current.category) {
-        throw new HttpError(
-          "VALIDATION_FAILED",
-          `details.category '${input.details.category}' must match booking category '${current.category}'`,
-          { details: "category mismatch" },
-        );
-      }
-
-      // §3.2 transition legality (same-status is not a transition — no-op).
-      const nextStatus = input.status ?? current.status;
-      if (nextStatus !== current.status) {
-        if (!BOOKING_STATUS_TRANSITIONS[current.status].includes(nextStatus)) {
+        // R-ib-1: the details discriminant must match the ROW's (immutable)
+        // category — the wire schema can only check body-internal consistency.
+        if (input.details !== undefined && input.details.category !== current.category) {
           throw new HttpError(
             "VALIDATION_FAILED",
-            `illegal status transition '${current.status}' → '${nextStatus}'`,
-            { status: "illegal transition" },
+            `details.category '${input.details.category}' must match booking category '${current.category}'`,
+            { details: "category mismatch" },
           );
         }
-      }
 
-      // R-ib-12 on the MERGED row: a non-null price requires a currency.
-      const nextPrice = input.price_cents !== undefined ? input.price_cents : current.priceCents;
-      const nextCurrency = input.currency !== undefined ? input.currency : current.currency;
-      if (nextPrice !== null && nextCurrency === null) {
-        throw new HttpError("VALIDATION_FAILED", "price_cents requires a currency", {
-          currency: "required with price_cents",
-        });
-      }
-
-      const detailsTouched = input.details !== undefined;
-      const nextDetails = input.details ?? current.details;
-      // Derived instants only move when details are written (R-ib-4).
-      const { startsAt: nextStartsAt, endsAt: nextEndsAt } = detailsTouched
-        ? derivedInstantsOf(nextDetails)
-        : { startsAt: current.startsAt, endsAt: current.endsAt };
-
-      const set: Partial<typeof schema.bookings.$inferInsert> = {};
-      if (input.title !== undefined) set.title = input.title;
-      if (detailsTouched) {
-        set.details = nextDetails;
-        set.startsAt = nextStartsAt;
-        set.endsAt = nextEndsAt;
-      }
-      if (input.status !== undefined) set.status = input.status;
-      if (input.price_cents !== undefined) set.priceCents = input.price_cents;
-      if (input.currency !== undefined) set.currency = input.currency;
-      if (input.confirmation_code !== undefined) set.confirmationCode = input.confirmation_code;
-      if (input.place_id !== undefined) set.placeId = input.place_id;
-
-      // Round-1 B1: the DB re-checks `bookings_time_order_ck` against the NEW
-      // tuple of every UPDATE — `NOT VALID` only exempts rows nobody touches.
-      // So the grace-era rows migration 0003 deliberately grandfathers are
-      // update-poison: a details-less PATCH copies their stored (inverted)
-      // instants into the SET above and raises 23514. `derivedInstantsOf`
-      // above never sees them (it validates payloads). Validate the MERGED
-      // instants whenever this update actually writes a column, so the answer
-      // is a specific 400 instead of an unmapped 500. Nothing here can make
-      // the write SUCCEED — that needs the row's times fixed, which a
-      // details-carrying PATCH does (B-9's re-entry flow) and a migration
-      // must never do (Autonomy trigger #5).
-      if (Object.keys(set).length > 0) assertStoredInstantsOrdered(nextStartsAt, nextEndsAt);
-
-      const updated =
-        Object.keys(set).length > 0
-          ? (
-              await tx
-                .update(schema.bookings)
-                .set(set)
-                .where(eq(schema.bookings.id, bookingId))
-                .returning()
-            )[0]
-          : current;
-      if (!updated) throw new HttpError("INTERNAL", "booking update returned no row");
-
-      // ---- item side effects, same transaction (§3.1/§3.2) -------------------
-      const existing = await itemsOf(tx, bookingId);
-      const dirty = new Set<string>();
-
-      if (nextStatus === "idea" || nextStatus === "cancelled") {
-        // I-1 / I-4: off-calendar states hold zero items. `→ idea` (manual
-        // unschedule) and `→ cancelled` delete in the same transaction; the
-        // cancelled row itself is retained (R-ib-7 — expense links unchanged).
-        for (const item of existing) {
-          await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, item.id));
-          for (const day of itemDays(item)) dirty.add(day);
+        // §3.2 transition legality (same-status is not a transition — no-op).
+        const nextStatus = input.status ?? current.status;
+        if (nextStatus !== current.status) {
+          if (!BOOKING_STATUS_TRANSITIONS[current.status].includes(nextStatus)) {
+            throw new HttpError(
+              "VALIDATION_FAILED",
+              `illegal status transition '${current.status}' → '${nextStatus}'`,
+              { status: "illegal transition" },
+            );
+          }
         }
-      } else {
-        const wasOnCalendar = current.status === "planned" || current.status === "booked";
-        if (nextStartsAt !== null && (detailsTouched || !wasOnCalendar)) {
-          // I-2: exactly the derived items, day/times synced (the booking
-          // wins). Also the I-3 → I-2 precedence arm: a timeless-but-scheduled
-          // booking gaining real times overwrites the item's day/times HERE.
-          const synced = await syncItemsToPlacements(tx, {
-            tripId,
-            bookingId,
-            userId,
-            placements: derivedPlacementsOf(nextDetails),
-            existing,
+
+        // R-ib-12 on the MERGED row: a non-null price requires a currency.
+        const nextPrice = input.price_cents !== undefined ? input.price_cents : current.priceCents;
+        const nextCurrency = input.currency !== undefined ? input.currency : current.currency;
+        if (nextPrice !== null && nextCurrency === null) {
+          throw new HttpError("VALIDATION_FAILED", "price_cents requires a currency", {
+            currency: "required with price_cents",
           });
-          for (const day of synced) dirty.add(day);
         }
-        // else: I-3 — starts_at NULL (times removed keep item-owned day/times;
-        // nothing vanishes), or booked↔planned with untouched details (items
-        // unaffected, §3.2 matrix note). No item writes.
-      }
 
-      // Location change: a moved place re-resolves every item's location
-      // (R-ib-20 resolves `booking`-kind via the parent's place_id) — the
-      // items' days go dirty even though no item row changed.
-      if (input.place_id !== undefined && input.place_id !== current.placeId) {
-        for (const item of await itemsOf(tx, bookingId)) {
-          for (const day of itemDays(item)) dirty.add(day);
+        const detailsTouched = input.details !== undefined;
+        const nextDetails = input.details ?? current.details;
+        // Derived instants only move when details are written (R-ib-4).
+        const { startsAt: nextStartsAt, endsAt: nextEndsAt } = detailsTouched
+          ? derivedInstantsOf(nextDetails)
+          : { startsAt: current.startsAt, endsAt: current.endsAt };
+
+        const set: Partial<typeof schema.bookings.$inferInsert> = {};
+        if (input.title !== undefined) set.title = input.title;
+        if (detailsTouched) {
+          set.details = nextDetails;
+          set.startsAt = nextStartsAt;
+          set.endsAt = nextEndsAt;
         }
-      }
+        if (input.status !== undefined) set.status = input.status;
+        if (input.price_cents !== undefined) set.priceCents = input.price_cents;
+        if (input.currency !== undefined) set.currency = input.currency;
+        if (input.confirmation_code !== undefined) set.confirmationCode = input.confirmation_code;
+        if (input.place_id !== undefined) set.placeId = input.place_id;
 
-      return {
-        booking: updated,
-        items: await itemsOf(tx, bookingId),
-        dirtyDays: marksFor(tripId, dirty),
-      };
-    })
-    // A2: race-window place-FK 23503 → canonical 404. Round-1 B1: the
-    // grandfathered-row 23514 → the same 400 the pre-write check answers, so
-    // no ordering of concurrent writes can turn this path into a 500.
-    // Constraint-precise, and UPDATE-only on purpose — see `time-order.ts`.
-    .catch((error: unknown) => {
-      if (isTimeOrderCkViolation(error)) rethrowTimeOrderCkMapped(error);
-      return rethrowPlaceFkMapped(error);
-    });
+        // Round-1 B1: the DB re-checks `bookings_time_order_ck` against the NEW
+        // tuple of every UPDATE — `NOT VALID` only exempts rows nobody touches.
+        // So the grace-era rows migration 0003 deliberately grandfathers are
+        // update-poison: a details-less PATCH copies their stored (inverted)
+        // instants into the SET above and raises 23514. `derivedInstantsOf`
+        // above never sees them (it validates payloads). Validate the MERGED
+        // instants whenever this update actually writes a column, so the answer
+        // is a specific 400 instead of an unmapped 500. Nothing here can make
+        // the write SUCCEED — that needs the row's times fixed, which a
+        // details-carrying PATCH does (B-9's re-entry flow) and a migration
+        // must never do (Autonomy trigger #5).
+        if (Object.keys(set).length > 0) assertStoredInstantsOrdered(nextStartsAt, nextEndsAt);
+
+        const updated =
+          Object.keys(set).length > 0
+            ? (
+                await tx
+                  .update(schema.bookings)
+                  .set(set)
+                  .where(eq(schema.bookings.id, bookingId))
+                  .returning()
+              )[0]
+            : current;
+        if (!updated) throw new HttpError("INTERNAL", "booking update returned no row");
+
+        // ---- item side effects, same transaction (§3.1/§3.2) -------------------
+        const existing = await itemsOf(tx, bookingId);
+        const dirty = new Set<string>();
+
+        if (nextStatus === "idea" || nextStatus === "cancelled") {
+          // I-1 / I-4: off-calendar states hold zero items. `→ idea` (manual
+          // unschedule) and `→ cancelled` delete in the same transaction; the
+          // cancelled row itself is retained (R-ib-7 — expense links unchanged).
+          for (const item of existing) {
+            await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, item.id));
+            for (const day of itemDays(item)) dirty.add(day);
+          }
+        } else {
+          const wasOnCalendar = current.status === "planned" || current.status === "booked";
+          if (nextStartsAt !== null && (detailsTouched || !wasOnCalendar)) {
+            // I-2: exactly the derived items, day/times synced (the booking
+            // wins). Also the I-3 → I-2 precedence arm: a timeless-but-scheduled
+            // booking gaining real times overwrites the item's day/times HERE.
+            const synced = await syncItemsToPlacements(tx, {
+              tripId,
+              bookingId,
+              userId,
+              placements: derivedPlacementsOf(nextDetails),
+              existing,
+            });
+            for (const day of synced) dirty.add(day);
+          }
+          // else: I-3 — starts_at NULL (times removed keep item-owned day/times;
+          // nothing vanishes), or booked↔planned with untouched details (items
+          // unaffected, §3.2 matrix note). No item writes.
+        }
+
+        // Location change: a moved place re-resolves every item's location
+        // (R-ib-20 resolves `booking`-kind via the parent's place_id) — the
+        // items' days go dirty even though no item row changed.
+        if (input.place_id !== undefined && input.place_id !== current.placeId) {
+          for (const item of await itemsOf(tx, bookingId)) {
+            for (const day of itemDays(item)) dirty.add(day);
+          }
+        }
+
+        return {
+          booking: updated,
+          items: await itemsOf(tx, bookingId),
+          dirtyDays: marksFor(tripId, dirty),
+        };
+      })
+      // A2: race-window place-FK 23503 → canonical 404. Round-1 B1: the
+      // grandfathered-row 23514 → the same 400 the pre-write check answers, so
+      // no ordering of concurrent writes can turn this path into a 500.
+      // Constraint-precise, and UPDATE-only on purpose — see `time-order.ts`.
+      .catch((error: unknown) => {
+        if (isTimeOrderCkViolation(error)) rethrowTimeOrderCkMapped(error);
+        return rethrowPlaceFkMapped(error);
+      })
+  );
 }
 
 /**

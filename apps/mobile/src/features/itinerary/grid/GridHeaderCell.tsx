@@ -24,11 +24,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import { AppText, Badge, Icon } from "@/components";
 
 import { formatDayChip } from "../model";
-import {
-  ALL_DAY_ROW_HEIGHT,
-  HEADER_LABEL_HEIGHT,
-  SPAN_LANE_HEIGHT,
-} from "./constants";
+import { ALL_DAY_ROW_HEIGHT, HEADER_LABEL_HEIGHT, SPAN_LANE_HEIGHT } from "./constants";
 import type { GridDay } from "./model";
 
 const useStyles = createStyles((t) =>

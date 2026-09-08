@@ -246,7 +246,10 @@ describe("Eventbrite (§2.7 row 12) — US state--city slug or OMIT", () => {
       "https://www.eventbrite.com/d/ga--atlanta/events/",
     );
     // The USPS code stays unambiguous.
-    expectReady(buildEventbriteUrl("Atlanta, GA"), "https://www.eventbrite.com/d/ga--atlanta/events/");
+    expectReady(
+      buildEventbriteUrl("Atlanta, GA"),
+      "https://www.eventbrite.com/d/ga--atlanta/events/",
+    );
   });
 
   it("strips combining marks so accented cities slug per-letter, not per-word (R1)", () => {

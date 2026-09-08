@@ -56,13 +56,13 @@ Out of scope: see §3.8.
 - **R-auth-3 (nonce binding):** WHEN a provider token is verified THE SYSTEM
   SHALL require the request's `raw_nonce` to match the token's `nonce` claim
   (Apple: `nonce = SHA-256(raw_nonce)`; Google: raw match) — a token minted
-  for a different sign-in attempt SHALL be rejected 401. *(Synced
+  for a different sign-in attempt SHALL be rejected 401. _(Synced
   2026-07-22, post-T-5.2: the Apple binding is `SHA-256(raw_nonce)`
   encoded as LOWERCASE hex — a cross-workspace wire contract the T-5.7
   mobile client MUST match (hashing to uppercase hex fails every Apple
   sign-in); Google compares `raw_nonce` verbatim. Both sides are hashed
   before the constant-time compare, so nonce length never
-  short-circuits.)*
+  short-circuits.)_
 - **R-auth-4 (returning user):** WHEN a verified token's `sub` matches an
   existing `users.apple_sub` / `users.google_sub` THE SYSTEM SHALL sign in
   that user — never create a second account for a known sub.
@@ -72,14 +72,14 @@ Out of scope: see §3.8.
   (mirror of schema spec R-db-5) and return `is_new_user: true`.
   `display_name` seeds from the provider name fields when present (Apple
   sends them only on first authorization — client MUST forward them), else
-  from the email local part; the user edits it at onboarding. *(Synced
+  from the email local part; the user edits it at onboarding. _(Synced
   2026-07-22, post-T-5.2: an unknown-`sub` token whose email is
   UNVERIFIED or ABSENT is DENIED 401, never created — the creation-side
   twin of R-auth-6's gate. This preserves the invariant that every
   stored `users.email` was verified at intake, which R-auth-6 auto-link
   silently depends on: an account planted on an unverified email would
   let a victim's later verified sign-in auto-link into an attacker's
-  account, §3.6.2.)*
+  account, §3.6.2.)_
 - **R-auth-6 (email collision — auto-link):** WHEN a verified token's `sub`
   is unknown AND `lower(email)` matches an existing account THE SYSTEM SHALL
   auto-link the new provider identity to that account (set the missing
@@ -87,13 +87,13 @@ Out of scope: see §3.8.
   — provided the incoming email is verified (Google: `email_verified` claim
   true; Apple: verified by construction). Unverified email → 401, no link.
   Resolved at `.specs/database/schema.spec.md`:§3.3.1 `users` (Gate 2,
-  2026-07-09): auto-link on verified matching email. *(Synced
+  2026-07-09): auto-link on verified matching email. _(Synced
   2026-07-22, post-T-5.2: if the email-matched account already holds a
   DIFFERENT `sub` in the incoming provider's slot, the sign-in is
   REJECTED 401 — the slot is NEVER overwritten (silent overwrite =
   identity takeover; a second account is impossible under `lower(email)`
   uniqueness, and v1 has no recovery flow). Only a genuinely empty slot
-  is linked.)*
+  is linked.)_
 - **R-auth-7 (Apple revocation credential):** WHEN Apple sign-in completes
   THE SYSTEM SHALL exchange the request's `authorization_code` with Apple's
   token endpoint and store the returned Apple refresh token encrypted
@@ -106,7 +106,7 @@ Out of scope: see §3.8.
 - **R-auth-8 (issuance):** WHEN sign-in or refresh succeeds THE SYSTEM SHALL
   issue (a) a `jose`-signed **ES256** access token, TTL
   `ACCESS_TOKEN_TTL = 15 min`, claims exactly `{iss, aud, sub, sid, iat,
-  exp}` (§3.2), and (b) an opaque **256-bit** random refresh token, TTL
+exp}` (§3.2), and (b) an opaque **256-bit** random refresh token, TTL
   `REFRESH_TOKEN_TTL = 30 days` from issuance (sliding via rotation).
 - **R-auth-9 (hash-only persistence):** THE SYSTEM SHALL persist refresh
   tokens as SHA-256 hashes only; plaintext refresh/access tokens SHALL never
@@ -208,7 +208,7 @@ Out of scope: see §3.8.
 - **R-ent-1 (read endpoint):** WHEN `/users/me/entitlements` is requested
   THE SYSTEM SHALL return the caller's **effective** entitlements computed
   solely by the shared `resolveEntitlements()` (`overrides ?? PLAN_DEFAULTS
-  [plan]`) — the only resolution path (R-shared-12); handlers SHALL never
+[plan]`) — the only resolution path (R-shared-12); handlers SHALL never
   read `overrides` or plan defaults directly.
 - **R-ent-2 (server-side cap seam):** WHEN any AI endpoint executes THE
   SYSTEM SHALL run `requireAiQuota(feature)` within the request, **before**
@@ -242,8 +242,8 @@ Out of scope: see §3.8.
   trip exists — no information leak).
 - **R-authz-4 (middleware order):** THE SYSTEM SHALL apply middleware in the
   fixed order `requireAuth → zod validation (@hono/zod-validator, shared
-  schemas) → resource authz (requireTripMember / ownership checks /
-  requireAiQuota) → handler`, and all errors SHALL serialize through the
+schemas) → resource authz (requireTripMember / ownership checks /
+requireAiQuota) → handler`, and all errors SHALL serialize through the
   shared error middleware as the `ApiError` envelope — never an ad-hoc shape
   (R-shared-4).
 
@@ -293,10 +293,10 @@ POST /auth/{apple|google}  ────▶ verify JWT: JWKS sig, iss,
 
 ### 3.2 Token model
 
-| Token | Form | TTL | Claims / content | Transport |
-|---|---|---|---|---|
-| Access | `jose` JWS, **ES256** (alg allowlist `[ES256]` — reject `none`/HS) | `ACCESS_TOKEN_TTL` = 15 min | `iss: 'gogo-api'`, `aud: 'gogo-mobile'`, `sub` = user id, `sid` = session id, `iat`, `exp` — nothing else (no email/PII in tokens) | `Authorization: Bearer` header |
-| Refresh | opaque, 256-bit CSPRNG, URL-safe | `REFRESH_TOKEN_TTL` = 30 days from issuance (sliding via rotation) | none (random); stored as SHA-256 hash only (R-auth-9) | request body of `/auth/refresh` only |
+| Token   | Form                                                               | TTL                                                                | Claims / content                                                                                                                   | Transport                            |
+| ------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Access  | `jose` JWS, **ES256** (alg allowlist `[ES256]` — reject `none`/HS) | `ACCESS_TOKEN_TTL` = 15 min                                        | `iss: 'gogo-api'`, `aud: 'gogo-mobile'`, `sub` = user id, `sid` = session id, `iat`, `exp` — nothing else (no email/PII in tokens) | `Authorization: Bearer` header       |
+| Refresh | opaque, 256-bit CSPRNG, URL-safe                                   | `REFRESH_TOKEN_TTL` = 30 days from issuance (sliding via rotation) | none (random); stored as SHA-256 hash only (R-auth-9)                                                                              | request body of `/auth/refresh` only |
 
 - Signing key: ES256 private key from server env (Law #1 — never in git);
   public part embedded in verification config. Tokens carry `kid`; rotation
@@ -316,27 +316,27 @@ R-db-12).
 
 #### 3.3.1 `auth_sessions` — one row per signed-in device
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `uuid` | no | `gen_random_uuid()` | PK; the access token's `sid` claim |
-| `user_id` | `uuid` | no | — | FK → `users.id` ON DELETE CASCADE |
-| `device_name` | `text` | yes | — | Client-supplied ("Sean's iPhone 17"); display only |
-| `platform` | `push_platform` | no | — | Reuses the shared enum (`ios`/`android`) — no new enum |
-| `last_used_at` | `timestamptz` | no | `now()` | Bumped on each refresh |
-| `revoked_at` | `timestamptz` | yes | — | Set by logout / remote revoke / reuse-theft response / account deletion |
+| Column         | Type            | Null | Default             | Notes                                                                   |
+| -------------- | --------------- | ---- | ------------------- | ----------------------------------------------------------------------- |
+| `id`           | `uuid`          | no   | `gen_random_uuid()` | PK; the access token's `sid` claim                                      |
+| `user_id`      | `uuid`          | no   | —                   | FK → `users.id` ON DELETE CASCADE                                       |
+| `device_name`  | `text`          | yes  | —                   | Client-supplied ("Sean's iPhone 17"); display only                      |
+| `platform`     | `push_platform` | no   | —                   | Reuses the shared enum (`ios`/`android`) — no new enum                  |
+| `last_used_at` | `timestamptz`   | no   | `now()`             | Bumped on each refresh                                                  |
+| `revoked_at`   | `timestamptz`   | yes  | —                   | Set by logout / remote revoke / reuse-theft response / account deletion |
 
 - `created_at`/`updated_at` per convention (mutable table). **Indexes:**
   `(user_id)` — session list + revoke-all-on-deletion.
 
 #### 3.3.2 `refresh_tokens` — one row per issued refresh token
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `uuid` | no | `gen_random_uuid()` | PK |
-| `session_id` | `uuid` | no | — | FK → `auth_sessions.id` ON DELETE CASCADE |
-| `token_hash` | `text` | no | — | SHA-256 hex of the token; UNIQUE — the lookup key (R-auth-9) |
-| `expires_at` | `timestamptz` | no | — | issuance + `REFRESH_TOKEN_TTL` |
-| `rotated_at` | `timestamptz` | yes | — | Set when replaced; a presented token with this set = reuse → family revoke (R-auth-11) |
+| Column       | Type          | Null | Default             | Notes                                                                                  |
+| ------------ | ------------- | ---- | ------------------- | -------------------------------------------------------------------------------------- |
+| `id`         | `uuid`        | no   | `gen_random_uuid()` | PK                                                                                     |
+| `session_id` | `uuid`        | no   | —                   | FK → `auth_sessions.id` ON DELETE CASCADE                                              |
+| `token_hash` | `text`        | no   | —                   | SHA-256 hex of the token; UNIQUE — the lookup key (R-auth-9)                           |
+| `expires_at` | `timestamptz` | no   | —                   | issuance + `REFRESH_TOKEN_TTL`                                                         |
+| `rotated_at` | `timestamptz` | yes  | —                   | Set when replaced; a presented token with this set = reuse → family revoke (R-auth-11) |
 
 - Write-once + a single `rotated_at` stamp → no `updated_at` (same
   justification as the schema spec's immutable ledger tables). **Indexes:**
@@ -346,14 +346,14 @@ R-db-12).
 - "Revoked sessions older than 90d" is measured from `revoked_at`: the rule
   is `revoked_at IS NOT NULL AND revoked_at < now() - 90d` (strict `<`; a
   never-revoked session is unprunable at any age — no absolute session
-  lifetime, §3.2). *(Synced 2026-07-22, post-T-5.1)*
+  lifetime, §3.2). _(Synced 2026-07-22, post-T-5.1)_
 
 #### 3.3.3 `apple_credentials` — Apple revocation material (R-auth-7)
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `user_id` | `uuid` | no | — | PK; FK → `users.id` ON DELETE CASCADE |
-| `refresh_token_ciphertext` | `text` | no | — | Apple refresh token, AES-256-GCM app-level encryption, key from server env (Law #1); consumed only by account deletion (R-user-9) |
+| Column                     | Type   | Null | Default | Notes                                                                                                                             |
+| -------------------------- | ------ | ---- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `user_id`                  | `uuid` | no   | —       | PK; FK → `users.id` ON DELETE CASCADE                                                                                             |
+| `refresh_token_ciphertext` | `text` | no   | —       | Apple refresh token, AES-256-GCM app-level encryption, key from server env (Law #1); consumed only by account deletion (R-user-9) |
 
 - `created_at`/`updated_at` per convention (refreshed on each Apple
   sign-in). Never returned by any endpoint; never logged.
@@ -395,6 +395,7 @@ expires_in: number }` (seconds, = `ACCESS_TOKEN_TTL`)
 R-auth-7, R-auth-8, R-auth-14, R-auth-15
 
 **Tests required**:
+
 - [ ] Happy path: new user → user + entitlements row in one txn, `is_new_user: true`, valid ES256 access token with `sub`/`sid`, refresh stored hashed
 - [ ] Happy path: returning `apple_sub` → same user id, `is_new_user: false`, new session created
 - [ ] Happy path: unknown `apple_sub`, email matches existing Google-created account → linked (`apple_sub` set on the existing row), signed in, no second account (R-auth-6)
@@ -423,6 +424,7 @@ failure, incl. email collision with `email_verified` false — no link);
 R-auth-8, R-auth-14, R-auth-15
 
 **Tests required**:
+
 - [ ] Happy path: new + returning user (as Apple tests, keyed on `google_sub`)
 - [ ] Happy path: unknown `google_sub`, verified email matches existing Apple-created account → linked, signed in (R-auth-6)
 - [ ] Error: email collision with `email_verified: false` → 401, no link, no new account (R-auth-6)
@@ -448,6 +450,7 @@ fires first, R-auth-11); 429 `RATE_LIMITED`
 R-auth-14
 
 **Tests required**:
+
 - [ ] Happy path: valid refresh → old token `rotated_at` set, new pair returned, session `last_used_at` bumped — atomically
 - [ ] Error: expired-but-never-rotated → 401, session NOT revoked
 - [ ] Error (theft): presenting a rotated token → 401 AND session + all its tokens revoked; the previously-issued "legitimate" token now also 401s
@@ -470,6 +473,7 @@ Revoke the calling session; optionally deregister this device's push token.
 **Requirements covered**: R-auth-13, R-user-8
 
 **Tests required**:
+
 - [ ] Happy path: session `revoked_at` set; its refresh token stops working; supplied push token deleted
 - [ ] Happy path: no `push_token_id` → session revoked, push tokens untouched
 - [ ] Error: no/expired access token → 401
@@ -482,9 +486,9 @@ Revoke the calling session; optionally deregister this device's push token.
 List the caller's signed-in devices. **Auth**: Required
 
 **Query**: `{ cursor? }` — the standard `Paginated<T>` page cursor
-(contracts spec §3.5; `CursorQuerySchema`). *(Synced 2026-07-22, post-T-5.1
+(contracts spec §3.5; `CursorQuerySchema`). _(Synced 2026-07-22, post-T-5.1
 — the response was already `Paginated<AuthSessionInfo>`; the request-side
-param that round-trips `nextCursor` is now pinned.)*
+param that round-trips `nextCursor` is now pinned.)_
 
 **Response 200** `Paginated<AuthSessionInfo>` where `AuthSessionInfo =
 { id: Uuid, device_name: string | null, platform: 'ios' | 'android',
@@ -496,6 +500,7 @@ created_at: ISODateTime, last_used_at: ISODateTime, current: boolean }`
 **Requirements covered**: R-auth-13
 
 **Tests required**:
+
 - [ ] Happy path: two devices → both listed, `current` true exactly once
 - [ ] Error: unauthenticated → 401
 - [ ] Authz: user A never sees user B's sessions
@@ -515,11 +520,12 @@ revoked, or not owned by the caller (indistinguishable, R-auth-13)
 **Requirements covered**: R-auth-13, R-auth-12
 
 **Tests required**:
+
 - [ ] Happy path: other-device session revoked → its refresh 401s immediately; its unexpired access token works until `exp` (≤ 15 min — R-auth-12 documented latency)
 - [ ] Error: unknown session id → 404
 - [ ] Authz: user B's session id → 404, session untouched
 
-*Scope note:* v1 ships both the endpoints and a minimal session list/revoke
+_Scope note:_ v1 ships both the endpoints and a minimal session list/revoke
 screen in settings (the profile surface lives off the trips-list header
 avatar button — navigation spec §1). `GET /auth/sessions` +
 `DELETE /auth/sessions/:id` stay in v1. (Resolved 2026-07-09, Gate 2)
@@ -545,6 +551,7 @@ CurrencyCode, units?: 'metric' | 'imperial' }` (contracts spec §3.4)
 **Requirements covered**: R-user-1
 
 **Tests required**:
+
 - [ ] Happy path: full shape returned incl. handles + prefs
 - [ ] Error: unauthenticated → 401
 - [ ] Authz: response is always the token's `sub` — no parameterization to reach another user
@@ -568,6 +575,7 @@ foreign/never-issued/missing-object `avatar_key`; 401 `UNAUTHENTICATED`
 **Requirements covered**: R-user-2, R-user-3
 
 **Tests required**:
+
 - [ ] Happy path: display_name + prefs update round-trips; unknown prefs keys stripped
 - [ ] Happy path: commit issued `avatar_key`; clear with null
 - [ ] Error: `avatar_key` not issued to this user (incl. another user's valid key) → 400
@@ -610,6 +618,7 @@ in schema spec §3.3.17).
 **Requirements covered**: R-user-3
 
 **Tests required**:
+
 - [ ] Happy path: ticket issued, key namespaced `avatars/{user_id}/…`, TTL ≤ 10 min
 - [ ] Error: `image/gif` → 400; 6 MB → 413
 - [ ] Authz: issued key commits only for the requesting user (cross-user commit → 400, covered in PATCH tests)
@@ -637,6 +646,7 @@ validation and storage, matching the shared `PaymentHandles` refinements)
 **Requirements covered**: R-user-5, R-user-6, R-user-7
 
 **Tests required**:
+
 - [ ] Happy path: set all four rails (+ zelle display name); `@`/`$` prefixes stripped in stored + returned values
 - [ ] Happy path: null clears a handle; absent fields untouched
 - [ ] Error: cashtag HEAD 404 → 400 with details; HEAD timeout/5xx → save succeeds (fail-open)
@@ -664,6 +674,7 @@ shared trip (indistinguishable, R-user-4)
 **Requirements covered**: R-user-4
 
 **Tests required**:
+
 - [ ] Happy path: co-member of any trip → profile with handles
 - [ ] Error: unknown uuid → 404
 - [ ] Authz: real user, zero shared trips → 404 with body identical to the unknown-uuid case; response never includes email/prefs
@@ -692,6 +703,7 @@ existing row with `last_seen_at` bumped; a token owned by another account
 **Requirements covered**: R-user-8
 
 **Tests required**:
+
 - [ ] Happy path: register → row created; re-register → same id, `last_seen_at` bumped
 - [ ] Happy path: token previously on account B, registered by A → now owned by A only (moved, not duplicated)
 - [ ] Error: malformed token → 400
@@ -712,6 +724,7 @@ another user (indistinguishable)
 **Requirements covered**: R-user-8
 
 **Tests required**:
+
 - [ ] Happy path: own token deleted
 - [ ] Error: unknown id → 404
 - [ ] Authz: user B's token id → 404, row untouched
@@ -739,6 +752,7 @@ first, R-user-9 / schema spec §3.3.5)
 **Requirements covered**: R-user-9, R-auth-7, R-auth-13
 
 **Tests required**:
+
 - [ ] Happy path: fixed effects all fire (sessions revoked, push tokens gone, Apple revocation called — mocked)
 - [ ] Happy path: disposition — user row soft-deleted + PII scrubbed; surviving trip members still see ledger rows attributed to "Deleted user"
 - [ ] Error: unauthenticated → 401
@@ -766,6 +780,7 @@ AI spec's surface, not this endpoint.
 **Requirements covered**: R-ent-1, R-ent-3
 
 **Tests required**:
+
 - [ ] Happy path: free plan defaults (`ai_calls_per_day = 30`) returned
 - [ ] Happy path: row with `overrides.ai_calls_per_day = 100` → 100 (resolver precedence)
 - [ ] Error: unauthenticated → 401
@@ -778,14 +793,14 @@ AI spec's surface, not this endpoint.
 No implementation here — these are the behavioral contracts the server
 middleware must satisfy and other specs reference by name.
 
-| Middleware | Applies to | Behavior | Failure |
-|---|---|---|---|
-| `requireAuth` | every route outside the public allowlist (R-authz-1) | Verify `Authorization: Bearer` access token per R-auth-12 (stateless, ES256-only, iss/aud/exp); attach auth context `{ user_id, session_id }` to the request | 401 `UNAUTHENTICATED` |
-| `requireTripMember(minRole = 'viewer')` | every `/trips/:tripId/*` route in every spec (R-authz-2) | Load caller's `trip_members` row for `:tripId`; attach `{ trip_id, role }` trip context | no membership / no trip → 404 `NOT_FOUND` (indistinguishable); member below `minRole` → 403 `FORBIDDEN` (R-authz-3) |
-| `requireAiQuota(feature: ai_feature)` | every AI endpoint (R-ent-2) | Within the request, before any model call: kill-switch check, then `resolveEntitlements` + today's `ai_usage[feature]` for the caller | cap reached → 429 `AI_CAP_EXCEEDED`; kill switch → 503 `AI_DISABLED` |
+| Middleware                              | Applies to                                               | Behavior                                                                                                                                                     | Failure                                                                                                             |
+| --------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| `requireAuth`                           | every route outside the public allowlist (R-authz-1)     | Verify `Authorization: Bearer` access token per R-auth-12 (stateless, ES256-only, iss/aud/exp); attach auth context `{ user_id, session_id }` to the request | 401 `UNAUTHENTICATED`                                                                                               |
+| `requireTripMember(minRole = 'viewer')` | every `/trips/:tripId/*` route in every spec (R-authz-2) | Load caller's `trip_members` row for `:tripId`; attach `{ trip_id, role }` trip context                                                                      | no membership / no trip → 404 `NOT_FOUND` (indistinguishable); member below `minRole` → 403 `FORBIDDEN` (R-authz-3) |
+| `requireAiQuota(feature: ai_feature)`   | every AI endpoint (R-ent-2)                              | Within the request, before any model call: kill-switch check, then `resolveEntitlements` + today's `ai_usage[feature]` for the caller                        | cap reached → 429 `AI_CAP_EXCEEDED`; kill switch → 503 `AI_DISABLED`                                                |
 
 - Order fixed by R-authz-4: `requireAuth → validation → resource authz →
-  handler`; all failures serialize as `ApiError` via the shared error
+handler`; all failures serialize as `ApiError` via the shared error
   middleware.
 - `capture_parse` vs the AI cap — Resolved at
   `.specs/database/schema.spec.md`:§3.2 `ai_feature` (Gate 2, 2026-07-09):
@@ -829,13 +844,13 @@ accepted v1 behavior; `users.email` uniqueness holds.
 
 #### 3.6.3 Rate limits on auth surfaces (R-auth-14)
 
-| Surface | Limit | Key | Rationale |
-|---|---|---|---|
-| `POST /auth/apple`, `POST /auth/google` | 10/min, 50/day | IP | credential-stuffing / token-grinding |
-| `POST /auth/refresh` | 30/hour | session (`sid` via token row) + 60/hour per IP | rotation abuse; theft probing |
-| `POST /users/me/avatar-upload` | 10/hour | user | presign farming |
-| `PATCH /users/me/payment-handles` | 10/hour | user | bounds outbound cash.app HEADs (we are a polite client) |
-| `DELETE /users/me` | 3/day | user | fat-finger + abuse containment |
+| Surface                                 | Limit          | Key                                            | Rationale                                               |
+| --------------------------------------- | -------------- | ---------------------------------------------- | ------------------------------------------------------- |
+| `POST /auth/apple`, `POST /auth/google` | 10/min, 50/day | IP                                             | credential-stuffing / token-grinding                    |
+| `POST /auth/refresh`                    | 30/hour        | session (`sid` via token row) + 60/hour per IP | rotation abuse; theft probing                           |
+| `POST /users/me/avatar-upload`          | 10/hour        | user                                           | presign farming                                         |
+| `PATCH /users/me/payment-handles`       | 10/hour        | user                                           | bounds outbound cash.app HEADs (we are a polite client) |
+| `DELETE /users/me`                      | 3/day          | user                                           | fat-finger + abuse containment                          |
 
 All limits are server config constants; exceeding any returns 429
 `RATE_LIMITED` + `Retry-After`. Backing store (in-memory vs Postgres
@@ -899,16 +914,16 @@ Sequencing: AU-1 → AU-2 → (AU-3, AU-4) → AU-5 → (AU-6, AU-7) → AU-8.
 Depends on SH-1 (shared scaffold) and DB-1 (users/entitlements/push_tokens
 tables) landing first.
 
-| ID | Task | Covers | Blocked by markers? |
-|---|---|---|---|
-| AU-1 | `@gogo/shared` auth additions: `domains/auth.ts`, user/entitlement schema additions, endpoint descriptors (§3.7) | R-shared-14 pattern; all request/response shapes | no (`travel_style` enum resolved at contracts spec §3.4) |
-| AU-2 | Auth tables + migration: `auth_sessions`, `refresh_tokens`, `apple_credentials` (§3.3), prune job | R-auth-9, R-auth-11 structure, R-auth-7 storage | no |
-| AU-3 | Provider verification + sign-in endpoints: JWKS verify, nonce binding, find-or-create + entitlements txn, auto-link on verified email collision, Apple code exchange | R-auth-1..7, R-auth-15 | no (identity linking resolved Gate 2) |
-| AU-4 | Token issuance/rotation: ES256 signing, `/auth/refresh` rotation + reuse revocation, `/auth/logout`, sessions list/revoke | R-auth-8..13 | no (session list/revoke confirmed in v1, Gate 2) |
-| AU-5 | Middleware trio + error mapping + rate limiting: `requireAuth`, `requireTripMember`, `requireAiQuota`, shared `ApiError` serializer, limit table | R-authz-1..4, R-ent-2, R-auth-14 | no (`capture_parse` excluded from the AI cap, Gate 2) |
-| AU-6 | Profile endpoints: `/users/me` GET/PATCH, avatar presign + commit validation, payment handles (HEAD validation, fail-open), push tokens, `/users/:userId` shared-trip guard | R-user-1..8 | no |
-| AU-7 | Entitlements read endpoint wired to shared resolver | R-ent-1, R-ent-3 | no |
-| AU-8 | Account deletion: fixed effects (session/push/Apple revocation) + soft-delete/PII-scrub disposition, owner-transfer guard | R-user-9 | no (disposition resolved Gate 2: soft-delete + PII scrub) |
+| ID   | Task                                                                                                                                                                        | Covers                                           | Blocked by markers?                                       |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------- |
+| AU-1 | `@gogo/shared` auth additions: `domains/auth.ts`, user/entitlement schema additions, endpoint descriptors (§3.7)                                                            | R-shared-14 pattern; all request/response shapes | no (`travel_style` enum resolved at contracts spec §3.4)  |
+| AU-2 | Auth tables + migration: `auth_sessions`, `refresh_tokens`, `apple_credentials` (§3.3), prune job                                                                           | R-auth-9, R-auth-11 structure, R-auth-7 storage  | no                                                        |
+| AU-3 | Provider verification + sign-in endpoints: JWKS verify, nonce binding, find-or-create + entitlements txn, auto-link on verified email collision, Apple code exchange        | R-auth-1..7, R-auth-15                           | no (identity linking resolved Gate 2)                     |
+| AU-4 | Token issuance/rotation: ES256 signing, `/auth/refresh` rotation + reuse revocation, `/auth/logout`, sessions list/revoke                                                   | R-auth-8..13                                     | no (session list/revoke confirmed in v1, Gate 2)          |
+| AU-5 | Middleware trio + error mapping + rate limiting: `requireAuth`, `requireTripMember`, `requireAiQuota`, shared `ApiError` serializer, limit table                            | R-authz-1..4, R-ent-2, R-auth-14                 | no (`capture_parse` excluded from the AI cap, Gate 2)     |
+| AU-6 | Profile endpoints: `/users/me` GET/PATCH, avatar presign + commit validation, payment handles (HEAD validation, fail-open), push tokens, `/users/:userId` shared-trip guard | R-user-1..8                                      | no                                                        |
+| AU-7 | Entitlements read endpoint wired to shared resolver                                                                                                                         | R-ent-1, R-ent-3                                 | no                                                        |
+| AU-8 | Account deletion: fixed effects (session/push/Apple revocation) + soft-delete/PII-scrub disposition, owner-transfer guard                                                   | R-user-9                                         | no (disposition resolved Gate 2: soft-delete + PII scrub) |
 
 **Cross-cutting tests required** (beyond the per-endpoint lists):
 
@@ -920,10 +935,10 @@ tables) landing first.
 
 ---
 
-*Trace: every R-auth/R-user/R-ent/R-authz cites its design section and
+_Trace: every R-auth/R-user/R-ent/R-authz cites its design section and
 endpoints inline. All six markers resolved at Gate 2 (2026-07-09) — four at
 their canonical homes (identity linking → auto-link on verified email;
 account deletion → soft-delete + PII scrub; `travel_style` → fixed
 multi-tag set; `capture_parse` → outside the AI cap), two owned here (Apple
 client mechanism → native module; session-management UI → endpoints + UI
-ship in v1). Zero markers remain.*
+ship in v1). Zero markers remain._

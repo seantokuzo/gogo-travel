@@ -5,10 +5,10 @@ Seeded by migration `drizzle/0002_*` (generated from these files by
 `scripts/reference-data-to-sql.ts`); the app NEVER downloads reference data at
 boot or runtime, and CI never touches the network for it.
 
-| File            | Rows | Contents                                                       |
-| --------------- | ---- | -------------------------------------------------------------- |
-| `airports.json` | 4133 | IATA, ICAO, name, city, country, lat/lng, IANA tz              |
-| `airlines.json` | 893  | IATA airline designator, display name (flight-no. inference)   |
+| File            | Rows | Contents                                                     |
+| --------------- | ---- | ------------------------------------------------------------ |
+| `airports.json` | 4133 | IATA, ICAO, name, city, country, lat/lng, IANA tz            |
+| `airlines.json` | 893  | IATA airline designator, display name (flight-no. inference) |
 
 Snapshot taken **2026-09-06** by `scripts/generate-reference-data.ts` (run it
 to refresh; it self-checks a pin set — NRT/HND/LAX/AKL/PPT/BAH/PPG zones and
@@ -37,19 +37,19 @@ never as a runtime write (Law #6).
   (**ODbL**, built from OpenStreetMap data).
 
   ⚠️ **ODbL flag (share-alike), not silently assumed**: the derived `tz`
-  column is plausibly a *derivative database* of the tz boundary DB. Posture
+  column is plausibly a _derivative database_ of the tz boundary DB. Posture
   taken: attribute here (done — tz values © OpenStreetMap contributors via
   timezone-boundary-builder, ODbL 1.0) and treat this seed file's tz column
   as redistributable under ODbL terms. ODbL permits commercial use; the
   obligations are attribution + making the derived data available under the
-  same licence — this committed file *is* that data. If the app ever ships a
+  same licence — this committed file _is_ that data. If the app ever ships a
   public data-attribution screen, include "Timezone boundaries © OpenStreetMap
   contributors (ODbL), via timezone-boundary-builder". Escalate before
-  building any feature that *redistributes* the tz column standalone.
+  building any feature that _redistributes_ the tz column standalone.
 
   Why not the CC0-licensed `@photostructure/tz-lookup`: measured against exact
-  polygons over these 4,133 airports it mislabels 743 (70 with *wrong UTC
-  offsets* — BAH, PPG, OOL, DIL…). Offset-wrong zones are the exact B-8 bug
+  polygons over these 4,133 airports it mislabels 743 (70 with _wrong UTC
+  offsets_ — BAH, PPG, OOL, DIL…). Offset-wrong zones are the exact B-8 bug
   class this table exists to kill.
 
 ### `airlines.json`

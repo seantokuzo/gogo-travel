@@ -30,8 +30,9 @@ const LNG_IDX_SPAN = 720;
 
 /** Wrap a longitude cell index onto the [-360, 359] ring (antimeridian). */
 function wrapLngIdx(idx: number): number {
-  return ((((idx % LNG_IDX_SPAN) + LNG_IDX_SPAN + LNG_IDX_SPAN / 2) % LNG_IDX_SPAN) -
-    LNG_IDX_SPAN / 2);
+  return (
+    (((idx % LNG_IDX_SPAN) + LNG_IDX_SPAN + LNG_IDX_SPAN / 2) % LNG_IDX_SPAN) - LNG_IDX_SPAN / 2
+  );
 }
 
 function cellFromIndices(latIdx: number, lngIdx: number): RegionCell {

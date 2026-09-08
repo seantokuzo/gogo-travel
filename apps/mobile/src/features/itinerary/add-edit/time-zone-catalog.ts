@@ -56,7 +56,11 @@ export function resetTimeZoneCatalogForTests(): void {
 
 /** Trim, lowercase, and space every `_`/`-`/`/` so "los_angeles" and "Los Angeles" agree. */
 export function normalizeZoneQuery(raw: string): string {
-  return raw.trim().toLowerCase().replaceAll(/[/_-]+/g, " ").replaceAll(/\s+/g, " ");
+  return raw
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[/_-]+/g, " ")
+    .replaceAll(/\s+/g, " ");
 }
 
 /**
@@ -64,7 +68,10 @@ export function normalizeZoneQuery(raw: string): string {
  * (0) → city substring (1) → haystack substring (2) → country code exact
  * (3); ties keep catalog order so results are stable across keystrokes.
  */
-export function searchTimeZones(rawQuery: string, limit = Number.POSITIVE_INFINITY): TimeZoneEntry[] {
+export function searchTimeZones(
+  rawQuery: string,
+  limit = Number.POSITIVE_INFINITY,
+): TimeZoneEntry[] {
   const query = normalizeZoneQuery(rawQuery);
   const all = timeZoneCatalog();
   if (query === "") return all.slice(0, limit);

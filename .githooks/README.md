@@ -12,8 +12,8 @@ That points Git at this directory for hook lookups. Without it, the hooks are in
 
 ## Currently shipped
 
-| Hook | Type | Behavior |
-|------|------|----------|
+| Hook         | Type                    | Behavior                                                                                                                                              |
+| ------------ | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pre-commit` | Advisory (never blocks) | Warns when a new `docs/*.md` is being committed outside the 6-homes allowlist. Always exits 0 — the warning prints to stderr and the commit proceeds. |
 
 The advisory model is intentional. Hard blocks would frustrate the "spec and walk away" UX; the nudge gives the user a chance to think without standing in the way of merges.

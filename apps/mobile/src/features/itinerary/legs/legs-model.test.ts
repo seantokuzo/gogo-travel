@@ -8,12 +8,7 @@
  */
 import type { TravelLeg } from "@gogo/shared";
 
-import {
-  ITEM_A_ID,
-  ITEM_B_ID,
-  ITEM_C_ID,
-  makeTravelLeg,
-} from "@/test-utils/itinerary-fixtures";
+import { ITEM_A_ID, ITEM_B_ID, ITEM_C_ID, makeTravelLeg } from "@/test-utils/itinerary-fixtures";
 
 import {
   formatLegDistance,
@@ -46,7 +41,9 @@ describe("indexLegsByPair (§2.2 pair keying)", () => {
       "driving",
       "transit",
     ]);
-    expect(index.byPair.get(legPairKey(ITEM_B_ID, ITEM_C_ID))?.map((o: LegOption) => o.mode)).toEqual(["cycling"]);
+    expect(
+      index.byPair.get(legPairKey(ITEM_B_ID, ITEM_C_ID))?.map((o: LegOption) => o.mode),
+    ).toEqual(["cycling"]);
   });
 
   it("is DIRECTIONAL — the reverse pair is a different key (R-ib-20)", () => {
@@ -202,9 +199,9 @@ describe("isNoTravelLeg — the server's same-place legs (R-itin-6)", () => {
   });
 
   it("all-zero across every mode is 'no travel'", () => {
-    expect(isNoTravelLeg([zero("walking"), zero("driving"), zero("cycling"), zero("transit")])).toBe(
-      true,
-    );
+    expect(
+      isNoTravelLeg([zero("walking"), zero("driving"), zero("cycling"), zero("transit")]),
+    ).toBe(true);
   });
 
   it("CONTROL: one real mode makes it a genuine leg", () => {
@@ -213,7 +210,9 @@ describe("isNoTravelLeg — the server's same-place legs (R-itin-6)", () => {
 
   it("zero duration but real distance is still a leg (not a same-place row)", () => {
     expect(
-      isNoTravelLeg([{ mode: "walking", durationSeconds: 0, distanceMeters: 40, provider: "mapbox" }]),
+      isNoTravelLeg([
+        { mode: "walking", durationSeconds: 0, distanceMeters: 40, provider: "mapbox" },
+      ]),
     ).toBe(false);
   });
 

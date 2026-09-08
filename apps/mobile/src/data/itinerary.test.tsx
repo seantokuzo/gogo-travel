@@ -361,9 +361,9 @@ describe("useCreateItineraryItem / useUpdateItineraryItem", () => {
       result.current.mutate({ kind: "custom", title: "Nope", day: TRIP_START });
     });
     await waitFor(() => expect(onMutationError).toHaveBeenCalledWith(failure));
-    expect(client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items).toEqual(
-      seeded.items,
-    );
+    expect(
+      client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items,
+    ).toEqual(seeded.items);
   });
 });
 
@@ -417,10 +417,7 @@ describe("useDeleteItineraryItem", () => {
     });
     await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(ITEM_B_ID));
 
-    const [descriptor, input] = request.mock.calls[0] as [
-      { method: string },
-      { params: unknown },
-    ];
+    const [descriptor, input] = request.mock.calls[0] as [{ method: string }, { params: unknown }];
     expect(descriptor.method).toBe("DELETE");
     expect(input.params).toEqual({ tripId: TEST_TRIP_ID, itemId: ITEM_B_ID });
     const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));

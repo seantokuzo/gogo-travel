@@ -18,18 +18,18 @@ This skill **never auto-fixes**. It produces a structured report; the user picks
 
 ## The 6-homes allowlist
 
-| Path | Purpose |
-|------|---------|
-| `docs/PLANNING.md` | Roadmap |
-| `docs/QUEUE.md` | Working state |
-| `docs/STATE.md` | Active context |
-| `docs/SESSION-GUIDE.md` | Session entry point |
-| `docs/decisions/README.md` | Index for ADRs |
-| `docs/decisions/ADR-template.md` | Template |
-| `docs/decisions/ADR-NNN-<slug>.md` | Locked decisions |
-| `docs/history/README.md` | Index for archives |
-| `docs/history/PHASE-template.md` | Template |
-| `docs/history/P-NNN-<slug>.md` | Phase archives |
+| Path                               | Purpose             |
+| ---------------------------------- | ------------------- |
+| `docs/PLANNING.md`                 | Roadmap             |
+| `docs/QUEUE.md`                    | Working state       |
+| `docs/STATE.md`                    | Active context      |
+| `docs/SESSION-GUIDE.md`            | Session entry point |
+| `docs/decisions/README.md`         | Index for ADRs      |
+| `docs/decisions/ADR-template.md`   | Template            |
+| `docs/decisions/ADR-NNN-<slug>.md` | Locked decisions    |
+| `docs/history/README.md`           | Index for archives  |
+| `docs/history/PHASE-template.md`   | Template            |
+| `docs/history/P-NNN-<slug>.md`     | Phase archives      |
 
 Anything else under `docs/` is a candidate ORPHAN. The repo-root `README.md`, `CHANGELOG.md`, `LICENSE` are NOT planning docs and are explicitly out of scope.
 

@@ -146,7 +146,9 @@ describe("analyzeDayConflicts — overlap chips (R-itin-7)", () => {
 
   it("timedSpanOf is null exactly for the two ambient cases", () => {
     const bookings = bookingsById();
-    expect(timedSpanOf(makeItineraryItem({ id: ITEM_A_ID, start_time: null }), bookings)).toBeNull();
+    expect(
+      timedSpanOf(makeItineraryItem({ id: ITEM_A_ID, start_time: null }), bookings),
+    ).toBeNull();
     expect(timedSpanOf(timed(ITEM_A_ID, "09:00", "10:00"), bookings)).toEqual({
       startMinutes: 540,
       endMinutes: 600,
@@ -203,7 +205,11 @@ describe("list ≡ grid (R-itin-7 ⇔ R-itin-15 — the spec's cross-surface tes
     // clip-at-midnight from any fixed-length fallback. (A 23:00 start does
     // not — 23:00 + 60 min IS midnight, and the mutation reads as a no-op.)
     const items = [
-      timed(ITEM_A_ID, "21:00", "06:00", { day: TRIP_START, end_day: TRIP_DAY_2, sort_order: 1024 }),
+      timed(ITEM_A_ID, "21:00", "06:00", {
+        day: TRIP_START,
+        end_day: TRIP_DAY_2,
+        sort_order: 1024,
+      }),
       timed(ITEM_B_ID, "22:30", "23:45", { day: TRIP_START, sort_order: 2048 }),
     ];
     const bookings = bookingsById();

@@ -5,11 +5,7 @@
  * (`places.category` stays the raw source-taxonomy string). `numeric`
  * coordinates arrive as STRINGS (db/schema/_shared.ts) and convert here.
  */
-import {
-  coarseCategory,
-  type Place,
-  type SavedPlaceWithPlace,
-} from "@gogo/shared/domains/place";
+import { coarseCategory, type Place, type SavedPlaceWithPlace } from "@gogo/shared/domains/place";
 import type * as schema from "../db/schema/index.js";
 
 export type PlaceRow = typeof schema.places.$inferSelect;

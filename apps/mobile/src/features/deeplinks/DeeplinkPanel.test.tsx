@@ -377,8 +377,7 @@ describe("train — Trainline two-step URN flow (§2.7)", () => {
       return {
         ok: true,
         status: 200,
-        text: async () =>
-          JSON.stringify({ searchLocations: urn !== undefined ? [{ urn }] : [] }),
+        text: async () => JSON.stringify({ searchLocations: urn !== undefined ? [{ urn }] : [] }),
       } as unknown as Response;
     }) as unknown as typeof fetch;
   }

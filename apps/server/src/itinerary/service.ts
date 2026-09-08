@@ -66,9 +66,7 @@ const wallHHMM = (value: string | null): string | null =>
 
 /** Both chain days of an item (§3.6: spanning items sit in BOTH days' chains). */
 function itemDays(item: { day: string; endDay: string | null }): string[] {
-  return item.endDay !== null && item.endDay !== item.day
-    ? [item.day, item.endDay]
-    : [item.day];
+  return item.endDay !== null && item.endDay !== item.day ? [item.day, item.endDay] : [item.day];
 }
 
 function marksFor(tripId: string, days: Iterable<string>): DirtyDayMark[] {
@@ -355,9 +353,7 @@ export async function updateItem(
       const [probe] = await tx
         .select({ kind: schema.itineraryItems.kind, bookingId: schema.itineraryItems.bookingId })
         .from(schema.itineraryItems)
-        .where(
-          and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)),
-        );
+        .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)));
       if (!probe) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
       let parentStartsAt: Date | null = null;
@@ -365,9 +361,7 @@ export async function updateItem(
         const [parent] = await tx
           .select({ startsAt: schema.bookings.startsAt })
           .from(schema.bookings)
-          .where(
-            and(eq(schema.bookings.id, probe.bookingId), eq(schema.bookings.tripId, tripId)),
-          )
+          .where(and(eq(schema.bookings.id, probe.bookingId), eq(schema.bookings.tripId, tripId)))
           .for("update");
         // Parent deleted in the probe→lock window ⇒ the item cascaded too.
         if (!parent) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
@@ -377,9 +371,7 @@ export async function updateItem(
       const [current] = await tx
         .select()
         .from(schema.itineraryItems)
-        .where(
-          and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)),
-        )
+        .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)))
         .for("update");
       if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
@@ -473,8 +465,7 @@ export async function updateItem(
       // title/notes-only edit cannot.
       const dirty = new Set<string>();
       const placeChanged = input.place_id !== undefined && input.place_id !== current.placeId;
-      const orderChanged =
-        input.sort_order !== undefined && input.sort_order !== current.sortOrder;
+      const orderChanged = input.sort_order !== undefined && input.sort_order !== current.sortOrder;
       const timesChanged =
         nextStart !== wallHHMM(current.startTime) || nextEnd !== wallHHMM(current.endTime);
       const daysChanged = nextDay !== current.day || nextEndDay !== current.endDay;
@@ -516,77 +507,81 @@ export async function deleteItem(
 ): Promise<{ dirtyDays: DirtyDayMark[] } | null> {
   const { tripId, itemId } = args;
 
-  return db.transaction(async (tx) => {
-    const [probe] = await tx
-      .select({ kind: schema.itineraryItems.kind, bookingId: schema.itineraryItems.bookingId })
-      .from(schema.itineraryItems)
-      .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)));
-    if (!probe) return null;
-
-    const dirty = new Set<string>();
-
-    if (probe.kind === "booking" && probe.bookingId !== null) {
-      // Lock order: parent booking FIRST (this path writes it too, R-ib-9).
-      const [parent] = await tx
-        .select({ id: schema.bookings.id, status: schema.bookings.status })
-        .from(schema.bookings)
-        .where(and(eq(schema.bookings.id, probe.bookingId), eq(schema.bookings.tripId, tripId)))
-        .for("update");
-      if (!parent) return null; // parent deleted in the window ⇒ item cascaded
-
-      if (parent.status === "booked") {
-        throw new HttpError(
-          "CONFLICT",
-          "a booked booking's calendar item cannot be deleted — cancel or demote the booking instead",
-          { reason: "booked_parent" },
-        );
-      }
-
-      // Ordered FOR UPDATE fence over ALL the booking's items (they leave
-      // together — I-1), then delete them.
-      const fenced = await tx
-        .select({
-          id: schema.itineraryItems.id,
-          day: schema.itineraryItems.day,
-          endDay: schema.itineraryItems.endDay,
-        })
+  return db
+    .transaction(async (tx) => {
+      const [probe] = await tx
+        .select({ kind: schema.itineraryItems.kind, bookingId: schema.itineraryItems.bookingId })
         .from(schema.itineraryItems)
-        .where(eq(schema.itineraryItems.bookingId, parent.id))
-        .orderBy(asc(schema.itineraryItems.id))
-        .for("update");
-      // The targeted item vanished between probe and fence ⇒ treat as absent
-      // (LWW posture) — nothing is deleted on a stale target.
-      if (!fenced.some((row) => row.id === itemId)) return null;
+        .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)));
+      if (!probe) return null;
 
-      for (const row of fenced) {
-        for (const day of itemDays(row)) dirty.add(day);
-      }
-      await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.bookingId, parent.id));
+      const dirty = new Set<string>();
 
-      // R-ib-9: planned → idea rides the same transaction. (Any other
-      // status here means the invariant already drifted; the delete above
-      // restored I-1/I-3's zero-item arm and the status is left alone.)
-      if (parent.status === "planned") {
+      if (probe.kind === "booking" && probe.bookingId !== null) {
+        // Lock order: parent booking FIRST (this path writes it too, R-ib-9).
+        const [parent] = await tx
+          .select({ id: schema.bookings.id, status: schema.bookings.status })
+          .from(schema.bookings)
+          .where(and(eq(schema.bookings.id, probe.bookingId), eq(schema.bookings.tripId, tripId)))
+          .for("update");
+        if (!parent) return null; // parent deleted in the window ⇒ item cascaded
+
+        if (parent.status === "booked") {
+          throw new HttpError(
+            "CONFLICT",
+            "a booked booking's calendar item cannot be deleted — cancel or demote the booking instead",
+            { reason: "booked_parent" },
+          );
+        }
+
+        // Ordered FOR UPDATE fence over ALL the booking's items (they leave
+        // together — I-1), then delete them.
+        const fenced = await tx
+          .select({
+            id: schema.itineraryItems.id,
+            day: schema.itineraryItems.day,
+            endDay: schema.itineraryItems.endDay,
+          })
+          .from(schema.itineraryItems)
+          .where(eq(schema.itineraryItems.bookingId, parent.id))
+          .orderBy(asc(schema.itineraryItems.id))
+          .for("update");
+        // The targeted item vanished between probe and fence ⇒ treat as absent
+        // (LWW posture) — nothing is deleted on a stale target.
+        if (!fenced.some((row) => row.id === itemId)) return null;
+
+        for (const row of fenced) {
+          for (const day of itemDays(row)) dirty.add(day);
+        }
         await tx
-          .update(schema.bookings)
-          .set({ status: "idea" })
-          .where(eq(schema.bookings.id, parent.id));
+          .delete(schema.itineraryItems)
+          .where(eq(schema.itineraryItems.bookingId, parent.id));
+
+        // R-ib-9: planned → idea rides the same transaction. (Any other
+        // status here means the invariant already drifted; the delete above
+        // restored I-1/I-3's zero-item arm and the status is left alone.)
+        if (parent.status === "planned") {
+          await tx
+            .update(schema.bookings)
+            .set({ status: "idea" })
+            .where(eq(schema.bookings.id, parent.id));
+        }
+
+        return { dirtyDays: marksFor(tripId, dirty) };
       }
 
+      const [locked] = await tx
+        .select({ day: schema.itineraryItems.day, endDay: schema.itineraryItems.endDay })
+        .from(schema.itineraryItems)
+        .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)))
+        .for("update");
+      if (!locked) return null;
+      for (const day of itemDays(locked)) dirty.add(day);
+
+      await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, itemId));
       return { dirtyDays: marksFor(tripId, dirty) };
-    }
-
-    const [locked] = await tx
-      .select({ day: schema.itineraryItems.day, endDay: schema.itineraryItems.endDay })
-      .from(schema.itineraryItems)
-      .where(and(eq(schema.itineraryItems.id, itemId), eq(schema.itineraryItems.tripId, tripId)))
-      .for("update");
-    if (!locked) return null;
-    for (const day of itemDays(locked)) dirty.add(day);
-
-    await tx.delete(schema.itineraryItems).where(eq(schema.itineraryItems.id, itemId));
-    return { dirtyDays: marksFor(tripId, dirty) };
-  }).catch(rethrowTimeOrderCkMapped); // B1: grandfathered parent's 23514 → 400, never a 500
+    })
+    .catch(rethrowTimeOrderCkMapped); // B1: grandfathered parent's 23514 → 400, never a 500
 }
 
 export interface DayOrderResultRows {
@@ -654,9 +649,7 @@ export async function reorderDay(
         ? await tx
             .select({ id: schema.bookings.id, startsAt: schema.bookings.startsAt })
             .from(schema.bookings)
-            .where(
-              and(inArray(schema.bookings.id, parentIds), eq(schema.bookings.tripId, tripId)),
-            )
+            .where(and(inArray(schema.bookings.id, parentIds), eq(schema.bookings.tripId, tripId)))
             .orderBy(asc(schema.bookings.id))
             .for("update")
         : [];
@@ -668,10 +661,7 @@ export async function reorderDay(
             .select()
             .from(schema.itineraryItems)
             .where(
-              and(
-                inArray(schema.itineraryItems.id, ids),
-                eq(schema.itineraryItems.tripId, tripId),
-              ),
+              and(inArray(schema.itineraryItems.id, ids), eq(schema.itineraryItems.tripId, tripId)),
             )
             .orderBy(asc(schema.itineraryItems.id))
             .for("update")
@@ -735,7 +725,8 @@ export async function reorderDay(
           .where(eq(schema.itineraryItems.id, row.id));
         dirty.add(day);
         for (const d of itemDays(row)) dirty.add(d);
-        if (row.endDay !== null) for (const d of itemDays({ day, endDay: row.endDay })) dirty.add(d);
+        if (row.endDay !== null)
+          for (const d of itemDays({ day, endDay: row.endDay })) dirty.add(d);
       }
     }
 

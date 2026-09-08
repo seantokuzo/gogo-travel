@@ -216,14 +216,14 @@ R-nav-16; unauthenticated stash-and-resume R-nav-14).
 
 States (from `GET /invites/:token`):
 
-| State | Render |
-|---|---|
-| loading | Skeleton preview card |
-| `active` | Preview card (trip name, destination, dates, inviter avatar + name, "joining as <role>") + Accept + Decline |
-| `active` + `already_member` | Notice "You're already in this trip" + Open trip |
-| `expired` | Error card: "This invite has expired — ask <inviter> for a new link" + Back to trips |
-| `revoked` / `max_uses_reached` | Error card: "This invite is no longer valid" + Back to trips |
-| 404 unknown | Generic "Invite not found" + Back to trips (no oracle for token guessing) |
+| State                          | Render                                                                                                      |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| loading                        | Skeleton preview card                                                                                       |
+| `active`                       | Preview card (trip name, destination, dates, inviter avatar + name, "joining as <role>") + Accept + Decline |
+| `active` + `already_member`    | Notice "You're already in this trip" + Open trip                                                            |
+| `expired`                      | Error card: "This invite has expired — ask <inviter> for a new link" + Back to trips                        |
+| `revoked` / `max_uses_reached` | Error card: "This invite is no longer valid" + Back to trips                                                |
+| 404 unknown                    | Generic "Invite not found" + Back to trips (no oracle for token guessing)                                   |
 
 Accept → `POST /invites/:token/accept` → invalidate `['trips']` →
 `router.replace('/[tripId]')` (default tab per nav R-nav-7/8). Decline →
@@ -249,17 +249,17 @@ back to trip list, no server call.
 
 **Trip settings** — ListItem rows (R-tripui-18), role-gated per API §3.2:
 
-| Row | Roles shown | Behavior |
-|---|---|---|
-| Trip details (name, destination, dates) | owner, editor | Push → form; save sends `expect_updated_at` (R-tripui-19) |
-| Theme | owner, editor | Push → theme picker (tokens spec themes); optimistic apply |
-| Base currency | owner | Push → currency picker; locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
-| Trip visibility | — | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2) |
-| Offline pack | all | Status pill + download/refresh (offline spec owns content) |
-| Members | all | Shortcut → members screen |
-| Leave trip | editor, viewer | ConfirmDialog → `DELETE /trips/:tripId/members/:me` → trip list |
-| Leave trip (owner) | owner | Disabled row + "Transfer ownership first" hint → members screen (resolved Gate 2) |
-| Delete trip | owner | ConfirmDialog (permanent, all members) → `DELETE /trips/:tripId` → trip list |
+| Row                                     | Roles shown    | Behavior                                                                                                                             |
+| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Trip details (name, destination, dates) | owner, editor  | Push → form; save sends `expect_updated_at` (R-tripui-19)                                                                            |
+| Theme                                   | owner, editor  | Push → theme picker (tokens spec themes); optimistic apply                                                                           |
+| Base currency                           | owner          | Push → currency picker; locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
+| Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                                 |
+| Offline pack                            | all            | Status pill + download/refresh (offline spec owns content)                                                                           |
+| Members                                 | all            | Shortcut → members screen                                                                                                            |
+| Leave trip                              | editor, viewer | ConfirmDialog → `DELETE /trips/:tripId/members/:me` → trip list                                                                      |
+| Leave trip (owner)                      | owner          | Disabled row + "Transfer ownership first" hint → members screen (resolved Gate 2)                                                    |
+| Delete trip                             | owner          | ConfirmDialog (permanent, all members) → `DELETE /trips/:tripId` → trip list                                                         |
 
 ### 2.6 Collab client rules (optimistic · refetch-on-focus · push)
 
@@ -278,50 +278,50 @@ keys derive from endpoint descriptors (contracts §3.6).
   mutations in this spec rely on row-grain LWW (API §3.5 rule 1).
 - **Push invalidation mapping (R-tripui-4):**
 
-| Event (API §3.5) | Invalidate | Extra behavior |
-|---|---|---|
-| `trip.updated`, `trip.status_changed` | `['trips']`, `['trip', tripId]` | Theme/status changes re-render trip context |
-| `trip.deleted` | `['trips']`; evict `['trip', tripId]` subtree | If inside that trip → exit to list + notice |
-| `member.added` / `member.left` / `member.removed` / `member.role_changed` / `ownership.transferred` | `['trip', tripId, 'members']`, `['trips']` | If `entity_id` = me: refetch own role (gates re-render); `member.removed` targeting me → evict + exit + notice |
-| `invite.created` / `invite.revoked` | `['trip', tripId, 'invites']` | — |
+| Event (API §3.5)                                                                                    | Invalidate                                    | Extra behavior                                                                                                 |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `trip.updated`, `trip.status_changed`                                                               | `['trips']`, `['trip', tripId]`               | Theme/status changes re-render trip context                                                                    |
+| `trip.deleted`                                                                                      | `['trips']`; evict `['trip', tripId]` subtree | If inside that trip → exit to list + notice                                                                    |
+| `member.added` / `member.left` / `member.removed` / `member.role_changed` / `ownership.transferred` | `['trip', tripId, 'members']`, `['trips']`    | If `entity_id` = me: refetch own role (gates re-render); `member.removed` targeting me → evict + exit + notice |
+| `invite.created` / `invite.revoked`                                                                 | `['trip', tripId, 'invites']`                 | —                                                                                                              |
 
 ### 2.7 testIDs (nav §2.7 grammar — `<screen>-<element>[-<qualifier>]`)
 
 Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 `members-screen`, `trip-settings-screen`.
 
-| Screen | testID | Element |
-|---|---|---|
-| trip-list | `trip-list-fab-create` | create FAB |
-| | `trip-list-list-item-{tripId}` | trip row |
-| | `trip-list-button-profile` | header avatar (profile surface confirmed — resolved Gate 2) |
-| | `trip-list-button-join` | join entry (EmptyState/overflow) |
-| | `trip-list-retry` | error retry |
-| trip-new | `trip-new-input-name` | name input |
-| | `trip-new-input-destination` | destination search input |
-| | `trip-new-list-item-{placeId}` | destination result row |
-| | `trip-new-input-dates` | date-range control |
-| | `trip-new-button-create` | submit |
-| | `trip-new-button-cancel` | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
-| invite-join | `invite-join-button-accept` | accept |
-| | `invite-join-button-decline` | decline |
-| | `invite-join-button-open-trip` | already-member open |
-| | `invite-join-button-back` | error-state back to trips |
-| members | `members-list-item-{userId}` | member row |
-| | `members-button-invite` | invite CTA |
-| | `members-button-role-{userId}` | role-change action |
-| | `members-button-remove-{userId}` | remove action (Confirm derives `-confirm`/`-cancel`) |
-| | `members-button-transfer-{userId}` | make-owner action |
-| | `members-list-item-invite-{inviteId}` | active invite row |
-| | `members-button-revoke-{inviteId}` | revoke invite |
-| trip-settings | `trip-settings-list-item-details` | details row |
-| | `trip-settings-list-item-theme` | theme row |
-| | `trip-settings-list-item-currency` | base currency row |
-| | `trip-settings-list-item-offline` | offline pack row |
-| | `trip-settings-list-item-members` | members shortcut |
-| | `trip-settings-button-leave` | leave trip |
-| | `trip-settings-button-delete` | delete trip |
-| | `trip-settings-button-save` | details form save |
+| Screen        | testID                                | Element                                                                         |
+| ------------- | ------------------------------------- | ------------------------------------------------------------------------------- |
+| trip-list     | `trip-list-fab-create`                | create FAB                                                                      |
+|               | `trip-list-list-item-{tripId}`        | trip row                                                                        |
+|               | `trip-list-button-profile`            | header avatar (profile surface confirmed — resolved Gate 2)                     |
+|               | `trip-list-button-join`               | join entry (EmptyState/overflow)                                                |
+|               | `trip-list-retry`                     | error retry                                                                     |
+| trip-new      | `trip-new-input-name`                 | name input                                                                      |
+|               | `trip-new-input-destination`          | destination search input                                                        |
+|               | `trip-new-list-item-{placeId}`        | destination result row                                                          |
+|               | `trip-new-input-dates`                | date-range control                                                              |
+|               | `trip-new-button-create`              | submit                                                                          |
+|               | `trip-new-button-cancel`              | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
+| invite-join   | `invite-join-button-accept`           | accept                                                                          |
+|               | `invite-join-button-decline`          | decline                                                                         |
+|               | `invite-join-button-open-trip`        | already-member open                                                             |
+|               | `invite-join-button-back`             | error-state back to trips                                                       |
+| members       | `members-list-item-{userId}`          | member row                                                                      |
+|               | `members-button-invite`               | invite CTA                                                                      |
+|               | `members-button-role-{userId}`        | role-change action                                                              |
+|               | `members-button-remove-{userId}`      | remove action (Confirm derives `-confirm`/`-cancel`)                            |
+|               | `members-button-transfer-{userId}`    | make-owner action                                                               |
+|               | `members-list-item-invite-{inviteId}` | active invite row                                                               |
+|               | `members-button-revoke-{inviteId}`    | revoke invite                                                                   |
+| trip-settings | `trip-settings-list-item-details`     | details row                                                                     |
+|               | `trip-settings-list-item-theme`       | theme row                                                                       |
+|               | `trip-settings-list-item-currency`    | base currency row                                                               |
+|               | `trip-settings-list-item-offline`     | offline pack row                                                                |
+|               | `trip-settings-list-item-members`     | members shortcut                                                                |
+|               | `trip-settings-button-leave`          | leave trip                                                                      |
+|               | `trip-settings-button-delete`         | delete trip                                                                     |
+|               | `trip-settings-button-save`           | details form save                                                               |
 
 Dynamic qualifiers are stable entity ids, never render indexes (nav §2.7
 rule; ConfirmDialog children derive `-confirm`/`-cancel` per rule 4).
@@ -348,14 +348,14 @@ Each sized to one agent session; become `T-N.M` rows at build time.
 Depends on: NAV-1..5 (routes, guards, deep links), DS-7..9 (components),
 API-TRIPS-1..4.
 
-| ID | Task | Covers |
-|---|---|---|
-| CT-1 | Trip list: sections, rows, empty/loading/error states, FAB + join entries, refetch-on-focus wiring. | R-tripui-1..3, 5, 22 |
-| CT-2 | Create-trip modal: form, destination structured search (Overture city subset — resolved Gate 2), required dates, submit/land, dirty-dismiss guard. | R-tripui-6..8, 22 |
-| CT-3 | Invite-join screen: preview, accept/decline, all dead-token states, already-member path (cold/warm via nav registry). | R-tripui-9..12, 22 |
-| CT-4 | Members screen: list + role badges, role-gated actions (role change, remove, transfer), invite create + share sheet, active-invite list + revoke. | R-tripui-13..17, 21, 22 |
-| CT-5 | Trip settings screen: role-gated rows, details form with `expect_updated_at` conflict UX, leave/delete flows. | R-tripui-14, 18..20, 21, 22 |
-| CT-6 | Collab client layer: push-event → query-key invalidation map, optimistic mutation helpers with rollback, forced-exit handling (trip deleted / self removed). | R-tripui-3, 4, 21 |
+| ID   | Task                                                                                                                                                         | Covers                      |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
+| CT-1 | Trip list: sections, rows, empty/loading/error states, FAB + join entries, refetch-on-focus wiring.                                                          | R-tripui-1..3, 5, 22        |
+| CT-2 | Create-trip modal: form, destination structured search (Overture city subset — resolved Gate 2), required dates, submit/land, dirty-dismiss guard.           | R-tripui-6..8, 22           |
+| CT-3 | Invite-join screen: preview, accept/decline, all dead-token states, already-member path (cold/warm via nav registry).                                        | R-tripui-9..12, 22          |
+| CT-4 | Members screen: list + role badges, role-gated actions (role change, remove, transfer), invite create + share sheet, active-invite list + revoke.            | R-tripui-13..17, 21, 22     |
+| CT-5 | Trip settings screen: role-gated rows, details form with `expect_updated_at` conflict UX, leave/delete flows.                                                | R-tripui-14, 18..20, 21, 22 |
+| CT-6 | Collab client layer: push-event → query-key invalidation map, optimistic mutation helpers with rollback, forced-exit handling (trip deleted / self removed). | R-tripui-3, 4, 21           |
 
 **Tests required (minimum):**
 
@@ -374,10 +374,10 @@ API-TRIPS-1..4.
 
 ---
 
-*Trace: every R-tripui-N cites its §2 section inline. All markers resolved
+_Trace: every R-tripui-N cites its §2 section inline. All markers resolved
 at Gate 2 (2026-07-09): 1 owned here (destination search source → Overture
 city/locality subset), 6 inherited (§2.2 — dates required; structured
 destination; ownership transfer; multi-use invites; universal-link domain;
 profile = trip-list header avatar); the API spec's 3 markers (viewer
 participation, base-currency lock, trip visibility dropped) resolved
-there. Zero markers remain.*
+there. Zero markers remain._

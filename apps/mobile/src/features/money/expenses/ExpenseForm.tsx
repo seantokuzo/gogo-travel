@@ -286,9 +286,7 @@ export function ExpenseForm({
       ...(needsFx && baseCents !== null && (currencyChanged || rateChanged || amountChanged)
         ? { fx_rate: trimmedRate, base_amount_cents: baseCents }
         : {}),
-      ...(!needsFx && expense.fx_rate !== null
-        ? { fx_rate: null, base_amount_cents: null }
-        : {}),
+      ...(!needsFx && expense.fx_rate !== null ? { fx_rate: null, base_amount_cents: null } : {}),
     };
     if (Object.keys(candidate).length === 0) {
       onSaved();
@@ -481,7 +479,9 @@ export function ExpenseForm({
             accessibilityLiveRegion="polite"
             testID="expense-new-split-former-blocked"
           >
-            {"A changed split can't keep former members — remove them, or leave the split as it was."}
+            {
+              "A changed split can't keep former members — remove them, or leave the split as it was."
+            }
           </AppText>
         ) : null}
       </View>
@@ -514,9 +514,7 @@ export function ExpenseForm({
             title={nameFor(member.user.id)}
             {...(member.user.id === payerId
               ? {
-                  trailing: (
-                    <Icon name="checkmark" size={18} color={theme.color.primary.solid} />
-                  ),
+                  trailing: <Icon name="checkmark" size={18} color={theme.color.primary.solid} />,
                 }
               : {})}
             onPress={() => {

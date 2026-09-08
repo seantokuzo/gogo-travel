@@ -97,9 +97,7 @@ describe("cameraStopFor", () => {
   });
 
   it("emits a center stop with the target zoom, animated on request", () => {
-    expect(
-      cameraStopFor({ kind: "center", center: KYOTO, zoom: 12 }, { animate: true }),
-    ).toEqual({
+    expect(cameraStopFor({ kind: "center", center: KYOTO, zoom: 12 }, { animate: true })).toEqual({
       centerCoordinate: KYOTO,
       zoomLevel: 12,
       animationDuration: CAMERA_ANIMATION_MS,

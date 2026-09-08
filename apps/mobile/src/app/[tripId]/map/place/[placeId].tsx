@@ -167,8 +167,7 @@ export default function PlaceDetailScreen() {
   const savedRowSettled = savedRow !== undefined && !isOptimisticSavedPlaceId(savedRow.id);
   const busy = save.isPending || unsave.isPending || noteUpdate.isPending;
 
-  const is404 =
-    detailQuery.error instanceof ApiRequestError && detailQuery.error.status === 404;
+  const is404 = detailQuery.error instanceof ApiRequestError && detailQuery.error.status === 404;
 
   const linkedItems = useMemo(
     () =>
@@ -265,7 +264,9 @@ export default function PlaceDetailScreen() {
       <View style={s.banner}>
         <ErrorBanner
           message={
-            offline ? "You're offline and this place isn't cached yet." : "Couldn't load this place."
+            offline
+              ? "You're offline and this place isn't cached yet."
+              : "Couldn't load this place."
           }
           onRetry={() => void detailQuery.refetch()}
           testID="place-detail-error"

@@ -106,7 +106,7 @@ assigned/guessed trip.
   an expired signed URL is refetched transparently once before surfacing an
   error.
 - **R-capc-16 (auto-file visibility):** WHEN a capture was auto-filed THE
-  SYSTEM SHALL render it in landed history as "Filed to *<trip>*" linking
+  SYSTEM SHALL render it in landed history as "Filed to _<trip>_" linking
   to the booking — auto-filing is never invisible in-app. Auto-file is
   decided behavior — Resolved at `.specs/api/capture.spec.md`:§R-cap-13
   (Gate 2, 2026-07-09): high-confidence parses auto-file + push
@@ -131,7 +131,7 @@ assigned/guessed trip.
   with a one-tap copy button (copied toast) and teach both paths:
   - **Forward path:** "Forward booking emails to this address" + mail-app
     reality tips from research: Apple Mail shares PDFs in 3 taps; the Gmail
-    iOS app can't share email bodies at all — Gmail users must *forward*
+    iOS app can't share email bodies at all — Gmail users must _forward_
     instead of share.
   - **Share path:** "Or share PDFs, screenshots and links straight from any
     app" with the share-sheet walkthrough.
@@ -159,27 +159,27 @@ assigned/guessed trip.
 
 ### 2.1 Screens & presentation (navigation §2.6 conventions)
 
-| Screen | Route (anchored at the trips-level inbox home — nav registry, resolved Gate 2) | Presentation |
-|---|---|---|
-| `capture-queue` | `capture/index` | trips-level inbox (trip-list header entry + badge) with a per-trip filtered view |
-| `capture-review` | `capture/[captureId]` | **PUSH** (drill into an on-screen entity) |
-| `capture-onboarding` | `capture/onboarding` | **MODAL — form** (self-contained teach flow, explicit done) |
-| raw viewer | within `capture-review` | **PUSH** (full-bleed viewer) |
-| trip picker | within `capture-review` | **Sheet** (single-decision, context visible) |
-| reject / discard confirmations | — | **ConfirmDialog** |
+| Screen                         | Route (anchored at the trips-level inbox home — nav registry, resolved Gate 2) | Presentation                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `capture-queue`                | `capture/index`                                                                | trips-level inbox (trip-list header entry + badge) with a per-trip filtered view |
+| `capture-review`               | `capture/[captureId]`                                                          | **PUSH** (drill into an on-screen entity)                                        |
+| `capture-onboarding`           | `capture/onboarding`                                                           | **MODAL — form** (self-contained teach flow, explicit done)                      |
+| raw viewer                     | within `capture-review`                                                        | **PUSH** (full-bleed viewer)                                                     |
+| trip picker                    | within `capture-review`                                                        | **Sheet** (single-decision, context visible)                                     |
+| reject / discard confirmations | —                                                                              | **ConfirmDialog**                                                                |
 
 Share-intent arrival (R-capc-1/2) targets `capture-queue` via the deep-link
 registry's share-sheet row (navigation §2.3), after upload kickoff.
 
 ### 2.2 Queue row states (one component, four render modes)
 
-| `parse_status` + landed | Row treatment | Tap target |
-|---|---|---|
-| `pending` | spinner + "Reading…" + source icon | review screen (read-only, processing) |
-| `parsed`, unlanded | proposal summary + "Pick a trip" chip (or trip_guess name) | review screen |
-| `needs_review` | proposal summary + "Needs review" badge | review screen |
-| `failed` | error line + "Failed" badge | review screen (failure mode, R-capc-14) |
-| landed (any, `booking_id` set) | "Filed to *<trip>*" + checkmark (history segment) | booking detail |
+| `parse_status` + landed        | Row treatment                                              | Tap target                              |
+| ------------------------------ | ---------------------------------------------------------- | --------------------------------------- |
+| `pending`                      | spinner + "Reading…" + source icon                         | review screen (read-only, processing)   |
+| `parsed`, unlanded             | proposal summary + "Pick a trip" chip (or trip_guess name) | review screen                           |
+| `needs_review`                 | proposal summary + "Needs review" badge                    | review screen                           |
+| `failed`                       | error line + "Failed" badge                                | review screen (failure mode, R-capc-14) |
+| landed (any, `booking_id` set) | "Filed to _<trip>_" + checkmark (history segment)          | booking detail                          |
 
 ### 2.3 State & data
 
@@ -200,34 +200,34 @@ registry's share-sheet row (navigation §2.3), after upload kickoff.
 Screen roots: `capture-queue-screen`, `capture-review-screen`,
 `capture-onboarding-screen`.
 
-| Element | testID |
-|---|---|
-| Queue list / row | `capture-queue-list`, `capture-queue-list-item-{captureId}` |
-| Queue segment (open/history) | `capture-queue-segment-open`, `capture-queue-segment-landed` |
-| Queue help/onboarding entry | `capture-queue-button-onboarding` |
-| Pending-upload synthetic row + retry/discard | `capture-queue-list-item-{localId}`, `{testID}-retry`, `{testID}-discard` (+ ConfirmDialog derives `-confirm`/`-cancel`) |
-| Review: field inputs | `capture-review-input-title`, `capture-review-input-price`, `capture-review-input-currency`, `capture-review-input-confirmation` |
-| Review: category picker | `capture-review-picker-category` |
-| Review: trip assign + sheet rows | `capture-review-button-assign-trip`, `capture-review-sheet-trip`, `capture-review-list-item-trip-{tripId}` |
-| Review: primary actions | `capture-review-button-confirm`, `capture-review-button-reject` (ConfirmDialog derives `-confirm`/`-cancel`), `capture-review-button-retry`, `capture-review-button-add-manually`, `capture-review-button-view-original` |
-| Auto-filed row undo (landed history overflow) | `capture-queue-button-undo-{captureId}` |
-| Onboarding | `capture-onboarding-button-copy-address`, `capture-onboarding-button-done`, `capture-onboarding-button-retry` (address provisioning failure) |
+| Element                                       | testID                                                                                                                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Queue list / row                              | `capture-queue-list`, `capture-queue-list-item-{captureId}`                                                                                                                                                              |
+| Queue segment (open/history)                  | `capture-queue-segment-open`, `capture-queue-segment-landed`                                                                                                                                                             |
+| Queue help/onboarding entry                   | `capture-queue-button-onboarding`                                                                                                                                                                                        |
+| Pending-upload synthetic row + retry/discard  | `capture-queue-list-item-{localId}`, `{testID}-retry`, `{testID}-discard` (+ ConfirmDialog derives `-confirm`/`-cancel`)                                                                                                 |
+| Review: field inputs                          | `capture-review-input-title`, `capture-review-input-price`, `capture-review-input-currency`, `capture-review-input-confirmation`                                                                                         |
+| Review: category picker                       | `capture-review-picker-category`                                                                                                                                                                                         |
+| Review: trip assign + sheet rows              | `capture-review-button-assign-trip`, `capture-review-sheet-trip`, `capture-review-list-item-trip-{tripId}`                                                                                                               |
+| Review: primary actions                       | `capture-review-button-confirm`, `capture-review-button-reject` (ConfirmDialog derives `-confirm`/`-cancel`), `capture-review-button-retry`, `capture-review-button-add-manually`, `capture-review-button-view-original` |
+| Auto-filed row undo (landed history overflow) | `capture-queue-button-undo-{captureId}`                                                                                                                                                                                  |
+| Onboarding                                    | `capture-onboarding-button-copy-address`, `capture-onboarding-button-done`, `capture-onboarding-button-retry` (address provisioning failure)                                                                             |
 
 Dynamic qualifiers are stable entity ids, never render indexes (§2.7 rule).
 
 ### 2.5 Failure-state matrix
 
-| Failure | Surface | Recovery |
-|---|---|---|
-| Share while signed out | auth flow, payload stashed | resume into R-capc-2 after sign-in (R-nav-14 machinery) |
-| Upload network failure | synthetic row + ErrorBanner | retry (R-capc-3); discard via ConfirmDialog (R-capc-4) |
-| Upload 413 / 400 / 429 | synthetic row with reason ("Too large — max 10 MB" / "Can't read this type" / "Slow down a moment") | 429: retry; 413/400: discard or share something else |
-| Parse `failed` | review screen failure mode | retry / add-manually / reject (R-capc-14) |
-| Parse `needs_review` — `ai_unavailable` | needs-review card + notice "AI parsing unavailable — review manually" (server R-cap-16; capture is cap-exempt with its own 20/day ceiling — resolved Gate 2) | edit + confirm manually, or retry later |
-| Confirm 400 | inline field errors | fix + resubmit (R-capc-11) |
-| Confirm 409 (landed elsewhere) | row refreshes to landed | none needed |
-| Raw URL expired | transparent single refetch | error toast if refetch fails (R-capc-15) |
-| Address provisioning failure | onboarding ErrorBanner | retry (R-capc-17) |
+| Failure                                 | Surface                                                                                                                                                      | Recovery                                                |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Share while signed out                  | auth flow, payload stashed                                                                                                                                   | resume into R-capc-2 after sign-in (R-nav-14 machinery) |
+| Upload network failure                  | synthetic row + ErrorBanner                                                                                                                                  | retry (R-capc-3); discard via ConfirmDialog (R-capc-4)  |
+| Upload 413 / 400 / 429                  | synthetic row with reason ("Too large — max 10 MB" / "Can't read this type" / "Slow down a moment")                                                          | 429: retry; 413/400: discard or share something else    |
+| Parse `failed`                          | review screen failure mode                                                                                                                                   | retry / add-manually / reject (R-capc-14)               |
+| Parse `needs_review` — `ai_unavailable` | needs-review card + notice "AI parsing unavailable — review manually" (server R-cap-16; capture is cap-exempt with its own 20/day ceiling — resolved Gate 2) | edit + confirm manually, or retry later                 |
+| Confirm 400                             | inline field errors                                                                                                                                          | fix + resubmit (R-capc-11)                              |
+| Confirm 409 (landed elsewhere)          | row refreshes to landed                                                                                                                                      | none needed                                             |
+| Raw URL expired                         | transparent single refetch                                                                                                                                   | error toast if refetch fails (R-capc-15)                |
+| Address provisioning failure            | onboarding ErrorBanner                                                                                                                                       | retry (R-capc-17)                                       |
 
 ### 2.6 Out of scope (explicit)
 
@@ -252,16 +252,17 @@ Traceable to requirement IDs; each sized to one agent session; become `T-N.M`
 rows when the phase is cut. **Depends on:** NAV-6 (share-intent routing),
 capture API (CAP-1..4), design-system Sheet/ConfirmDialog/ListItem.
 
-| ID | Task | Covers |
-|---|---|---|
-| CAPC-1 | Share-intent ingestion: expo-share-intent v8 wiring (config plugin, dev client), payload classification, upload call, pending-upload store + synthetic rows, stash/resume path. | R-capc-1..4 |
-| CAPC-2 | Queue screen: list + segments + row states + poll loop + badge derivation + empty state. | R-capc-5..8 |
+| ID     | Task                                                                                                                                                                                                                             | Covers                  |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| CAPC-1 | Share-intent ingestion: expo-share-intent v8 wiring (config plugin, dev client), payload classification, upload call, pending-upload store + synthetic rows, stash/resume path.                                                  | R-capc-1..4             |
+| CAPC-2 | Queue screen: list + segments + row states + poll loop + badge derivation + empty state.                                                                                                                                         | R-capc-5..8             |
 | CAPC-3 | Review screen: proposal card, edit fields with shared-schema validation, trip picker sheet, confirm/reject/retry/add-manually/view-original flows, landed history rendering, auto-file undo (push action + landed-row overflow). | R-capc-9..16, R-capc-23 |
-| CAPC-4 | Onboarding screen: address provisioning, copy affordance, forward + share teaching content, R-nav-18 entry hook, persistent reachability. | R-capc-17..20 |
+| CAPC-4 | Onboarding screen: address provisioning, copy affordance, forward + share teaching content, R-nav-18 entry hook, persistent reachability.                                                                                        | R-capc-17..20           |
 
 testIDs (R-capc-21) land with each screen's task; NAV-7 lint enforces them.
 
 **Tests required (minimum):**
+
 - [ ] Share intent (each payload kind) on cold + warm start → upload fired, queue shows processing row (CAPC-1)
 - [ ] Share while signed out → stash, auth, resume to upload (CAPC-1)
 - [ ] Upload 413/400/429/network failure → visible synthetic row, retry works, discard requires ConfirmDialog, payload never silently dropped (CAPC-1)
@@ -276,9 +277,9 @@ testIDs (R-capc-21) land with each screen's task; NAV-7 lint enforces them.
 
 ---
 
-*Trace: R-capc-N ↔ §2 sections inline. Both repeated markers resolved at
+_Trace: R-capc-N ↔ §2 sections inline. Both repeated markers resolved at
 their canonical homes at Gate 2 (2026-07-09): queue surface → trips-level
 inbox + per-trip filtered view (navigation spec §1); auto-file →
 high-confidence auto-file + push with one-tap undo, medium/low → review
 queue (capture API R-cap-13/28 — client undo flow added as R-capc-23).
-Zero markers remain.*
+Zero markers remain._

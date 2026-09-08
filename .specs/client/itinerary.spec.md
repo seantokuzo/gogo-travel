@@ -114,7 +114,7 @@
   R-nav-21 form-modal convention) with that type preset.
 - **R-itin-19**: WHEN a booking category is being added or edited THE SYSTEM
   SHALL present that category's fields mirroring its `details` shape (schema
-  §3.4.1) plus status (default `idea`), price + currency (paired), 
+  §3.4.1) plus status (default `idea`), price + currency (paired),
   confirmation code, and optional place attach; saving without times/day
   SHALL land it in the Ideas bucket, saving with times SHALL schedule it
   automatically (API R-ib-5/R-ib-8).
@@ -286,18 +286,18 @@ labels; the bin header names them), never schedulable. Card press →
 FAB → add Sheet (10 options: 8 categories + place visit + custom) →
 `item/new` modal. The modal renders per type:
 
-| Type | Form fields (mirror schema §3.4.1) | Deeplink-out buttons (§2.7) |
-|---|---|---|
-| `flight` | airline, flight number, origin/destination IATA, departs/arrives (+tz via place pickers), cabin class, seat | Kayak, Skyscanner |
-| `lodging` | property name, address/place, check-in/check-out, guests, room type, provider | Airbnb, Booking.com, Expedia, Vrbo |
-| `train` | carrier, train number, origin/destination stations, departs/arrives, coach, seat | Trainline (URN flow), Omio, Amtrak (plain) |
-| `car_rental` | company, pickup/dropoff locations + times, vehicle class | Kayak Cars, Turo |
-| `moped_rental` | company, pickup/dropoff locations + times, vehicle description, helmets | — (manual entry v1; BikesBooking is v2 — research § verdict) |
-| `activity` | provider, venue/place, starts/ends, ticket count/type, external URL | Open external URL; Eventbrite browse (US-slug cities only) |
-| `restaurant` | place/address, reserved at, party size, provider | — (no verified format in research; manual v1) |
-| `other` | description, starts/ends, external URL | Open external URL |
-| `place_visit` | place picker (saved places → spine search, R-itin-23), day, times, notes | — |
-| `custom` | title, day, times, notes | — |
+| Type           | Form fields (mirror schema §3.4.1)                                                                          | Deeplink-out buttons (§2.7)                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `flight`       | airline, flight number, origin/destination IATA, departs/arrives (+tz via place pickers), cabin class, seat | Kayak, Skyscanner                                            |
+| `lodging`      | property name, address/place, check-in/check-out, guests, room type, provider                               | Airbnb, Booking.com, Expedia, Vrbo                           |
+| `train`        | carrier, train number, origin/destination stations, departs/arrives, coach, seat                            | Trainline (URN flow), Omio, Amtrak (plain)                   |
+| `car_rental`   | company, pickup/dropoff locations + times, vehicle class                                                    | Kayak Cars, Turo                                             |
+| `moped_rental` | company, pickup/dropoff locations + times, vehicle description, helmets                                     | — (manual entry v1; BikesBooking is v2 — research § verdict) |
+| `activity`     | provider, venue/place, starts/ends, ticket count/type, external URL                                         | Open external URL; Eventbrite browse (US-slug cities only)   |
+| `restaurant`   | place/address, reserved at, party size, provider                                                            | — (no verified format in research; manual v1)                |
+| `other`        | description, starts/ends, external URL                                                                      | Open external URL                                            |
+| `place_visit`  | place picker (saved places → spine search, R-itin-23), day, times, notes                                    | —                                                            |
+| `custom`       | title, day, times, notes                                                                                    | —                                                            |
 
 Common to booking types: status selector (idea/planned/booked), price +
 currency, confirmation code. Save routes: timeless → bucket; timed →
@@ -357,21 +357,21 @@ an optional affiliate-params config, dormant until Sean's affiliate
 signups (research § Escalations — Viator `?pid={P00X}&mcid={id}&medium=link`
 is the documented shape when it activates).
 
-| Partner | Category | Constructed URL | Field mapping / caveats |
-|---|---|---|---|
-| Kayak Flights | flight | `https://www.kayak.com/flights/{ORIG}-{DEST}/{YYYY-MM-DD}[/{YYYY-MM-DD}]` + optional `?fs=stops=0` | ORIG/DEST = form origin/destination IATA; second date only for round trips; `fs=stops=0` when a "non-stop only" form toggle is set. Enabled when both IATAs + depart date present (R-itin-21). |
-| Skyscanner | flight | `https://www.skyscanner.net/transport/flights/{orig}/{dest}/{yymmdd}/[{yymmdd}/]?adultsv2={adults}&cabinclass={cabin}&preferDirects={bool}` | Lowercase IATA; **`yymmdd`** dates (not ISO); `cabin` mapped from cabin-class field (economy/premiumeconomy/business/first); params are the officially documented set. |
-| Airbnb | lodging | `https://www.airbnb.com/s/{location}/homes?checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&adults={adults}` | `location` = place/address field, else `trips.destination_name`. Research caveat repeated: app honoring params after universal-link is **UNTESTED — device-verify** before this button ships enabled. |
-| Booking.com | lodging | `https://www.booking.com/searchresults.html?ss={q}&checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&group_adults={adults}` | `ss` = location query as Airbnb. |
-| Expedia | lodging | `https://www.expedia.com/Hotel-Search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}` | Officially documented format. |
-| Vrbo | lodging | `https://www.vrbo.com/search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}` | |
-| Trainline | train | Lookup: `https://www.thetrainline.com/api/locations-search/v2/search?searchTerm={q}` → pick URN → `https://www.thetrainline.com/book/results?origin={urn}&destination={urn}&outwardDate={ISO}` | Two-step: station fields drive debounced client-direct URN lookup (open API, verified live); on lookup failure degrade to plain `thetrainline.com`. |
-| Omio | train | `https://www.omio.com/` (plain) | No parameterized format in research — plain link only. |
-| Amtrak | train | `https://www.amtrak.com/` (plain) | Research: no API, SPA, no prefill. |
-| Kayak Cars | car_rental | `https://www.kayak.com/cars/{location}/{YYYY-MM-DD}/{YYYY-MM-DD}` | Pickup location + pickup/dropoff dates. |
-| Turo | car_rental | `https://turo.com/us/en/search?location={q}&startDate={MM/DD/YYYY}` | **`MM/DD/YYYY`** date format; research shows further params exist but unverified (`&…`) — ship location+startDate only, device-verify before adding more. |
-| Eventbrite | activity | `https://www.eventbrite.com/d/{state--city}/events/` | Browse-only (discovery API dead since 2020). Constructible only when the destination maps to a US `state--city` slug; otherwise omit the button. |
-| External URL | activity, other | `details.external_url` verbatim | Shown as "Open {host}". |
+| Partner       | Category        | Constructed URL                                                                                                                                                                                | Field mapping / caveats                                                                                                                                                                               |
+| ------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Kayak Flights | flight          | `https://www.kayak.com/flights/{ORIG}-{DEST}/{YYYY-MM-DD}[/{YYYY-MM-DD}]` + optional `?fs=stops=0`                                                                                             | ORIG/DEST = form origin/destination IATA; second date only for round trips; `fs=stops=0` when a "non-stop only" form toggle is set. Enabled when both IATAs + depart date present (R-itin-21).        |
+| Skyscanner    | flight          | `https://www.skyscanner.net/transport/flights/{orig}/{dest}/{yymmdd}/[{yymmdd}/]?adultsv2={adults}&cabinclass={cabin}&preferDirects={bool}`                                                    | Lowercase IATA; **`yymmdd`** dates (not ISO); `cabin` mapped from cabin-class field (economy/premiumeconomy/business/first); params are the officially documented set.                                |
+| Airbnb        | lodging         | `https://www.airbnb.com/s/{location}/homes?checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&adults={adults}`                                                                                         | `location` = place/address field, else `trips.destination_name`. Research caveat repeated: app honoring params after universal-link is **UNTESTED — device-verify** before this button ships enabled. |
+| Booking.com   | lodging         | `https://www.booking.com/searchresults.html?ss={q}&checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&group_adults={adults}`                                                                           | `ss` = location query as Airbnb.                                                                                                                                                                      |
+| Expedia       | lodging         | `https://www.expedia.com/Hotel-Search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                             | Officially documented format.                                                                                                                                                                         |
+| Vrbo          | lodging         | `https://www.vrbo.com/search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                                      |                                                                                                                                                                                                       |
+| Trainline     | train           | Lookup: `https://www.thetrainline.com/api/locations-search/v2/search?searchTerm={q}` → pick URN → `https://www.thetrainline.com/book/results?origin={urn}&destination={urn}&outwardDate={ISO}` | Two-step: station fields drive debounced client-direct URN lookup (open API, verified live); on lookup failure degrade to plain `thetrainline.com`.                                                   |
+| Omio          | train           | `https://www.omio.com/` (plain)                                                                                                                                                                | No parameterized format in research — plain link only.                                                                                                                                                |
+| Amtrak        | train           | `https://www.amtrak.com/` (plain)                                                                                                                                                              | Research: no API, SPA, no prefill.                                                                                                                                                                    |
+| Kayak Cars    | car_rental      | `https://www.kayak.com/cars/{location}/{YYYY-MM-DD}/{YYYY-MM-DD}`                                                                                                                              | Pickup location + pickup/dropoff dates.                                                                                                                                                               |
+| Turo          | car_rental      | `https://turo.com/us/en/search?location={q}&startDate={MM/DD/YYYY}`                                                                                                                            | **`MM/DD/YYYY`** date format; research shows further params exist but unverified (`&…`) — ship location+startDate only, device-verify before adding more.                                             |
+| Eventbrite    | activity        | `https://www.eventbrite.com/d/{state--city}/events/`                                                                                                                                           | Browse-only (discovery API dead since 2020). Constructible only when the destination maps to a US `state--city` slug; otherwise omit the button.                                                      |
+| External URL  | activity, other | `details.external_url` verbatim                                                                                                                                                                | Shown as "Open {host}".                                                                                                                                                                               |
 
 Not deeplinked in v1 (buttons absent, manual entry only): `moped_rental`
 (BikesBooking is a v2 affiliate — research § verdict table), `restaurant`
@@ -394,41 +394,41 @@ the loop nobody else runs.
 Screens: `itinerary` (index, both view modes), `itinerary-item`,
 `itinerary-item-new`, `booking-detail`. Roots carry `<screen>-screen`.
 
-| Element | testID |
-|---|---|
-| View toggle (header) | `itinerary-view-toggle` |
-| FAB | `itinerary-fab-add` |
-| Add-sheet option | `itinerary-add-option-{category\|place-visit\|custom}` |
-| Day add row (empty day) | `itinerary-day-add-{date}` |
-| Day-header add button (every day, editors — B-11) | `itinerary-day-header-add-{date}` |
-| Day jump strip item | `itinerary-day-jump-{date}` |
-| Item card | `itinerary-list-item-{itemId}` (nav §2.7 example) |
-| Travel-time chip | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key) |
-| Mode sheet row | `itinerary-leg-{fromItemId}-mode-{mode}` |
-| Directions handoff | `itinerary-leg-{fromItemId}-directions` |
-| Sort-by-time affordance | `itinerary-sort-by-time-{date}` |
-| Ideas section toggle | `itinerary-ideas-toggle` |
-| Ideas card | `itinerary-ideas-item-{bookingId}` |
-| Ideas "Add to day" | `itinerary-ideas-schedule-{bookingId}` |
-| Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`) | `itinerary-cancelled-toggle` |
-| Cancelled bin list | `itinerary-cancelled-list` |
-| Cancelled card | `itinerary-cancelled-item-{bookingId}` |
-| Grid item block | `itinerary-grid-item-{itemId}` |
-| Grid checkpoint indicator (B-12, derived) | `itinerary-grid-item-{itemId}-check-in` / `-check-out` |
-| Grid empty slot | `itinerary-grid-slot-{date}-{HH}` |
-| Grid all-day chip | `itinerary-grid-allday-{itemId}` |
-| Form inputs | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …) |
-| Date/time field derivations (every DateField/TimeField, B-10) | `{fieldTestID}-picker`, `-error`, `-clear` (time); iOS date-picker modal card `{fieldTestID}-sheet` with `-sheet-close` / `-sheet-scrim` |
-| Form status segment | `itinerary-item-new-segment-status-{status}` |
-| Form place attach | `itinerary-item-new-button-place` |
-| Form save | `itinerary-item-new-button-save` |
-| Partner search (form) | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`) |
-| Booking detail actions | `booking-detail-button-{edit\|cancel\|delete}` |
-| Confirmation copy | `booking-detail-button-copy-confirmation` |
-| Detail deeplink buttons | `booking-detail-button-deeplink-{partner}` |
-| Detail rows | `booking-detail-row-{place\|expenses\|schedule}` |
-| Item detail actions | `itinerary-item-button-{edit\|delete}` |
-| Return prompt sheet | `booking-return-sheet`, `booking-return-button-{forward\|share\|manual\|dismiss}` (complements R-nav-18, which owns the prompt's behavior) |
+| Element                                                                 | testID                                                                                                                                                                                      |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| View toggle (header)                                                    | `itinerary-view-toggle`                                                                                                                                                                     |
+| FAB                                                                     | `itinerary-fab-add`                                                                                                                                                                         |
+| Add-sheet option                                                        | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                      |
+| Day add row (empty day)                                                 | `itinerary-day-add-{date}`                                                                                                                                                                  |
+| Day-header add button (every day, editors — B-11)                       | `itinerary-day-header-add-{date}`                                                                                                                                                           |
+| Day jump strip item                                                     | `itinerary-day-jump-{date}`                                                                                                                                                                 |
+| Item card                                                               | `itinerary-list-item-{itemId}` (nav §2.7 example)                                                                                                                                           |
+| Travel-time chip                                                        | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key)                                                                                                         |
+| Mode sheet row                                                          | `itinerary-leg-{fromItemId}-mode-{mode}`                                                                                                                                                    |
+| Directions handoff                                                      | `itinerary-leg-{fromItemId}-directions`                                                                                                                                                     |
+| Sort-by-time affordance                                                 | `itinerary-sort-by-time-{date}`                                                                                                                                                             |
+| Ideas section toggle                                                    | `itinerary-ideas-toggle`                                                                                                                                                                    |
+| Ideas card                                                              | `itinerary-ideas-item-{bookingId}`                                                                                                                                                          |
+| Ideas "Add to day"                                                      | `itinerary-ideas-schedule-{bookingId}`                                                                                                                                                      |
+| Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`) | `itinerary-cancelled-toggle`                                                                                                                                                                |
+| Cancelled bin list                                                      | `itinerary-cancelled-list`                                                                                                                                                                  |
+| Cancelled card                                                          | `itinerary-cancelled-item-{bookingId}`                                                                                                                                                      |
+| Grid item block                                                         | `itinerary-grid-item-{itemId}`                                                                                                                                                              |
+| Grid checkpoint indicator (B-12, derived)                               | `itinerary-grid-item-{itemId}-check-in` / `-check-out`                                                                                                                                      |
+| Grid empty slot                                                         | `itinerary-grid-slot-{date}-{HH}`                                                                                                                                                           |
+| Grid all-day chip                                                       | `itinerary-grid-allday-{itemId}`                                                                                                                                                            |
+| Form inputs                                                             | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …)                                                                                  |
+| Date/time field derivations (every DateField/TimeField, B-10)           | `{fieldTestID}-picker`, `-error`, `-clear` (time); iOS date-picker modal card `{fieldTestID}-sheet` with `-sheet-close` / `-sheet-scrim`                                                    |
+| Form status segment                                                     | `itinerary-item-new-segment-status-{status}`                                                                                                                                                |
+| Form place attach                                                       | `itinerary-item-new-button-place`                                                                                                                                                           |
+| Form save                                                               | `itinerary-item-new-button-save`                                                                                                                                                            |
+| Partner search (form)                                                   | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`) |
+| Booking detail actions                                                  | `booking-detail-button-{edit\|cancel\|delete}`                                                                                                                                              |
+| Confirmation copy                                                       | `booking-detail-button-copy-confirmation`                                                                                                                                                   |
+| Detail deeplink buttons                                                 | `booking-detail-button-deeplink-{partner}`                                                                                                                                                  |
+| Detail rows                                                             | `booking-detail-row-{place\|expenses\|schedule}`                                                                                                                                            |
+| Item detail actions                                                     | `itinerary-item-button-{edit\|delete}`                                                                                                                                                      |
+| Return prompt sheet                                                     | `booking-return-sheet`, `booking-return-button-{forward\|share\|manual\|dismiss}` (complements R-nav-18, which owns the prompt's behavior)                                                  |
 
 ConfirmDialogs derive `{testID}-confirm`/`-cancel` per design-system
 convention (tokens §2.9).
@@ -461,20 +461,21 @@ convention (tokens §2.9).
 Each sized to one agent session; they become `T-N.M` rows when the phase is
 cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 
-| ID | Task | Covers |
-|---|---|---|
-| IT-1 | Plan-mode day list: sections, item cards, empty-day rows, day-jump strip, view-toggle shell + per-trip persistence. | R-itin-1, R-itin-8, R-itin-9, R-itin-28 |
-| IT-2 | Drag-drop reorder: optimistic day-order PUT, booking-item day locks, haptics, rollback. | R-itin-2, R-itin-3 |
-| IT-3 | Travel-time chips + mode sheet + directions handoff + absent-leg states. | R-itin-4..R-itin-6 |
-| IT-4 | Conflict surfacing: overlap chips, sort-by-time affordance, form conflict notice. | R-itin-7, R-itin-20 |
-| IT-5 | Ideas bucket: section, grouping, add-to-day scheduling flow, needs-a-day + cancelled visibility. | R-itin-10..R-itin-12 |
-| IT-6 | Calendar grid: hour axis, day paging, timed blocks, overlap split, all-day lane incl. spanning-lodging lane, gap-tap prefill; list-mode check-in/check-out synthesis. | R-itin-13..R-itin-17, R-itin-31 |
-| IT-7 | Add/edit flows: add sheet, per-type forms (10 types), save routing (bucket vs scheduled), place picker. | R-itin-18, R-itin-19, R-itin-23 |
-| IT-8 | Deeplink-out: URL builders per §2.7 (+ device-verify pass for Airbnb/Turo caveats), adults default + inline edit, button enablement, tap recording, return-prompt "add manually" landing. | R-itin-21, R-itin-22, R-itin-32 |
-| IT-9 | Booking detail screen: per-category layouts, status actions, copy affordance, seams (place/expenses/schedule rows), cancel/delete confirms. | R-itin-24..R-itin-26 |
-| IT-10 | Item detail (place_visit/custom) + booking-item routing + offline degradation of this tab. | R-itin-27, R-itin-29 |
+| ID    | Task                                                                                                                                                                                      | Covers                                  |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| IT-1  | Plan-mode day list: sections, item cards, empty-day rows, day-jump strip, view-toggle shell + per-trip persistence.                                                                       | R-itin-1, R-itin-8, R-itin-9, R-itin-28 |
+| IT-2  | Drag-drop reorder: optimistic day-order PUT, booking-item day locks, haptics, rollback.                                                                                                   | R-itin-2, R-itin-3                      |
+| IT-3  | Travel-time chips + mode sheet + directions handoff + absent-leg states.                                                                                                                  | R-itin-4..R-itin-6                      |
+| IT-4  | Conflict surfacing: overlap chips, sort-by-time affordance, form conflict notice.                                                                                                         | R-itin-7, R-itin-20                     |
+| IT-5  | Ideas bucket: section, grouping, add-to-day scheduling flow, needs-a-day + cancelled visibility.                                                                                          | R-itin-10..R-itin-12                    |
+| IT-6  | Calendar grid: hour axis, day paging, timed blocks, overlap split, all-day lane incl. spanning-lodging lane, gap-tap prefill; list-mode check-in/check-out synthesis.                     | R-itin-13..R-itin-17, R-itin-31         |
+| IT-7  | Add/edit flows: add sheet, per-type forms (10 types), save routing (bucket vs scheduled), place picker.                                                                                   | R-itin-18, R-itin-19, R-itin-23         |
+| IT-8  | Deeplink-out: URL builders per §2.7 (+ device-verify pass for Airbnb/Turo caveats), adults default + inline edit, button enablement, tap recording, return-prompt "add manually" landing. | R-itin-21, R-itin-22, R-itin-32         |
+| IT-9  | Booking detail screen: per-category layouts, status actions, copy affordance, seams (place/expenses/schedule rows), cancel/delete confirms.                                               | R-itin-24..R-itin-26                    |
+| IT-10 | Item detail (place_visit/custom) + booking-item routing + offline degradation of this tab.                                                                                                | R-itin-27, R-itin-29                    |
 
 **Tests required (minimum, E2E on testIDs of §2.9):**
+
 - [ ] Reorder round-trip: drag persists order; failure rolls back visibly (IT-2)
 - [ ] Timed-booking item refuses cross-day drop with hint (IT-2)
 - [ ] Leg chip shows correct default mode; absent transit shows no error (IT-3)
@@ -489,10 +490,10 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 
 ---
 
-*Trace: every R-itin-N cites its design section inline; §2.7 rows each trace
+_Trace: every R-itin-N cites its design section inline; §2.7 rows each trace
 to `.specs/research/booking-integrations.md` § Key deeplink formats. All
 four markers resolved at Gate 2 (2026-07-09): two at the schema spec
 (multi-day → spanning item with lane/point-row rendering → R-itin-31;
 dates required), two owned here (party size → member-count default,
 inline-editable → R-itin-32; plan-mode mini-map → deferred to polish).
-Zero markers remain.*
+Zero markers remain._

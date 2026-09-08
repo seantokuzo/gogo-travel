@@ -85,9 +85,7 @@ export function MapLocateButton() {
         <Icon
           name={permission === "granted" ? "locate" : "locate-outline"}
           size={20}
-          color={
-            permission === "granted" ? theme.color.primary.solid : theme.color.text.secondary
-          }
+          color={permission === "granted" ? theme.color.primary.solid : theme.color.text.secondary}
         />
       </Pressable>
 

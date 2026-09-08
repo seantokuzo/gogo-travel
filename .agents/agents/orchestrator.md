@@ -26,15 +26,15 @@ Read, in order: `CLAUDE.md` (constitution + planning convention) → `docs/STATE
 
 ## Routing
 
-| Task | Persona |
-|------|---------|
-| `apps/server` — routes, DB, sockets, workers, auth | `backend-engineer` |
-| `apps/web` — UI, routes, hooks, client auth | `web-engineer` |
-| `apps/mobile` — screens, native UI, offline, push | `mobile-engineer` |
-| Answer a question before building / spike (`S-N`) | `researcher` |
-| Review an open PR (one per lane) | `reviewer` ×N |
-| Doc/QUEUE/STATE updates, handoff writing | `general-purpose` (doc agent) |
-| Merge + shipping mechanics, post-merge sync | `general-purpose` (ship agent) |
+| Task                                               | Persona                        |
+| -------------------------------------------------- | ------------------------------ |
+| `apps/server` — routes, DB, sockets, workers, auth | `backend-engineer`             |
+| `apps/web` — UI, routes, hooks, client auth        | `web-engineer`                 |
+| `apps/mobile` — screens, native UI, offline, push  | `mobile-engineer`              |
+| Answer a question before building / spike (`S-N`)  | `researcher`                   |
+| Review an open PR (one per lane)                   | `reviewer` ×N                  |
+| Doc/QUEUE/STATE updates, handoff writing           | `general-purpose` (doc agent)  |
+| Merge + shipping mechanics, post-merge sync        | `general-purpose` (ship agent) |
 
 Cross-component work: split per component. If a contract (shared schema / endpoint shape) must exist first, that's Wave 1; consumers are Wave 2.
 

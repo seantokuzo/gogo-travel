@@ -115,7 +115,9 @@ function installHermesIntl(shape: HermesIntlShape): () => void {
 
     resolvedOptions(): Intl.ResolvedDateTimeFormatOptions {
       const resolved = this.inner.resolvedOptions();
-      return shape.deviceZone !== undefined ? { ...resolved, timeZone: shape.deviceZone } : resolved;
+      return shape.deviceZone !== undefined
+        ? { ...resolved, timeZone: shape.deviceZone }
+        : resolved;
     }
   }
 

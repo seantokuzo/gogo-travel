@@ -52,17 +52,9 @@ import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import { epochMicrosExpr } from "../http/keyset-cursor.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
-import {
-  decodeExpenseCursor,
-  encodeExpenseCursor,
-  expenseCursorPredicate,
-} from "./cursor.js";
+import { decodeExpenseCursor, encodeExpenseCursor, expenseCursorPredicate } from "./cursor.js";
 import {
   createExpense,
   expenseSharesJsonExpr,

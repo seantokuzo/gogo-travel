@@ -69,7 +69,9 @@ describe("expenses keyset cursor codec (three-part, date-led — T-9.2)", () => 
   it("18-digit micros (max magnitude) still decode, both signs", () => {
     const max = "9".repeat(18);
     expect(
-      decodeExpenseCursor(encodeExpenseCursor({ spentAt: "2026-06-30", createdMicros: max, id: ID })),
+      decodeExpenseCursor(
+        encodeExpenseCursor({ spentAt: "2026-06-30", createdMicros: max, id: ID }),
+      ),
     ).toEqual({ spentAt: "2026-06-30", createdMicros: max, id: ID });
     expect(
       decodeExpenseCursor(

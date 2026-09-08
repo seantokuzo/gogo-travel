@@ -300,11 +300,11 @@ same material to gitignored `apps/server/.env.test` for the live rig +
 
 ## 5. Wave plan
 
-| Wave | Parallel tasks (isolated worktrees) | Why safe |
-| --- | --- | --- |
-| W1 | T-S3.1 ∥ T-S3.2 — **MERGED** (PR #41 0643621 ∥ PR #42 aaf0742, full pipeline) | Disjoint: server+scripts+root dotfiles vs mobile jest surface. |
-| W2 | T-S3.3 ∥ T-S3.5 — **MERGED** (PR #44 b903017 ∥ PR #43 3754a4e, full pipeline, judge merge/high) | Disjoint: server test infra vs new mobile dev-feature files. |
-| W3 | T-S3.4 (solo) — **MERGED** (PR #45, 65a8ac1) | Touches all three workspaces — ran alone, after the others merged. |
+| Wave | Parallel tasks (isolated worktrees)                                                             | Why safe                                                           |
+| ---- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| W1   | T-S3.1 ∥ T-S3.2 — **MERGED** (PR #41 0643621 ∥ PR #42 aaf0742, full pipeline)                   | Disjoint: server+scripts+root dotfiles vs mobile jest surface.     |
+| W2   | T-S3.3 ∥ T-S3.5 — **MERGED** (PR #44 b903017 ∥ PR #43 3754a4e, full pipeline, judge merge/high) | Disjoint: server test infra vs new mobile dev-feature files.       |
+| W3   | T-S3.4 (solo) — **MERGED** (PR #45, 65a8ac1)                                                    | Touches all three workspaces — ran alone, after the others merged. |
 
 **S-3 BUILD COMPLETE (2026-08-30):** all five tasks T-S3.1..T-S3.5 are on
 main (PRs #41–#45, full pipeline each). ADR-006 remains **Proposed**
@@ -312,11 +312,11 @@ pending Sean's read of this PR.
 
 ### Collision matrix (checked 2026-08-30 against `git diff --name-only origin/main qa/device-integration` and QUEUE)
 
-| Other stream | Their files | Our exposure | Mitigation |
-| --- | --- | --- | --- |
-| `qa/device-integration` — **DISSOLVED: merged to main d4f7637 before any W1 branch cut** | `apps/mobile/src/auth/{google.ts,google.test.ts,api-client.ts}`, `app/(auth)/sign-in.tsx`, `apps/server/src/{index.ts,app.ts,bookings/service.ts,bookings/routes.db.test.ts,http/dev-request-log.*}`, migration 0001 | ~~T-S3.2 (auth tests), T-S3.3 (bookings db suite), T-S3.1 (index.ts), T-S3.5 (sign-in entry link)~~ none — guard dead | Row kept for the record only; the riders below became plain dispatchable follow-ups. |
-| Stream A polish (B-10..B-13) | `DateField.tsx`, itinerary day-list/grid, bookings list bins | None | No task touches components. `jest.setup.js` is Stream-B-exclusive (STATE ruling) — Stream A must not edit it. |
-| P-9 money W3/W4 (T-9.4/T-9.5 dispatched; T-9.6/T-9.7 queued) | server money src + tests; mobile money screens | T-S3.3's conversion of `expenses/`/`settlements/` db suites; T-S3.4's shared `package.json` export | Conversion list finalized at T-S3.3 dispatch against open PRs (exclude + rider if in flight); T-S3.4 runs W3 solo and rebases on merged main. |
+| Other stream                                                                             | Their files                                                                                                                                                                                                          | Our exposure                                                                                                          | Mitigation                                                                                                                                    |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `qa/device-integration` — **DISSOLVED: merged to main d4f7637 before any W1 branch cut** | `apps/mobile/src/auth/{google.ts,google.test.ts,api-client.ts}`, `app/(auth)/sign-in.tsx`, `apps/server/src/{index.ts,app.ts,bookings/service.ts,bookings/routes.db.test.ts,http/dev-request-log.*}`, migration 0001 | ~~T-S3.2 (auth tests), T-S3.3 (bookings db suite), T-S3.1 (index.ts), T-S3.5 (sign-in entry link)~~ none — guard dead | Row kept for the record only; the riders below became plain dispatchable follow-ups.                                                          |
+| Stream A polish (B-10..B-13)                                                             | `DateField.tsx`, itinerary day-list/grid, bookings list bins                                                                                                                                                         | None                                                                                                                  | No task touches components. `jest.setup.js` is Stream-B-exclusive (STATE ruling) — Stream A must not edit it.                                 |
+| P-9 money W3/W4 (T-9.4/T-9.5 dispatched; T-9.6/T-9.7 queued)                             | server money src + tests; mobile money screens                                                                                                                                                                       | T-S3.3's conversion of `expenses/`/`settlements/` db suites; T-S3.4's shared `package.json` export                    | Conversion list finalized at T-S3.3 dispatch against open PRs (exclude + rider if in flight); T-S3.4 runs W3 solo and rebases on merged main. |
 
 ### Riders (were gated on the qa merge — that landed d4f7637, so all are dispatchable now; record as QUEUE rows at dispatch)
 

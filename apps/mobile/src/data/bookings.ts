@@ -126,11 +126,7 @@ export function useBooking(
   return useQuery({
     queryKey: queryKeys.tripBooking(tripId, bookingId),
     queryFn: ({ signal }) =>
-      apiClient.request(
-        bookingEndpoints.getBooking,
-        { params: { tripId, bookingId } },
-        { signal },
-      ),
+      apiClient.request(bookingEndpoints.getBooking, { params: { tripId, bookingId } }, { signal }),
     enabled: options?.enabled ?? true,
   });
 }
@@ -399,9 +395,7 @@ export function useScheduleBooking(
           : {
               ...old,
               items: old.items.map((row) =>
-                row.id === bookingId && row.status === "idea"
-                  ? { ...row, status: "planned" }
-                  : row,
+                row.id === bookingId && row.status === "idea" ? { ...row, status: "planned" } : row,
               ),
             },
       );

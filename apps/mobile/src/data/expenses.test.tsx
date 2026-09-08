@@ -21,7 +21,13 @@ import type { ReactNode } from "react";
 
 import { apiClient } from "@/auth";
 
-import { useCreateExpense, useDeleteExpense, useFxRate, useTripExpenses, useUpdateExpense } from "./expenses";
+import {
+  useCreateExpense,
+  useDeleteExpense,
+  useFxRate,
+  useTripExpenses,
+  useUpdateExpense,
+} from "./expenses";
 import { queryKeys } from "./query-client";
 
 import { TEST_TRIP_ID } from "@/test-utils/ids";
@@ -69,7 +75,11 @@ describe("useTripExpenses (E2 infinite list)", () => {
     const request = jest.spyOn(apiClient, "request").mockResolvedValue(page as never);
 
     const { result } = await renderHook(
-      () => useTripExpenses(TEST_TRIP_ID, { member: "11111111-1111-4111-8111-111111111199", category: "food" }),
+      () =>
+        useTripExpenses(TEST_TRIP_ID, {
+          member: "11111111-1111-4111-8111-111111111199",
+          category: "food",
+        }),
       { wrapper: wrapperFor(client) },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));

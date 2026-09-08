@@ -18,12 +18,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FxRateReadSchema, type FxRateRead } from "@gogo/shared/domains/money";
 import { createApp } from "../app.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
-import {
-  ACCESS_TOKEN_TTL_SECONDS,
-  JWT_AUDIENCE,
-  JWT_ISSUER,
-  RATE_LIMITS,
-} from "../config.js";
+import { ACCESS_TOKEN_TTL_SECONDS, JWT_AUDIENCE, JWT_ISSUER, RATE_LIMITS } from "../config.js";
 import type { DbClient } from "../db/create-user.js";
 import { InMemoryRateLimitStore } from "../http/rate-limit.js";
 import { createFxRouter } from "./routes.js";
@@ -34,9 +29,7 @@ interface StubProvider extends FxProviderPort {
   respond: (base: string, quote: string) => FxProviderResult;
 }
 
-function stubProvider(
-  respond: (base: string, quote: string) => FxProviderResult,
-): StubProvider {
+function stubProvider(respond: (base: string, quote: string) => FxProviderResult): StubProvider {
   const provider: StubProvider = {
     provider: "stub",
     calls: [],
@@ -125,7 +118,13 @@ describe("GET /fx/rate (proxy route)", () => {
 
   it("400 on a bad query: missing/lowercase/non-ISO codes never reach the provider", async () => {
     const token = await mintToken();
-    for (const query of ["", "?base=EUR", "?quote=USD", "?base=eur&quote=USD", "?base=EURO&quote=USD"]) {
+    for (const query of [
+      "",
+      "?base=EUR",
+      "?quote=USD",
+      "?base=eur&quote=USD",
+      "?base=EURO&quote=USD",
+    ]) {
       const res = await get(query, token);
       expect(res.status, query).toBe(400);
       const envelope = (await res.json()) as { error: { code: string } };
@@ -199,9 +198,7 @@ describe("GET /fx/rate (proxy route)", () => {
     const limited = await get("?base=EUR&quote=USD", token);
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBeTruthy();
-    expect(((await limited.json()) as { error: { code: string } }).error.code).toBe(
-      "RATE_LIMITED",
-    );
+    expect(((await limited.json()) as { error: { code: string } }).error.code).toBe("RATE_LIMITED");
 
     // Window reset restores service.
     rateLimitNow += RATE_LIMITS.fxRate.windowMs + 1;

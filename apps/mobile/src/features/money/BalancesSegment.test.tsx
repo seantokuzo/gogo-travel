@@ -56,9 +56,7 @@ afterEach(async () => {
 it("an open request the caller sent renders the subdued annotation on its row", async () => {
   const request = makeSettleRequest();
   await renderSegment([request]);
-  const row = await screen.findByTestId(
-    `money-transfer-list-item-${MEMBER_B_ID}-${TEST_USER.id}`,
-  );
+  const row = await screen.findByTestId(`money-transfer-list-item-${MEMBER_B_ID}-${TEST_USER.id}`);
   expect(row).toBeTruthy();
   // Locale-independent: build the expected date the way the component does.
   const expectedDate = new Date(request.created_at).toLocaleDateString();

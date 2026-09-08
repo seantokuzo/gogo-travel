@@ -333,9 +333,7 @@ export function ItineraryDayList({
             </Pressable>
           );
         case "entry":
-          return (
-            <EntryCard entry={row.entry} overlapping={row.overlapping} onOpen={onOpenEntry} />
-          );
+          return <EntryCard entry={row.entry} overlapping={row.overlapping} onOpen={onOpenEntry} />;
       }
     },
     [onAddToDay, onHeaderAdd, onOpenEntry, onOpenLeg, onSortDay, s, scrollToDay, theme],

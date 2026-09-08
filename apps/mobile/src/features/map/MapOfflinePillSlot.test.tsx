@@ -23,22 +23,17 @@ import { settle } from "@/test-utils/settle";
 import { makeActiveTrip } from "@/test-utils/trip-fixtures";
 
 import { MapOfflinePillSlot } from "./MapOfflinePillSlot";
-import {
-  clearPackAnnotationsForTests,
-  writePackAnnotation,
-} from "./offline-pack-annotation";
-import {
-  resetOfflinePacksForTests,
-  useOfflinePackStore,
-} from "./offline-pack-controller";
+import { clearPackAnnotationsForTests, writePackAnnotation } from "./offline-pack-annotation";
+import { resetOfflinePacksForTests, useOfflinePackStore } from "./offline-pack-controller";
 import { packNameFor, packRegionKeyFor } from "./offline-packs";
 
 interface OfflineManagerMock {
   createPack: jest.Mock;
   getPack: jest.Mock;
 }
-const om = (jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } })
-  .__mock.offlineManager;
+const om = (
+  jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
+).__mock.offlineManager;
 
 const trip = () => makeActiveTrip(TEST_TRIP_ID);
 const LIGHT_STYLE = "mapbox://styles/mapbox/light-v11";

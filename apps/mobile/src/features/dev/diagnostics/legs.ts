@@ -109,7 +109,10 @@ export interface HealthLegDeps {
   /** `resolveApiBaseUrl` — the URL the app's real client would dial. */
   baseUrl: () => string;
   /** Transport seam — global fetch on device, a fixture in jest. */
-  fetchFn: (input: string, init?: { signal?: AbortSignal }) => Promise<{
+  fetchFn: (
+    input: string,
+    init?: { signal?: AbortSignal },
+  ) => Promise<{
     ok: boolean;
     status: number;
     json: () => Promise<unknown>;
@@ -363,7 +366,8 @@ export interface SecureStoreLegDeps {
  */
 export async function runSecureStoreLeg(deps: SecureStoreLegDeps): Promise<LegResult> {
   const value =
-    deps.probeValue?.() ?? `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    deps.probeValue?.() ??
+    `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   const steps: string[] = [`key: ${DIAGNOSTICS_PROBE_KEY}`];
   let step = "write";
   try {

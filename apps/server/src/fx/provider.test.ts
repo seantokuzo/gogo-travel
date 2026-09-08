@@ -25,9 +25,10 @@ interface RecordedCall {
   init: Parameters<FetchLike>[1];
 }
 
-function stubFetch(
-  respond: (url: string) => { status: number; body: string } | Error,
-): { fetchImpl: FetchLike; calls: RecordedCall[] } {
+function stubFetch(respond: (url: string) => { status: number; body: string } | Error): {
+  fetchImpl: FetchLike;
+  calls: RecordedCall[];
+} {
   const calls: RecordedCall[] = [];
   const fetchImpl: FetchLike = (url, init) => {
     calls.push({ url, init });

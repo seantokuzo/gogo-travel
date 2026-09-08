@@ -9,12 +9,7 @@ import { View } from "react-native";
 import { Icon, ListItem } from "@/components";
 
 import { CATEGORY_ICONS } from "../model";
-import {
-  ADD_OPTION_LABELS,
-  ADD_OPTION_ORDER,
-  addOptionSlug,
-  type AddOptionId,
-} from "./form-model";
+import { ADD_OPTION_LABELS, ADD_OPTION_ORDER, addOptionSlug, type AddOptionId } from "./form-model";
 
 export interface AddOptionListProps {
   onSelect(option: AddOptionId): void;

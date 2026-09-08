@@ -160,9 +160,7 @@ export function createReferenceRouter(deps: ReferenceRouterDeps): Hono<RequestVa
       const rows = await deps.db
         .select()
         .from(schema.airlines)
-        .where(
-          or(like(schema.airlines.iata, codePrefix), ilike(schema.airlines.name, anywhere)),
-        )
+        .where(or(like(schema.airlines.iata, codePrefix), ilike(schema.airlines.name, anywhere)))
         .orderBy(rank, asc(schema.airlines.name), asc(schema.airlines.iata))
         .limit(limit);
 

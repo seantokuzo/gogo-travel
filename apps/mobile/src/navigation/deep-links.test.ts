@@ -76,7 +76,10 @@ describe("parseDeepLink — not ours → passthrough", () => {
     ["https://example.com/invite/tok-1", "someone else's https host"],
     ["exp://127.0.0.1:8081/--/whatever", "dev-client scheme"],
     ["mailto:someone@example.com", "non-URL-shaped scheme string"],
-    [`${APP_SCHEME}://some-trip-id/itinerary`, "internal route on the app scheme (dev QA, notifications)"],
+    [
+      `${APP_SCHEME}://some-trip-id/itinerary`,
+      "internal route on the app scheme (dev QA, notifications)",
+    ],
     ["/sign-in", "bare internal path"],
     ["/", "root path"],
   ])("%s (%s)", (url) => {

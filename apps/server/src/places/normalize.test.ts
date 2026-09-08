@@ -73,9 +73,9 @@ describe("normalizeSpineRecord", () => {
   });
 
   it("keeps category as the raw taxonomy string; junk categories null out without dropping the record", () => {
-    expect(normalizeSpineRecord({ ...valid, category: "Dining and Drinking > Bakery" })?.category).toBe(
-      "Dining and Drinking > Bakery",
-    );
+    expect(
+      normalizeSpineRecord({ ...valid, category: "Dining and Drinking > Bakery" })?.category,
+    ).toBe("Dining and Drinking > Bakery");
     expect(normalizeSpineRecord({ ...valid, category: null })?.category).toBeNull();
     expect(normalizeSpineRecord({ ...valid, category: "  " })?.category).toBeNull();
     expect(normalizeSpineRecord({ ...valid, category: "x".repeat(501) })?.category).toBeNull();

@@ -242,8 +242,7 @@ describe("booking form (R-itin-20)", () => {
       }),
     ];
     const bookingRead = {
-      "GET /trips/:tripId/bookings/:bookingId": () =>
-        Promise.resolve({ ...booking, items }),
+      "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve({ ...booking, items }),
     };
     const first = await renderForm(
       { bookingId: BOOKING_FLIGHT_ID },
@@ -371,8 +370,7 @@ describe("booking form (R-itin-20)", () => {
       { bookingId: BOOKING_LODGING_ID },
       { items: lateItem, bookings: [redEye] },
       {
-        "GET /trips/:tripId/bookings/:bookingId": () =>
-          Promise.resolve({ ...redEye, items: [] }),
+        "GET /trips/:tripId/bookings/:bookingId": () => Promise.resolve({ ...redEye, items: [] }),
       },
     );
     expect(await screen.findByTestId("itinerary-item-new-conflict")).toHaveTextContent(

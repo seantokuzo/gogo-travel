@@ -21,9 +21,9 @@ patterns worth repeating, surprises worth remembering, surviving follow-ups.
 
 ## Index
 
-| ID | Title | Status |
-|----|-------|--------|
-| _(no phases closed yet)_ | | |
+| ID                       | Title | Status |
+| ------------------------ | ----- | ------ |
+| _(no phases closed yet)_ |       |        |
 
 ## See also
 

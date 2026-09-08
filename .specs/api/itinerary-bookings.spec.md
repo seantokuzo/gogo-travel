@@ -197,18 +197,18 @@ Both canonical markers this spec repeated are resolved:
 All booking writers — this router, the capture landing service, any future
 job — go through one booking domain service that enforces, transactionally:
 
-| # | Invariant | Requirement |
-|---|---|---|
-| I-1 | `status = 'idea'` ⇒ zero itinerary items | R-ib-6 |
-| I-2 | `status ∈ {planned, booked}` ∧ `starts_at` known ⇒ exactly the derived item(s) exist, day/times synced from the booking | R-ib-5 |
+| #   | Invariant                                                                                                                                          | Requirement     |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| I-1 | `status = 'idea'` ⇒ zero itinerary items                                                                                                           | R-ib-6          |
+| I-2 | `status ∈ {planned, booked}` ∧ `starts_at` known ⇒ exactly the derived item(s) exist, day/times synced from the booking                            | R-ib-5          |
 | I-3 | `status ∈ {planned, booked}` ∧ `starts_at` NULL ⇒ zero items (unscheduled bucket) or exactly the user-scheduled item(s), which own their day/times | R-ib-8, R-ib-16 |
-| I-4 | `status = 'cancelled'` ⇒ zero items; booking row retained | R-ib-7 |
-| I-5 | Every booking/item mutation that can change a day's located sequence marks legs dirty | R-ib-19 |
+| I-4 | `status = 'cancelled'` ⇒ zero items; booking row retained                                                                                          | R-ib-7          |
+| I-5 | Every booking/item mutation that can change a day's located sequence marks legs dirty                                                              | R-ib-19         |
 
 Precedence rule for I-3 → I-2: when a timeless-but-scheduled booking later
 gains real times (user edits details; capture updates it), the booking wins —
 its derived day/times overwrite the item's in the same transaction. When a
-booking's times are *removed* (details edited to drop them), existing items
+booking's times are _removed_ (details edited to drop them), existing items
 keep their current day/times and become item-owned (I-3); nothing silently
 vanishes from the calendar.
 
@@ -217,12 +217,12 @@ vanishes from the calendar.
 `booking_status` values and semantics are canonical in schema §3.2. Allowed
 transitions (anything absent is `VALIDATION_FAILED`):
 
-| From \ To | idea | planned | booked | cancelled |
-|---|---|---|---|---|
-| **idea** | — | ✔ (schedule R-ib-8, or manual) | ✔ | ✔ |
-| **planned** | ✔ (unschedule R-ib-9, or manual — deletes items) | — | ✔ | ✔ |
-| **booked** | ✖ (demote to planned first — deliberate two-step friction) | ✔ ("didn't actually book"; items unaffected) | — | ✔ |
-| **cancelled** | ✖ | ✖ | ✖ | — |
+| From \ To     | idea                                                       | planned                                      | booked | cancelled |
+| ------------- | ---------------------------------------------------------- | -------------------------------------------- | ------ | --------- |
+| **idea**      | —                                                          | ✔ (schedule R-ib-8, or manual)               | ✔      | ✔         |
+| **planned**   | ✔ (unschedule R-ib-9, or manual — deletes items)           | —                                            | ✔      | ✔         |
+| **booked**    | ✖ (demote to planned first — deliberate two-step friction) | ✔ ("didn't actually book"; items unaffected) | —      | ✔         |
+| **cancelled** | ✖                                                          | ✖                                            | ✖      | —         |
 
 Side effects ride the transition in one transaction: `→ idea` and
 `→ cancelled` delete items (I-1/I-4); `idea → planned|booked` with known
@@ -242,16 +242,16 @@ schemas so server and client agree):
 - `starts_at` (UTC) = the instant of the category's **primary start** field;
   `ends_at` = primary end. Primary fields per category:
 
-| Category | Primary start | Primary end | Auto-item shape (R-ib-5) |
-|---|---|---|---|
-| `flight` | `departs_at` | `arrives_at` | 1 item on departure wall-date |
-| `train` | `departs_at` | `arrives_at` | 1 item on departure wall-date |
-| `lodging` | `check_in` | `check_out` | 1 spanning item: `day` = check-in wall-date, `end_day` = check-out wall-date (§3.6 Branch A, resolved Gate 2) |
-| `car_rental` | `pickup_at` | `dropoff_at` | 2 point items: pickup event + dropoff event (each `booking`-kind; schema §3.3.9 "row(s)" anticipates plurality). Dropoff item exists only when `dropoff_at` is set. |
-| `moped_rental` | `pickup_at` | `dropoff_at` | same as `car_rental` |
-| `activity` | `starts_at` | `ends_at` | 1 item |
-| `restaurant` | `reserved_at` | — | 1 item, `end_time` NULL |
-| `other` | `starts_at` | `ends_at` | 1 item |
+| Category       | Primary start | Primary end  | Auto-item shape (R-ib-5)                                                                                                                                            |
+| -------------- | ------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `flight`       | `departs_at`  | `arrives_at` | 1 item on departure wall-date                                                                                                                                       |
+| `train`        | `departs_at`  | `arrives_at` | 1 item on departure wall-date                                                                                                                                       |
+| `lodging`      | `check_in`    | `check_out`  | 1 spanning item: `day` = check-in wall-date, `end_day` = check-out wall-date (§3.6 Branch A, resolved Gate 2)                                                       |
+| `car_rental`   | `pickup_at`   | `dropoff_at` | 2 point items: pickup event + dropoff event (each `booking`-kind; schema §3.3.9 "row(s)" anticipates plurality). Dropoff item exists only when `dropoff_at` is set. |
+| `moped_rental` | `pickup_at`   | `dropoff_at` | same as `car_rental`                                                                                                                                                |
+| `activity`     | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                              |
+| `restaurant`   | `reserved_at` | —            | 1 item, `end_time` NULL                                                                                                                                             |
+| `other`        | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                              |
 
 - Item `day` = wall-date component of the primary-start ISO string (offset
   dropped — no tz database needed); `start_time`/`end_time` = wall-time
@@ -286,6 +286,7 @@ updated_at DESC` (timeless ideas trail, freshest first; uses schema
 **Requirements covered**: R-ib-10, R-ib-24
 
 **Tests required**:
+
 - [ ] Happy path: filters by status/category; pagination cursor round-trip
 - [ ] `unscheduled=true` returns exactly zero-item bookings; excludes cancelled by default
 - [ ] Authz: non-member gets 404 with zero data; viewer can read
@@ -315,6 +316,7 @@ place-deleted-mid-write FK race too).
 **Requirements covered**: R-ib-1, R-ib-4, R-ib-5, R-ib-11, R-ib-12, R-ib-24
 
 **Tests required**:
+
 - [ ] Happy path per all 8 categories (valid details parse; unknown keys stripped)
 - [ ] Mismatched category/details rejected; `source: 'email'` from client rejected
 - [ ] Timed `planned` create auto-creates item(s) atomically; `idea` create does not
@@ -336,6 +338,7 @@ indistinguishable).
 **Requirements covered**: R-ib-24
 
 **Tests required**:
+
 - [ ] Happy path incl. items array for scheduled + empty for ideas
 - [ ] Authz: wrong-trip bookingId 404; non-member 404
 
@@ -359,6 +362,7 @@ the caller — one indistinguishable NOT_FOUND, R-places-8 / Law #3: invisible
 **Requirements covered**: R-ib-1..R-ib-7, R-ib-12, R-ib-18, R-ib-24
 
 **Tests required**:
+
 - [ ] Every legal transition of §3.2 applies its item side effects atomically; every illegal one 400s
 - [ ] Booking time change moves its item's day/times in the same transaction (I-2)
 - [ ] Removing times leaves scheduled item untouched (I-3 precedence)
@@ -380,6 +384,7 @@ expense ledger outlives the booking.
 **Requirements covered**: R-ib-19, R-ib-24
 
 **Tests required**:
+
 - [ ] Delete cascades items, SET-NULLs expenses, triggers leg recompute
 - [ ] Authz: viewer 403; non-member 404
 
@@ -403,6 +408,7 @@ day" action).
 **Requirements covered**: R-ib-8, R-ib-18, R-ib-24
 
 **Tests required**:
+
 - [ ] Idea scheduled → item exists, status planned, one transaction
 - [ ] Timed booking 400; already-scheduled 409
 - [ ] Authz: viewer 403; non-member 404
@@ -432,6 +438,7 @@ range.
 **Requirements covered**: R-ib-13, R-ib-24
 
 **Tests required**:
+
 - [ ] Ordering is `(day, sort_order)`; range filtering of items and legs
 - [ ] Default range covers items outside trip dates
 - [ ] Authz: non-member 404
@@ -451,12 +458,12 @@ Create a `place_visit` or `custom` item (R-ib-14).
 **Response 201**: `ItineraryItem`. Side effect: legs dirty for `day`.
 
 **Errors**: 400 VALIDATION_FAILED (kind `booking`; kind/field mismatch per
-schema §3.3.10 checks; structural time violations per R-ib-17) · 401 · 403 ·
-404.
+schema §3.3.10 checks; structural time violations per R-ib-17) · 401 · 403 · 404.
 
 **Requirements covered**: R-ib-14, R-ib-15, R-ib-17, R-ib-19, R-ib-24
 
 **Tests required**:
+
 - [ ] Happy path both kinds; server-assigned gapped sort_order appends
 - [ ] kind=booking rejected; place_visit without place_id rejected
 - [ ] Overlapping times accepted (R-ib-17)
@@ -479,6 +486,7 @@ mismatch) · 401 · 403 · 404.
 **Requirements covered**: R-ib-16, R-ib-17, R-ib-18, R-ib-19, R-ib-24
 
 **Tests required**:
+
 - [ ] Time/day edit on item of timed booking 400s; on timeless-booking item succeeds
 - [ ] notes/sort_order editable on any kind
 - [ ] Day move marks both days' legs dirty
@@ -500,6 +508,7 @@ demote the booking instead) · 401 · 403 · 404.
 **Requirements covered**: R-ib-9, R-ib-19, R-ib-24
 
 **Tests required**:
+
 - [ ] planned-booking item delete reverts status to idea in one transaction
 - [ ] booked-booking item delete 409s; custom/place_visit deletes cleanly
 - [ ] Legs recomputed for the day
@@ -528,6 +537,7 @@ item pulled across days) · 401 · 403 · 404.
 **Requirements covered**: R-ib-15, R-ib-16, R-ib-18, R-ib-19, R-ib-24
 
 **Tests required**:
+
 - [ ] Reorder assigns 1024-gapped values; response reflects post-state
 - [ ] Cross-day pull works for custom/place_visit/timeless-booking items; rejected for timed-booking items
 - [ ] Deleted-elsewhere ids silently ignored; foreign-trip ids 400
@@ -550,6 +560,7 @@ rate-limited per trip (`RATE_LIMITED` on abuse; window is config).
 **Requirements covered**: R-ib-19, R-ib-23, R-ib-24
 
 **Tests required**:
+
 - [ ] Enqueues exactly one pending recompute per trip (dedup)
 - [ ] Rate limit enforced; authz non-member 404
 
@@ -683,7 +694,7 @@ Sized one agent session each; queued as `T-N.M` rows at build time.
 
 ---
 
-*Trace: every R-ib-N cites its enforcing section/endpoint inline. Both
+_Trace: every R-ib-N cites its enforcing section/endpoint inline. Both
 repeated markers resolved at their canonical home (schema spec) at Gate 2,
 2026-07-09 — multi-day bookings → one spanning item (Branch A); trip dates
-→ required at creation. Zero markers remain.*
+→ required at creation. Zero markers remain._

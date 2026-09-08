@@ -185,14 +185,14 @@ Inherited from the companion API spec:
 
 Routes per navigation spec §2.1 (no additions):
 
-| Surface | Route / presentation | Contents |
-|---|---|---|
-| `photos` (album grid) | `[tripId]/more/photos/index.tsx` | Day/place segmented grid, upload FAB, queue tiles, visibility badges |
-| `photo-viewer` | `[tripId]/more/photos/[photoId].tsx` — PUSH | Full-bleed image, metadata, pin links, owner controls |
-| Source picker | Sheet over `photos` (or today tab) | Camera / library entries + priming branch |
-| Pin editor | Sheet over `photo-viewer` | Place search (trip's saved places) + same-day itinerary items, suggestion preselected |
-| Visibility control | Sheet over `photo-viewer` | Three levels w/ icons + scope copy; public path → ConfirmDialog |
-| Priming screens | In-flow (pre-OS-prompt) | Camera / photos / location-metadata explainers |
+| Surface               | Route / presentation                        | Contents                                                                              |
+| --------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `photos` (album grid) | `[tripId]/more/photos/index.tsx`            | Day/place segmented grid, upload FAB, queue tiles, visibility badges                  |
+| `photo-viewer`        | `[tripId]/more/photos/[photoId].tsx` — PUSH | Full-bleed image, metadata, pin links, owner controls                                 |
+| Source picker         | Sheet over `photos` (or today tab)          | Camera / library entries + priming branch                                             |
+| Pin editor            | Sheet over `photo-viewer`                   | Place search (trip's saved places) + same-day itinerary items, suggestion preselected |
+| Visibility control    | Sheet over `photo-viewer`                   | Three levels w/ icons + scope copy; public path → ConfirmDialog                       |
+| Priming screens       | In-flow (pre-OS-prompt)                     | Camera / photos / location-metadata explainers                                        |
 
 Entry points: album FAB; today-tab quick action "add photo" (navigation
 spec §2.4 today screen); map photo-pin tap → place-filtered album (§3.7).
@@ -219,9 +219,9 @@ spec §2.4 today screen); map photo-pin tap → place-filtered album (§3.7).
 
 - **Entry shape (client store, persisted — MMKV/SQLite per PLANNING
   cross-cutting):** `{ local_id, trip_id, asset_ref, content_type,
-  byte_size, state: 'queued' | 'uploading' | 'processing' | 'done' |
-  'failed', photo_id?, ticket?, put_url?, error?, attempts,
-  extract_location }`. Bytes stay in the OS photo store; only references
+byte_size, state: 'queued' | 'uploading' | 'processing' | 'done' |
+'failed', photo_id?, ticket?, put_url?, error?, attempts,
+extract_location }`. Bytes stay in the OS photo store; only references
   persist (R-cphoto-8).
 - **Pipeline per batch (≤ 20):** mint slots → parallel PUTs (bounded
   concurrency, e.g. 3) → finalize each → replace queue tile with the real
@@ -264,11 +264,11 @@ spec §2.4 today screen); map photo-pin tap → place-filtered album (§3.7).
 One reusable priming pattern (illustration + one-paragraph why + proceed /
 not-now), three instances:
 
-| Prime | Fires before | Copy commitment | On deny/not-now |
-|---|---|---|---|
-| Camera | first camera use | capture straight into the trip album | camera entry shows settings-link explainer; library unaffected (R-cphoto-2) |
-| Photo library | first library pick (where the OS/picker requires an app-level grant; out-of-process pickers may need none — build-time verification via Context7) | pick trip photos; app never scans the whole library | library entry explains + settings link; camera unaffected |
-| Location metadata | first upload (per-upload opt-in; after first consent the choice becomes the remembered default toggle state — §2, resolved Gate 2) | photo GPS is used only to suggest place/itinerary pins; photos' location never leaves the visibility the user sets (Law #3) | uploads proceed with `extract_location: false`; manual pinning intact (R-cphoto-3/4) |
+| Prime             | Fires before                                                                                                                                      | Copy commitment                                                                                                             | On deny/not-now                                                                      |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Camera            | first camera use                                                                                                                                  | capture straight into the trip album                                                                                        | camera entry shows settings-link explainer; library unaffected (R-cphoto-2)          |
+| Photo library     | first library pick (where the OS/picker requires an app-level grant; out-of-process pickers may need none — build-time verification via Context7) | pick trip photos; app never scans the whole library                                                                         | library entry explains + settings link; camera unaffected                            |
+| Location metadata | first upload (per-upload opt-in; after first consent the choice becomes the remembered default toggle state — §2, resolved Gate 2)                | photo GPS is used only to suggest place/itinerary pins; photos' location never leaves the visibility the user sets (Law #3) | uploads proceed with `extract_location: false`; manual pinning intact (R-cphoto-3/4) |
 
 Priming screens are app UI (skippable, re-triggerable from the blocked
 entry), never a replacement for OS dialogs.
@@ -315,24 +315,24 @@ and pin visuals:
 Screen names `photos`, `photo-viewer` (already reserved in the navigation
 spec's screen list and examples).
 
-| Element | testID |
-|---|---|
-| Album root / grid | `photos-screen` · `photos-list` |
-| Grid tile | `photos-list-item-{photoId}` |
-| Grouping segment | `photos-segment-by-day` · `photos-segment-by-place` |
-| Upload FAB | `photos-fab-upload` |
-| Source sheet + entries | `photos-sheet-source` · `photos-button-camera` · `photos-button-library` |
-| Queue tile / retry / cancel | `photos-upload-item-{localId}` (+ `-retry`, `-cancel`) |
-| Suggestion chip confirm/dismiss | `photos-button-pin-suggestion-{photoId}` (+ `-confirm`, `-dismiss`) |
-| Priming proceed / not-now | `photos-button-prime-proceed` · `photos-button-prime-later` |
-| Viewer root | `photo-viewer-screen` |
-| Visibility control | `photo-viewer-toggle-visibility` (navigation spec's own example) |
-| Visibility sheet + options | `photo-viewer-sheet-visibility` · `photo-viewer-button-visibility-private/-trip/-public` |
-| Public ConfirmDialog | `photo-viewer-dialog-public` (+ `-confirm`, `-cancel` per compound rule) |
-| Pin editor | `photo-viewer-button-pin` · `photo-viewer-sheet-pin` · `photo-viewer-list-item-place-{placeId}` · `photo-viewer-list-item-item-{itemId}` |
-| Caption input | `photo-viewer-input-caption` |
-| Delete + dialog | `photo-viewer-button-delete` (+ `-confirm`, `-cancel`) |
-| Back | `photo-viewer-back` |
+| Element                         | testID                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Album root / grid               | `photos-screen` · `photos-list`                                                                                                          |
+| Grid tile                       | `photos-list-item-{photoId}`                                                                                                             |
+| Grouping segment                | `photos-segment-by-day` · `photos-segment-by-place`                                                                                      |
+| Upload FAB                      | `photos-fab-upload`                                                                                                                      |
+| Source sheet + entries          | `photos-sheet-source` · `photos-button-camera` · `photos-button-library`                                                                 |
+| Queue tile / retry / cancel     | `photos-upload-item-{localId}` (+ `-retry`, `-cancel`)                                                                                   |
+| Suggestion chip confirm/dismiss | `photos-button-pin-suggestion-{photoId}` (+ `-confirm`, `-dismiss`)                                                                      |
+| Priming proceed / not-now       | `photos-button-prime-proceed` · `photos-button-prime-later`                                                                              |
+| Viewer root                     | `photo-viewer-screen`                                                                                                                    |
+| Visibility control              | `photo-viewer-toggle-visibility` (navigation spec's own example)                                                                         |
+| Visibility sheet + options      | `photo-viewer-sheet-visibility` · `photo-viewer-button-visibility-private/-trip/-public`                                                 |
+| Public ConfirmDialog            | `photo-viewer-dialog-public` (+ `-confirm`, `-cancel` per compound rule)                                                                 |
+| Pin editor                      | `photo-viewer-button-pin` · `photo-viewer-sheet-pin` · `photo-viewer-list-item-place-{placeId}` · `photo-viewer-list-item-item-{itemId}` |
+| Caption input                   | `photo-viewer-input-caption`                                                                                                             |
+| Delete + dialog                 | `photo-viewer-button-delete` (+ `-confirm`, `-cancel`)                                                                                   |
+| Back                            | `photo-viewer-back`                                                                                                                      |
 
 ### 3.9 Out of scope (explicit)
 
@@ -361,16 +361,17 @@ spec's screen list and examples).
 Sized to one agent session each; become `T-N.M` rows at build time.
 Depends on PH-1..3 (API), NAV-1 route skeleton, DS-7..9 components.
 
-| ID | Task | Covers |
-|---|---|---|
-| PHC-1 | Album grid: day/place grouping, segmented control, tiles (blurhash, badges), EmptyState/Skeleton, cursor pagination, offline cache read. | R-cphoto-12..16 |
-| PHC-2 | Capture + upload: source Sheet, camera/library flows, selection validation, persisted upload queue with batch pipeline, progress/retry/cancel tiles, suggestion chips. | R-cphoto-5..11 |
-| PHC-3 | Viewer: full-bleed image, owner vs non-owner control sets, pin editor Sheet w/ suggestions, caption edit, delete w/ ConfirmDialog. | R-cphoto-17, R-cphoto-20 |
+| ID    | Task                                                                                                                                                                                                | Covers                   |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| PHC-1 | Album grid: day/place grouping, segmented control, tiles (blurhash, badges), EmptyState/Skeleton, cursor pagination, offline cache read.                                                            | R-cphoto-12..16          |
+| PHC-2 | Capture + upload: source Sheet, camera/library flows, selection validation, persisted upload queue with batch pipeline, progress/retry/cancel tiles, suggestion chips.                              | R-cphoto-5..11           |
+| PHC-3 | Viewer: full-bleed image, owner vs non-owner control sets, pin editor Sheet w/ suggestions, caption edit, delete w/ ConfirmDialog.                                                                  | R-cphoto-17, R-cphoto-20 |
 | PHC-4 | Visibility control: iconography, control Sheet, public ConfirmDialog, optimistic transitions w/ rollback. **Sensitive path — photo visibility auto-escalates review (PLANNING § Review Pipeline).** | R-cphoto-18, R-cphoto-19 |
-| PHC-5 | Permission priming trio + consent plumbing (`extract_location` per-upload flag with remembered default — resolved Gate 2 — plus denial degradations). | R-cphoto-1..4 |
-| PHC-6 | Map-pin data contract: visibility-safe pin feed + pin-tap → filtered album navigation (joint task with the map spec's owner). | R-cphoto-21 |
+| PHC-5 | Permission priming trio + consent plumbing (`extract_location` per-upload flag with remembered default — resolved Gate 2 — plus denial degradations).                                               | R-cphoto-1..4            |
+| PHC-6 | Map-pin data contract: visibility-safe pin feed + pin-tap → filtered album navigation (joint task with the map spec's owner).                                                                       | R-cphoto-21              |
 
 **Tests required (minimum):**
+
 - [ ] Priming precedes every OS prompt; each denial path leaves the other
       capture route functional (PHC-5)
 - [ ] Consent off ⇒ `extract_location: false` on the wire and no GPS read
@@ -394,8 +395,8 @@ Depends on PH-1..3 (API), NAV-1 route skeleton, DS-7..9 components.
 
 ---
 
-*Requirements → design trace inline. All three markers resolved at their
+_Requirements → design trace inline. All three markers resolved at their
 canonical homes at Gate 2 (2026-07-09): caption is the v1 review surface +
 public photos surface on the place detail sheet only (schema spec
 §3.3.17); location consent is per-upload opt-in with a remembered default
-(photos API spec). Zero markers remain.*
+(photos API spec). Zero markers remain._

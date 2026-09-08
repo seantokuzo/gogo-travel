@@ -182,15 +182,13 @@ describe("usePutBudget (G2 / R-cmoney-2)", () => {
     client.setQueryData(queryKeys.tripBudgets(TEST_TRIP_ID), staleDoc);
     // Deferred-promise discipline: resolvers array, release in finally.
     const getResolvers: ((value: unknown) => void)[] = [];
-    jest
-      .spyOn(apiClient, "request")
-      .mockImplementation((descriptor: { method: string }) =>
-        descriptor.method === "GET"
-          ? (new Promise((resolve) => {
-              getResolvers.push(resolve);
-            }) as never)
-          : (Promise.resolve(serverDoc) as never),
-      );
+    jest.spyOn(apiClient, "request").mockImplementation((descriptor: { method: string }) =>
+      descriptor.method === "GET"
+        ? (new Promise((resolve) => {
+            getResolvers.push(resolve);
+          }) as never)
+        : (Promise.resolve(serverDoc) as never),
+    );
     try {
       const { result } = await renderHook(
         () => ({

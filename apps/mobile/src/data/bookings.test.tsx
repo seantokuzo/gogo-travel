@@ -139,7 +139,9 @@ it("useCreateBooking: hook-level onMutationSuccess fires for BOTH in-flight crea
   expect(onMutationSuccess).toHaveBeenNthCalledWith(2, makeBooking("b-2"));
 
   expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
-  expect(client.getQueryState(queryKeys.tripBooking(TEST_TRIP_ID, "b-0"))?.isInvalidated).toBe(true);
+  expect(client.getQueryState(queryKeys.tripBooking(TEST_TRIP_ID, "b-0"))?.isInvalidated).toBe(
+    true,
+  );
 });
 
 it("useCreateBooking error rides the hook-level onMutationError and leaves the cache alone", async () => {
@@ -493,9 +495,7 @@ it("useScheduleBooking is optimistic (R-itin-11): placeholder + badge advance, t
   const client = makeTestQueryClient();
   const idea = makeWireBooking({ id: BOOKING_ID, status: "idea", starts_at: null });
   seedBookingList(client, [idea]);
-  seedItinerary(client, [
-    makeItineraryItem({ id: OTHER_ITEM_ID, day: DAY, sort_order: 1024 }),
-  ]);
+  seedItinerary(client, [makeItineraryItem({ id: OTHER_ITEM_ID, day: DAY, sort_order: 1024 })]);
 
   let resolve!: (value: BookingWithItems) => void;
   spyRequest().mockImplementation(() => new Promise((r) => (resolve = r)));
@@ -588,10 +588,9 @@ it("useScheduleBooking failure restores BOTH snapshots and invalidates (stale-pr
   spyRequest().mockRejectedValue(new Error("409"));
   const onMutationError = jest.fn();
 
-  const { result } = await renderHook(
-    () => useScheduleBooking(TEST_TRIP_ID, { onMutationError }),
-    { wrapper: makeWrapper(client) },
-  );
+  const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID, { onMutationError }), {
+    wrapper: makeWrapper(client),
+  });
   await act(async () => {
     result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY } });
   });

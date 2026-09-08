@@ -6,10 +6,7 @@
  * at the antimeridian (`PlaceSearchQuerySchema` REJECTS minLng > maxLng —
  * an inverted box is a live 400 on every map search for that trip).
  */
-import {
-  PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
-  regionCellsForDestination,
-} from "@gogo/shared";
+import { PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES, regionCellsForDestination } from "@gogo/shared";
 
 import { bboxParamFor, searchGeoBoundFor } from "./search-geo";
 
@@ -37,12 +34,8 @@ describe("searchGeoBoundFor (destination-region envelope)", () => {
       { lat: 64.1466, lng: -21.9426 },
     ]) {
       const bound = searchGeoBoundFor(destination);
-      expect(bound.maxLat - bound.minLat).toBeLessThanOrEqual(
-        PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
-      );
-      expect(bound.maxLng - bound.minLng).toBeLessThanOrEqual(
-        PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
-      );
+      expect(bound.maxLat - bound.minLat).toBeLessThanOrEqual(PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES);
+      expect(bound.maxLng - bound.minLng).toBeLessThanOrEqual(PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES);
     }
   });
 

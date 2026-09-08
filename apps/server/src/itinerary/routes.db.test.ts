@@ -938,9 +938,9 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       title: "Read-only",
       day: "2026-09-02",
     });
-    expect(
-      (await patchItem(trip.id, item.id, viewer.accessToken, { title: "nope" })).status,
-    ).toBe(403);
+    expect((await patchItem(trip.id, item.id, viewer.accessToken, { title: "nope" })).status).toBe(
+      403,
+    );
   });
 
   // ===========================================================================
@@ -1437,9 +1437,8 @@ describe.skipIf(!dockerAvailable)("T-7.2 itinerary routes (integration)", () => 
       day: "2026-09-02",
     });
     expect(
-      (
-        await putDayOrder(trip.id, "2026-09-02", viewer.accessToken, { item_ids: [item.id] })
-      ).status,
+      (await putDayOrder(trip.id, "2026-09-02", viewer.accessToken, { item_ids: [item.id] }))
+        .status,
     ).toBe(403);
   });
 
