@@ -1,12 +1,12 @@
 ---
-paths: [".agents/skills/pr-review-pipeline/**", "**/aggregate-verdict*.mjs"]
+paths: [".claude/rules/review.md", "**/aggregate-verdict*.mjs"]
 ---
 
 # PR Review — File Conventions (IN-SESSION)
 
 You're touching review-pipeline plumbing. Reviews run **in-session on Claude Code** (the main agent spawns specialist subagents). There is **NO GitHub Action, NO Copilot, NO API/console billing** — Max-plan only. Drift in the sentinel format breaks `aggregate-verdict.mjs`.
 
-> **Canonical source for the sentinel + verdict format.** CLAUDE.md and the pipeline `SKILL.md` reference this file — don't restate the shapes elsewhere.
+> **Canonical source for the sentinel + verdict format.** CLAUDE.md and `.claude/rules/review.md` reference this file — don't restate the shapes elsewhere.
 
 ## Specialist lanes
 

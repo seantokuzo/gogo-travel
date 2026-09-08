@@ -1,10 +1,5 @@
 ---
-paths:
-  [
-    ".agents/skills/pr-review-pipeline/**",
-    ".claude/commands/review.md",
-    "**/aggregate-verdict*.mjs",
-  ]
+paths: [".claude/commands/review.md", "**/aggregate-verdict*.mjs"]
 ---
 
 # Review brief — GoGo Travel

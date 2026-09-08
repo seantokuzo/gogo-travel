@@ -677,8 +677,8 @@ pnpm test && pnpm build`
 ## Review Pipeline Configuration
 
 > Local, in-session — [ADR-003](decisions/ADR-003-local-in-session-reviews.md).
-> Mechanics: `.agents/skills/pr-review-pipeline/SKILL.md`; sentinel format:
-> `.claude/rules/pr-review-files.md`.
+> Mechanics: the `review-loop` skill; project brief: `.claude/rules/review.md`;
+> sentinel format: `.claude/rules/pr-review-files.md`.
 
 - **Lanes (locked, 5):** correctness · security · tests · performance · conventions
 - **Judge:** fresh impartial subagent → `merge | re-review | human-decides`;

@@ -21,7 +21,7 @@ Read, in order: `CLAUDE.md` (constitution + planning convention) → `docs/STATE
 2. **Wave up.** Wave 1 = tasks with no unmet deps. Wave 2+ = tasks depending on prior waves. Independent tasks in a wave spawn simultaneously.
 3. **Spawn** (see routing + spawn checklist below).
 4. **Verify the wave** (checklist below) before starting the next.
-5. **PR review.** Per the `pr-review-pipeline` skill — spawn reviewer lanes, triage, judge, merge.
+5. **PR review.** Per the `review-loop` skill — pick the panel from the diff, triage, judge, merge. Project brief: `.claude/rules/review.md`.
 6. **Handoff.** Pull merged work to local main, update `docs/STATE.md`, prep the next-session prompt.
 
 ## Routing
@@ -32,7 +32,7 @@ Read, in order: `CLAUDE.md` (constitution + planning convention) → `docs/STATE
 | `apps/web` — UI, routes, hooks, client auth        | `web-engineer`                 |
 | `apps/mobile` — screens, native UI, offline, push  | `mobile-engineer`              |
 | Answer a question before building / spike (`S-N`)  | `researcher`                   |
-| Review an open PR (one per lane)                   | `reviewer` ×N                  |
+| Review an open PR (panel picked from the diff)     | 1–4 review specialists         |
 | Doc/QUEUE/STATE updates, handoff writing           | `general-purpose` (doc agent)  |
 | Merge + shipping mechanics, post-merge sync        | `general-purpose` (ship agent) |
 
