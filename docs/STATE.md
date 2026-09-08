@@ -25,6 +25,102 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
+### REVIEW LOOP CLOSE-OUT 2026-09-07/08 — all seven PRs merged (#58–#64); B-8 CLOSED end to end; E2E lane live
+
+Continuation of "REVIEW WAVE 2026-09-07" below (#58 `67055a1` / #60 `ef241ef`
+merged there; #59/#61/#62 were STILL OPEN at that point). Every remaining PR
+landed through the full local review loop (panel picked from the diff,
+triage, independent fix verification, fresh judge), and two more PRs (#63,
+#64) opened and merged in the same window. #58/#60 unchanged from that
+section — see it for their full narrative; not repeated here.
+
+- **PR #62 `89a664b`** (B-9 client half — airport/airline pickers + real
+  per-endpoint timezones, closes B-8's client side): airport/airline
+  typeahead pickers carry each endpoint's IANA zone into the paired time
+  field, an always-visible zone picker, flight-number→airline inference, and
+  a hard refusal to save a zoned time with no zone (no `Z` fallback). No new
+  dependency — Hermes ships full ECMA-402 `Intl` on both platforms. 5 lanes →
+  2 blocking, both fixed: an airport swap did not invalidate its zone (pick
+  NRT → clear → type LAX saved origin LAX with a Tokyo zone, silently ~16h
+  wrong; worse on edit, where a stale `raw` re-emitted the old offset); the
+  composition core had only ever run on Node/V8's full-ICU `Intl`, never the
+  shipped Hermes — with all three defensive gates removed, 60 of 120 sampled
+  wall-hours composed a well-formed WRONG offset (not null, not a throw).
+  Fix: three gates (`isIntlFaithful()` engine self-check, tzdb-range check,
+  gap-signature check) plus a Hermes-Apple-shaped stub test suite. An
+  independent re-verification later corrected the sweep count from a
+  misreported 62→60 and one misclassified DST kind — record-correction only,
+  no design change.
+- **PR #59 `1b6d6ae`** (B-8 revert, DoD) — the temporary 12h
+  `TZ_INVERSION_GRACE_MS` grace removed from the app-side mirror, and the
+  strict `bookings_time_order_ck` re-added via migration 0003 as
+  `ADD CONSTRAINT … NOT VALID`, deliberately grandfathering rows with
+  already-inverted stored instants (rewriting them is Autonomy trigger #5 —
+  Sean's call, never a migration's). 2 blocking, both fixed: a grandfathered
+  row 500'd on any details-less write, including unscheduling its itinerary
+  item (`deleteItem`'s `planned→idea` flip is an UPDATE of the booking) —
+  fixed with a pre-write merged-instants guard plus a constraint-precise
+  23514→400 fallback wired onto UPDATE paths only (INSERT stays a loud 500 —
+  that would mean mirror/DB drift, a real bug, and must stay loud).
+  Independent verification 11/11, judge merge/high. Merged-tree CI run
+  deliberately (client fix + server revert verified together, not just
+  separately). **⇒ B-8 IS CLOSED END TO END.**
+- **PR #61 `e867968`** (S-4 phase 1 — Maestro E2E lane): ADR-007, pinned
+  Maestro 2.10.0, a Release-config simulator build lane, four unauthed flows
+  plus one dev-tagged flow, `scripts/e2e.sh`. Three review rounds. **Merge
+  gate met for real**: one `bash scripts/e2e.sh` invocation →
+  `tests="4" failures="0"` (178.188s), plus `--tags dev` →
+  `tests="1" failures="0"`. The lane paid for itself before merging — the
+  first honest run was 4/2, and the failure was a genuine device-only
+  defect: the inert Release diagnostics marker rendered with a ZERO FRAME,
+  excluded from the XCUITest accessibility hierarchy outright, so the
+  assertion was unsatisfiable by construction. Falsified three ways on
+  device (frameless FAILED, 40×40 COMPLETED, zero-size+`accessible` FAILED —
+  cause is size, not accessibility). Fixed with `style={{ flex: 1 }}`. Wave 2
+  (env-gated session door plus flows 5–10) is a separate, not-yet-started
+  PR — QUEUE "S-4" row updated, still queued.
+- **PR #63 `3fe201b`** (docs correction, B-9) — corrected a FALSE premise #62
+  shipped: iOS Hermes does NOT ignore a requested `hourCycle`. Verified at
+  the pinned commit (`HERMES_V1_VERSION_NAME=250829098.0.16` → `90f2385`;
+  `PlatformIntlApple.mm` selects the hour pattern from the requested
+  `hourCycle_`, the locale default applies only when the option is absent)
+  and confirmed by a runtime probe in the app's own Hermes on the simulator
+  (`hour=17` not `05`, `FAITHFUL=true`, all backward links resolve,
+  `Not/AZone` throws). The three #62 gates never trip on the shipped engine
+  but stay as belt-and-braces against a future regression. **Qualification:
+  honored only when `hour12` is NOT also passed** — passing `hour12`
+  discards the requested `hourCycle` and re-derives it from the locale
+  default, turning h23 into h24 on `en-US` (midnight would read "24").
+  Backward links (`Asia/Kolkata`→`Asia/Calcutta`, etc. — every India flight)
+  resolve via an `NSTimeZone` fallback landed in hermes commit `8f9cf10fc`
+  (2025-03-17, fixing #1607) — the GitHub PR itself shows closed-not-merged,
+  because Meta lands Hermes changes via internal import.
+- **PR #64 `5313e84`** (chore — repo-wide prettier sweep): one-time sweep,
+  231 dirty files on the base. Two review rounds. **The sweep introduced
+  seven markdown content corruptions**, all from prettier reading a
+  line-initial `-`/`+`/`*` as a bullet marker or a leading `>` as a
+  blockquote marker in raw prose (invisible in rendered output, but several
+  of these files are read as raw text — grep'd, injected verbatim into
+  session context, never rendered). Worst hits: `.agents/agents/backend-engineer.md:30`
+  inverted a **Law #2 money-atomicity instruction** in a role file `CLAUDE.md`
+  requires reading before backend work; **locked** ADR-004 made to read as
+  excluding `npx expo-doctor`; `.specs/api/places.spec.md` made to read as
+  folding schema changes in WITHOUT a migration (negating Law #6);
+  `.specs/api/photos.spec.md` where `>20 items` became a blockquote,
+  dropping 413/429/404 from the Errors contract. All repaired by making the
+  punctuation non-line-initial (backticks preferred — prettier never
+  reformats inside a code span). Also reverted three generator/tool-owned
+  JSON files that had been reformatted anyway (`airports.json` /
+  `airlines.json` / `icon.json` — `airports.json` alone was 91% of the
+  sweep's raw diff) and excluded them going forward via `.prettierignore`.
+  **Final net semantic delta vs `main`: one character, and it is a fix** (a
+  prophylactic backtick in `docs/QUEUE.md`).
+
+**E2E lane is now live and gate-proven** (PR #61 above) — the first PR in
+this project to merge on a real device-execution gate, not just `pnpm test`.
+**Host simulator wedge is RESOLVED** (see landmines below — stale blocker
+note updated, not left standing).
+
 ### QA WRAP SESSION 2026-08-30 — device-QA branch merged, polish shipped, S-3 testing overhaul launched
 
 #### Outcomes (all merged to main, full 5-lane pipeline + independent fix verification + fresh judge, each)
@@ -308,16 +404,16 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   owner-scoped).
 - **Ask the ledger's exact criteria, never a paraphrase** (the 2026-08-29 session's
   repeated failure mode — deliberately preserved here).
-- **Host iOS simulator stack is wedged (2026-09-07).** `xcrun simctl boot`
-  on any device hangs indefinitely (killed at 60s, then 75s); `simctl list`
-  works but nothing reaches Booted. Tried and did NOT fix: `kill -9` of the
-  stale `SimLaunchHost.x86`, `killall -9` of the user-owned
-  `CoreSimulatorService` (launchd respawned both), plus the earlier S-4
-  agent's shutdown-all / Simulator.app restarts / clean service restart /
-  orphaned `SimRenderServer`+`SimMetalHost` kills / `launchctl kickstart`.
-  Not disk (214 GB free), not load. Remaining fix = log out or reboot the
-  host, which is Sean's call. Blocks PR #61's merge gate and all device QA.
-- **Grandfathered-booking dead end**, arriving when PR #59 lands: an
+- **Host iOS simulator stack — RESOLVED 2026-09-07** (host reboot, Sean's
+  call, executed). `xcrun simctl boot` completes normally again; PR #61's
+  merge gate ran to completion against a live sim afterward
+  (`tests="4" failures="0"`, 178.188s). The prior wedge (killed at 60s/75s;
+  `kill -9` of the stale `SimLaunchHost.x86`; `killall -9` of the user-owned
+  `CoreSimulatorService`; shutdown-all / Simulator.app restarts / orphaned
+  `SimRenderServer`+`SimMetalHost` kills — none of it worked short of the
+  reboot) is kept only as history in
+  `.tmp/session-notes/sim-wedge-2026-09-07.md`, in case the class recurs.
+- **Grandfathered-booking dead end**, present since PR #59 landed: an
   itinerary item derived from a booking with inverted stored instants
   CANNOT be unscheduled, because `deleteItem`'s R-ib-9 `planned → idea` flip
   is an UPDATE of the parent booking and the re-tightened `NOT VALID` CHECK
@@ -325,7 +421,22 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   Reads, deletes and any details-CARRYING PATCH still work, and a details
   PATCH HEALS the row, which is exactly the B-9 re-entry flow — so it is
   mostly self-healing. The only exits are: edit the booking's times, or
-  delete the booking.
+  delete the booking. Permanent by design (rewriting Sean's stored data is
+  Autonomy trigger #5) — this does not close when B-9/B-8 do; it is their
+  documented residual.
+- **Prettier rewrites line-initial punctuation in prose (PR #64).**
+  CommonMark reads a bare `-`, `+`, or `*` at the start of a line — including
+  a line a paragraph merely wraps onto — as a list marker, and a leading `>`
+  as a blockquote marker; `*emphasis*` also gets normalized to `_emphasis_`.
+  Invisible in rendered output, but several files in this repo are read as
+  raw text (grep'd, `cat`'d, injected verbatim into session context, never
+  rendered) — there the raw characters ARE the artifact. This corrupted a
+  Law #2 money-atomicity instruction in a role file and silently altered a
+  **locked** ADR before anyone noticed. Rule: any line-initial `-`/`+`/`*`/`>`
+  in prose, and any bare `*...*` around a code-literal/glob/UI-copy string,
+  must be escaped, joined onto the previous line, or put in backticks —
+  backticks are the most durable fix, since prettier never reformats inside
+  a code span.
 - **B-19's ledger flip is NOT earned yet.** Nothing in PR #60 was
   device-verified (simulator down); the mechanism was established by
   reading `RNSScreenStack.mm` (vendored 4.25.2) and an RN 0.81.5 copy of
@@ -903,6 +1014,18 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 
 ## Blockers / Waiting on Sean
 
+- **`chore/doctor-cleanup-review-loop` is unpushed (2026-09-08).** Three
+  commits on the main checkout — retiring the verdict aggregator, retiring
+  the fixed 5-lane review pipeline skill, making `/review-loop` canonical —
+  exist only on this machine. Needs a push + PR, or it's one disk failure
+  from gone.
+- **`.claude/agent-memory/` is untracked and not gitignored (P3, Sean's
+  call — QUEUE Active row).** Already being written to; will appear as noise
+  in every `git status` until committed or ignored.
+- **Device QA still owed:** the F-0xx ledger flips, B-19's freeze check
+  (device recipe in the landmines above and the PR #60 body), and the P-9
+  spec-pass batch (43+ interpretations) plus the other Sean-gated spec
+  decisions already tracked in `docs/QUEUE.md`.
 - **Mapbox account + access token** (escalation #3, PARKED — does not block
   the P-7 build; adapters are fixture-driven behind ports). Needed for: live
   travel-leg QA (P-7 phase QA at the earliest) and the P-8 `@rnmapbox/maps`
