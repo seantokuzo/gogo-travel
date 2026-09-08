@@ -15,6 +15,6 @@ argument-hint: [task or phase id]
 4. **Route** per the orchestrator table: `backend-engineer` / `web-engineer` / `mobile-engineer` / `researcher`. Pass **paths, not contents**. A spike (`S-N`) → researcher, output an ADR.
 5. **Per task:** `.claude/rules/` auto-load on read — honor them. Context7 for every library API. One atomic commit. CI gate green locally (`CLAUDE.md § Quality Gates`) before a task counts as done.
 6. **Verify each wave** before the next (orchestrator's hard gate). Beware false green — sibling repos have shipped "passing" code that was broken in prod.
-7. **PR-ready** → push, `gh pr create`, then run **`/review`**. Flip the `QUEUE.md` row as work lands.
+7. **PR-ready** → push, `gh pr create`, then run **`/review-loop`**. Flip the `QUEUE.md` row as work lands.
 
 Pull the queue and go — interrupt-driven, not approval-driven.

@@ -22,7 +22,7 @@ Don't flag defensive code for states that can't happen. Don't bikeshed. **Skepti
 | **security**    | Authn/authz holes, missing endpoint/socket auth, IDOR, input validation, injection, secrets/tokens in code, cookie/token handling, CVEs in _changed_ deps                                   | General logic bugs, perf, naming                    |
 | **tests**       | Missing/weak tests for new logic, assertions that prove nothing, untested error/edge cases, skipped suites, **test-vs-prod parity** (e.g. transactions tested on a driver prod doesn't use) | Prod-code bugs themselves, raw coverage %, style    |
 | **performance** | N+1 queries, missing indexes on queried columns, unbounded loads (`ScrollView`+`.map` vs `FlatList`), needless re-renders, missing pagination, blocking work on hot paths                   | Premature micro-opt with no realistic hot path      |
-| **conventions** | Violations of `.claude/rules/*.md` path rules, project structure, `any`, `console.log`, not consuming the shared package, breaking an established pattern                            | Subjective taste already consistent in the codebase |
+| **conventions** | Violations of `.claude/rules/*.md` path rules, project structure, `any`, `console.log`, not consuming the shared package, breaking an established pattern                                   | Subjective taste already consistent in the codebase |
 
 Spot something out-of-lane? One-line `cross-lane:` note in your findings. Don't chase it, don't fix it.
 
@@ -62,4 +62,4 @@ ci_failing: true | false      (correctness lane only; omit elsewhere)
 - `ci_failing` — include **only** for the `correctness` lane (`true` if CI is red for a reason your lane owns); omit the line otherwise.
 - `verdict` vocabulary is fixed: `ship` · `fix-then-ship` · `rethink`. Nothing else.
 
-The orchestrator parses these deterministically and aggregates into the verdict sticky. Your counts must match your findings exactly — the aggregation trusts the sentinel.
+The orchestrator parses these deterministically and aggregates into the round's LOCAL verdict record (`.tmp/review*/round-<N>/VERDICT.md` — never posted to the PR). Your counts must match your findings exactly — the aggregation trusts the sentinel.

@@ -4,11 +4,11 @@ Convention files auto-loaded by Claude Code when it reads a file matching the `p
 
 ## How it works
 
-1. A `.md` file here declares `paths: [...]` (globs) in YAML frontmatter — that line is its "applies to" header.
-2. When Claude reads a file matching any glob, that rule loads into context.
-3. Rules fire on **reads, not writes** (known limitation). Read before you edit.
+Rules fire on **reads, not writes** (known limitation). Read before you edit.
 
-This README is the index — it has no `paths`, so it doesn't auto-load.
+⚠️ This README has no `paths` — and it loads into EVERY session anyway
+(verified 2026-09-07, it lands in the system prompt alongside `CLAUDE.md`).
+It is always-resident context, so hold it to the leanness contract below.
 
 ## The leanness contract
 

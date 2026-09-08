@@ -64,25 +64,21 @@ Everything reversible AND in-spec runs without asking.
 ## Before you code
 
 1. Read the relevant `.specs/` contract and `.agents/skills/` for the domain.
-2. **Context7 for ALL library APIs** — never trust training data.
-3. `npm view <package> version` before adding any dependency.
-4. Read the role file in `.agents/agents/` for the work you're doing.
+2. Read the role file in `.agents/agents/` for the work you're doing.
 
 ## Tech stack
 
-Locked by [ADR-004](docs/decisions/ADR-004-stack-expo-rn-hono-drizzle.md).
-pnpm workspaces + Turborepo monorepo, TypeScript strict everywhere:
+Locked by [ADR-004](docs/decisions/ADR-004-stack-expo-rn-hono-drizzle.md); the
+workspace manifests say what's installed. What they DON'T tell you:
 
-| Workspace         | Stack                                                                                                                                                                             |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/mobile`     | Expo + React Native, `expo-router`, TanStack Query (server state), Zustand (client state), `StyleSheet` + design tokens (NO NativeWind unless a deliberate migration ADR says so) |
-| `apps/server`     | Hono + `@hono/zod-validator`, Drizzle ORM, Postgres (Neon; `postgres-js` in tests)                                                                                                |
-| `packages/shared` | `@gogo/shared` — Zod schemas as single source of truth; all wire types are `z.infer`                                                                                              |
-
-iOS first (simulator-driven; XcodeBuildMCP available), Android verification
-pass pre-launch. Exact versions pinned at P-3 scaffold via `npm view` +
-`npx expo-doctor` — never from training data. Maps SDK + AI provider: S-2
-research → ADR if non-obvious.
+- `apps/mobile` styling is `StyleSheet` + `@gogo/tokens` — **NO NativeWind**
+  unless a deliberate migration ADR says so.
+- `packages/shared` Zod schemas are the single source of truth; every wire
+  type is a `z.infer`, never a hand-written interface.
+- `apps/server` runs Neon in prod but `postgres-js` in tests — driver-class
+  bugs are invisible to CI.
+- iOS first (simulator-driven; XcodeBuildMCP available), Android verification
+  pass pre-launch. Maps SDK + AI provider: S-2 research → ADR if non-obvious.
 
 ## Git conventions
 
@@ -99,9 +95,9 @@ research → ADR if non-obvious.
 **Pure orchestrator, fat workers** — the central agent only reads state,
 decomposes, dispatches, tracks, and verifies wave gates; everything else
 (research, specs, code, review lanes, fixes, judging, doc updates, merges,
-handoffs) is delegated to subagents. Pass **paths** not contents, no nesting.
-Full directive + parallelism doctrine (its canonical home):
-`.agents/agents/orchestrator.md`.
+handoffs) is delegated to subagents. Full directive + parallelism doctrine
+(its canonical home): `.agents/agents/orchestrator.md`; the per-role files sit
+beside it in `.agents/agents/`.
 
 **Shared-worktree rule** (learned 2026-07-10, P-3): background agents share
 the session's working tree — a checkout by either side moves HEAD for both.
@@ -111,50 +107,32 @@ the branch merges. Parallel review lanes: only ONE lane (correctness, which
 runs the CI gate) may checkout; the rest review via `git diff`/`git show`.
 Agents that mutate files in parallel get `isolation: "worktree"`.
 
-| Agent                 | Role                                                      |
-| --------------------- | --------------------------------------------------------- |
-| `orchestrator.md`     | Decomposition, wave dispatch, verification                |
-| `researcher.md`       | Read-only research, Context7-first, confidence-tagged     |
-| `reviewer.md`         | Single-lane review specialist (spawned by the pipeline)   |
-| `backend-engineer.md` | `apps/server` — Hono routes, Drizzle/Postgres, auth       |
-| `mobile-engineer.md`  | `apps/mobile` — Expo screens, maps, photos, offline, push |
-
 ## Planning convention
 
-Stable IDs (`P-N` / `T-N.M` / `B-N` / `S-N`), canonical doc homes, append-only
-ADRs/history, derived execution order. Canonical: [ADR-001](docs/decisions/ADR-001-naming-convention.md)
-
-- `.claude/rules/planning-doc-homes.md` (auto-fires on doc reads). Status enum:
-  [ADR-002](docs/decisions/ADR-002-status-enum-lock.md). Specs are three-artifact
-  (requirements w/ EARS criteria · design · tasks) in `.specs/<area>/`.
+Stable IDs (`P-N` / `T-N.M` / `B-N` / `S-N`) — canonical:
+[ADR-001](docs/decisions/ADR-001-naming-convention.md). Doc homes, the locked
+status enum, and the three-artifact spec shape all live in
+`.claude/rules/planning-doc-homes.md` (auto-fires on doc reads).
 
 ## Local review pipeline
 
-Every functional PR: 5 parallel reviewer lanes → deterministic aggregation
-(`.github/scripts/aggregate-verdict.mjs`) → triage every finding
-(`fix-now`/`respond`/`defer`) → local disposition record → fresh impartial
-judge → `merge | re-review | human-decides`. Hard cap 4 rounds. Review
-records are **local-only** (2026-08-01): verdicts live in `.tmp/review*/`
-during the run; the durable record is the QUEUE "Recently done" row —
-nothing posted to GitHub (CI stays; that's CI, not review).
-**Run it with `/review`; fix loop is `/address-comments`.**
-Sentinel format: `.claude/rules/pr-review-files.md` (canonical — don't restate).
-Sensitive paths + blocking criteria: `docs/PLANNING.md § Review Pipeline
-Configuration`.
+Every functional PR gets one — **run `/review-loop`; the fix loop is
+`/address-comments`.** (`/review` is a deprecated alias that redirects here.)
+Review records are **local-only** (ADR-003): no verdict sticky, nothing about a
+review posted to GitHub (CI stays; that's CI, not review). The panel is picked
+from the diff, not fixed. Project brief — priorities, path → specialist map,
+what NOT to flag: `.claude/rules/review.md`.
 
 ## Quality Gates (before any task counts as done)
 
-1. Code compiles/builds; 2. tests green (new logic ⇒ new tests); 3. no
-   regressions; 4. conventions honored; 5. no secrets/PII in code or logs.
-   **CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
-   (runnable once the P-3 scaffold lands).
+**CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
+— new logic ⇒ new tests, happy path + error/edge.
 
 ## Autonomous loop ("spec and walk away")
 
-`bash scripts/run-loop.sh start|stop|status` — chains fresh sessions gated by
-`.loop/` sentinels (`done`/`pivot`/`blocked`/`next-prompt.md`); Stop hook
-enforces the contract; escalation triggers above still apply inside the loop
-(write `.loop/pivot`). Discipline: `.agents/skills/autonomous-loop/SKILL.md`.
+`bash scripts/run-loop.sh start|stop|status`. The escalation triggers above
+still apply inside the loop — write `.loop/pivot` to stop and ask. Sentinels,
+Stop-hook contract, and discipline: `.agents/skills/autonomous-loop/SKILL.md`.
 
 ## What NOT to do
 

@@ -26,15 +26,15 @@ Read, in order: `CLAUDE.md` (constitution + planning convention) → `docs/STATE
 
 ## Routing
 
-| Task | Persona |
-|------|---------|
-| `apps/server` — routes, DB, sockets, workers, auth | `backend-engineer` |
-| `apps/web` — UI, routes, hooks, client auth | `web-engineer` |
-| `apps/mobile` — screens, native UI, offline, push | `mobile-engineer` |
-| Answer a question before building / spike (`S-N`) | `researcher` |
-| Review an open PR (one per lane) | `reviewer` ×N |
-| Doc/QUEUE/STATE updates, handoff writing | `general-purpose` (doc agent) |
-| Merge + shipping mechanics, post-merge sync | `general-purpose` (ship agent) |
+| Task                                               | Persona                        |
+| -------------------------------------------------- | ------------------------------ |
+| `apps/server` — routes, DB, sockets, workers, auth | `backend-engineer`             |
+| `apps/web` — UI, routes, hooks, client auth        | `web-engineer`                 |
+| `apps/mobile` — screens, native UI, offline, push  | `mobile-engineer`              |
+| Answer a question before building / spike (`S-N`)  | `researcher`                   |
+| Review an open PR (one per lane)                   | `reviewer` ×N                  |
+| Doc/QUEUE/STATE updates, handoff writing           | `general-purpose` (doc agent)  |
+| Merge + shipping mechanics, post-merge sync        | `general-purpose` (ship agent) |
 
 Cross-component work: split per component. If a contract (shared schema / endpoint shape) must exist first, that's Wave 1; consumers are Wave 2.
 
@@ -42,12 +42,12 @@ Cross-component work: split per component. If a contract (shared schema / endpoi
 
 Maximize concurrency at every seam. Patterns proven in-session (P-7, 2026-08-01):
 
-- **Parallel builds in isolated worktrees** whenever file ownership is disjoint. Spawn with `isolation: "worktree"`; declare explicit file-ownership boundaries in each spawn prompt.
+- **Parallel builds in isolated worktrees** whenever file ownership is disjoint. Spawn with `isolation: "worktree"`; declare explicit file-ownership boundaries in each spawn prompt. **You spawn it, you tear it down** — see the wave gate below.
 - **Overlap pipeline stages.** Review PR N while building PR N+1; run two PRs' review rounds concurrently.
 - **Don't serialize on wave labels.** A later-wave task whose TRUE dependencies are merged dispatches early. (T-7.4 needed only merged T-7.1/T-7.2, not in-flight T-7.3; T-7.8's self-contained module needed neither.)
 - **Riders.** Small queued debts ride the next PR that touches their files, as separate commits.
 - **Seam-first dispatch.** Land a frozen no-op contract (schema/endpoint stub) first to unlock parallel consumers.
-- **Targeted re-reviews.** Round 2+ spawns only affected lanes — never a full 5-lane re-run.
+- **Targeted re-reviews.** Round 2+ spawns only the specialists whose findings are still open — never a full panel re-run.
 
 What keeps this safe: ONE agent per file-ownership zone, worktree isolation always for parallel mutators, and the orchestrator alone sequences merges.
 
@@ -68,6 +68,18 @@ Every spawn prompt includes:
 - **CI locally:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`. Type errors or test regressions = wave not done.
 - **Contract crosscheck:** if the wave touched an endpoint or a `@gogo/shared` schema, confirm server and every client consumer still agree. "It compiles" ≠ "it integrates."
 - **Integration trace:** for Wave-2-on-Wave-1 deps, manually trace one happy-path call across the boundary.
+- 🔴 **Tear down every worktree the wave spawned.** You created them, you remove them — nothing else in this repo does. Left alone they accumulate silently: 96 stale trees and 97 registrations by 2026-09-07, slowing every git operation in the repo.
+
+  ```bash
+  git worktree list                      # find the wave's trees under .claude/worktrees/
+  git worktree remove <path>             # per tree; add --force ONLY after checking (below)
+  git worktree prune                     # sweeps registrations whose dir is already gone
+  ```
+
+  **`prune` alone is NOT the cleanup** — it only drops registrations for directories that no longer exist, so it is a no-op while the directories are still there. `remove` is the command that does the work.
+
+  Before removing, check the tree isn't holding work: `git -C <path> status --porcelain` (uncommitted changes) and `git branch --merged main` (is its branch landed?). A clean tree on a merged branch, or a detached-HEAD tree, is safe. **A dirty tree or an unmerged branch is an escalation, not a `--force`** — surface it to Sean.
+
 - **Atomic commits:** one commit per `T-N`. No bundling unrelated tasks.
 - **Beware false green:** this repo has shipped "passing" code that was broken in prod (tests ran on a different DB driver than prod; E2E suites were `describe.skip`'d). If a critical path is only covered by a skipped/parity-mismatched test, treat it as untested.
 

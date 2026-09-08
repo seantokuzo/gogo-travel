@@ -8,16 +8,16 @@
 
 ## Docs topology
 
-| Doc | What | Read when |
-|-----|------|-----------|
-| [`STATE.md`](STATE.md) | Current truth + `CURRENT DIRECTION` (auto-injected, ~1 page) | every session start |
-| [`QUEUE.md`](QUEUE.md) | Work queue — IDs, status, deps | every session start |
-| [`PLANNING.md`](PLANNING.md) | Roadmap + phase narrative + open questions | planning a phase |
-| [`SECURITY.md`](SECURITY.md) | Security findings + fix order | security work |
-| [`decisions/`](decisions/) | ADRs — locked, append-only | "why did we do X?" |
-| [`history/`](history/) | Completed-phase archives, append-only | post-mortems |
-| `.specs/` | Feature/impl specs — build contracts | before building the thing |
-| `CLAUDE.md` | Lean constitution: laws, autonomy contract, loop | always (auto) |
+| Doc                          | What                                                         | Read when                 |
+| ---------------------------- | ------------------------------------------------------------ | ------------------------- |
+| [`STATE.md`](STATE.md)       | Current truth + `CURRENT DIRECTION` (auto-injected, ~1 page) | every session start       |
+| [`QUEUE.md`](QUEUE.md)       | Work queue — IDs, status, deps                               | every session start       |
+| [`PLANNING.md`](PLANNING.md) | Roadmap + phase narrative + open questions                   | planning a phase          |
+| [`SECURITY.md`](SECURITY.md) | Security findings + fix order                                | security work             |
+| [`decisions/`](decisions/)   | ADRs — locked, append-only                                   | "why did we do X?"        |
+| [`history/`](history/)       | Completed-phase archives, append-only                        | post-mortems              |
+| `.specs/`                    | Feature/impl specs — build contracts                         | before building the thing |
+| `CLAUDE.md`                  | Lean constitution: laws, autonomy contract, loop             | always (auto)             |
 
 One canonical home per concept. Cross-reference, never duplicate.
 
@@ -35,18 +35,21 @@ One canonical home per concept. Cross-reference, never duplicate.
 ## Kickoff prompts
 
 **Continue (the usual):**
+
 ```
 Read CLAUDE.md, docs/STATE.md, docs/QUEUE.md. We're in P-N.
 Pull the top of the queue and keep going.
 ```
 
 **Plan a phase:**
+
 ```
 Read CLAUDE.md, docs/PLANNING.md, docs/QUEUE.md. Plan P-N — decompose into
 tasks, queue them, surface decisions. Wait for buy-in before building.
 ```
 
 **A spike:**
+
 ```
 Run S-N — research, present options + a recommendation, output an ADR.
 ```
@@ -56,10 +59,11 @@ Run S-N — research, present options + a recommendation, output an ADR.
 ## The in-session review flow
 
 1. Claude opens the PR (full description, labels, test notes).
-2. Spawns 5 reviewer subagents in parallel — **correctness · security · tests ·
-   performance · conventions** (charters in `.agents/agents/reviewer.md`).
-3. Verdicts aggregate deterministically (`.github/scripts/aggregate-verdict.mjs`),
-   sticky posted to the PR.
+2. Picks the reviewer panel **from the diff** (1–4 specialists, spawned in
+   parallel) using the path → specialist map in `.claude/rules/review.md`.
+3. Verdicts aggregate deterministically (`.github/scripts/aggregate-verdict.mjs`)
+   into a LOCAL record — `.tmp/review*/round-<N>/VERDICT.md`, never posted to
+   the PR (ADR-003). The durable record is the QUEUE "Recently done" row.
 4. Every finding categorized `fix-now` / `respond` / `defer`; fixes applied;
    inline replies with fix SHA.
 5. **Impartial judge** (fresh subagent, no review history) decides
@@ -67,7 +71,7 @@ Run S-N — research, present options + a recommendation, output an ADR.
 6. CI gate green before merge (command pinned in CLAUDE.md after ADR-004).
 7. Merge `--merge`, delete branch, post-merge handoff.
 
-`/review` runs the pipeline; `/address-comments` runs the fix loop;
+`/review-loop` runs the review; `/address-comments` runs the fix loop;
 `/code-review` (built-in) is available as a complement.
 
 ---
@@ -95,11 +99,11 @@ A good handoff is "a note to a competent stranger":
 
 ## Context discipline
 
-| Metric | Target | Split signal |
-|--------|--------|--------------|
-| Files per task | 5–8 | 15+ → spawn a subagent |
-| Tasks per session | 2–3 | 5+ → parallelize / fresh session |
-| Context feel | light | heavy → finish task, hand off, fresh session |
+| Metric            | Target | Split signal                                 |
+| ----------------- | ------ | -------------------------------------------- |
+| Files per task    | 5–8    | 15+ → spawn a subagent                       |
+| Tasks per session | 2–3    | 5+ → parallelize / fresh session             |
+| Context feel      | light  | heavy → finish task, hand off, fresh session |
 
 Thin orchestrator: pass **paths** to subagents, not contents. Context-exhaustion
 signals (forgetting decisions, repeating searches, quality dropping) → finish the
