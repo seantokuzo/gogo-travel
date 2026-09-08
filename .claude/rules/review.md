@@ -1,5 +1,5 @@
 ---
-paths: [".claude/commands/review.md", "**/aggregate-verdict*.mjs"]
+paths: [".claude/commands/review.md", ".agents/agents/reviewer.md"]
 ---
 
 # Review brief — GoGo Travel
@@ -16,23 +16,57 @@ PR #13's sticky was the last one. The aggregator's output lives ONLY in
 the QUEUE "Recently done" row narrative. CI (Guard/Verify) stays on GitHub —
 that's CI, not review.
 
-Sentinel + verdict format: `.claude/rules/pr-review-files.md` (canonical — don't restate).
+## The aggregator is RETIRED (decision, 2026-09-07 — reverses an earlier call)
 
-## The aggregator stays (decision, 2026-09-07)
+The diff-picked panel retires **both** the fixed 5-lane roster and
+`aggregate-verdict.mjs`. No sentinels. Specialists return findings plus a
+one-line verdict (`ship` / `fix-then-ship` / `rethink`) in prose; the
+**`merge-judge`** subagent — fresh each round, no review history, no stake — is
+the final unrelated judgment. That is the role the aggregator was standing in for.
 
-Switching to the diff-picked panel retires the fixed 5-lane roster, **not** the
-deterministic aggregation. Every specialist still emits a line-format sentinel;
-the orchestrator still runs `.github/scripts/aggregate-verdict.mjs` into
-`.tmp/review*/round-<N>/VERDICT.md` before spawning the judge.
+Why the reversal (an earlier version of this file said the aggregator stays):
 
-Why: the aggregator is mechanically tested (its falsification suite runs in the CI
-guard job via `node --test .github/scripts/*.test.mjs`), and it is the one step
-between reviewer output and the judge that doesn't rest on model judgment. A
-reviewer whose sentinel counts disagree with its own findings gets caught here.
-Dropping it would orphan a working, verified check and its CI coverage to gain
-nothing. Law #7 argues the same way.
+- **It verified nothing.** It parsed the counts each reviewer wrote about itself
+  and summed them. The old charter said so outright: "the aggregation trusts the
+  sentinel." Deterministic arithmetic over model-authored numbers is not a check.
+- **Its unique jobs are already covered.** Round cap (4) and CI-green-before-merge
+  live in the `review-loop` skill; the merge decision is the judge's.
+- **Its lane math is hostile to a variable panel.** It hardcoded five lanes and
+  scored any lane with no sentinel as _degraded_, downgrading `ship` →
+  `fix-then-ship`. A 2-specialist panel tripped a false downgrade every round.
+- Keeping it meant either editing a CI-gated script or always spawning five
+  lanes — the fixed panel again. The tail was wagging the dog.
 
-So: **panel selection is new, sentinel discipline is unchanged.**
+The one rule worth saving from it, now the **judge's** to apply:
+
+> Recommend a deep `/code-review ultra` when any of: verdict `rethink` · a
+> sensitive-path finding that is blocking · more than 5 blocking findings total ·
+> diff over 500 LOC.
+
+`.github/scripts/aggregate-verdict.mjs` and its test file are now unreferenced.
+They still sit in the tree and the CI guard job still runs their suite; deleting
+them is a loose end, not a blocker (QUEUE row).
+
+## Findings go in `.tmp/`
+
+Per round, each specialist writes `.tmp/review/round-<N>/<specialist>.md`; use
+`.tmp/review-<pr>/` when two PRs' rounds run concurrently. `.tmp/` is gitignored —
+these are the record for the run's duration only. The durable record is the QUEUE
+"Recently done" row narrative.
+
+## 🔴 Mutation probes SERIALIZE the tree (PR #17 R2, 2026-08-02)
+
+A specialist that falsifies a pin by breaking prod code, or that runs the CI gate,
+is _writing to and reading from_ the checkout. **Never run two such agents against
+the same worktree concurrently** — one agent's revert clobbers the other's probe,
+and any test or gate result taken while a foreign mutation is live is garbage (a
+gate run came back a **false red** exactly this way). Any number of pure-reading
+specialists may share a tree; **at most one mutating agent per worktree** — give
+each additional one `isolation: "worktree"` and check out the PR branch inside it,
+or dispatch them serially. Every mutating agent confirms its probe actually applied
+(`git add -N . && git diff --stat`) before trusting a result, and leaves the tree
+byte-clean. Evidence collected under contention is re-run clean before it counts
+(Law #7).
 
 ## Priorities, in order
 

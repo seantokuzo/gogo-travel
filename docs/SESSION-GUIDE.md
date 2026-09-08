@@ -61,9 +61,9 @@ Run S-N — research, present options + a recommendation, output an ADR.
 1. Claude opens the PR (full description, labels, test notes).
 2. Picks the reviewer panel **from the diff** (1–4 specialists, spawned in
    parallel) using the path → specialist map in `.claude/rules/review.md`.
-3. Verdicts aggregate deterministically (`.github/scripts/aggregate-verdict.mjs`)
-   into a LOCAL record — `.tmp/review*/round-<N>/VERDICT.md`, never posted to
-   the PR (ADR-003). The durable record is the QUEUE "Recently done" row.
+3. Each specialist writes findings + a verdict line to `.tmp/review/round-<N>/`,
+   never to the PR (ADR-003). The durable record is the QUEUE "Recently done"
+   row.
 4. Every finding categorized `fix-now` / `respond` / `defer`; fixes applied;
    inline replies with fix SHA.
 5. **Impartial judge** (fresh subagent, no review history) decides

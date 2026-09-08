@@ -23,7 +23,6 @@ It is always-resident context, so hold it to the leanness contract below.
 | Rule                    | Scopes                 | Purpose                                                                     |
 | ----------------------- | ---------------------- | --------------------------------------------------------------------------- |
 | `planning-doc-homes.md` | `docs/**`, `.specs/**` | What goes where; one home per doc                                           |
-| `pr-review-files.md`    | review tooling         | In-session review sentinel/verdict spec                                     |
 | `review.md`             | review tooling         | Project review brief: priorities, path → specialist map, what NOT to flag   |
 | `ci.md`                 | `.github/workflows/**` | No cron / no LLM in CI (guard-enforced); gate command; prod-parity landmine |
 | `server.md`             | `apps/server/**`       | Hono/Drizzle + landmines                                                    |

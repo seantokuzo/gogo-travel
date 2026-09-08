@@ -20,8 +20,9 @@ mechanically; don't fight it.
   pass regardless. Write the escape, never the byte.
 - **Gate per CLAUDE.md § Quality Gates**; note `lint` includes `lint:root`
   (root configs + `.github/scripts/` — nothing else lints those). The guard
-  job also runs `node --test .github/scripts/*.test.mjs`, which covers the
-  aggregator AND the NUL guard's exit contract.
+  job also runs `node --test .github/scripts/*.test.mjs` — the NUL guard's exit
+  contract and the place-persistence check. (The review aggregator was retired
+  2026-09-07; its script/test are unreferenced leftovers.)
 - **The DB constraint suite must RUN in CI, never skip**: `CI=true` makes the
   Docker-down path hard-fail (T-3.3). ubuntu-latest has a native Docker
   daemon; testcontainers works without setup.

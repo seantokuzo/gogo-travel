@@ -19,6 +19,36 @@
 
 set -u
 
+# --- Formatting gate: staged files only -------------------------------------
+# Prettier is NOT part of `pnpm lint` (lint = lint:root && turbo run lint), so
+# formatting had no gate and the tree drifted to ~394 unformatted files by
+# 2026-09-07. Full-repo `pnpm format:check` takes minutes; this checks only
+# what you're actually committing. Blocking on purpose — advisory didn't hold.
+staged=$(git diff --cached --name-only --diff-filter=ACMR \
+  | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|css)$' || true)
+if [ -n "$staged" ]; then
+  prettier_bin=""
+  if [ -x "node_modules/.bin/prettier" ]; then
+    prettier_bin="node_modules/.bin/prettier"
+  fi
+  if [ -n "$prettier_bin" ]; then
+    # shellcheck disable=SC2086
+    if ! echo "$staged" | xargs "$prettier_bin" --check --log-level=warn 2>&1; then
+      {
+        echo ""
+        echo "[pre-commit] BLOCKED — staged files are not Prettier-formatted."
+        echo "  Fix:  pnpm exec prettier --write \$(git diff --cached --name-only --diff-filter=ACMR | tr '\\n' ' ')"
+        echo "  Then: git add -u && git commit ..."
+        echo ""
+        echo "  Bypass (use sparingly):  git commit --no-verify"
+        echo ""
+      } >&2
+      exit 1
+    fi
+  fi
+fi
+
+
 # Newly-added files (status A) — modifications are fine, only new docs raise the flag
 new_files=$(git diff --cached --name-only --diff-filter=A)
 
