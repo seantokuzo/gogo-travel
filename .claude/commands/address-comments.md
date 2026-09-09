@@ -9,7 +9,7 @@ The post-review fix loop. **In-session on Max — no Copilot, no GitHub Action**
 
 ## Do this
 
-1. **Load** `.agents/skills/pr-review-pipeline/SKILL.md` and follow its triage → fix → reply → re-review → judge → merge loop.
+1. **Load** the `review-loop` skill and follow its triage → fix → verify → judge → merge loop (steps 3–7). Project brief: `.claude/rules/review.md`.
 2. **Pull comments** (`$ARGUMENTS` = PR #, else detect from the current branch): `gh api repos/seantokuzo/gogo-travel/pulls/<PR>/comments`.
 3. **Categorize every comment** — apply skepticism, a reviewer is a tool not an oracle:
    - **fix-now** → apply, commit `fix(scope): address round N review`, reply in-thread citing the SHA.

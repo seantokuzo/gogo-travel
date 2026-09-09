@@ -56,7 +56,7 @@
 
 - [ ] No `any`, no `console.log`, no hardcoded secrets/URLs
 - [ ] Branch up to date with `main`
-- [ ] Review pipeline run (`/review`) — verdict sticky on record
+- [ ] Review loop run (`/review-loop`) — verdict recorded locally, not on the PR
 - [ ] Self-reviewed the diff
 
 ## 💬 Notes for reviewers

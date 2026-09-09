@@ -59,10 +59,11 @@ Run S-N — research, present options + a recommendation, output an ADR.
 ## The in-session review flow
 
 1. Claude opens the PR (full description, labels, test notes).
-2. Spawns 5 reviewer subagents in parallel — **correctness · security · tests ·
-   performance · conventions** (charters in `.agents/agents/reviewer.md`).
-3. Verdicts aggregate deterministically (`.github/scripts/aggregate-verdict.mjs`),
-   sticky posted to the PR.
+2. Picks the reviewer panel **from the diff** (1–4 specialists, spawned in
+   parallel) using the path → specialist map in `.claude/rules/review.md`.
+3. Each specialist writes findings + a verdict line to `.tmp/review/round-<N>/`,
+   never to the PR (ADR-003). The durable record is the QUEUE "Recently done"
+   row.
 4. Every finding categorized `fix-now` / `respond` / `defer`; fixes applied;
    inline replies with fix SHA.
 5. **Impartial judge** (fresh subagent, no review history) decides
@@ -70,7 +71,7 @@ Run S-N — research, present options + a recommendation, output an ADR.
 6. CI gate green before merge (command pinned in CLAUDE.md after ADR-004).
 7. Merge `--merge`, delete branch, post-merge handoff.
 
-`/review` runs the pipeline; `/address-comments` runs the fix loop;
+`/review-loop` runs the review; `/address-comments` runs the fix loop;
 `/code-review` (built-in) is available as a complement.
 
 ---

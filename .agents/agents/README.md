@@ -13,13 +13,13 @@ The main agent **coordinates** — it decomposes work, spawns specialists, verif
 
 ## Roster
 
-| Persona               | Owns                                                        | Spawn when                                                                               |
-| --------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `orchestrator.md`     | Coordination, decomposition, waves, verification            | The session's driver. Not usually "spawned" — it's the main agent.                       |
-| `backend-engineer.md` | `apps/server` (Hono · Drizzle/Postgres)                     | API routes, DB schema/queries, jobs, auth                                                |
-| `mobile-engineer.md`  | `apps/mobile` (Expo · RN · expo-router · tokens/StyleSheet) | Mobile screens, native UI, maps, photos, offline/sync, push                              |
-| `reviewer.md`         | One review lane on a PR diff                                | After a PR is opened — one reviewer per lane, in parallel (see pr-review-pipeline skill) |
-| `researcher.md`       | Read-only investigation, codebase mapping, feasibility      | A question must be answered _before_ implementation; spikes (`S-N`)                      |
+| Persona               | Owns                                                        | Spawn when                                                                                  |
+| --------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `orchestrator.md`     | Coordination, decomposition, waves, verification            | The session's driver. Not usually "spawned" — it's the main agent.                          |
+| `backend-engineer.md` | `apps/server` (Hono · Drizzle/Postgres)                     | API routes, DB schema/queries, jobs, auth                                                   |
+| `mobile-engineer.md`  | `apps/mobile` (Expo · RN · expo-router · tokens/StyleSheet) | Mobile screens, native UI, maps, photos, offline/sync, push                                 |
+| `reviewer.md`         | Sentinel + output contract for a review specialist          | Read by whichever specialist the `review-loop` panel spawns (see `.claude/rules/review.md`) |
+| `researcher.md`       | Read-only investigation, codebase mapping, feasibility      | A question must be answered _before_ implementation; spikes (`S-N`)                         |
 
 (No web app for now — ADR-004 is mobile-first. A web surface, if it ever comes, gets its own persona via `TEMPLATE.md`.)
 
@@ -30,12 +30,12 @@ The main agent **coordinates** — it decomposes work, spawns specialists, verif
 - **One component, clear domain** → the matching engineer.
 - **Spans components** (e.g. new endpoint + web consumer + mobile consumer) → decompose into per-component tasks, spawn engineers in parallel where independent, sequence where a contract must land first.
 - **"Which approach / does X work / where does Y live"** → `researcher` before any engineer.
-- **PR opened** → `reviewer` ×N lanes via the pr-review-pipeline skill.
+- **PR opened** → the `review-loop` skill picks 1–4 specialists from the diff.
 
 ## Pointers (the canonical homes — don't duplicate them here)
 
 - Constitution & loop: `CLAUDE.md`
 - State / plan / queue: `docs/STATE.md`, `docs/PLANNING.md`, `docs/QUEUE.md`
 - Path-scoped conventions: `.claude/rules/{server,mobile,shared}.md` (auto-load when you open matching files; land with the P-3 scaffold)
-- Procedures: `.agents/skills/pr-review-pipeline`
+- Procedures: the `review-loop` skill; project brief `.claude/rules/review.md`
 - Library APIs: Context7 (never trust training data)

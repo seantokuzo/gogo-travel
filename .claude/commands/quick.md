@@ -14,6 +14,6 @@ For one-offs that don't need a phase. Keep it light — no orchestrator, no wave
 - **Conventions:** `.claude/rules/` still apply (auto-load on read).
 - **Change it:** branch if non-trivial, commit atomically — conventional `fix|feat|chore(scope): …` (no ticket prefix).
 - **CI gate** if code changed (`CLAUDE.md § Quality Gates`).
-- **Wrap:** PR-worthy → push, `gh pr create`, run `/review`. Otherwise report files changed + any follow-ups.
+- **Wrap:** PR-worthy → push, `gh pr create`, run `/review-loop`. Otherwise report files changed + any follow-ups.
 
 Don't ceremony a two-line fix.

@@ -29,3 +29,8 @@ apps/server/reference-data/*.json
 # Icon Composer owns this file and rewrites it (its own dense/ordered style)
 # on every save from the macOS app. Same generator-ownership reason.
 apps/mobile/assets/expo.icon/icon.json
+
+# Native build output (CNG-generated, gitignored) — prettier must not walk it
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/expo-env.d.ts
