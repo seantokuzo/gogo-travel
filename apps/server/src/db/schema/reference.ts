@@ -45,7 +45,9 @@ export const airports = pgTable(
     // tz is a path-shaped IANA id, never an offset literal; bound (caps class).
     check("airports_tz_ck", sql`length(${t.tz}) BETWEEN 1 AND 64`),
     // Generation dedupes ICAO collisions (nulling the loser), so this holds.
-    uniqueIndex("airports_icao_uq").on(t.icao).where(sql`${t.icao} IS NOT NULL`),
+    uniqueIndex("airports_icao_uq")
+      .on(t.icao)
+      .where(sql`${t.icao} IS NOT NULL`),
     // NO trgm/GIN search indexes on purpose: the table is bounded (~4k rows,
     // seeded — not user-growable), so ILIKE typeahead is a sub-ms scan. The
     // places spine needed GIN because it grows to 10^5–10^6 rows.

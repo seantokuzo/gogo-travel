@@ -130,7 +130,8 @@ export function GridDayColumn({
         );
         // B-12: checkpoint indicators key/label with the list-row qualifier
         // grammar (two derived blocks share one itemId).
-        const key = block.checkpoint === null ? block.itemId : `${block.itemId}-${block.checkpoint}`;
+        const key =
+          block.checkpoint === null ? block.itemId : `${block.itemId}-${block.checkpoint}`;
         const checkpointLabel = block.checkpoint === "check-in" ? "Check-in" : "Check-out";
         // B-18: rental pickup/drop-off rides the label the same way the B-12
         // checkpoint does — never both (subtext is rental-only, checkpoint

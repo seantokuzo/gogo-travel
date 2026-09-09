@@ -112,9 +112,14 @@ export function createFxRouter(deps: FxRouterDeps): Hono<RequestVars> {
           return c.json(result.read satisfies FxRateRead);
         case "unsupported":
           // The pair, not the provider — never cached, never a 5xx.
-          return apiError(c, "VALIDATION_FAILED", "currency pair not supported by the FX provider", {
-            pair: "unsupported",
-          });
+          return apiError(
+            c,
+            "VALIDATION_FAILED",
+            "currency pair not supported by the FX provider",
+            {
+              pair: "unsupported",
+            },
+          );
         case "unavailable":
           // Manual-fallback arm (module doc). Detail is deliberately NOT
           // forwarded — provider-controlled text stays out of client bodies.

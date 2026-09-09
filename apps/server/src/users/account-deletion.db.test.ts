@@ -377,9 +377,7 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     // T-6.1 reconcile: deletion is the member's final "leave" (§3.2) — the
     // membership row goes, the trip and the financial history stay.
     expect(await membersOf(viewer.user.id)).toEqual([]);
-    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(
-      1,
-    );
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(1);
     const survivingExpenses = await db
       .select()
       .from(schema.expenses)
@@ -547,9 +545,7 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
       await tx
         .select({ userId: schema.tripMembers.userId })
         .from(schema.tripMembers)
-        .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")),
-        )
+        .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")))
         .for("share");
       await tx
         .insert(schema.tripMembers)
@@ -587,9 +583,7 @@ describe.skipIf(!dockerAvailable)("T-5.6 account deletion (integration)", () => 
     // "deleted", and cascaded the joiner's trip away.
     expect(await outcome).toBe("conflict");
     expect((await userRow(owner.user.id)).deletedAt).toBeNull();
-    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(
-      1,
-    );
+    expect(await db.select().from(schema.trips).where(eq(schema.trips.id, tripId))).toHaveLength(1);
     expect(await membersOf(joiner.user.id)).toHaveLength(1);
   });
 

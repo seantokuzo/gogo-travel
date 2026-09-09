@@ -50,12 +50,7 @@ export const PERSISTER_TOKENS = [
 ];
 
 /** Rule-2 trigger: the file works with the fetch-fresh domain. */
-export const FRESH_TOKENS = [
-  "place-fresh",
-  "FreshPlaceDetails",
-  "usePlaceFresh",
-  "placeFresh",
-];
+export const FRESH_TOKENS = ["place-fresh", "FreshPlaceDetails", "usePlaceFresh", "placeFresh"];
 
 /**
  * Rule-2 sink packages, specifier PREFIXES (subpaths like

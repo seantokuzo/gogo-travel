@@ -119,10 +119,7 @@ async function renderScreen(
   });
   const request = mockNavApi({
     trips: [trip],
-    members: [
-      makeMember(),
-      makeMember({ user: { id: B, display_name: "Blair" }, role: "editor" }),
-    ],
+    members: [makeMember(), makeMember({ user: { id: B, display_name: "Blair" }, role: "editor" })],
     overrides: opts?.overrides ?? {},
   });
   await renderWithProviders(
@@ -666,9 +663,7 @@ describe("edit mode (R-cmoney-12 + the ex-member PATCH posture)", () => {
         },
       },
     );
-    expect(screen.getByTestId("expense-new-input-description").props.value).toBe(
-      "Dinner at Menya",
-    );
+    expect(screen.getByTestId("expense-new-input-description").props.value).toBe("Dinner at Menya");
     expect(screen.getByTestId("expense-new-input-amount").props.value).toBe("25.50");
     expect(screen.getByTestId(`expense-new-input-share-${ME}`).props.value).toBe("12.75");
     // R-cmoney-12: equal-detectable prefill shows the hint.

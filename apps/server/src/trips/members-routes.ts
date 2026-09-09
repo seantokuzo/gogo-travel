@@ -42,11 +42,7 @@ import { memberEndpoints } from "@gogo/shared/domains/member";
 import * as schema from "../db/schema/index.js";
 import { apiError, HttpError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { emitTripEvent } from "./push-invalidation.js";
 import type { TripsRouterDeps } from "./routes.js";
@@ -119,9 +115,7 @@ export function createMembersRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const [target] = await deps.db
         .select({ role: schema.tripMembers.role })
         .from(schema.tripMembers)
-        .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, targetId)),
-        );
+        .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, targetId)));
       if (!target) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
       if (target.role === "owner") {
         return apiError(c, "VALIDATION_FAILED", "the owner's role moves only via transfer", {

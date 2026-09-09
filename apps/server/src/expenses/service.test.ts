@@ -9,11 +9,7 @@
  * doc's honest-residual note).
  */
 import { describe, expect, it } from "vitest";
-import {
-  EXPENSES_BOOKING_FK,
-  isDeadlockError,
-  isExpenseBookingFkViolation,
-} from "./service.js";
+import { EXPENSES_BOOKING_FK, isDeadlockError, isExpenseBookingFkViolation } from "./service.js";
 
 const shaped = (props: Record<string, unknown>): Error =>
   Object.assign(new Error("db failure"), props);
@@ -21,9 +17,7 @@ const shaped = (props: Record<string, unknown>): Error =>
 describe("isExpenseBookingFkViolation (both driver shapes — PR #30 R1)", () => {
   it("matches the postgres-js TEST-driver shape (constraint_name)", () => {
     expect(
-      isExpenseBookingFkViolation(
-        shaped({ code: "23503", constraint_name: EXPENSES_BOOKING_FK }),
-      ),
+      isExpenseBookingFkViolation(shaped({ code: "23503", constraint_name: EXPENSES_BOOKING_FK })),
     ).toBe(true);
   });
 
@@ -66,9 +60,9 @@ describe("isExpenseBookingFkViolation (both driver shapes — PR #30 R1)", () =>
 describe("isDeadlockError (40P01 walk — PR #30 R1)", () => {
   it("matches a top-level 40P01 and a cause-wrapped one", () => {
     expect(isDeadlockError(shaped({ code: "40P01" }))).toBe(true);
-    expect(
-      isDeadlockError(new Error("Failed query", { cause: shaped({ code: "40P01" }) })),
-    ).toBe(true);
+    expect(isDeadlockError(new Error("Failed query", { cause: shaped({ code: "40P01" }) }))).toBe(
+      true,
+    );
   });
 
   it("rejects other codes and non-Errors — the retry must never eat a real failure", () => {

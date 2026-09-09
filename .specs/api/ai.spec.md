@@ -277,13 +277,13 @@ anti-hallucination test suite).
 Verified 2026-07-09 (claude-api skill + research; re-verify at P-3 via the
 Models API — never from training data, R-shared-13):
 
-| Feature | Model id | Mode | Cap treatment (ceilings resolved Gate 2) |
-|---|---|---|---|
-| `recommendations` | `claude-sonnet-5` | live, `ai_cache` | counted; 10/day ceiling |
-| `expense_estimate` | `claude-haiku-4-5` | live, `ai_cache` | counted; 10/day ceiling (money spec owns endpoint) |
-| `tour_guide` | `claude-haiku-4-5` | **Batch** at T-3 pre-gen (§3.9.1) | cap-exempt; structural cap 50 places/trip |
-| `packing_list` | `claude-haiku-4-5` | live, **uncached** (§3.6.3, resolved Gate 2) | counted; 5/day ceiling |
-| `recap` | `claude-sonnet-5` | **Batch** overnight post-trip | cap-exempt; once per trip |
+| Feature            | Model id           | Mode                                         | Cap treatment (ceilings resolved Gate 2)           |
+| ------------------ | ------------------ | -------------------------------------------- | -------------------------------------------------- |
+| `recommendations`  | `claude-sonnet-5`  | live, `ai_cache`                             | counted; 10/day ceiling                            |
+| `expense_estimate` | `claude-haiku-4-5` | live, `ai_cache`                             | counted; 10/day ceiling (money spec owns endpoint) |
+| `tour_guide`       | `claude-haiku-4-5` | **Batch** at T-3 pre-gen (§3.9.1)            | cap-exempt; structural cap 50 places/trip          |
+| `packing_list`     | `claude-haiku-4-5` | live, **uncached** (§3.6.3, resolved Gate 2) | counted; 5/day ceiling                             |
+| `recap`            | `claude-sonnet-5`  | **Batch** overnight post-trip                | cap-exempt; once per trip                          |
 
 Price constants are integers in **cents per million tokens**:
 Haiku 4.5 = 100 in / 500 out; Sonnet 5 = 300 in / 1 500 out (standard
@@ -322,13 +322,13 @@ its enum value — cap-exempt, like `tour_guide`.
 
 ### 3.4 Typed errors (contracts spec §3.5 + one append)
 
-| Condition | Status | `ErrorCode` |
-|---|---|---|
-| Daily/global or feature cap hit | 429 | `AI_CAP_EXCEEDED` |
-| Kill-switch tripped | 503 | `AI_DISABLED` |
-| Anthropic upstream failure / invalid output after retry | 503 | `AI_UPSTREAM` |
-| Generic flood (incl. cache-hit hammering) | 429 | `RATE_LIMITED` |
-| Trip lacks a resolvable destination for grounding | 400 | `VALIDATION_FAILED` |
+| Condition                                               | Status | `ErrorCode`         |
+| ------------------------------------------------------- | ------ | ------------------- |
+| Daily/global or feature cap hit                         | 429    | `AI_CAP_EXCEEDED`   |
+| Kill-switch tripped                                     | 503    | `AI_DISABLED`       |
+| Anthropic upstream failure / invalid output after retry | 503    | `AI_UPSTREAM`       |
+| Generic flood (incl. cache-hit hammering)               | 429    | `RATE_LIMITED`      |
+| Trip lacks a resolvable destination for grounding       | 400    | `VALIDATION_FAILED` |
 
 `AI_UPSTREAM` (503) is a **new ErrorCode** — the enum is explicitly
 append-only (contracts spec §3.5); this spec requires the one-line companion
@@ -482,6 +482,7 @@ capped at 20. Fewer than 3 candidates → 200 with `items: []` and
 **Requirements covered**: R-ai-3..5, 9..13, 15, 16, 18..22.
 
 **Tests required**:
+
 - [ ] Happy path: mocked model → ranked items, each `place_id` from the
       candidate set, hydrated `place` present, cache row written
 - [ ] Cache hit: second call → no model invocation, no `ai_usage` row,
@@ -514,6 +515,7 @@ rows; generation already paid.)
 attribution).
 
 **Tests required**:
+
 - [ ] Happy path: ready bundles paginate with content; pending/failed
       filterable
 - [ ] Every fact's `source_ref` resolves into `sources[]` (round-trip
@@ -539,6 +541,7 @@ generation is allowed; `weather_used: false` signals the degrade.)
 **Requirements covered**: R-ai-3..5, 11, 13, 15, 16, 18, 19, 27, 28.
 
 **Tests required**:
+
 - [ ] Happy path with weather present (`weather_used: true`) and absent
       (generation still succeeds, `weather_used: false`)
 - [ ] Date-less trip → duration/season "unknown" path generates
@@ -569,6 +572,7 @@ row exists.
 **Requirements covered**: R-ai-29..31, 18.
 
 **Tests required**:
+
 - [ ] Ready recap returns content; pending returns status without content
 - [ ] Viewer-filtering truth table: member A's private photo id never
       renders for member B (Law #3)
@@ -676,13 +680,13 @@ Semantic requirements (visual treatment belongs to the design-system spec):
 
 ### 3.12 Degradation matrix (kill-switch / caps / upstream)
 
-| Surface | On `AI_CAP_EXCEEDED` | On `AI_DISABLED` / `AI_UPSTREAM` |
-|---|---|---|
-| Recommendations | "Daily AI limit reached — resets at {t}"; browse/search places normally | "AI suggestions unavailable right now"; browse/search unaffected |
-| Tour guide | n/a (pre-generated; cap-exempt) | Existing downloaded bundles keep working offline; only new generation pauses |
-| Packing | Manual list creation unaffected; generate button disabled with reason | Same |
-| Recap | n/a (system-initiated) | Recap shows `pending`; album/photos view unaffected |
-| Expense estimate | Budget entry unaffected; estimate chip hidden with reason | Same |
+| Surface          | On `AI_CAP_EXCEEDED`                                                    | On `AI_DISABLED` / `AI_UPSTREAM`                                             |
+| ---------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Recommendations  | "Daily AI limit reached — resets at {t}"; browse/search places normally | "AI suggestions unavailable right now"; browse/search unaffected             |
+| Tour guide       | n/a (pre-generated; cap-exempt)                                         | Existing downloaded bundles keep working offline; only new generation pauses |
+| Packing          | Manual list creation unaffected; generate button disabled with reason   | Same                                                                         |
+| Recap            | n/a (system-initiated)                                                  | Recap shows `pending`; album/photos view unaffected                          |
+| Expense estimate | Budget entry unaffected; estimate chip hidden with reason               | Same                                                                         |
 
 Clients branch on `error.code` (never message text). Core flows (trips,
 itinerary, bookings, money, photos) have zero AI dependencies (R-ai-19).
@@ -725,6 +729,7 @@ Each sized to one agent session; queued as `T-N.M` rows at build time.
 - [ ] `AI_UPSTREAM` ErrorCode companion addition to contracts spec §3.5
 
 **Tests required:**
+
 - [ ] Cap boundary: 29th call passes, 30th → `AI_CAP_EXCEEDED`; feature
       ceiling independent of global; cap-exempt features bypass user cap but
       write usage
@@ -748,6 +753,7 @@ Each sized to one agent session; queued as `T-N.M` rows at build time.
       present in every generative template
 
 **Tests required:**
+
 - [ ] Snapshot every template: grounding block, restriction clause, unknown
       permission, no brevity phrases
 - [ ] Refiner: unresolvable `source_ref` dropped; unknown `place_id`
@@ -797,7 +803,7 @@ highlight selection deterministic (same inputs → same ids).
 
 ---
 
-*Trace: every R-ai-N cites its design section inline; §3.8 endpoints list
+_Trace: every R-ai-N cites its design section inline; §3.8 endpoints list
 covered requirements. All 11 markers resolved at Gate 2 (2026-07-09): owned
 here — per-feature ceilings (approved as proposed, §2.1), tour-guide
 trigger (T-3 days + manual button, §3.9.1), packing cache policy
@@ -806,4 +812,4 @@ recap persistence (`recaps` table approved), capture_parse (cap-exempt,
 20/day ceiling), locale (English-only v1), trip dates (required),
 destination input (structured), status transitions (derived + override),
 packing-list ownership (shared per trip) — each resolved at its cited home.
-Zero markers remain.*
+Zero markers remain._

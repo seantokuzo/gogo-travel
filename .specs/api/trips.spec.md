@@ -39,7 +39,7 @@ per endpoint):
 - **Wire casing:** `snake_case`, mirroring DB columns (contracts §3.1).
 - **Membership gate:** non-members of `:tripId` get `NOT_FOUND` — never
   `FORBIDDEN` — so resource existence is not revealed (IDOR posture,
-  PLANNING § Security; mirror of R-nav-15). Members whose *role* lacks a
+  PLANNING § Security; mirror of R-nav-15). Members whose _role_ lacks a
   capability get `FORBIDDEN`.
 
 Out of scope (explicit): auth/session endpoints (auth spec); itinerary,
@@ -115,7 +115,7 @@ schemas (notifications spec — this spec fixes only the domain event list,
 
 - **R-trips-13 (invite creation):** WHEN an invite is created THE SYSTEM
   SHALL require a §3.2-permitted role, accept only `role ∈ {editor,
-  viewer}` no higher than the creator's own role, and generate a unique
+viewer}` no higher than the creator's own role, and generate a unique
   URL-safe token with ≥ 128 bits of entropy (R-db-9).
 - **R-trips-14 (acceptance transaction):** WHEN an invite is accepted THE
   SYSTEM SHALL, in one transaction: validate the token is unexpired,
@@ -129,7 +129,7 @@ schemas (notifications spec — this spec fixes only the domain event list,
   with an unknown token THE SYSTEM SHALL respond `NOT_FOUND`; WHEN the
   token is expired, revoked, or at `max_uses` THE SYSTEM SHALL respond
   `CONFLICT` with `details.reason ∈ {'expired','revoked',
-  'max_uses_reached'}` (the client renders distinct error states,
+'max_uses_reached'}` (the client renders distinct error states,
   R-nav-11).
 - **R-trips-17 (revocation):** WHEN an invite is revoked THE SYSTEM SHALL
   set `revoked_at` (rows are never deleted as a revocation path) and emit
@@ -180,11 +180,11 @@ schemas (notifications spec — this spec fixes only the domain event list,
 
 Three roles (`trip_member_role`, schema spec §3.2 — locked):
 
-| Role | One-line semantics |
-|---|---|
-| `owner` | Full control: everything an editor can, plus membership management, ownership transfer, destructive ops (delete trip), and owner-only settings. Exactly one per trip (R-db-8). |
-| `editor` | Edits trip **content** (itinerary, bookings, places, budgets, shared packing) and can invite; cannot manage membership or destroy the trip. |
-| `viewer` | Reads the plan. Participates **personally** where participation isn't plan-editing: logs expenses, uploads photos, settles their own debts (R-trips-21, resolved Gate 2). |
+| Role     | One-line semantics                                                                                                                                                             |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `owner`  | Full control: everything an editor can, plus membership management, ownership transfer, destructive ops (delete trip), and owner-only settings. Exactly one per trip (R-db-8). |
+| `editor` | Edits trip **content** (itinerary, bookings, places, budgets, shared packing) and can invite; cannot manage membership or destroy the trip.                                    |
+| `viewer` | Reads the plan. Participates **personally** where participation isn't plan-editing: logs expenses, uploads photos, settles their own debts (R-trips-21, resolved Gate 2).      |
 
 ### 3.2 Permission matrix — THE authz source of truth
 
@@ -192,59 +192,59 @@ Legend: ✓ allowed · ✗ denied · **own** = only rows they created/own ·
 **self** = only when they are the acting party. Domain specs cite rows as
 `trips.spec §3.2 "<capability>"`.
 
-| Capability | owner | editor | viewer | Notes / canonical cites |
-|---|---|---|---|---|
-| **Trips** | | | | |
-| View trip detail (all tabs) | ✓ | ✓ | ✓ | R-trips-1 gate first |
-| Edit name / destination / dates | ✓ | ✓ | ✗ | R-trips-20 |
-| Change trip theme | ✓ | ✓ | ✗ | Theme is trip-level display, content-adjacent |
-| Change base currency | ✓ | ✗ | ✗ | Locks once the first expense exists (R-trips-22, resolved Gate 2) |
-| Manual status override ("archive") | ✓ | ✗ | ✗ | Override wins until cleared (§3.4, resolved Gate 2) |
-| Delete trip | ✓ | ✗ | ✗ | Cascade per schema §3.6; R-trips-8 |
-| Download offline pack | ✓ | ✓ | ✓ | Free forever (ADR-005) |
-| **Members & invites** | | | | |
-| View member list + roles (incl. payment handles per contracts §3.4 `UserProfile`) | ✓ | ✓ | ✓ | Handles are deliberately member-visible (settle-up) |
-| Create invite (grantable role ≤ own, never `owner`) | ✓ | ✓ | ✗ | R-trips-13; schema `CHECK (role <> 'owner')` |
-| View active invites | ✓ | ✓ | ✗ | |
-| Revoke invite | ✓ any | ✓ own | ✗ | R-trips-17 |
-| Change member role (editor ↔ viewer) | ✓ | ✗ | ✗ | Never grants/revokes `owner` (R-trips-9) |
-| Remove member (non-owner) | ✓ | ✗ | ✗ | R-trips-11 |
-| Leave trip | ✗* | self | self | *owner transfers first (R-trips-11, resolved Gate 2) |
-| Transfer ownership | ✓ | ✗ | ✗ | R-trips-10 |
-| **Itinerary** (cited by itinerary spec) | | | | |
-| View itinerary / calendar | ✓ | ✓ | ✓ | |
-| Create / edit / delete / reorder items | ✓ | ✓ | ✗ | |
-| **Bookings** (cited by bookings spec) | | | | |
-| View bookings incl. `confirmation_code` | ✓ | ✓ | ✓ | Trip membership is the trust boundary; PNR visibility flagged for the threat model |
-| Create / edit / delete bookings | ✓ | ✓ | ✗ | |
-| Land a capture into this trip | ✓ | ✓ | ✗ | Creates a booking (capture spec) |
-| **Places** (cited by maps/places spec) | | | | |
-| View saved places | ✓ | ✓ | ✓ | |
-| Save / unsave / edit note; create custom place | ✓ | ✓ | ✗ | |
-| **Money** (cited by money spec) | | | | |
-| View budgets / expenses / balances | ✓ | ✓ | ✓ | |
-| Set / edit budget caps | ✓ | ✓ | ✗ | |
-| Run AI expense estimate | ✓ | ✓ | ✗ | Debits the **caller's** AI cap (ADR-005) |
-| Log an expense; edit/delete own-logged | ✓ | ✓ | ✓ | Payer may be any member (R-trips-21, resolved Gate 2) |
-| Edit / delete any expense | ✓ | ✗ | ✗ | Owner as dispute-breaker; deletion is soft-delete with visible audit trail (schema §3.3.12, resolved Gate 2; money spec inherits) |
-| Record settlement (self as from/to party) | self | self | self | Either party may record (schema §3.3.14); viewers owe money regardless of role |
-| Send settle-up request link | self | self | self | Money spec owns the payload |
-| **Photos** (cited by photos spec) | | | | |
-| View trip photos (visibility-filtered — Law #3, `canViewPhoto`) | ✓ | ✓ | ✓ | contracts §3.4 `photo.ts` |
-| Upload photos | ✓ | ✓ | ✓ | R-trips-21, resolved Gate 2 |
-| Set visibility / delete — own photo | own | own | own | Uploader controls their photo at any role |
-| Delete any photo (moderation) | ✓ | ✗ | ✗ | |
-| **Packing** (cited by packing/utilities spec) | | | | |
-| View lists | ✓ | ✓ | ✓ | |
-| Edit shared trip list | ✓ | ✓ | ✗ | Packing lists are shared per trip v1 (schema §3.3.21, resolved Gate 2) |
-| Edit own personal list | own | own | own | |
-| **Documents** | | | | |
-| Vault access | own | own | own | Role-irrelevant; trip association grants ZERO visibility (R-db-18, Law #3) |
-| **Capture inbox** | | | | |
-| View / manage own captures | own | own | own | User-scoped, not trip-scoped; landing gated by the bookings row above |
-| **AI** (cited by AI spec) | | | | |
-| Read pre-generated content (tour bundles, recs, estimates) | ✓ | ✓ | ✓ | |
-| Trigger trip-scoped generation/regeneration | ✓ | ✓ | ✗ | Debits caller's cap |
+| Capability                                                                        | owner | editor | viewer | Notes / canonical cites                                                                                                           |
+| --------------------------------------------------------------------------------- | ----- | ------ | ------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| **Trips**                                                                         |       |        |        |                                                                                                                                   |
+| View trip detail (all tabs)                                                       | ✓     | ✓      | ✓      | R-trips-1 gate first                                                                                                              |
+| Edit name / destination / dates                                                   | ✓     | ✓      | ✗      | R-trips-20                                                                                                                        |
+| Change trip theme                                                                 | ✓     | ✓      | ✗      | Theme is trip-level display, content-adjacent                                                                                     |
+| Change base currency                                                              | ✓     | ✗      | ✗      | Locks once the first expense exists (R-trips-22, resolved Gate 2)                                                                 |
+| Manual status override ("archive")                                                | ✓     | ✗      | ✗      | Override wins until cleared (§3.4, resolved Gate 2)                                                                               |
+| Delete trip                                                                       | ✓     | ✗      | ✗      | Cascade per schema §3.6; R-trips-8                                                                                                |
+| Download offline pack                                                             | ✓     | ✓      | ✓      | Free forever (ADR-005)                                                                                                            |
+| **Members & invites**                                                             |       |        |        |                                                                                                                                   |
+| View member list + roles (incl. payment handles per contracts §3.4 `UserProfile`) | ✓     | ✓      | ✓      | Handles are deliberately member-visible (settle-up)                                                                               |
+| Create invite (grantable role ≤ own, never `owner`)                               | ✓     | ✓      | ✗      | R-trips-13; schema `CHECK (role <> 'owner')`                                                                                      |
+| View active invites                                                               | ✓     | ✓      | ✗      |                                                                                                                                   |
+| Revoke invite                                                                     | ✓ any | ✓ own  | ✗      | R-trips-17                                                                                                                        |
+| Change member role (editor ↔ viewer)                                              | ✓     | ✗      | ✗      | Never grants/revokes `owner` (R-trips-9)                                                                                          |
+| Remove member (non-owner)                                                         | ✓     | ✗      | ✗      | R-trips-11                                                                                                                        |
+| Leave trip                                                                        | ✗*    | self   | self   | *owner transfers first (R-trips-11, resolved Gate 2)                                                                              |
+| Transfer ownership                                                                | ✓     | ✗      | ✗      | R-trips-10                                                                                                                        |
+| **Itinerary** (cited by itinerary spec)                                           |       |        |        |                                                                                                                                   |
+| View itinerary / calendar                                                         | ✓     | ✓      | ✓      |                                                                                                                                   |
+| Create / edit / delete / reorder items                                            | ✓     | ✓      | ✗      |                                                                                                                                   |
+| **Bookings** (cited by bookings spec)                                             |       |        |        |                                                                                                                                   |
+| View bookings incl. `confirmation_code`                                           | ✓     | ✓      | ✓      | Trip membership is the trust boundary; PNR visibility flagged for the threat model                                                |
+| Create / edit / delete bookings                                                   | ✓     | ✓      | ✗      |                                                                                                                                   |
+| Land a capture into this trip                                                     | ✓     | ✓      | ✗      | Creates a booking (capture spec)                                                                                                  |
+| **Places** (cited by maps/places spec)                                            |       |        |        |                                                                                                                                   |
+| View saved places                                                                 | ✓     | ✓      | ✓      |                                                                                                                                   |
+| Save / unsave / edit note; create custom place                                    | ✓     | ✓      | ✗      |                                                                                                                                   |
+| **Money** (cited by money spec)                                                   |       |        |        |                                                                                                                                   |
+| View budgets / expenses / balances                                                | ✓     | ✓      | ✓      |                                                                                                                                   |
+| Set / edit budget caps                                                            | ✓     | ✓      | ✗      |                                                                                                                                   |
+| Run AI expense estimate                                                           | ✓     | ✓      | ✗      | Debits the **caller's** AI cap (ADR-005)                                                                                          |
+| Log an expense; edit/delete own-logged                                            | ✓     | ✓      | ✓      | Payer may be any member (R-trips-21, resolved Gate 2)                                                                             |
+| Edit / delete any expense                                                         | ✓     | ✗      | ✗      | Owner as dispute-breaker; deletion is soft-delete with visible audit trail (schema §3.3.12, resolved Gate 2; money spec inherits) |
+| Record settlement (self as from/to party)                                         | self  | self   | self   | Either party may record (schema §3.3.14); viewers owe money regardless of role                                                    |
+| Send settle-up request link                                                       | self  | self   | self   | Money spec owns the payload                                                                                                       |
+| **Photos** (cited by photos spec)                                                 |       |        |        |                                                                                                                                   |
+| View trip photos (visibility-filtered — Law #3, `canViewPhoto`)                   | ✓     | ✓      | ✓      | contracts §3.4 `photo.ts`                                                                                                         |
+| Upload photos                                                                     | ✓     | ✓      | ✓      | R-trips-21, resolved Gate 2                                                                                                       |
+| Set visibility / delete — own photo                                               | own   | own    | own    | Uploader controls their photo at any role                                                                                         |
+| Delete any photo (moderation)                                                     | ✓     | ✗      | ✗      |                                                                                                                                   |
+| **Packing** (cited by packing/utilities spec)                                     |       |        |        |                                                                                                                                   |
+| View lists                                                                        | ✓     | ✓      | ✓      |                                                                                                                                   |
+| Edit shared trip list                                                             | ✓     | ✓      | ✗      | Packing lists are shared per trip v1 (schema §3.3.21, resolved Gate 2)                                                            |
+| Edit own personal list                                                            | own   | own    | own    |                                                                                                                                   |
+| **Documents**                                                                     |       |        |        |                                                                                                                                   |
+| Vault access                                                                      | own   | own    | own    | Role-irrelevant; trip association grants ZERO visibility (R-db-18, Law #3)                                                        |
+| **Capture inbox**                                                                 |       |        |        |                                                                                                                                   |
+| View / manage own captures                                                        | own   | own    | own    | User-scoped, not trip-scoped; landing gated by the bookings row above                                                             |
+| **AI** (cited by AI spec)                                                         |       |        |        |                                                                                                                                   |
+| Read pre-generated content (tour bundles, recs, estimates)                        | ✓     | ✓      | ✓      |                                                                                                                                   |
+| Trigger trip-scoped generation/regeneration                                       | ✓     | ✓      | ✗      | Debits caller's cap                                                                                                               |
 
 - Viewer participation boundary: resolved — viewers CAN log expenses and
   upload photos (they're travelers, not spectators); they CANNOT edit
@@ -286,6 +286,7 @@ even though the columns stay nullable (schema §3.3.4, resolved Gate 2,
 **Requirements covered**: R-trips-3
 
 **Tests required**:
+
 - [ ] Happy path: trip + owner membership row exist after one call; role returned
 - [ ] Transactionality: forced membership-insert failure rolls back the trip row
 - [ ] `start_date > end_date` rejected
@@ -308,6 +309,7 @@ List the caller's trips. **Auth**: Required
 **Requirements covered**: R-trips-4
 
 **Tests required**:
+
 - [ ] Returns only trips with caller membership; correct `role` per trip
 - [ ] Excludes trips the caller was removed from
 - [ ] Pagination cursor round-trip
@@ -325,6 +327,7 @@ Trip detail. **Auth**: Required (member)
 **Requirements covered**: R-trips-1
 
 **Tests required**:
+
 - [ ] Member gets trip + own role
 - [ ] Non-member and nonexistent id both → identical 404 body
 - [ ] Authz (wrong user / wrong trip)
@@ -352,6 +355,7 @@ precondition.
 **Requirements covered**: R-trips-5, R-trips-6, R-trips-20
 
 **Tests required**:
+
 - [ ] Editor updates name/dates/theme; viewer → 403
 - [ ] Editor touching `base_currency` → 403; owner succeeds (no expenses yet)
 - [ ] Owner touching `base_currency` with ≥ 1 expense → 409 (R-trips-22); pre-expense change updates budget rows' currency
@@ -373,6 +377,7 @@ Delete a trip and its world. **Auth**: Required (owner)
 **Requirements covered**: R-trips-8
 
 **Tests required**:
+
 - [ ] Owner deletes; children cascade per schema §3.6 (spot-check members, invites, bookings)
 - [ ] Editor/viewer → 403
 - [ ] `trip.deleted` pushed to the pre-delete member set minus actor
@@ -392,6 +397,7 @@ trip_member_role, joined_at }> }` — `UserProfile` per contracts §3.4
 **Requirements covered**: R-trips-1
 
 **Tests required**:
+
 - [ ] All members with roles returned; payment handles present
 - [ ] Non-member → 404
 
@@ -412,6 +418,7 @@ Change a member's role (editor ↔ viewer only). **Auth**: Required (owner)
 **Requirements covered**: R-trips-9
 
 **Tests required**:
+
 - [ ] Owner flips editor↔viewer; `member.role_changed` pushed (incl. to the target)
 - [ ] `role: 'owner'` rejected; targeting the owner rejected
 - [ ] Editor/viewer caller → 403
@@ -434,6 +441,7 @@ explicit DELETE /trips/:tripId.
 **Requirements covered**: R-trips-11, R-trips-12
 
 **Tests required**:
+
 - [ ] Owner removes editor; editor leaves self; viewer leaves self
 - [ ] Editor removing another member → 403
 - [ ] Owner leave with members present → 409
@@ -459,6 +467,7 @@ schema spec §3.3.5, resolved Gate 2, 2026-07-09.)
 **Requirements covered**: R-trips-9, R-trips-10
 
 **Tests required**:
+
 - [ ] Single transaction: old owner → editor, target → owner; partial-unique owner index never violated mid-flight
 - [ ] Target not a member → 404; self-transfer → 400; non-owner → 403
 - [ ] `ownership.transferred` pushed
@@ -488,6 +497,7 @@ growth); 400 `role: 'owner'`.
 **Requirements covered**: R-trips-13
 
 **Tests required**:
+
 - [ ] Owner + editor create; viewer → 403
 - [ ] `role: 'owner'` → 400
 - [ ] Token uniqueness + entropy source asserted; URL format matches registry
@@ -507,6 +517,7 @@ List invites (active and dead, flagged). **Auth**: Required (owner/editor)
 **Requirements covered**: R-trips-13, R-trips-17
 
 **Tests required**:
+
 - [ ] States computed correctly from `expires_at`/`revoked_at`/`use_count`
 - [ ] Viewer → 403
 
@@ -525,6 +536,7 @@ invite; 409 already revoked.
 **Requirements covered**: R-trips-17
 
 **Tests required**:
+
 - [ ] Owner revokes any; editor revokes own; editor revoking other's → 403
 - [ ] Acceptance after revocation → 409 (see accept endpoint)
 - [ ] `invite.revoked` pushed
@@ -551,6 +563,7 @@ defense-in-depth for the threat model).
 **Requirements covered**: R-trips-16
 
 **Tests required**:
+
 - [ ] Active/expired/revoked/maxed states rendered in `state`, 200 each
 - [ ] Unknown token → 404
 - [ ] No trip id / content beyond the preview fields in the payload
@@ -571,6 +584,7 @@ Accept an invite; become a member. **Auth**: Required
 **Requirements covered**: R-trips-14, R-trips-15, R-trips-16
 
 **Tests required**:
+
 - [ ] Happy path: membership row upserted at invite's role; `use_count` incremented; `member.added` pushed
 - [ ] Transactionality: all-or-nothing (validate → upsert → increment)
 - [ ] Already-member accept: 200, role unchanged (even if invite role is higher), `use_count` NOT incremented, `already_member: true`
@@ -640,18 +654,18 @@ refetch-on-focus + push invalidation. **No sockets; no event-log tables**
    (R-trips-18). Transport + payload schema: notifications spec. Event
    names are `<entity>.<verb>`, the naming pattern all domains follow.
 
-| Event | Emitted when | `entity_id` |
-|---|---|---|
-| `trip.updated` | PATCH /trips/:tripId succeeds (any field incl. theme/currency) | — |
-| `trip.status_changed` | Stored status changes (derived reconciliation or manual override — §3.4) | — |
-| `trip.deleted` | DELETE /trips/:tripId | — |
-| `member.added` | Invite accepted | new member's `user_id` |
-| `member.role_changed` | Role PATCH | target `user_id` |
-| `member.removed` | Owner removes a member | removed `user_id` |
-| `member.left` | Self-removal | departed `user_id` |
-| `ownership.transferred` | Transfer endpoint | new owner's `user_id` |
-| `invite.created` | Invite created | `invite_id` |
-| `invite.revoked` | Invite revoked | `invite_id` |
+| Event                   | Emitted when                                                             | `entity_id`            |
+| ----------------------- | ------------------------------------------------------------------------ | ---------------------- |
+| `trip.updated`          | PATCH /trips/:tripId succeeds (any field incl. theme/currency)           | —                      |
+| `trip.status_changed`   | Stored status changes (derived reconciliation or manual override — §3.4) | —                      |
+| `trip.deleted`          | DELETE /trips/:tripId                                                    | —                      |
+| `member.added`          | Invite accepted                                                          | new member's `user_id` |
+| `member.role_changed`   | Role PATCH                                                               | target `user_id`       |
+| `member.removed`        | Owner removes a member                                                   | removed `user_id`      |
+| `member.left`           | Self-removal                                                             | departed `user_id`     |
+| `ownership.transferred` | Transfer endpoint                                                        | new owner's `user_id`  |
+| `invite.created`        | Invite created                                                           | `invite_id`            |
+| `invite.revoked`        | Invite revoked                                                           | `invite_id`            |
 
 ### 3.6 Trip settings
 
@@ -664,7 +678,7 @@ Settings surface (client: trip-settings screen) maps to `PATCH
   the first expense exists** (R-trips-22). Changing it before any expense
   is allowed; the change updates existing budget rows' currency in the
   same transaction (amounts unchanged), preserving the `budgets.currency
-  == trips.base_currency` invariant (schema §3.3.12/§3.3.15). The money
+== trips.base_currency` invariant (schema §3.3.12/§3.3.15). The money
   spec inherits this rule. (Resolved 2026-07-09, Gate 2)
 - **Visibility** — dropped from v1: there is no trip-level visibility
   concept — trips are member-private, and only photos carry a visibility
@@ -705,7 +719,7 @@ Upstream resolutions this section depends on (canonical homes):
   invites and membership writes are online-only — no queued membership
   mutations in v1).
 - Account deletion interplay with membership (schema R-db-16 owns it —
-  soft-delete + PII scrub, resolved Gate 2; member *removal* here never
+  soft-delete + PII scrub, resolved Gate 2; member _removal_ here never
   deletes user rows).
 - Trip-level visibility (dropped from v1 — §3.6, resolved Gate 2).
 
@@ -761,9 +775,9 @@ is enforced at the money/photos endpoints that cite §3.2)
 
 ---
 
-*Trace: every R-trips-N cites its endpoint/section inline. All 9 markers
+_Trace: every R-trips-N cites its endpoint/section inline. All 9 markers
 resolved at Gate 2 (2026-07-09): 3 owned here (viewer participation →
 R-trips-21; base-currency lock → R-trips-22; trip visibility → dropped),
 6 at their canonical homes (dates required; structured destination; status
 derived + override; ownership transfer; multi-use invites; universal-link
-domain). Zero markers remain.*
+domain). Zero markers remain._

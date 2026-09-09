@@ -32,7 +32,12 @@ export type CardProps = CardBaseProps &
         testID: string;
         accessibilityLabel?: string;
       }
-    | { onPress?: undefined; onLongPress?: undefined; testID?: string; accessibilityLabel?: undefined }
+    | {
+        onPress?: undefined;
+        onLongPress?: undefined;
+        testID?: string;
+        accessibilityLabel?: undefined;
+      }
   );
 
 const useStyles = createStyles((t) => ({

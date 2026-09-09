@@ -72,10 +72,9 @@ it("onMutationSuccess fires for BOTH of two in-flight creates — per-call onSuc
   const onMutationSuccess = jest.fn();
   const perCallSuccess = jest.fn();
 
-  const { result } = await renderHook(
-    () => useCreateInvite(TEST_TRIP_ID, { onMutationSuccess }),
-    { wrapper: makeWrapper(client) },
-  );
+  const { result } = await renderHook(() => useCreateInvite(TEST_TRIP_ID, { onMutationSuccess }), {
+    wrapper: makeWrapper(client),
+  });
 
   // Two creates, the second while the first is still in flight (the
   // superseding call) — the per-call handle rides BOTH calls to prove the

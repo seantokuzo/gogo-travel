@@ -35,11 +35,7 @@ import { ISODateSchema } from "@gogo/shared/scalars";
 import type { DbClient } from "../db/create-user.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import { markDaysDirty, type DirtyDayMarker } from "../bookings/dirty-days.js";
 import { toItineraryItemWire } from "../bookings/serialize.js";

@@ -82,8 +82,8 @@ it("R-nav-15 + NAV-5: a trip deep link for a non-member renders no-access with z
   await renderApp(`/t/${TRIP_B_ID}`);
   expect(await screen.findByTestId("no-access-screen")).toBeOnTheScreen();
   // The ONLY trip call is the guard's indistinguishable-404 membership check.
-  const tripCalls = request.mock.calls.filter(
-    ([descriptor]) => (descriptor as { path: string }).path.startsWith("/trips"),
+  const tripCalls = request.mock.calls.filter(([descriptor]) =>
+    (descriptor as { path: string }).path.startsWith("/trips"),
   );
   expect(tripCalls).toEqual([
     [

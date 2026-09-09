@@ -102,10 +102,7 @@ export function MarkSettledSheet({
     >
       <View style={s.body}>
         {errorMessage !== null ? (
-          <ErrorBanner
-            message={errorMessage}
-            testID={`${testIDBase}-sheet-mark-settled-error`}
-          />
+          <ErrorBanner message={errorMessage} testID={`${testIDBase}-sheet-mark-settled-error`} />
         ) : null}
         <Input
           label={`Amount (${currency})`}

@@ -21,20 +21,12 @@
  * members list — that comes free with `useRemoveMember`.)
  */
 import { tripEndpoints, type Trip, type TripStatus, type TripUpdate } from "@gogo/shared";
-import {
-  useMutation,
-  useQueryClient,
-  type UseMutationResult,
-} from "@tanstack/react-query";
+import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { apiClient, ApiRequestError } from "@/auth";
 import { localTodayISO } from "@/navigation/trip-defaults";
 
-import {
-  applyOptimisticTripPatch,
-  reconcileTripRow,
-  rollbackTripPatch,
-} from "./collab";
+import { applyOptimisticTripPatch, reconcileTripRow, rollbackTripPatch } from "./collab";
 import { invalidateTripLists, queryKeys } from "./query-client";
 
 // ---------------------------------------------------------------------------

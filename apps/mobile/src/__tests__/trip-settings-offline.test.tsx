@@ -63,8 +63,9 @@ interface OfflineManagerMock {
   getPack: jest.Mock;
   getPacks: jest.Mock;
 }
-const om = (jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } })
-  .__mock.offlineManager;
+const om = (
+  jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
+).__mock.offlineManager;
 const network = (
   jest.requireMock("expo-network") as { __mock: { getNetworkStateAsync: jest.Mock } }
 ).__mock;

@@ -250,9 +250,7 @@ describe("statusBadgeTone (R-itin-8)", () => {
 describe("buildDayRows (§2.2 flat model)", () => {
   it("emits header/entry/empty-day rows in calendar order", () => {
     const rows = buildDayRows(TRIP, defaultItineraryItems(), bookingsById());
-    expect(
-      rows.map(rowLabel),
-    ).toEqual([
+    expect(rows.map(rowLabel)).toEqual([
       `day:${TRIP_START}`,
       "entry:aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaa1",
       "entry:aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaa2",
@@ -456,19 +454,24 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
         distance_meters: 0,
         provider: "same_place",
       });
-    const items = [
-      located(ITEM_A_ID, "09:00", 1024),
-      located(ITEM_C_ID, "11:00", 2048),
-    ];
+    const items = [located(ITEM_A_ID, "09:00", 1024), located(ITEM_C_ID, "11:00", 2048)];
     const rows = buildDayRows(TRIP, items, bookingsById(), {
-      legs: [samePlace("walking"), samePlace("driving"), samePlace("cycling"), samePlace("transit")],
+      legs: [
+        samePlace("walking"),
+        samePlace("driving"),
+        samePlace("cycling"),
+        samePlace("transit"),
+      ],
     });
     expect(rows.filter((row) => row.type === "leg")).toHaveLength(0);
 
     // CONTROL: one real mode and the chip is back — the suppression is about
     // zero-travel data, not about the fixture being unable to emit a chip.
     const withRealMode = buildDayRows(TRIP, items, bookingsById(), {
-      legs: [samePlace("walking"), makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "transit", { duration_seconds: 600 })],
+      legs: [
+        samePlace("walking"),
+        makeTravelLeg(ITEM_A_ID, ITEM_C_ID, "transit", { duration_seconds: 600 }),
+      ],
     });
     expect(withRealMode.filter((row) => row.type === "leg")).toHaveLength(1);
   });
@@ -628,8 +631,18 @@ describe("buildDayRows — leg rows (R-itin-4/6)", () => {
 describe("buildDayRows — conflict flags (R-itin-7)", () => {
   it("marks the overlapping entry rows and the unsorted day header", () => {
     const items = [
-      makeItineraryItem({ id: ITEM_A_ID, start_time: "14:00", end_time: "16:00", sort_order: 1024 }),
-      makeItineraryItem({ id: ITEM_B_ID, start_time: "09:00", end_time: "15:00", sort_order: 2048 }),
+      makeItineraryItem({
+        id: ITEM_A_ID,
+        start_time: "14:00",
+        end_time: "16:00",
+        sort_order: 1024,
+      }),
+      makeItineraryItem({
+        id: ITEM_B_ID,
+        start_time: "09:00",
+        end_time: "15:00",
+        sort_order: 2048,
+      }),
     ];
     const conflicts = analyzeDayConflicts(items, bookingsById());
     const rows = buildDayRows(TRIP, items, bookingsById(), { conflicts });
@@ -641,8 +654,18 @@ describe("buildDayRows — conflict flags (R-itin-7)", () => {
 
   it("CONTROL: without the conflicts option nothing is flagged", () => {
     const items = [
-      makeItineraryItem({ id: ITEM_A_ID, start_time: "14:00", end_time: "16:00", sort_order: 1024 }),
-      makeItineraryItem({ id: ITEM_B_ID, start_time: "09:00", end_time: "15:00", sort_order: 2048 }),
+      makeItineraryItem({
+        id: ITEM_A_ID,
+        start_time: "14:00",
+        end_time: "16:00",
+        sort_order: 1024,
+      }),
+      makeItineraryItem({
+        id: ITEM_B_ID,
+        start_time: "09:00",
+        end_time: "15:00",
+        sort_order: 2048,
+      }),
     ];
     const rows = buildDayRows(TRIP, items, bookingsById());
     expect(rows.some((row) => row.type === "day" && row.unsorted)).toBe(false);

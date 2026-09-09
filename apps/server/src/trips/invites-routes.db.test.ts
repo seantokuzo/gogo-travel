@@ -207,9 +207,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
       await db
         .select()
         .from(schema.tripMembers)
-        .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, userId)),
-        )
+        .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.userId, userId)))
     )[0];
 
   // ===========================================================================
@@ -261,9 +259,8 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     expect((await createInvite(tripId, viewer.accessToken, { role: "viewer" })).status).toBe(403);
     expect((await createInvite(tripId, owner.accessToken, { role: "owner" })).status).toBe(400);
     expect(
-      (
-        await createInvite(tripId, owner.accessToken, { role: "editor", max_uses: 2_147_483_648 })
-      ).status,
+      (await createInvite(tripId, owner.accessToken, { role: "editor", max_uses: 2_147_483_648 }))
+        .status,
     ).toBe(400);
   });
 
@@ -419,13 +416,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     const raw = (await res.json()) as Record<string, unknown>;
 
     // Exact top-level and nested key sets — additive leaks fail loudly.
-    expect(Object.keys(raw).sort()).toEqual([
-      "already_member",
-      "inviter",
-      "role",
-      "state",
-      "trip",
-    ]);
+    expect(Object.keys(raw).sort()).toEqual(["already_member", "inviter", "role", "state", "trip"]);
     expect(Object.keys(raw.trip as object).sort()).toEqual([
       "destination_name",
       "end_date",
@@ -635,9 +626,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
         (d) => d.payload.event === "member.added",
       );
       expect(added).toHaveLength(1);
-      expect(added[0]!.payload.entity_id).toBe(
-        memberships.find((m) => m !== undefined)?.userId,
-      );
+      expect(added[0]!.payload.entity_id).toBe(memberships.find((m) => m !== undefined)?.userId);
     }
   });
 
@@ -674,9 +663,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
       await tx
         .select({ userId: schema.tripMembers.userId })
         .from(schema.tripMembers)
-        .where(
-          and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")),
-        )
+        .where(and(eq(schema.tripMembers.tripId, tripId), eq(schema.tripMembers.role, "owner")))
         .for("share");
       stage1Reached();
       await gate1;
@@ -856,9 +843,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     expect(JSON.stringify(events[0])).not.toContain(invite.token);
     // §3.5: fan-out is MEMBERSHIP-drawn, not list-capability-drawn — the
     // viewer receives the event even though GET invites 403s them.
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
   });
 
   it("POST: a viewer's 403 create emits nothing", async () => {
@@ -879,9 +864,7 @@ describe.skipIf(!dockerAvailable)("T-6.2 invites routes (integration)", () => {
     const events = await pushEvents.eventsFor(tripId);
     expect(events.map((d) => d.payload.event)).toEqual(["invite.revoked"]);
     expect(events[0]!.payload.entity_id).toBe(invite.id);
-    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual(
-      [editor.userId, viewer.userId].sort(),
-    );
+    expect(pushEvents.recipientIdsOf(events[0]!)).toEqual([editor.userId, viewer.userId].sort());
   });
 
   it("accept: member.added → the pre-existing members; the joining actor is excluded", async () => {

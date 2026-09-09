@@ -581,7 +581,9 @@ export default function TripSettingsScreen() {
                     : trip.base_currency
                 }
                 leading={<Icon name="cash-outline" size={22} />}
-                trailing={currencyLocked ? <Icon name="lock-closed-outline" size={18} /> : "chevron"}
+                trailing={
+                  currencyLocked ? <Icon name="lock-closed-outline" size={18} /> : "chevron"
+                }
                 onPress={
                   currencyLocked
                     ? undefined

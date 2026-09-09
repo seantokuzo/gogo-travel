@@ -65,7 +65,12 @@ const saved = () => [
 ];
 
 /** Deliberately NOT in the saved list — the search sheet's no-lookup path. */
-const searchHit = makePlace({ id: SEARCH_PLACE, name: "Gion Teahouse", lat: 35.0037, lng: 135.775 });
+const searchHit = makePlace({
+  id: SEARCH_PLACE,
+  name: "Gion Teahouse",
+  lat: 35.0037,
+  lng: 135.775,
+});
 
 const trip = makeTrip({
   id: TEST_TRIP_ID,

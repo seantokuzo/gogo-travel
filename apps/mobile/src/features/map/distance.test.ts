@@ -53,7 +53,10 @@ describe("distanceLabelFor", () => {
   });
 
   it("labels with the away suffix when a position is known", () => {
-    const label = distanceLabelFor({ lat: 34.9858, lng: 135.7588 }, { lat: 34.9671, lng: 135.7727 });
+    const label = distanceLabelFor(
+      { lat: 34.9858, lng: 135.7588 },
+      { lat: 34.9671, lng: 135.7727 },
+    );
     expect(label).toMatch(/km away$/);
   });
 });

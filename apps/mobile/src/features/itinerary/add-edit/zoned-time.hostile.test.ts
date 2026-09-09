@@ -123,9 +123,9 @@ describe("[2] DST boundaries", () => {
     expect(composed).toBe(DST_FALL_BACK_AMBIGUOUS.candidates.daylight);
     expect(composed).not.toBe(DST_FALL_BACK_AMBIGUOUS.candidates.standard);
     // Earlier of the two instants, by one hour.
-    expect(
-      instantMs(DST_FALL_BACK_AMBIGUOUS.candidates.standard) - instantMs(composed ?? ""),
-    ).toBe(HOUR);
+    expect(instantMs(DST_FALL_BACK_AMBIGUOUS.candidates.standard) - instantMs(composed ?? "")).toBe(
+      HOUR,
+    );
   });
 
   it("GAP wall time (02:30 never happens) takes the PRE-transition offset — the wall values the user typed survive", () => {

@@ -9,11 +9,7 @@
  */
 import { COARSE_CATEGORIES, type Photo } from "@gogo/shared";
 
-import {
-  BOOKING_FLIGHT_ID,
-  makeBooking,
-  makeItineraryItem,
-} from "@/test-utils/itinerary-fixtures";
+import { BOOKING_FLIGHT_ID, makeBooking, makeItineraryItem } from "@/test-utils/itinerary-fixtures";
 import { makePlace, TEST_PLACE_ID } from "@/test-utils/trip-fixtures";
 
 import {
@@ -52,8 +48,16 @@ it("categoryLabel: raw source taxonomy wins; absent/blank falls back to the capi
 // ---------------------------------------------------------------------------
 
 it("matches an item by its OWN place_id", () => {
-  const mine = makeItineraryItem({ id: "aaaaaaa5-aaaa-4aaa-8aaa-aaaaaaaaaaa5", kind: "place_visit", place_id: TEST_PLACE_ID });
-  const other = makeItineraryItem({ id: "aaaaaaa6-aaaa-4aaa-8aaa-aaaaaaaaaaa6", kind: "place_visit", place_id: OTHER_PLACE_ID });
+  const mine = makeItineraryItem({
+    id: "aaaaaaa5-aaaa-4aaa-8aaa-aaaaaaaaaaa5",
+    kind: "place_visit",
+    place_id: TEST_PLACE_ID,
+  });
+  const other = makeItineraryItem({
+    id: "aaaaaaa6-aaaa-4aaa-8aaa-aaaaaaaaaaa6",
+    kind: "place_visit",
+    place_id: OTHER_PLACE_ID,
+  });
   const unplaced = makeItineraryItem({ id: "aaaaaaa7-aaaa-4aaa-8aaa-aaaaaaaaaaa7" });
   expect(linkedItineraryItems([mine, other, unplaced], [], TEST_PLACE_ID)).toEqual([mine]);
 });
@@ -127,7 +131,10 @@ it("filters by place AND canViewPhoto: another member's private photo NEVER surf
   const ownPrivate = makePhoto({ id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd1", user_id: VIEWER_ID });
   const theirPrivate = makePhoto({ id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd2" });
   const theirTrip = makePhoto({ id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd3", visibility: "trip" });
-  const theirPublic = makePhoto({ id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd4", visibility: "public" });
+  const theirPublic = makePhoto({
+    id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd4",
+    visibility: "public",
+  });
   const elsewhere = makePhoto({
     id: "dddddddd-dddd-4ddd-8ddd-ddddddddddd5",
     visibility: "public",
@@ -139,11 +146,7 @@ it("filters by place AND canViewPhoto: another member's private photo NEVER surf
     viewer,
     TEST_PLACE_ID,
   );
-  expect(visible.map((photo) => photo.id)).toEqual([
-    ownPrivate.id,
-    theirTrip.id,
-    theirPublic.id,
-  ]);
+  expect(visible.map((photo) => photo.id)).toEqual([ownPrivate.id, theirTrip.id, theirPublic.id]);
 });
 
 // ---------------------------------------------------------------------------
@@ -152,7 +155,5 @@ it("filters by place AND canViewPhoto: another member's private photo NEVER surf
 
 it("builds the Maps URLs API coordinate handoff — encoded, origin omitted (defaults to current location)", () => {
   const url = placeNavigateUrl(makePlace({ lat: 35.0116, lng: 135.7681 }));
-  expect(url).toBe(
-    "https://www.google.com/maps/dir/?api=1&destination=35.0116%2C135.7681",
-  );
+  expect(url).toBe("https://www.google.com/maps/dir/?api=1&destination=35.0116%2C135.7681");
 });

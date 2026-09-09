@@ -143,7 +143,10 @@ describe("overlap chips (R-itin-7)", () => {
   });
 
   it("viewers see overlap chips — read-only information, not a write affordance", async () => {
-    await renderItinerary({ api: { items: unsortedOverlappingDay(), bookings: [] }, role: "viewer" });
+    await renderItinerary({
+      api: { items: unsortedOverlappingDay(), bookings: [] },
+      role: "viewer",
+    });
     expect(await screen.findByTestId(`itinerary-list-item-${ITEM_A_ID}-overlap`)).toBeOnTheScreen();
   });
 

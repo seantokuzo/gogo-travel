@@ -42,7 +42,7 @@ Substantial features get three sections (or three files for big ones):
 
 ## API endpoint format
 
-````markdown
+```markdown
 ### <METHOD> <PATH>
 
 What it does. **Auth**: Required | Optional | None
@@ -54,10 +54,11 @@ What it does. **Auth**: Required | Optional | None
 **Requirements covered**: R-xxx-N, R-xxx-M
 
 **Tests required**:
+
 - [ ] Happy path
 - [ ] Error cases
 - [ ] Authz (wrong user / wrong trip)
-````
+```
 
 ## How agents use specs
 

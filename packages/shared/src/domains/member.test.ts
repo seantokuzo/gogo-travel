@@ -22,12 +22,12 @@ describe("InviteCreate — CHECK (role <> 'owner') mirror", () => {
   });
 
   it("caps max_uses at int32 max — no Postgres integer overflow 500 vector", () => {
-    expect(
-      InviteCreateSchema.safeParse({ role: "editor", max_uses: 2_147_483_647 }).success,
-    ).toBe(true);
-    expect(
-      InviteCreateSchema.safeParse({ role: "editor", max_uses: 2_147_483_648 }).success,
-    ).toBe(false);
+    expect(InviteCreateSchema.safeParse({ role: "editor", max_uses: 2_147_483_647 }).success).toBe(
+      true,
+    );
+    expect(InviteCreateSchema.safeParse({ role: "editor", max_uses: 2_147_483_648 }).success).toBe(
+      false,
+    );
     expect(InviteCreateSchema.safeParse({ role: "editor", max_uses: 0 }).success).toBe(false);
   });
 });

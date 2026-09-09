@@ -187,7 +187,11 @@ describe("§2.3 — the loaded surface", () => {
     await renderDetail({
       getPlace: () =>
         Promise.resolve({
-          place: makePlace({ source: "custom", source_id: null, created_by: "00000000-0000-4000-8000-000000000001" }),
+          place: makePlace({
+            source: "custom",
+            source_id: null,
+            created_by: "00000000-0000-4000-8000-000000000001",
+          }),
         }),
     });
     await screen.findByTestId("place-detail-screen");
@@ -305,8 +309,7 @@ describe("R-map-11 — save / unsave", () => {
     // the row that has existed all along.
     let listCalls = 0;
     await renderDetail({
-      createSavedPlace: () =>
-        Promise.reject(new ApiRequestError(409, "CONFLICT", "already saved")),
+      createSavedPlace: () => Promise.reject(new ApiRequestError(409, "CONFLICT", "already saved")),
       getSavedPlaces: () => {
         listCalls += 1;
         return Promise.resolve({

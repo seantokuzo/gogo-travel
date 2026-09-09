@@ -83,8 +83,12 @@ export function packRegionKeyFor(lat: number, lng: number): string {
  */
 export function isUsableDestination(lat: number, lng: number): boolean {
   return (
-    Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
-    Number.isFinite(lng) && lng >= -180 && lng <= 180
+    Number.isFinite(lat) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    Number.isFinite(lng) &&
+    lng >= -180 &&
+    lng <= 180
   );
 }
 
@@ -103,10 +107,7 @@ export type PackBoundsPosition = [number, number];
  * a box across the antimeridian). Poles: dropped neighbors (8 → 5) simply
  * don't extend the envelope.
  */
-export function packBoundsFor(
-  lat: number,
-  lng: number,
-): [PackBoundsPosition, PackBoundsPosition] {
+export function packBoundsFor(lat: number, lng: number): [PackBoundsPosition, PackBoundsPosition] {
   const cells = regionCellsForDestination(lat, lng);
   const center = cells[0];
   const centerMid = (center.minLng + center.maxLng) / 2;
@@ -260,9 +261,7 @@ export function estimatePackTileCount(
 }
 
 /** Display-only byte estimate (module doc: labeled "~" wherever shown). */
-export function estimatePackSizeBytes(
-  bounds: [PackBoundsPosition, PackBoundsPosition],
-): number {
+export function estimatePackSizeBytes(bounds: [PackBoundsPosition, PackBoundsPosition]): number {
   return estimatePackTileCount(bounds) * ESTIMATED_TILE_BYTES;
 }
 

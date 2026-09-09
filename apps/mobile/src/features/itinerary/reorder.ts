@@ -62,11 +62,7 @@ function dayOrderIds(rows: readonly DayListRow[], day: ISODate): string[] {
  *   refusal with the R-itin-3 hint; same-day reorder stays allowed.
  * - A drop that leaves the target day's order unchanged → no-op (no PUT).
  */
-export function resolveDrop(
-  rows: readonly DayListRow[],
-  from: number,
-  to: number,
-): DropResolution {
+export function resolveDrop(rows: readonly DayListRow[], from: number, to: number): DropResolution {
   const fromRow = rows[from];
   if (fromRow === undefined || fromRow.type !== "entry" || !fromRow.entry.draggable) {
     return { kind: "noop" };

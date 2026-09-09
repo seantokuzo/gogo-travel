@@ -91,9 +91,7 @@ describe("cross-day moves", () => {
 
   it("timed-booking item refuses a cross-day drop (R-itin-3)", () => {
     const res = resolveDrop(rows, 1, 5);
-    expect(res).toEqual(
-      expect.objectContaining({ kind: "refused-day-lock" }),
-    );
+    expect(res).toEqual(expect.objectContaining({ kind: "refused-day-lock" }));
   });
 
   it("the same drop commits once the parent booking is timeless (falsification arm)", () => {

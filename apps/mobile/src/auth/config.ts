@@ -95,10 +95,7 @@ function resolveMetroHost(): string | null {
 
 /** Which resolution tier produced the base URL (T-S3.5 device-smoke leg 1). */
 export type ApiBaseUrlSource =
-  | "explicit-env"
-  | "expo-config-host-uri"
-  | "metro-script-url"
-  | "localhost-fallback";
+  "explicit-env" | "expo-config-host-uri" | "metro-script-url" | "localhost-fallback";
 
 /**
  * The resolved base URL plus its provenance — which tier fired, and the raw

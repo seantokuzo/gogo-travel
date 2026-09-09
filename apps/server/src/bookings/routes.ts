@@ -38,17 +38,9 @@ import * as schema from "../db/schema/index.js";
 import { apiError, NOT_FOUND_MESSAGE, type RequestVars } from "../http/errors.js";
 import { epochMicrosExpr, nullableEpochMicrosExpr } from "../http/keyset-cursor.js";
 import { authContextOf } from "../http/require-auth.js";
-import {
-  createRequireTripMember,
-  tripContextOf,
-  UUID_RE,
-} from "../http/require-trip-member.js";
+import { createRequireTripMember, tripContextOf, UUID_RE } from "../http/require-trip-member.js";
 import { rejectInvalidBody } from "../http/validation.js";
-import {
-  bookingCursorPredicate,
-  decodeBookingCursor,
-  encodeBookingCursor,
-} from "./cursor.js";
+import { bookingCursorPredicate, decodeBookingCursor, encodeBookingCursor } from "./cursor.js";
 import { markDaysDirty, type DirtyDayMarker } from "./dirty-days.js";
 import {
   createBooking,

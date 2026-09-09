@@ -614,9 +614,7 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const nearMom = "near=35.601,139.601&radius_m=500";
 
     // Creator: visible with no trip scope.
-    expect(
-      (await searchOk(creator.accessToken, nearMom)).items.map((p) => p.id),
-    ).toEqual([mom.id]);
+    expect((await searchOk(creator.accessToken, nearMom)).items.map((p) => p.id)).toEqual([mom.id]);
     // Stranger: byte-for-byte absent ("Mom's house" never appears in
     // strangers' searches — R-places-8's own example).
     expect((await searchOk(coMember.accessToken, nearMom)).items).toEqual([]);
@@ -890,9 +888,7 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
       lat: 35.675,
       lng: 139.675,
     });
-    await db
-      .insert(schema.tourGuideBundles)
-      .values({ tripId: trip.id, placeId: bundled.id });
+    await db.insert(schema.tourGuideBundles).values({ tripId: trip.id, placeId: bundled.id });
     const bundledRes = await deletePlace(bundled.id, user.accessToken);
     expect(bundledRes.status).toBe(409);
     expect(((await bundledRes.json()) as ErrorEnvelope).error.details).toEqual({

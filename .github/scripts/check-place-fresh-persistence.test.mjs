@@ -82,7 +82,7 @@ test("flags a fresh-touching module that console-logs", () => {
   const file = "apps/mobile/src/data/places.ts";
   const hits = findFreshPersistenceViolations(
     [file],
-    readerFor({ [file]: 'const x = usePlaceFresh(id);\nconsole.log(x);\n' }),
+    readerFor({ [file]: "const x = usePlaceFresh(id);\nconsole.log(x);\n" }),
   );
   assert.deepEqual(hits, [{ file, rule: "fresh-sink", token: "console." }]);
 });
@@ -153,7 +153,9 @@ test("CONTROL: sink WITHOUT fresh domain is clean (zustand stores are fine elsew
   const file = "apps/mobile/src/features/map/pending-focus.ts";
   const hits = findFreshPersistenceViolations(
     [file],
-    readerFor({ [file]: 'import { create } from "zustand";\nexport const s = create(() => ({}));\n' }),
+    readerFor({
+      [file]: 'import { create } from "zustand";\nexport const s = create(() => ({}));\n',
+    }),
   );
   assert.deepEqual(hits, []);
 });
@@ -176,7 +178,7 @@ test("CONTROL: fresh domain WITHOUT sinks is clean — prose mentions of MMKV/Zu
 // ---------------------------------------------------------------------------
 
 test("scope: tests, test-utils, jest files, and non-mobile files are exempt", () => {
-  const dirty = 'const a = usePlaceFresh(); console.log(a); persistQueryClient();\n';
+  const dirty = "const a = usePlaceFresh(); console.log(a); persistQueryClient();\n";
   for (const file of [
     "apps/mobile/src/data/places.test.tsx",
     "apps/mobile/src/__tests__/place-detail-screen.test.tsx",

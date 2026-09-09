@@ -4,8 +4,7 @@
 > (P-2 gate 3). Not approvable until zero `[NEEDS CLARIFICATION]` markers
 > remain.
 >
-> **Sources:** `CLAUDE.md` Law #2 (integer cents) · `docs/PLANNING.md
-> § Architecture` (money entities; P-7) ·
+> **Sources:** `CLAUDE.md` Law #2 (integer cents) · `docs/PLANNING.md § Architecture` (money entities; P-7) ·
 > `.specs/database/schema.spec.md` §§3.3.12–3.3.15, 3.3.18–3.3.19 (**CANONICAL**
 > — `expenses`, `expense_shares`, `settlements`, `budgets`, `ai_usage`,
 > `ai_cache`; R-db-2/5/10/13/14/16) · `.specs/shared/contracts.spec.md`
@@ -258,23 +257,23 @@ Conventions inherited wholesale (not restated per endpoint):
 
 All routes trip-scoped; `Auth: Required` throughout (JWT — Gate-1 auth lock).
 
-| # | Method + path | Purpose | Role |
-|---|---|---|---|
-| E1 | `POST /trips/:tripId/expenses` | Create expense + shares (atomic) | member incl. viewer (R-money-26) |
-| E2 | `GET /trips/:tripId/expenses` | List/filter expenses | member |
-| E3 | `GET /trips/:tripId/expenses/:expenseId` | Expense detail + shares | member |
-| E4 | `PATCH /trips/:tripId/expenses/:expenseId` | Update expense/split (atomic) | creator or owner (R-money-26) |
-| E5 | `DELETE /trips/:tripId/expenses/:expenseId` | Soft-delete expense (audit trail — R-money-27) | creator or owner (R-money-26) |
-| B1 | `GET /trips/:tripId/balances` | Pairwise nets + simplified transfers | member |
-| S1 | `POST /trips/:tripId/settlements` | Record a settlement | party (R-money-12) |
-| S2 | `GET /trips/:tripId/settlements` | List settlements | member |
-| S3 | `DELETE /trips/:tripId/settlements/:settlementId` | Delete own settlement ≤ 24 h (R-money-15) | recorder only |
-| Q1 | `POST /trips/:tripId/settle-requests` | Create request + link | creditor (R-money-16) |
-| Q2 | `GET /trips/:tripId/settle-requests/:requestId` | Request detail (deep-link data) | member (v1 — resolved Gate 2) |
-| Q3 | `DELETE /trips/:tripId/settle-requests/:requestId` | Cancel request (`status = 'cancelled'`) | request creator |
-| G1 | `GET /trips/:tripId/budgets` | Budget rows + computed spend | member |
-| G2 | `PUT /trips/:tripId/budgets/:category` | Upsert category cap | editor+ |
-| A1 | `POST /trips/:tripId/ai/expense-estimate` | AI per-category estimates | editor+ (writes budgets); cap-checked |
+| #   | Method + path                                      | Purpose                                        | Role                                  |
+| --- | -------------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
+| E1  | `POST /trips/:tripId/expenses`                     | Create expense + shares (atomic)               | member incl. viewer (R-money-26)      |
+| E2  | `GET /trips/:tripId/expenses`                      | List/filter expenses                           | member                                |
+| E3  | `GET /trips/:tripId/expenses/:expenseId`           | Expense detail + shares                        | member                                |
+| E4  | `PATCH /trips/:tripId/expenses/:expenseId`         | Update expense/split (atomic)                  | creator or owner (R-money-26)         |
+| E5  | `DELETE /trips/:tripId/expenses/:expenseId`        | Soft-delete expense (audit trail — R-money-27) | creator or owner (R-money-26)         |
+| B1  | `GET /trips/:tripId/balances`                      | Pairwise nets + simplified transfers           | member                                |
+| S1  | `POST /trips/:tripId/settlements`                  | Record a settlement                            | party (R-money-12)                    |
+| S2  | `GET /trips/:tripId/settlements`                   | List settlements                               | member                                |
+| S3  | `DELETE /trips/:tripId/settlements/:settlementId`  | Delete own settlement ≤ 24 h (R-money-15)      | recorder only                         |
+| Q1  | `POST /trips/:tripId/settle-requests`              | Create request + link                          | creditor (R-money-16)                 |
+| Q2  | `GET /trips/:tripId/settle-requests/:requestId`    | Request detail (deep-link data)                | member (v1 — resolved Gate 2)         |
+| Q3  | `DELETE /trips/:tripId/settle-requests/:requestId` | Cancel request (`status = 'cancelled'`)        | request creator                       |
+| G1  | `GET /trips/:tripId/budgets`                       | Budget rows + computed spend                   | member                                |
+| G2  | `PUT /trips/:tripId/budgets/:category`             | Upsert category cap                            | editor+                               |
+| A1  | `POST /trips/:tripId/ai/expense-estimate`          | AI per-category estimates                      | editor+ (writes budgets); cap-checked |
 
 (Research names the flat path `POST /ai/expense-estimate`; pinned trip-scoped
 here because every grounding input — destination, dates, party size — and the
@@ -317,6 +316,7 @@ non-base currency without the `fx_rate` + `base_amount_cents` pair
 **Requirements covered**: R-money-1..7, R-money-25/26
 
 **Tests required**:
+
 - [ ] Happy path: expense + N shares committed atomically; sum invariant holds
 - [ ] Sum mismatch by 1 cent → 400, zero rows written (transaction rollback)
 - [ ] Share user not a member → 400; booking from another trip → 400
@@ -340,6 +340,7 @@ created_at DESC` (matches `(trip_id, spent_at)` index, schema spec §3.5).
 **Requirements covered**: R-money-25
 
 **Tests required**:
+
 - [ ] Pagination cursor round-trip; filters (category, member-as-payer,
       member-as-share-holder, date range)
 - [ ] Authz: non-member → 404
@@ -366,6 +367,7 @@ coupling violations; 403 — caller is neither creator nor owner.
 **Requirements covered**: R-money-1/2/5, R-money-26/27
 
 **Tests required**:
+
 - [ ] PATCH amount without shares → 400; shares-only summing to stored
       amount → 200; stale share set fully replaced (no orphans)
 - [ ] DELETE soft-deletes; balances + default lists exclude it; audit entry
@@ -397,6 +399,7 @@ returns both.
 **Requirements covered**: R-money-8/9/10
 
 **Tests required**:
+
 - [ ] Formula fixtures (§3.4): multi-expense, multi-payer, settlement-offset,
       zero-share cases; Σ member nets = 0 in every fixture
 - [ ] Non-base-currency expense allocated per §3.3 (no per-share rounding
@@ -429,6 +432,7 @@ but that request is not `open` or is between a different pair.
 **Requirements covered**: R-money-11..14, R-money-18
 
 **Tests required**:
+
 - [ ] Happy path both directions (payer records; payee records)
 - [ ] Third member (non-party) → 403; non-member → 404
 - [ ] Non-base currency → 400; from = to → 400
@@ -456,6 +460,7 @@ window has passed (correction path: counter-entry); 404 non-member/missing.
 **Requirements covered**: R-money-15
 
 **Tests required**:
+
 - [ ] Recorder deletes within 24 h → 204; balances recompute; linked request reopens
 - [ ] Recorder after 24 h → 403; other party any time → 403
 - [ ] Authz: non-member → 404
@@ -496,6 +501,7 @@ member / debtor = caller.
 **Requirements covered**: R-money-16..19
 
 **Tests required**:
+
 - [ ] Default amount = current pairwise debt; zero debt without explicit
       amount → 409
 - [ ] Detail exposes only R-money-17 fields (snapshot test against a rich trip)
@@ -530,6 +536,7 @@ segment (storage mechanism per schema spec §3.3.15, resolved Gate 2).
 **Requirements covered**: R-money-20, R-money-25/26
 
 **Tests required**:
+
 - [ ] Upsert create-then-update; null clears cap, estimate survives
 - [ ] Overall (`total`) cap set/cleared; returned in the `total` block
 - [ ] `spent_cents` matches expense fixtures incl. FX-allocated ones
@@ -567,6 +574,7 @@ party size = current member count, caller's `travel_style` (R-money-24).
 **Requirements covered**: R-money-21..24, R-db-5/10 mirrors
 
 **Tests required**:
+
 - [ ] Gate order: dateless trip 400s before any cache/cap read
 - [ ] Cache hit: no model call, no `ai_usage` increment, budgets still upserted
 - [ ] Cache miss: cap consumed; at-cap → 429; kill-switch flag → 503
@@ -588,12 +596,12 @@ Inputs: `amount_cents A > 0`; ordered participant set `P` (deduplicated,
 sorted ascending by canonical lowercase `user_id` string — **all ordering in
 this spec means this**); per-type inputs. All arithmetic is integer.
 
-| Type | Input | Exact quota per participant `i` | Method |
-|---|---|---|---|
-| `equal` | none | `A / n` | base `floor(A/n)` each; remainder `r = A − n·floor(A/n)` cents assigned +1 each to the first `r` participants in `user_id` order |
-| `percent` | `percent_bp_i` (integer basis points; `Σ = 10000` exactly, else invalid) | `A · percent_bp_i / 10000` | largest-remainder (below) |
-| `shares` | integer weight `w_i ≥ 1`; `W = Σ w_i` | `A · w_i / W` | largest-remainder (below) |
-| `exact` | `share_cents_i` | as entered | no computation; invalid unless `Σ = A` |
+| Type      | Input                                                                    | Exact quota per participant `i` | Method                                                                                                                           |
+| --------- | ------------------------------------------------------------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `equal`   | none                                                                     | `A / n`                         | base `floor(A/n)` each; remainder `r = A − n·floor(A/n)` cents assigned +1 each to the first `r` participants in `user_id` order |
+| `percent` | `percent_bp_i` (integer basis points; `Σ = 10000` exactly, else invalid) | `A · percent_bp_i / 10000`      | largest-remainder (below)                                                                                                        |
+| `shares`  | integer weight `w_i ≥ 1`; `W = Σ w_i`                                    | `A · w_i / W`                   | largest-remainder (below)                                                                                                        |
+| `exact`   | `share_cents_i`                                                          | as entered                      | no computation; invalid unless `Σ = A`                                                                                           |
 
 **Largest-remainder:** `base_i = floor(quota_i)`; leftover
 `r = A − Σ base_i` (`0 ≤ r < n`); sort participants by fractional remainder
@@ -611,7 +619,7 @@ Per trip, in trip base currency, on read (R-money-8):
 
 1. **Effective base amount** of an expense:
    `B = base_amount_cents ?? amount_cents` (equal iff `currency =
-   base_currency`; the pair of FX columns is present exactly when currencies
+base_currency`; the pair of FX columns is present exactly when currencies
    differ — R-money-6, schema spec §3.3.12 CHECK).
 2. **Base shares**: when `B ≠ amount_cents`, allocate `B` across the
    expense's shares proportionally by §3.3 largest-remainder (R-money-9);
@@ -652,17 +660,17 @@ recorded against the real pair that pays (record-only ledger unaffected).
 Approved table — moves verbatim into `.specs/database/schema.spec.md` §3.3
 (one-source rule; schema spec stays canonical and is folding it in):
 
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `id` | `uuid` | no | `gen_random_uuid()` | PK; the `requestId` in the universal link |
-| `trip_id` | `uuid` | no | — | FK → `trips.id` ON DELETE CASCADE |
-| `from_user_id` | `uuid` | no | — | Debtor; FK → `users.id` ON DELETE RESTRICT; `CHECK (from_user_id <> to_user_id)` |
-| `to_user_id` | `uuid` | no | — | Creditor = creator; FK → `users.id` ON DELETE RESTRICT |
-| `amount_cents` | `bigint` | no | — | `CHECK (> 0)` |
-| `currency` | `char(3)` | no | — | Trip base (R-money-13 convention); uppercase check |
-| `note` | `text` | yes | — | |
-| `status` | `request_status` | no | `'open'` | New pgEnum `open / settled / cancelled` (append-only; lands in `@gogo/shared` enums per contracts spec §3.2) |
-| `settlement_id` | `uuid` | yes | — | FK → `settlements.id` ON DELETE SET NULL; set when settled through the request |
+| Column          | Type             | Null | Default             | Notes                                                                                                        |
+| --------------- | ---------------- | ---- | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `id`            | `uuid`           | no   | `gen_random_uuid()` | PK; the `requestId` in the universal link                                                                    |
+| `trip_id`       | `uuid`           | no   | —                   | FK → `trips.id` ON DELETE CASCADE                                                                            |
+| `from_user_id`  | `uuid`           | no   | —                   | Debtor; FK → `users.id` ON DELETE RESTRICT; `CHECK (from_user_id <> to_user_id)`                             |
+| `to_user_id`    | `uuid`           | no   | —                   | Creditor = creator; FK → `users.id` ON DELETE RESTRICT                                                       |
+| `amount_cents`  | `bigint`         | no   | —                   | `CHECK (> 0)`                                                                                                |
+| `currency`      | `char(3)`        | no   | —                   | Trip base (R-money-13 convention); uppercase check                                                           |
+| `note`          | `text`           | yes  | —                   |                                                                                                              |
+| `status`        | `request_status` | no   | `'open'`            | New pgEnum `open / settled / cancelled` (append-only; lands in `@gogo/shared` enums per contracts spec §3.2) |
+| `settlement_id` | `uuid`           | yes  | —                   | FK → `settlements.id` ON DELETE SET NULL; set when settled through the request                               |
 
 - **Indexes:** `(trip_id, status)` — open-requests list; FK indexes.
 - Follows all schema-spec §1 conventions (`created_at`/`updated_at`, uuid PK).
@@ -715,18 +723,18 @@ auth → membership → dates gate → deriveAiCacheKey → [hit → payload]
 
 ### 3.8 Authz matrix (money domain)
 
-| Action | owner | editor | viewer | non-member |
-|---|---|---|---|---|
-| Read expenses / balances / settlements / budgets / requests | ✓ | ✓ | ✓ | 404 |
-| Create expense | ✓ | ✓ | ✓ (R-money-26, resolved Gate 2) | 404 |
-| Edit / delete own-created expense | ✓ | ✓ | ✓ | 404 |
-| Edit / delete any expense | ✓ (dispute-breaker) | ✗ | ✗ | 404 |
-| Delete own settlement ≤ 24 h | recorder-only | recorder-only | recorder-only | 404 |
-| Record settlement | party-only | party-only | party-only | 404 |
-| Create settle-request | creditor-only | creditor-only | creditor-only | 404 |
-| Cancel settle-request | creator-only | creator-only | creator-only | 404 |
-| Upsert budget caps | ✓ | ✓ | ✗ | 404 |
-| Trigger AI estimate | ✓ | ✓ | ✗ | 404 |
+| Action                                                      | owner               | editor        | viewer                          | non-member |
+| ----------------------------------------------------------- | ------------------- | ------------- | ------------------------------- | ---------- |
+| Read expenses / balances / settlements / budgets / requests | ✓                   | ✓             | ✓                               | 404        |
+| Create expense                                              | ✓                   | ✓             | ✓ (R-money-26, resolved Gate 2) | 404        |
+| Edit / delete own-created expense                           | ✓                   | ✓             | ✓                               | 404        |
+| Edit / delete any expense                                   | ✓ (dispute-breaker) | ✗             | ✗                               | 404        |
+| Delete own settlement ≤ 24 h                                | recorder-only       | recorder-only | recorder-only                   | 404        |
+| Record settlement                                           | party-only          | party-only    | party-only                      | 404        |
+| Create settle-request                                       | creditor-only       | creditor-only | creditor-only                   | 404        |
+| Cancel settle-request                                       | creator-only        | creator-only  | creator-only                    | 404        |
+| Upsert budget caps                                          | ✓                   | ✓             | ✗                               | 404        |
+| Trigger AI estimate                                         | ✓                   | ✓             | ✗                               | 404        |
 
 Payment handles render from `UserProfile` (member-visible by design,
 contracts spec §3.4) — no additional read surface added here.
@@ -757,15 +765,15 @@ contracts spec §3.4) — no additional read surface added here.
 Each sized to one agent session; queued as `T-N.M` rows at build time.
 Depends on DB-1 + SH-1 (schema + shared) having landed.
 
-| ID | Task | Covers |
-|---|---|---|
-| MON-1 | Shared money math: `computeShares` (4 types, largest-remainder), `computeBalances`, `simplifyDebts`, base-allocation — pure functions + exhaustive property tests (`@gogo/shared/domains/money`). | R-money-3/8/9/10 |
-| MON-2 | Expenses CRUD (E1–E5): atomic writes, exact-sum enforcement, FX pair validation, soft-delete + audit trail, filters, creator-or-owner authz. | R-money-1/2/4/5/6/7, 25/26/27 |
-| MON-3 | Balances endpoint (B1) over MON-1 functions; fixtures incl. FX allocation + ex-members. | R-money-8/9/10 |
-| MON-4 | Settlements (S1–S3): party rule, base-currency rule, request linking, 24 h recorder-delete window. | R-money-11..15, 18 |
-| MON-5 | Settle-requests (Q1–Q3) + `settlement_requests` migration (entity approved Gate 2) + link construction (domain-agnostic format; universal-link domain pending Sean's purchase). | R-money-16..19 |
-| MON-6 | Budgets (G1, G2): upsert + computed spend + full-taxonomy synthesis. | R-money-20 |
-| MON-7 | AI estimate (A1): gate order, cache, refinement, totals, budget write, `ai_usage` accounting. | R-money-21..24 |
+| ID    | Task                                                                                                                                                                                              | Covers                        |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| MON-1 | Shared money math: `computeShares` (4 types, largest-remainder), `computeBalances`, `simplifyDebts`, base-allocation — pure functions + exhaustive property tests (`@gogo/shared/domains/money`). | R-money-3/8/9/10              |
+| MON-2 | Expenses CRUD (E1–E5): atomic writes, exact-sum enforcement, FX pair validation, soft-delete + audit trail, filters, creator-or-owner authz.                                                      | R-money-1/2/4/5/6/7, 25/26/27 |
+| MON-3 | Balances endpoint (B1) over MON-1 functions; fixtures incl. FX allocation + ex-members.                                                                                                           | R-money-8/9/10                |
+| MON-4 | Settlements (S1–S3): party rule, base-currency rule, request linking, 24 h recorder-delete window.                                                                                                | R-money-11..15, 18            |
+| MON-5 | Settle-requests (Q1–Q3) + `settlement_requests` migration (entity approved Gate 2) + link construction (domain-agnostic format; universal-link domain pending Sean's purchase).                   | R-money-16..19                |
+| MON-6 | Budgets (G1, G2): upsert + computed spend + full-taxonomy synthesis.                                                                                                                              | R-money-20                    |
+| MON-7 | AI estimate (A1): gate order, cache, refinement, totals, budget write, `ai_usage` accounting.                                                                                                     | R-money-21..24                |
 
 **Cross-cutting tests required** (beyond per-endpoint checklists):
 
@@ -774,8 +782,7 @@ Depends on DB-1 + SH-1 (schema + shared) having landed.
       never matters)
 - [ ] Property test: `simplifyDebts` preserves nets and never exceeds n−1
       transfers over randomized ledgers
-- [ ] Money-law audit: no float enters any money code path (lint/type-level
-      + fixture with `amount_cents: 25.5` rejected at validation)
+- [ ] Money-law audit: no float enters any money code path (lint/type-level + fixture with `amount_cents: 25.5` rejected at validation)
 - [ ] Concurrency: two simultaneous PATCHes to one expense leave a
       consistent expense+shares set (last-write-wins, never mixed)
 - [ ] Envelope conformance: every error path returns `ApiError` with a
@@ -783,7 +790,7 @@ Depends on DB-1 + SH-1 (schema + shared) having landed.
 
 ---
 
-*Trace: R-money-N ↔ §3 sections inline. All 11 markers resolved at Gate 2
+_Trace: R-money-N ↔ §3 sections inline. All 11 markers resolved at Gate 2
 (2026-07-09): 5 at canonical homes (FX = entry-time rate + manual override;
 taxonomy = fixed 6-value enum; overall cap = yes, optional; expense
 deletion = soft-delete + audit; travel_style = fixed multi-tag set), 6
@@ -791,4 +798,4 @@ owned here (simplification off-by-default with one-tap toggle; settlement
 correction = recorder delete ≤ 24 h then counter-entry;
 `settlement_requests` entity approved; viewer participation per trips
 §3.2; member removal allowed with nonzero balance; split metadata =
-resolved cents only). Zero markers remain.*
+resolved cents only). Zero markers remain._

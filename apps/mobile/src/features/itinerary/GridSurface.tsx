@@ -90,11 +90,10 @@ export function GridSurface({
   const s = useStyles();
   const { width: windowWidth } = useWindowDimensions();
 
-  const model = useMemo(() => buildGridDays(trip, items, bookingsById), [
-    trip,
-    items,
-    bookingsById,
-  ]);
+  const model = useMemo(
+    () => buildGridDays(trip, items, bookingsById),
+    [trip, items, bookingsById],
+  );
   const { days, laneCount, maxAllDayCount } = model;
   const showChipRow = maxAllDayCount > 0;
   const canAdd = trip.role !== "viewer";
@@ -103,7 +102,10 @@ export function GridSurface({
   const initialIndex = useMemo(() => {
     if (days.length === 0) return 0;
     return Math.min(
-      initialDayIndex(days.map((day) => day.date), localTodayISO()),
+      initialDayIndex(
+        days.map((day) => day.date),
+        localTodayISO(),
+      ),
       days.length - 1,
     );
   }, [days]);

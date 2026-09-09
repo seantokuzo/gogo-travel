@@ -140,9 +140,9 @@ describe("parseFlightNumber", () => {
 
 describe("lookup query schema", () => {
   it("caps flight_number at 12 chars", () => {
-    expect(FlightAirlineLookupQuerySchema.safeParse({ flight_number: "x".repeat(13) }).success).toBe(
-      false,
-    );
+    expect(
+      FlightAirlineLookupQuerySchema.safeParse({ flight_number: "x".repeat(13) }).success,
+    ).toBe(false);
     expect(FlightAirlineLookupQuerySchema.parse({ flight_number: " NH204 " }).flight_number).toBe(
       "NH204",
     );

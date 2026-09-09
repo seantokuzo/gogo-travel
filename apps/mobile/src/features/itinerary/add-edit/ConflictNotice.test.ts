@@ -49,9 +49,7 @@ describe("conflictMessage (R-itin-20)", () => {
 
   it("the copy always states that the overlap is ALLOWED (R-ib-17, non-blocking)", () => {
     for (const count of [1, 2, 5]) {
-      const message = conflictMessage(
-        Array.from({ length: count }, (_, i) => hit(`Item ${i}`)),
-      );
+      const message = conflictMessage(Array.from({ length: count }, (_, i) => hit(`Item ${i}`)));
       expect(message).toContain("that's allowed");
     }
   });

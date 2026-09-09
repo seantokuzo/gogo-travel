@@ -37,14 +37,14 @@ If you, the assistant, ever notice that `.loop/state.json` does not exist, you a
 
 All sentinels live in `.loop/` at the repo root. The directory is gitignored — it is per-machine runtime state.
 
-| File | Type | Meaning |
-|------|------|---------|
-| `.loop/state.json` | JSON | Presence = autonomous mode ON. Updated every session. |
-| `.loop/next-prompt.md` | Markdown | Instructions for the NEXT session in the chain. Non-empty → wrapper runs another iteration. |
-| `.loop/done` | Empty marker | All queued work complete. Chain exits cleanly and tears `.loop/` down. |
-| `.loop/pivot` | Markdown | Need human direction. Chain stops, `.loop/` preserved for inspection. |
-| `.loop/blocked` | Markdown | Stuck on an external blocker. Chain stops with non-zero exit, `.loop/` preserved. |
-| `.loop/log.txt` | Append-only | Timestamped activity log. Written by the wrapper and the hook. |
+| File                   | Type         | Meaning                                                                                     |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------------------- |
+| `.loop/state.json`     | JSON         | Presence = autonomous mode ON. Updated every session.                                       |
+| `.loop/next-prompt.md` | Markdown     | Instructions for the NEXT session in the chain. Non-empty → wrapper runs another iteration. |
+| `.loop/done`           | Empty marker | All queued work complete. Chain exits cleanly and tears `.loop/` down.                      |
+| `.loop/pivot`          | Markdown     | Need human direction. Chain stops, `.loop/` preserved for inspection.                       |
+| `.loop/blocked`        | Markdown     | Stuck on an external blocker. Chain stops with non-zero exit, `.loop/` preserved.           |
+| `.loop/log.txt`        | Append-only  | Timestamped activity log. Written by the wrapper and the hook.                              |
 
 ### Priority ordering
 
@@ -87,15 +87,15 @@ Initial contents (written by `scripts/run-loop.sh start`):
 }
 ```
 
-| Field | Maintained by | Notes |
-|-------|----------------|-------|
-| `active_phase` | You (each session) | e.g. `"P-3"`. Set when picking up work, clear when phase done. |
-| `active_task` | You (each session) | e.g. `"T-3.2"`. The single task currently in flight. |
-| `completed_this_session` | You (append) | Array of task IDs completed in this chain run. Append, never replace. |
-| `session_count` | Wrapper | Incremented automatically after each iteration. |
-| `started_at` | Wrapper | Written once at `start`. Never modify. |
-| `last_update` | Wrapper + you | Wrapper bumps it; you may bump it too when you write meaningful state. |
-| `max_chain` | Wrapper (default 20) | Hard cap on chain iterations. You may edit this if a phase legitimately needs more — but consider whether the plan needs smaller tasks. |
+| Field                    | Maintained by        | Notes                                                                                                                                   |
+| ------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `active_phase`           | You (each session)   | e.g. `"P-3"`. Set when picking up work, clear when phase done.                                                                          |
+| `active_task`            | You (each session)   | e.g. `"T-3.2"`. The single task currently in flight.                                                                                    |
+| `completed_this_session` | You (append)         | Array of task IDs completed in this chain run. Append, never replace.                                                                   |
+| `session_count`          | Wrapper              | Incremented automatically after each iteration.                                                                                         |
+| `started_at`             | Wrapper              | Written once at `start`. Never modify.                                                                                                  |
+| `last_update`            | Wrapper + you        | Wrapper bumps it; you may bump it too when you write meaningful state.                                                                  |
+| `max_chain`              | Wrapper (default 20) | Hard cap on chain iterations. You may edit this if a phase legitimately needs more — but consider whether the plan needs smaller tasks. |
 
 **How to update without clobbering:** prefer `jq` if available; otherwise read the file, change only the fields you own, write the whole object back. Never delete fields you didn't add.
 
@@ -133,6 +133,7 @@ PIVOT — P-3 / T-3.2 partway through.
 What I found: <one short paragraph>
 
 Options I see:
+
 1. <option A> — pros / cons
 2. <option B> — pros / cons
 
@@ -196,11 +197,13 @@ JUST DID: <one line> (commit <short SHA>).
 NEXT: <task ID> — <one-line description>. See docs/QUEUE.md for full row.
 
 CONTEXT:
+
 - <file or path the next session should open first>
 - <recent decision, gotcha, or constraint>
 - <links to relevant ADRs or skills>
 
 RE-READ:
+
 - .agents/skills/autonomous-loop/SKILL.md (sentinel protocol)
 - CLAUDE.md (project conventions)
 - docs/QUEUE.md (current work queue)
@@ -321,13 +324,13 @@ ls -l .claude/hooks/autonomous-handoff.sh   # should show -rwxr-xr-x
 
 ## 15. Failure modes and recovery
 
-| Symptom | Likely cause | Recovery |
-|--------|--------------|----------|
+| Symptom                                                                      | Likely cause                                                                | Recovery                                                                                                     |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Wrapper exits with `🚧 Blocked: Session ended without writing a sentinel...` | A session ended without sentinel discipline; the hook auto-wrote `blocked`. | Read `.loop/log.txt`, inspect recent commits, fix root cause, `scripts/run-loop.sh stop` then `start` again. |
-| Wrapper hits `⛔ Hit max chain (20)` | Plan too big or chain stuck in a loop. | Stop, inspect `state.json`, re-plan with smaller tasks, restart. |
-| `next-prompt.md` empty and no sentinel | Bug in a session — should have been caught by the hook. | Read `state.json` for last known task; manually write `next-prompt.md` or `pivot`, restart. |
-| Wrapper refuses to `start` ("already ON") | `.loop/` exists from a previous run that didn't terminate cleanly. | `scripts/run-loop.sh stop`, then `start`. |
-| `claude` CLI exits non-zero with no sentinel | Likely a transient error (rate limit, network). | Wrapper exits with that rc; check `.loop/log.txt`, restart manually if appropriate. |
+| Wrapper hits `⛔ Hit max chain (20)`                                         | Plan too big or chain stuck in a loop.                                      | Stop, inspect `state.json`, re-plan with smaller tasks, restart.                                             |
+| `next-prompt.md` empty and no sentinel                                       | Bug in a session — should have been caught by the hook.                     | Read `state.json` for last known task; manually write `next-prompt.md` or `pivot`, restart.                  |
+| Wrapper refuses to `start` ("already ON")                                    | `.loop/` exists from a previous run that didn't terminate cleanly.          | `scripts/run-loop.sh stop`, then `start`.                                                                    |
+| `claude` CLI exits non-zero with no sentinel                                 | Likely a transient error (rate limit, network).                             | Wrapper exits with that rc; check `.loop/log.txt`, restart manually if appropriate.                          |
 
 ---
 

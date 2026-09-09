@@ -109,12 +109,7 @@ module.exports = defineConfig([
     // generators into the app bundle. Test files (their own test-infra home
     // included) still need it.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: [
-      "src/**/*.test.*",
-      "src/__tests__/**",
-      "src/testing/**",
-      "src/test-utils/**",
-    ],
+    ignores: ["src/**/*.test.*", "src/__tests__/**", "src/testing/**", "src/test-utils/**"],
     rules: {
       "no-restricted-imports": [
         "error",

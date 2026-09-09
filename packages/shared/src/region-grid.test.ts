@@ -123,10 +123,7 @@ describe("regionCellsForBbox (T-6.5 — the R-places-7 secondary-trigger consume
 
   it("hard-caps a huge bbox at maxCells, keeping the center-most cells", () => {
     // A near-global viewport: the cap must bound the RESULT and the work.
-    const cells = regionCellsForBbox(
-      { minLat: -80, minLng: -170, maxLat: 80, maxLng: 170 },
-      9,
-    );
+    const cells = regionCellsForBbox({ minLat: -80, minLng: -170, maxLat: 80, maxLng: 170 }, 9);
     expect(cells).toHaveLength(9);
     // Box center (0, 0) → cell r:0:0 first; the rest are its ring-1 ring.
     expect(cells[0]?.key).toBe("r:0:0");
@@ -148,24 +145,21 @@ describe("regionCellsForBbox (T-6.5 — the R-places-7 secondary-trigger consume
     const polar = regionCellsForBbox({ minLat: 89.6, minLng: 0, maxLat: 90, maxLng: 0.4 }, 50);
     expect(polar.map((c) => c.key)).toEqual(["r:179:0"]);
 
-    const edge = regionCellsForBbox(
-      { minLat: 0, minLng: 179.6, maxLat: 0.4, maxLng: 180 },
-      50,
-    );
+    const edge = regionCellsForBbox({ minLat: 0, minLng: 179.6, maxLat: 0.4, maxLng: 180 }, 50);
     // [179.5, 180) is cell 359; the lng=180 boundary belongs to the wrapped
     // -360 cell — exactly regionCellAt(0, 180)'s answer.
     expect(new Set(edge.map((c) => c.key))).toEqual(new Set(["r:0:359", "r:0:-360"]));
   });
 
   it("rejects inverted boxes, bad coordinates, and non-positive caps loudly", () => {
-    expect(() =>
-      regionCellsForBbox({ minLat: 40, minLng: 0, maxLat: 39, maxLng: 1 }, 9),
-    ).toThrow(RangeError);
-    expect(() =>
-      regionCellsForBbox({ minLat: 0, minLng: -181, maxLat: 1, maxLng: 0 }, 9),
-    ).toThrow(RangeError);
-    expect(() =>
-      regionCellsForBbox({ minLat: 0, minLng: 0, maxLat: 1, maxLng: 1 }, 0),
-    ).toThrow(RangeError);
+    expect(() => regionCellsForBbox({ minLat: 40, minLng: 0, maxLat: 39, maxLng: 1 }, 9)).toThrow(
+      RangeError,
+    );
+    expect(() => regionCellsForBbox({ minLat: 0, minLng: -181, maxLat: 1, maxLng: 0 }, 9)).toThrow(
+      RangeError,
+    );
+    expect(() => regionCellsForBbox({ minLat: 0, minLng: 0, maxLat: 1, maxLng: 1 }, 0)).toThrow(
+      RangeError,
+    );
   });
 });

@@ -152,7 +152,8 @@ export function itineraryPinFeatures(input: ItineraryPinInput): PinFeatureCollec
   const features: PinFeature[] = [];
   for (const item of input.items) {
     const placeId =
-      item.place_id ?? (item.booking_id !== null ? (bookingPlaceById.get(item.booking_id) ?? null) : null);
+      item.place_id ??
+      (item.booking_id !== null ? (bookingPlaceById.get(item.booking_id) ?? null) : null);
     if (placeId === null) continue;
     const coordinate = input.placeIndex.get(placeId);
     if (coordinate === undefined) continue;
@@ -237,7 +238,13 @@ export interface MapPressFeature {
 
 export type MapPressTarget =
   | { kind: "cluster"; feature: MapPressFeature }
-  | { kind: "pin"; family: PinFamily; placeId: string | null; itemId: string | null; photoId: string | null }
+  | {
+      kind: "pin";
+      family: PinFamily;
+      placeId: string | null;
+      itemId: string | null;
+      photoId: string | null;
+    }
   | { kind: "none" };
 
 /**

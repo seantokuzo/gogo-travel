@@ -28,17 +28,20 @@ Status values come from [ADR-002 § Decision](../../../docs/decisions/ADR-002-st
 ## P-N: "Theme Name" — status: in-progress
 
 ### Success Criteria
+
 - [ ] User can do X
 - [ ] User can do Y
 - [ ] System handles Z
 
 ### Tasks
+
 - T-1 (frontend) — description — status: done — PR #12
 - T-2 (backend) — description — status: in-progress — depends_on: []
 - T-3 (frontend) — description — status: queued — depends_on: [T-2]
 - T-4 (integration) — description — status: queued — depends_on: [T-1, T-2]
 
 ### Deferred
+
 - Idea X — queued as T-N in P-(N+1), or filed as B-N if it's a bug
 ```
 
@@ -51,12 +54,14 @@ The orchestrator computes runtime waves at execution time from `status` + `depen
 Ask: **"What can the user do after this phase that they can't do now?"**
 
 The answer should be concrete and observable:
+
 - "User can log in and see their dashboard" (good)
 - "Improve the architecture" (bad — not user-observable)
 
 ### 2. Decompose into Tasks (`T-N`)
 
 Break the goal into atomic tasks. Each task should:
+
 - Touch ONE component/domain
 - Be completable in one agent session
 - Result in one atomic commit (one task = one commit). Canonical PR sizing rule: [ADR-001 § PR sizing](../../../docs/decisions/ADR-001-naming-convention.md#pr-sizing)
@@ -86,12 +91,12 @@ Waves are computed by the orchestrator at execution time, not stored in QUEUE.md
 
 Not time — complexity:
 
-| Size | Description | Agent Sessions |
-|------|-------------|---------------|
-| **S** | Single file, clear pattern | 1 session |
-| **M** | Multiple files, some decisions | 1-2 sessions |
-| **L** | Cross-cutting, architecture decisions | 2-3 sessions |
-| **XL** | Should probably be split into smaller tasks | Split it |
+| Size   | Description                                 | Agent Sessions |
+| ------ | ------------------------------------------- | -------------- |
+| **S**  | Single file, clear pattern                  | 1 session      |
+| **M**  | Multiple files, some decisions              | 1-2 sessions   |
+| **L**  | Cross-cutting, architecture decisions       | 2-3 sessions   |
+| **XL** | Should probably be split into smaller tasks | Split it       |
 
 ## Prioritization
 
@@ -121,11 +126,13 @@ This is the live work queue. Update task `status` as work moves:
 
 ```markdown
 ## P-1: "Hello World" — status: done
+
 - T-1 (frontend) — landing page — status: done — PR #1
 - T-2 (backend) — health check — status: done — PR #2
 - T-3 (integration) — wire up — status: done — PR #3
 
 ## P-2: "Auth & Security" — status: in-progress
+
 - T-4 (backend) — JWT issuer — status: done — PR #4
 - T-5 (frontend) — login form — status: done — PR #5 — depends_on: [T-4]
 - T-6 (backend) — session refresh — status: in-progress — depends_on: [T-4]
@@ -138,9 +145,11 @@ Update session state after milestones:
 
 ```markdown
 ## Current
+
 P-2 / T-6 in progress; T-7 queued behind it.
 
 ## Recent Decisions
+
 - Chose JWT over session cookies (see ADR-NNN — placeholder; replace with real ADR ID when locked)
 - Deferred OAuth to P-3 (queued as T-12)
 ```

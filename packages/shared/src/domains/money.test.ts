@@ -884,11 +884,7 @@ const permuted = (split: SplitSpec, rand: () => number): SplitSpec => {
   }
 };
 
-const expectCanonicalInvariants = (
-  shares: ShareAllocation[],
-  amount: number,
-  n: number,
-): void => {
+const expectCanonicalInvariants = (shares: ShareAllocation[], amount: number, n: number): void => {
   expect(sum(shares)).toBe(amount);
   expect(shares).toHaveLength(n);
   for (const s of shares) {
@@ -1143,9 +1139,9 @@ describe("request-direction caps (PR #28 R1)", () => {
     expect(ExpenseUpdateSchema.safeParse({ shares: shares(MAX_EXPENSE_SHARES) }).success).toBe(
       true,
     );
-    expect(
-      ExpenseUpdateSchema.safeParse({ shares: shares(MAX_EXPENSE_SHARES + 1) }).success,
-    ).toBe(false);
+    expect(ExpenseUpdateSchema.safeParse({ shares: shares(MAX_EXPENSE_SHARES + 1) }).success).toBe(
+      false,
+    );
   });
 
   const settlementBase = {

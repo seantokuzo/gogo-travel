@@ -108,10 +108,7 @@ function visibleCardOrder(): string[] {
     .map((node) => (node.props as { testID: string }).testID);
 }
 
-async function renderItinerary(opts?: {
-  role?: TripWithRole["role"];
-  api?: ItineraryApiOptions;
-}) {
+async function renderItinerary(opts?: { role?: TripWithRole["role"]; api?: ItineraryApiOptions }) {
   seedAuthenticated();
   const trip = makeTrip({
     id: TEST_TRIP_ID,
@@ -134,9 +131,7 @@ async function renderItinerary(opts?: {
 }
 
 function putCalls(request: jest.Mock): unknown[][] {
-  return request.mock.calls.filter(
-    (call) => (call[0] as { method?: string }).method === "PUT",
-  );
+  return request.mock.calls.filter((call) => (call[0] as { method?: string }).method === "PUT");
 }
 
 // Flat row indices (model.test pins this shape):
@@ -189,13 +184,10 @@ describe("reorder round trip (R-itin-2, R-ib-15/18)", () => {
     // Drag custom(B) onto empty Mar 2.
     await releaseDrag(2, 5);
     await waitFor(() => expect(putCalls(request)).toHaveLength(1));
-    expect(request).toHaveBeenCalledWith(
-      expect.objectContaining({ method: "PUT" }),
-      {
-        params: { tripId: TEST_TRIP_ID, day: TRIP_DAY_2 },
-        body: { item_ids: [ITEM_B_ID] },
-      },
-    );
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ method: "PUT" }), {
+      params: { tripId: TEST_TRIP_ID, day: TRIP_DAY_2 },
+      body: { item_ids: [ITEM_B_ID] },
+    });
     // B now renders after the Mar 2 header; Mar 2's empty-add row is gone.
     await waitFor(() => expect(screen.queryByTestId(`itinerary-day-add-${TRIP_DAY_2}`)).toBeNull());
   });
@@ -203,8 +195,7 @@ describe("reorder round trip (R-itin-2, R-ib-15/18)", () => {
   it("failure rolls back VISIBLY: order reverts and the ErrorBanner shows", async () => {
     const { request } = await renderItinerary({
       api: {
-        putDayOrder: () =>
-          Promise.reject(new ApiRequestError(500, "INTERNAL", "boom")),
+        putDayOrder: () => Promise.reject(new ApiRequestError(500, "INTERNAL", "boom")),
       },
     });
     await releaseDrag(2, 1);

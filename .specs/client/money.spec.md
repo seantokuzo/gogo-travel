@@ -245,13 +245,13 @@
 
 ### 2.1 Screen map (routes are canonical in navigation spec §2.1)
 
-| Route | Screen | Presentation |
-|---|---|---|
-| `money/index.tsx` | Money tab — segmented budget · expenses · balances | tab root |
-| `money/expense/new.tsx` | Add/edit expense (`?expenseId=` = edit, mirroring `itinerary/item/new`) | modal — form |
-| `money/expense/[expenseId].tsx` | Expense detail | push |
-| `money/settle/[memberId].tsx` | Settle screen (counterparty = memberId) | push; rail handoff + confirms in Sheets (nav §2.6: "settle handoff options") |
-| `money/request/[requestId].tsx` | Settle-request recipient view | push; deep-link target (R-nav-13) |
+| Route                           | Screen                                                                  | Presentation                                                                 |
+| ------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `money/index.tsx`               | Money tab — segmented budget · expenses · balances                      | tab root                                                                     |
+| `money/expense/new.tsx`         | Add/edit expense (`?expenseId=` = edit, mirroring `itinerary/item/new`) | modal — form                                                                 |
+| `money/expense/[expenseId].tsx` | Expense detail                                                          | push                                                                         |
+| `money/settle/[memberId].tsx`   | Settle screen (counterparty = memberId)                                 | push; rail handoff + confirms in Sheets (nav §2.6: "settle handoff options") |
+| `money/request/[requestId].tsx` | Settle-request recipient view                                           | push; deep-link target (R-nav-13)                                            |
 
 Entry points beyond the tab: today-tab quick action "add expense" (nav
 §2.4) opens `expense-new`; balances rows open `settle`/send-the-bill;
@@ -290,13 +290,13 @@ transfers.
 Deterministic mapping, defined once in `@gogo/shared` config (right-hand
 values are the fixed Gate-2 taxonomy):
 
-| `booking_category` | `expense_category` |
-|---|---|
-| `lodging` | `lodging` |
-| `flight` · `train` · `car_rental` · `moped_rental` | `transport` |
-| `activity` | `activities` |
-| `restaurant` | `food` |
-| `other` | `other` |
+| `booking_category`                                 | `expense_category` |
+| -------------------------------------------------- | ------------------ |
+| `lodging`                                          | `lodging`          |
+| `flight` · `train` · `car_rental` · `moped_rental` | `transport`        |
+| `activity`                                         | `activities`       |
+| `restaurant`                                       | `food`             |
+| `other`                                            | `other`            |
 
 Prefill only — user edits freely; the booking link persists as
 `expenses.booking_id` and renders on both booking detail (bookings spec's
@@ -317,13 +317,13 @@ spec §3.4).
 
 ### 2.5 Rail handoff — exact link formats (implement these; research, live-probed 2026-07-09)
 
-| Rail | Format | Notes |
-|---|---|---|
-| Venmo (app) | `venmo://paycharge?txn=pay&recipients=<user>&amount=25.50&note=<urlenc>` | `<user>` = `venmo_username` (stored bare — strip `@` at save); `txn=charge` reserved for R-cmoney-28. `venmo://users/<username>` is DEAD — never use |
-| Venmo (web fallback) | `https://account.venmo.com/pay?txn=pay&recipients=<user>&amount=25.50&note=<enc>` | Used when `canOpenURL` fails (R-cmoney-16) |
-| Cash App | `https://cash.app/$<cashtag>/25.50` | dot-decimal 2dp; **no note support**; cashtag stored bare, `$` prefixed at render; handle HEAD-validated at save (users spec side) |
-| PayPal.me | `https://paypal.me/<user>/25.50USD` | **always pin the currency code** (trip base) or the recipient's default currency applies |
-| Zelle | no link — copyable `zelle_handle` + `zelle_display_name` + amount shown adjacent | R-cmoney-19; unofficial QR format skipped v1 |
+| Rail                 | Format                                                                            | Notes                                                                                                                                                |
+| -------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Venmo (app)          | `venmo://paycharge?txn=pay&recipients=<user>&amount=25.50&note=<urlenc>`          | `<user>` = `venmo_username` (stored bare — strip `@` at save); `txn=charge` reserved for R-cmoney-28. `venmo://users/<username>` is DEAD — never use |
+| Venmo (web fallback) | `https://account.venmo.com/pay?txn=pay&recipients=<user>&amount=25.50&note=<enc>` | Used when `canOpenURL` fails (R-cmoney-16)                                                                                                           |
+| Cash App             | `https://cash.app/$<cashtag>/25.50`                                               | dot-decimal 2dp; **no note support**; cashtag stored bare, `$` prefixed at render; handle HEAD-validated at save (users spec side)                   |
+| PayPal.me            | `https://paypal.me/<user>/25.50USD`                                               | **always pin the currency code** (trip base) or the recipient's default currency applies                                                             |
+| Zelle                | no link — copyable `zelle_handle` + `zelle_display_name` + amount shown adjacent  | R-cmoney-19; unofficial QR format skipped v1                                                                                                         |
 
 Shared formatting rules: amount = trip-base cents → dot-decimal string with
 ISO-4217 minor-unit digits (2550 → `25.50`; JPY 2550 → `2550`) via the
@@ -372,34 +372,34 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
 Screen roots: `money-screen`, `expense-new-screen`, `expense-detail-screen`,
 `settle-screen`, `settle-request-screen`.
 
-| Surface | testIDs |
-|---|---|
-| Money tab | `money-segment-budget` · `money-segment-expenses` · `money-segment-balances` · `money-fab-add-expense` · `money-button-ai-estimate` · `money-toggle-simplify` · `money-input-cap-total` · `money-budget-list-item-{category}` · `money-input-cap-{category}` · `money-expense-list` · `money-expense-list-item-{expenseId}` · `money-button-filter` · `money-sheet-filter` · `money-balance-list-item-{userId}` · `money-transfer-list-item-{fromUserId}-{toUserId}` |
+| Surface          | testIDs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Money tab        | `money-segment-budget` · `money-segment-expenses` · `money-segment-balances` · `money-fab-add-expense` · `money-button-ai-estimate` · `money-toggle-simplify` · `money-input-cap-total` · `money-budget-list-item-{category}` · `money-input-cap-{category}` · `money-expense-list` · `money-expense-list-item-{expenseId}` · `money-button-filter` · `money-sheet-filter` · `money-balance-list-item-{userId}` · `money-transfer-list-item-{fromUserId}-{toUserId}`                                                                                         |
 | Add/edit expense | `expense-new-input-amount` · `expense-new-input-description` · `expense-new-picker-currency` · `expense-new-input-fx-rate` · `expense-new-input-base-amount` · `expense-new-picker-category` · `expense-new-picker-payer` · `expense-new-input-date` · `expense-new-toggle-participant-{userId}` · `expense-new-segment-split-equal` / `-exact` / `-percent` / `-shares` · `expense-new-input-share-{userId}` · `expense-new-input-percent-{userId}` · `expense-new-stepper-weight-{userId}` · `expense-new-button-booking-link` · `expense-new-button-save` |
-| Expense detail | `expense-detail-list-item-share-{userId}` · `expense-detail-button-booking` · `expense-detail-button-edit` · `expense-detail-button-delete` (ConfirmDialog derives `-confirm`/`-cancel`) |
-| Settle | `settle-button-settle-up` · `settle-input-amount` · `settle-sheet-handoff` · `settle-button-venmo` · `settle-button-cashapp` · `settle-button-paypal` · `settle-button-zelle-copy` · `settle-button-mark-settled` · `settle-picker-method` · `settle-sheet-return` (+ `-confirm`/`-cancel`) · `settle-button-request` |
-| Settle request | `settle-request-button-venmo` · `-cashapp` · `-paypal` · `-zelle-copy` · `settle-request-button-mark-settled` · `settle-request-button-back` |
+| Expense detail   | `expense-detail-list-item-share-{userId}` · `expense-detail-button-booking` · `expense-detail-button-edit` · `expense-detail-button-delete` (ConfirmDialog derives `-confirm`/`-cancel`)                                                                                                                                                                                                                                                                                                                                                                     |
+| Settle           | `settle-button-settle-up` · `settle-input-amount` · `settle-sheet-handoff` · `settle-button-venmo` · `settle-button-cashapp` · `settle-button-paypal` · `settle-button-zelle-copy` · `settle-button-mark-settled` · `settle-picker-method` · `settle-sheet-return` (+ `-confirm`/`-cancel`) · `settle-button-request`                                                                                                                                                                                                                                        |
+| Settle request   | `settle-request-button-venmo` · `-cashapp` · `-paypal` · `-zelle-copy` · `settle-request-button-mark-settled` · `settle-request-button-back`                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 (`settle-button-venmo` matches the worked example already in the navigation
 spec §2.7 — kept identical.)
 
 ### 2.9 Empty / edge / error states
 
-| Surface | Condition | Behavior |
-|---|---|---|
-| Budget | no caps, no estimates | EmptyState: "Plan your spending" + set-caps + AI CTA |
-| Budget | AI cap / kill-switch / offline / dateless | R-cmoney-3 state table |
-| Expenses | none | EmptyState + FAB pulse hint |
-| Expenses | filter yields none | "No matches" EmptyState + clear-filters action |
-| Balances | all zero | "All settled up" EmptyState |
-| Settle | counterparty has zero handles | hint + mark-as-settled only (R-cmoney-15) |
-| Settle | non-USD base trip | USD rails hidden (R-cmoney-18) |
-| Settle | rail open failure | non-blocking error; screen stays usable (R-cmoney-22) |
-| Request | settled / cancelled / resolved | resolved state, no pay buttons (R-cmoney-26) |
-| Request | unknown id | EmptyState + back to money tab |
-| Request | non-member opener | R-nav-15 no-access state (members-only v1 — R-cmoney-27, resolved Gate 2) |
-| All | query error | ErrorBanner + retry (R-ds-17) |
-| All | offline, active trip | segments mount from cache (nav §2.8 note); mutations while offline are the offline spec's queue — out of scope here |
+| Surface  | Condition                                 | Behavior                                                                                                            |
+| -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Budget   | no caps, no estimates                     | EmptyState: "Plan your spending" + set-caps + AI CTA                                                                |
+| Budget   | AI cap / kill-switch / offline / dateless | R-cmoney-3 state table                                                                                              |
+| Expenses | none                                      | EmptyState + FAB pulse hint                                                                                         |
+| Expenses | filter yields none                        | "No matches" EmptyState + clear-filters action                                                                      |
+| Balances | all zero                                  | "All settled up" EmptyState                                                                                         |
+| Settle   | counterparty has zero handles             | hint + mark-as-settled only (R-cmoney-15)                                                                           |
+| Settle   | non-USD base trip                         | USD rails hidden (R-cmoney-18)                                                                                      |
+| Settle   | rail open failure                         | non-blocking error; screen stays usable (R-cmoney-22)                                                               |
+| Request  | settled / cancelled / resolved            | resolved state, no pay buttons (R-cmoney-26)                                                                        |
+| Request  | unknown id                                | EmptyState + back to money tab                                                                                      |
+| Request  | non-member opener                         | R-nav-15 no-access state (members-only v1 — R-cmoney-27, resolved Gate 2)                                           |
+| All      | query error                               | ErrorBanner + retry (R-ds-17)                                                                                       |
+| All      | offline, active trip                      | segments mount from cache (nav §2.8 note); mutations while offline are the offline spec's queue — out of scope here |
 
 ### 2.10 Out of scope (explicit)
 
@@ -425,14 +425,14 @@ Each sized to one agent session; queued as `T-N.M` rows at build time.
 Depends on: MON-* API tasks, NAV-5 (deep-link registry), DS components
 (+ the SegmentedControl addition flagged in §2.1).
 
-| ID | Task | Covers |
-|---|---|---|
-| CMON-1 | Money tab shell: segments + budget overview (rows, caps editing, progress states) + AI estimate CTA state machine. | R-cmoney-1..4, 29, 30 |
-| CMON-2 | Expense list + filters Sheet + expense detail (+ delete Confirm). | R-cmoney-5, 13, 29, 30, 32 |
-| CMON-3 | Add/edit expense modal: integer-cents input, split picker × 4 with live shared-math preview, booking-link prefill. | R-cmoney-7..12 |
-| CMON-4 | Balances segment: nets, transfer rows, actions, request annotations. | R-cmoney-6, 29, 32 |
-| CMON-5 | Settle screen: rail buttons + gating, link builder (shared formatter), Zelle copy, mark-as-settled Sheet, return prompt. | R-cmoney-14..24 |
-| CMON-6 | Send-the-bill flow + request recipient screen + deep-link wiring. | R-cmoney-25..28 |
+| ID     | Task                                                                                                                     | Covers                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| CMON-1 | Money tab shell: segments + budget overview (rows, caps editing, progress states) + AI estimate CTA state machine.       | R-cmoney-1..4, 29, 30      |
+| CMON-2 | Expense list + filters Sheet + expense detail (+ delete Confirm).                                                        | R-cmoney-5, 13, 29, 30, 32 |
+| CMON-3 | Add/edit expense modal: integer-cents input, split picker × 4 with live shared-math preview, booking-link prefill.       | R-cmoney-7..12             |
+| CMON-4 | Balances segment: nets, transfer rows, actions, request annotations.                                                     | R-cmoney-6, 29, 32         |
+| CMON-5 | Settle screen: rail buttons + gating, link builder (shared formatter), Zelle copy, mark-as-settled Sheet, return prompt. | R-cmoney-14..24            |
+| CMON-6 | Send-the-bill flow + request recipient screen + deep-link wiring.                                                        | R-cmoney-25..28            |
 
 **Tests required (unit/integration):**
 
@@ -479,11 +479,11 @@ results recorded in the feature ledger before store submission):**
 
 ---
 
-*Trace: R-cmoney-N ↔ §2 sections inline. All 8 repeated markers resolved
+_Trace: R-cmoney-N ↔ §2 sections inline. All 8 repeated markers resolved
 at their canonical homes at Gate 2 (2026-07-09): overall cap (yes,
 optional), taxonomy (fixed 6-value enum), FX (entry-time rate + manual
 override), expense deletion (soft-delete + audit) — schema spec;
 simplification (off by default, one-tap toggle) + split metadata (resolved
 cents only) — api money spec; universal-link domain (Sean purchasing) +
 non-member recipients (app + account required) — navigation spec. Zero
-markers remain.*
+markers remain._

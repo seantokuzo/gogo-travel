@@ -7,7 +7,7 @@
 
 ## Context
 
-GoGo Travel is a mobile app whose core features skew heavily toward *during-trip*
+GoGo Travel is a mobile app whose core features skew heavily toward _during-trip_
 usage: native maps with saved places and travel times, camera/photo albums pinned
 to places, offline access on spotty connectivity, push notifications (flight
 status, itinerary), and a live "today" view. Sean approved the full extras set
@@ -25,11 +25,11 @@ platform failures).
 
 **pnpm-workspaces + Turborepo monorepo, TypeScript strict everywhere:**
 
-| Workspace | Stack |
-|-----------|-------|
-| `apps/mobile` | **Expo SDK (latest at scaffold) + React Native**, `expo-router`, TanStack Query (server state), Zustand (client state), offline-first persistence (MMKV/SQLite — pattern finalized in P-2 design), `expo-notifications` |
-| `apps/server` | **Hono** + `@hono/zod-validator`, **Drizzle ORM** on **Postgres** (Neon serverless in dev/prod; `postgres-js` + testcontainers in tests) |
-| `packages/shared` | **Zod schemas as the single source of truth** — all wire types are `z.infer`; platform-agnostic (DI for platform deps) |
+| Workspace         | Stack                                                                                                                                                                                                                   |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/mobile`     | **Expo SDK (latest at scaffold) + React Native**, `expo-router`, TanStack Query (server state), Zustand (client state), offline-first persistence (MMKV/SQLite — pattern finalized in P-2 design), `expo-notifications` |
+| `apps/server`     | **Hono** + `@hono/zod-validator`, **Drizzle ORM** on **Postgres** (Neon serverless in dev/prod; `postgres-js` + testcontainers in tests)                                                                                |
+| `packages/shared` | **Zod schemas as the single source of truth** — all wire types are `z.infer`; platform-agnostic (DI for platform deps)                                                                                                  |
 
 - **Styling:** `StyleSheet.create` + a design-token package (re-skinnable themes).
   NativeWind is NOT adopted by default — half-adopting it was a documented
@@ -37,8 +37,7 @@ platform failures).
 - **Targets:** iOS first (simulator-driven dev; Apple dev account deferred until
   push-on-device/TestFlight). Android stays compilable; verification pass
   pre-launch.
-- **Exact package versions:** pinned at P-3 scaffold via `npm view <pkg> version`
-  + `npx expo-doctor` — never from training data.
+- **Exact package versions:** pinned at P-3 scaffold via `npm view <pkg> version` + `npx expo-doctor` — never from training data.
 - **Maps SDK and AI provider:** chosen in S-2 research (separate ADRs if
   non-obvious).
 - **CI gate:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.

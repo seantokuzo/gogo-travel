@@ -76,7 +76,11 @@ describe("useMe", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(TEST_USER);
-    expect(request).toHaveBeenCalledWith(userEndpoints.getMe, {}, { signal: expect.any(AbortSignal) });
+    expect(request).toHaveBeenCalledWith(
+      userEndpoints.getMe,
+      {},
+      { signal: expect.any(AbortSignal) },
+    );
     // Close the settle→cleanup gap in act so no trailing query update escapes.
     await unmount();
   });
@@ -148,7 +152,11 @@ describe("useEntitlements", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(ENTITLEMENTS);
-    expect(request).toHaveBeenCalledWith(entitlementEndpoints.getMyEntitlements, {}, { signal: expect.any(AbortSignal) });
+    expect(request).toHaveBeenCalledWith(
+      entitlementEndpoints.getMyEntitlements,
+      {},
+      { signal: expect.any(AbortSignal) },
+    );
     await unmount();
   });
 });
@@ -164,7 +172,11 @@ describe("useSessions", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(page);
-    expect(request).toHaveBeenCalledWith(authEndpoints.listSessions, { query: {} }, { signal: expect.any(AbortSignal) });
+    expect(request).toHaveBeenCalledWith(
+      authEndpoints.listSessions,
+      { query: {} },
+      { signal: expect.any(AbortSignal) },
+    );
     await unmount();
   });
 });

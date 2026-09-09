@@ -130,7 +130,9 @@ it("no matches: the empty arm, not a broken list", async () => {
 
   await fireEvent.changeText(screen.getByTestId("map-search-input"), "zz");
 
-  expect(await screen.findByText("No places matched — try a different spelling.")).toBeOnTheScreen();
+  expect(
+    await screen.findByText("No places matched — try a different spelling."),
+  ).toBeOnTheScreen();
 });
 
 it("R-map-22 proactive: trip already offline ⇒ notice, NO request, no spinner", async () => {

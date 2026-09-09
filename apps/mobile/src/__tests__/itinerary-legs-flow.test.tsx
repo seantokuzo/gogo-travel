@@ -66,9 +66,7 @@ const openURLMock = Linking.openURL as jest.Mock;
  * unique. Tests query through the same helper the component renders with, so
  * the two cannot drift. Every chip in this suite is on day 1.
  */
-const chipId = (fromItemId: string): string =>
-  legChipTestID({ renderDay: TRIP_START, fromItemId });
-
+const chipId = (fromItemId: string): string => legChipTestID({ renderDay: TRIP_START, fromItemId });
 
 async function renderItinerary(opts?: { api?: ItineraryApiOptions; role?: "owner" | "viewer" }) {
   seedAuthenticated();
@@ -129,7 +127,12 @@ describe("chip rendering (R-itin-4/5/6)", () => {
     const items = [
       makeItineraryItem({ id: ITEM_A_ID, start_time: "09:00", sort_order: 1024 }),
       makeItineraryItem({ id: ITEM_C_ID, start_time: "11:00", sort_order: 2048 }),
-      makeItineraryItem({ id: ITEM_LODGING_ID, day: TRIP_END, start_time: "10:00", sort_order: 1024 }),
+      makeItineraryItem({
+        id: ITEM_LODGING_ID,
+        day: TRIP_END,
+        start_time: "10:00",
+        sort_order: 1024,
+      }),
     ];
     await renderItinerary({
       api: {
@@ -239,9 +242,9 @@ describe("directions handoff (R-itin-4)", () => {
     // in `deeplinks/directions.test.ts`, where a test can fail.
     await fireEvent.press(directions);
     expect(openURLMock).not.toHaveBeenCalled();
-    expect(
-      screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions-hint`),
-    ).toHaveTextContent("Needs a name or address for the destination");
+    expect(screen.getByTestId(`itinerary-leg-${ITEM_A_ID}-directions-hint`)).toHaveTextContent(
+      "Needs a name or address for the destination",
+    );
     expect(directions).toBeDisabled();
 
     await fireEvent.press(screen.getByTestId("itinerary-leg-sheet-close"));

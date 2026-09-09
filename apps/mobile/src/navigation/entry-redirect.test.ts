@@ -4,11 +4,7 @@
  * src/__tests__/entry-redirect-flow.test.tsx.
  */
 import { TEST_TRIP_ID, TRIP_B_ID, TRIP_C_ID } from "@/test-utils/ids";
-import {
-  makeActiveTrip,
-  makePastTrip,
-  makePlanningTrip,
-} from "@/test-utils/trip-fixtures";
+import { makeActiveTrip, makePastTrip, makePlanningTrip } from "@/test-utils/trip-fixtures";
 import { localTodayISO } from "./trip-defaults";
 
 import { resolveEntryTarget } from "./entry-redirect";

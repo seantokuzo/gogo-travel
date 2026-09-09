@@ -109,7 +109,7 @@ registry), provider choices for weather and object storage (escalations,
 
 - **R-notif-1 (itinerary changes by collaborators):** WHEN a trip member
   creates, updates, or deletes an itinerary item or booking THE SYSTEM SHALL
-  push to all *other* trip members (never the actor) an itinerary-change
+  push to all _other_ trip members (never the actor) an itinerary-change
   notification whose payload carries cache-invalidation hints (PLANNING
   collab sync v1: "push-notification invalidation"); WHEN multiple mutations
   by the same actor in the same trip occur within the coalescing window
@@ -133,8 +133,7 @@ registry), provider choices for weather and object storage (escalations,
   (buffer default 10 min, shared config). Local scheduling — not server
   push — because leave-by must fire offline and legs are precomputed
   exactly for offline use (schema §3.3.11). THE SYSTEM SHALL schedule only
-  a rolling window ≤ 48 h ahead (iOS caps pending local notifications at
-  64) and SHALL reschedule the window on bundle refresh, app foreground,
+  a rolling window ≤ 48 h ahead (iOS caps pending local notifications at 64) and SHALL reschedule the window on bundle refresh, app foreground,
   and any local itinerary mutation.
 - **R-notif-4 (document expiry reminders):** WHEN a document has
   `expires_at` and `remind_days_before` set and
@@ -196,7 +195,7 @@ registry), provider choices for weather and object storage (escalations,
   `NOT_FOUND` (indistinguishable from absent — contracts spec §3.5, Law #3).
 - **R-docs-2 (presigned upload):** WHEN a document file is uploaded THE
   SYSTEM SHALL mint a short-TTL presigned PUT (`POST
-  /documents/:documentId/upload-url`) and the client SHALL upload directly
+/documents/:documentId/upload-url`) and the client SHALL upload directly
   to object storage — document bytes never transit the API server.
 - **R-docs-3 (signed download only):** WHEN a document scan is viewed THE
   SYSTEM SHALL mint a short-TTL (≤ 5 min) signed GET URL after the R-docs-1
@@ -355,29 +354,29 @@ Discriminated union on `category`; common fields:
 
 Per-category extras:
 
-| Category | Extra fields | Notes |
-|---|---|---|
+| Category           | Extra fields                                                                                          | Notes                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `itinerary_change` | `invalidate: Array<'itinerary' \| 'bookings' \| 'legs' \| 'expenses' \| 'members'>`, `actor_id: Uuid` | Client maps `invalidate` scopes → TanStack Query key invalidation (today spec §2.7); `actor_id` lets a device suppress self-echo |
-| `daily_digest` | `day: ISODate` | Routes to today tab (today spec §2.8) |
-| `leave_by` | `item_id: Uuid`, `leave_at: ISODateTime` | **Local-only** — never crosses the wire; same schema for uniformity |
-| `document_expiry` | `document_id: Uuid` | |
-| `settle_up` | `request_id: Uuid` | Entity owned by money spec |
-| `flight_status` | reserved | Deferred to v2 (R-notif-6, resolved Gate 2) |
+| `daily_digest`     | `day: ISODate`                                                                                        | Routes to today tab (today spec §2.8)                                                                                            |
+| `leave_by`         | `item_id: Uuid`, `leave_at: ISODateTime`                                                              | **Local-only** — never crosses the wire; same schema for uniformity                                                              |
+| `document_expiry`  | `document_id: Uuid`                                                                                   |                                                                                                                                  |
+| `settle_up`        | `request_id: Uuid`                                                                                    | Entity owned by money spec                                                                                                       |
+| `flight_status`    | reserved                                                                                              | Deferred to v2 (R-notif-6, resolved Gate 2)                                                                                      |
 
 ### 3.4 Notification catalog (summary table)
 
-| # | Category | Trigger | Audience | Delivery | Dedup / coalesce | Route (registry) |
-|---|---|---|---|---|---|---|
-| 3.4.1 | `itinerary_change` | itinerary item / booking create·update·delete by a member | other trip members | server push | 120 s window per (trip, actor), one coalesced send | trip default tab; single-item change → item detail |
-| 3.4.2 | `daily_digest` | digest job tick crosses send-time for an active-trip day | members w/ pref on | server push (template) | once per (user, trip, day) | `/t/[tripId]` → today tab |
-| 3.4.3 | `leave_by` | scheduled locally from bundle legs + item starts | this device | **device-local** | ≤ 48 h rolling window; rescheduled on refresh (R-notif-3) | today tab, hero focused on `item_id` |
-| 3.4.4 | `document_expiry` | daily job: `today ≥ expires_at − remind_days_before` | document owner | server push | `last_reminded_at` (one reminder v1) | documents vault (`more/documents`) |
-| 3.4.5 | `settle_up` | settle-up request created (money spec) | debtor | server push | one per request | `/t/[tripId]/money/request/[requestId]` |
-| 3.4.6 | `flight_status` | — deferred to v2 (R-notif-6, resolved Gate 2) | — | — | — | reserved |
+| #     | Category           | Trigger                                                   | Audience           | Delivery               | Dedup / coalesce                                          | Route (registry)                                   |
+| ----- | ------------------ | --------------------------------------------------------- | ------------------ | ---------------------- | --------------------------------------------------------- | -------------------------------------------------- |
+| 3.4.1 | `itinerary_change` | itinerary item / booking create·update·delete by a member | other trip members | server push            | 120 s window per (trip, actor), one coalesced send        | trip default tab; single-item change → item detail |
+| 3.4.2 | `daily_digest`     | digest job tick crosses send-time for an active-trip day  | members w/ pref on | server push (template) | once per (user, trip, day)                                | `/t/[tripId]` → today tab                          |
+| 3.4.3 | `leave_by`         | scheduled locally from bundle legs + item starts          | this device        | **device-local**       | ≤ 48 h rolling window; rescheduled on refresh (R-notif-3) | today tab, hero focused on `item_id`               |
+| 3.4.4 | `document_expiry`  | daily job: `today ≥ expires_at − remind_days_before`      | document owner     | server push            | `last_reminded_at` (one reminder v1)                      | documents vault (`more/documents`)                 |
+| 3.4.5 | `settle_up`        | settle-up request created (money spec)                    | debtor             | server push            | one per request                                           | `/t/[tripId]/money/request/[requestId]`            |
+| 3.4.6 | `flight_status`    | — deferred to v2 (R-notif-6, resolved Gate 2)             | —                  | —                      | —                                                         | reserved                                           |
 
 Content templates (deterministic, R-push-9; PII posture R-push-10) live
 beside the sender in `apps/server`; exact copy is an implementation detail,
-the *inputs* per template are fixed by the table + payload schema.
+the _inputs_ per template are fixed by the table + payload schema.
 
 ### 3.5 Endpoints
 
@@ -399,6 +398,7 @@ different user moves the token. Bumps `last_seen_at`.
 **Requirements covered**: R-push-1, R-push-2 (client half), R-push-6
 
 **Tests required**:
+
 - [ ] Happy path: new token row created for caller
 - [ ] Upsert: same token re-registered by another user moves (no duplicate)
 - [ ] Re-registration bumps `last_seen_at`
@@ -415,6 +415,7 @@ Unregister on sign-out. Idempotent (deleting an absent token → 204).
 **Requirements covered**: R-push-5
 
 **Tests required**:
+
 - [ ] Happy path deletes the row; repeat call still 204
 - [ ] Another user's token → 403, row survives
 
@@ -427,6 +428,7 @@ Effective per-category preferences (stored ∪ defaults — absent = enabled).
 **Requirements covered**: R-push-4
 
 **Tests required**:
+
 - [ ] No stored prefs → all categories true
 - [ ] Stored overrides reflected
 
@@ -444,6 +446,7 @@ Writes `users.prefs.notifications`.
 **Requirements covered**: R-push-4
 
 **Tests required**:
+
 - [ ] Disable a category → subsequent send-point check skips recipient
 - [ ] Unknown key stripped, not persisted
 
@@ -462,6 +465,7 @@ posture). Provider failure is NOT an error (R-wx-2).
 **Requirements covered**: R-wx-1..4
 
 **Tests required**:
+
 - [ ] Fresh cache hit → no provider call
 - [ ] Expired cache → provider fetch + upsert
 - [ ] Provider down + stale row → 200 stale:true with old payload
@@ -480,6 +484,7 @@ schema §3.3.22 (no signed URLs in list payloads).
 **Requirements covered**: R-docs-1
 
 **Tests required**:
+
 - [ ] Returns only caller's documents (seeded with another user's rows)
 - [ ] trip_id filter narrows without leaking other users' docs
 
@@ -498,6 +503,7 @@ kind; 404 `NOT_FOUND` — trip_id the caller isn't a member of.
 **Requirements covered**: R-docs-6, R-docs-7
 
 **Tests required**:
+
 - [ ] Metadata-only create (no file) succeeds
 - [ ] remind_days_before=0 rejected
 - [ ] trip_id association requires membership
@@ -518,6 +524,7 @@ by job (photos precedent, schema §3.3.17 note).
 **Requirements covered**: R-docs-2, R-docs-4, R-docs-5
 
 **Tests required**:
+
 - [ ] Allowlisted type mints URL with TTL
 - [ ] Disallowed type / oversize rejected
 - [ ] Another user's documentId → 404
@@ -533,6 +540,7 @@ Short-TTL signed GET for the scan.
 **Requirements covered**: R-docs-1, R-docs-3
 
 **Tests required**:
+
 - [ ] Owner gets URL; TTL within bound
 - [ ] Trip member who isn't owner → 404 (Law #3 / R-db-18)
 - [ ] Metadata-only doc → 404
@@ -550,6 +558,7 @@ Update metadata: `kind`, `title`, `trip_id`, `expires_at`,
 **Requirements covered**: R-docs-1, R-docs-6
 
 **Tests required**:
+
 - [ ] Setting expiry+reminder makes the job pick it up (job test §3.6)
 - [ ] Non-owner → 404
 
@@ -562,6 +571,7 @@ Delete row; storage object cleaned by reconciliation job.
 **Requirements covered**: R-docs-1
 
 **Tests required**:
+
 - [ ] Owner deletes; non-owner → 404
 
 #### GET /trips/:tripId/packing-lists
@@ -575,6 +585,7 @@ forward compatibility with per-member lists.
 **Requirements covered**: R-pack-1
 
 **Tests required**:
+
 - [ ] Member reads; non-member → 404
 
 #### POST /trips/:tripId/packing-lists
@@ -591,6 +602,7 @@ request). One per trip (`unique(trip_id)`, resolved Gate 2).
 **Requirements covered**: R-pack-1, R-pack-4
 
 **Tests required**:
+
 - [ ] Create with/without items; viewer role rejected (403)
 - [ ] Second create for the same trip → 409
 
@@ -607,6 +619,7 @@ Last-write-wins on concurrent PATCH.
 **Requirements covered**: R-pack-2, R-pack-3
 
 **Tests required**:
+
 - [ ] Check-off round-trip preserves other items (stable ids)
 - [ ] Duplicate item id rejected
 - [ ] Offline-queued PATCH drains correctly (integration w/ today spec §2.7)
@@ -618,6 +631,7 @@ Last-write-wins on concurrent PATCH.
 **Requirements covered**: R-pack-1
 
 **Tests required**:
+
 - [ ] Editor deletes; viewer 403; non-member 404
 
 ---
@@ -627,12 +641,12 @@ Last-write-wins on concurrent PATCH.
 All non-LLM (R-push-9). Job runner mechanics belong to the server
 scaffold; contracts here:
 
-| Job | Cadence | Contract |
-|---|---|---|
-| `notification-digest` | hourly tick | For each active trip (status = derived + override, §2.6 resolved Gate 2) and member with `daily_digest` on: when destination-local time (fallback: device tz) crosses 20:00 for tomorrow's trip day and no digest sent for (user, trip, day) → build template from itinerary + legs + `weather_cache`, send (R-notif-2, resolved Gate 2) |
-| `document-expiry` | daily | Scan partial `(expires_at)` index; threshold rows without `last_reminded_at` → send + stamp (R-notif-4) |
-| `push-token-prune` | daily | Delete rows `last_seen_at < now() − 90d` (R-push-6) |
-| `push-receipt-poll` | minutes after each batch | Fetch Expo receipts; `DeviceNotRegistered` → delete token (R-push-6) |
+| Job                   | Cadence                  | Contract                                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notification-digest` | hourly tick              | For each active trip (status = derived + override, §2.6 resolved Gate 2) and member with `daily_digest` on: when destination-local time (fallback: device tz) crosses 20:00 for tomorrow's trip day and no digest sent for (user, trip, day) → build template from itinerary + legs + `weather_cache`, send (R-notif-2, resolved Gate 2) |
+| `document-expiry`     | daily                    | Scan partial `(expires_at)` index; threshold rows without `last_reminded_at` → send + stamp (R-notif-4)                                                                                                                                                                                                                                  |
+| `push-token-prune`    | daily                    | Delete rows `last_seen_at < now() − 90d` (R-push-6)                                                                                                                                                                                                                                                                                      |
+| `push-receipt-poll`   | minutes after each batch | Fetch Expo receipts; `DeviceNotRegistered` → delete token (R-push-6)                                                                                                                                                                                                                                                                     |
 
 The leg-ETA refresh job (PLANNING) is owned by the maps/itinerary domain;
 leave-by scheduling consumes its output via the bundle (R-notif-3) —
@@ -775,9 +789,9 @@ R-push-8, R-push-9, R-push-10; jobs §3.6
 
 ---
 
-*Trace: every R-push/R-notif/R-wx/R-docs/R-pack cites its design section
+_Trace: every R-push/R-notif/R-wx/R-docs/R-pack cites its design section
 inline. All markers resolved at Gate 2 (2026-07-09): §2.6 inherited
 (packing = shared per trip; destination structured; status derived +
 override; onboarding includes priming); §2.7 owned here (flight status →
 deferred to v2; digest → 20:00 destination-local, device-tz fallback;
-offline doc scans → excluded from v1). Zero markers remain.*
+offline doc scans → excluded from v1). Zero markers remain._

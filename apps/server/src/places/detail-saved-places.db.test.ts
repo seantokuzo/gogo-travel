@@ -219,7 +219,11 @@ describe.skipIf(!dockerAvailable)("T-8.1 place detail + saved-places routes (int
   const deleteSaved = (tripId: string, savedPlaceId: string, token: string) =>
     request(`/api/trips/${tripId}/saved-places/${savedPlaceId}`, token, { method: "DELETE" });
 
-  async function saveOk(tripId: string, token: string, body: unknown): Promise<SavedPlaceWithPlace> {
+  async function saveOk(
+    tripId: string,
+    token: string,
+    body: unknown,
+  ): Promise<SavedPlaceWithPlace> {
     const res = await postSaved(tripId, token, body);
     expect(res.status).toBe(201);
     return SavedPlaceWithPlaceSchema.parse(await res.json());

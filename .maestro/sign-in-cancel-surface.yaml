@@ -1,0 +1,112 @@
+# Flow 4 — the sign-in provider surface. MED feasibility (ADR-007 known limit 4).
+#
+# What this pins, all on the real native runtime where RNTL cannot reach:
+#
+#   Cell 1 — the unconfigured Google door renders VISIBLE and DISABLED. This is
+#     the T-5.7 render gate seen from the outside: configured → the
+#     hook-bearing button (`useGoogleSignIn` throws at render without a client
+#     id); unconfigured → a disabled placeholder holding its place. A build
+#     with no `EXPO_PUBLIC_GOOGLE_*` that renders an ENABLED Google button is a
+#     build whose gate has come undone.
+#
+#   Cell 2 — tapping Apple actually reaches the native provider. The system
+#     sheet appearing is proof the ASAuthorization module is wired and fired;
+#     a silent no-op button would be invisible to every unit test.
+#
+#   Cell 3 — a failed provider call SURFACES and is DISMISSIBLE. B-6 was a bare
+#     `catch` that destroyed the only signal a device QA session gets; the
+#     banner is the surface that replaced it. Here it is exercised end to end:
+#     the error appears, and `sign-in-error-dismiss` clears it.
+#
+# WHY THE SHEET IS ASSERTED BEFORE IT IS DISMISSED. `extendedWaitUntil: Close`
+# fails loudly if no sheet opened. Wrapping the tap in a `when: visible` guard
+# instead would make the cell pass on a build where the button does nothing at
+# all — the vacuous shape this repo has been bitten by (T-7.6, T-7.9).
+#
+# ── ENVIRONMENT (this is a real dependency, not a footnote) ───────────────────
+# The lane's simulator is NOT signed into an Apple Account, so tapping Apple
+# yields the system sheet "Sign in to your Apple Account / You need to sign in
+# to your Apple Account in Settings." with **Close** and **Settings** — there is
+# no "Cancel". Dismissing it is an *unavailable* outcome, not
+# `ERR_REQUEST_CANCELED`, so `signInWithApple()` throws and the banner is the
+# CORRECT response (`apple.ts` returns null only for the cancel code).
+#
+# This is machine state, not a universal invariant (S-4 round 1 / tests lane
+# advisory) — tagged `env-no-apple-account` so a reader (and, later, a runner)
+# knows this flow assumes it. On a sim signed INTO an Apple Account, tapping
+# Apple gets the real cancel sheet instead (no "Close"), `signInWithApple()`
+# returns null on `ERR_REQUEST_CANCELED`, and NO banner renders — this flow
+# goes red at the `Close` wait for purely environmental reasons. That is
+# correct: the environment changed and the pin should say so. Fix it by
+# updating the affordance here, not by loosening the assertion into something
+# both shapes satisfy.
+#
+# CONSEQUENCE — what is NOT covered here: the true user-cancel path (cancel is
+# NOT an error → no banner). Reaching it needs a simulator signed into an Apple
+# Account, which is manual, stateful, and un-reproducible in this lane. It is
+# marked, not faked. Coverage moves to the session door (env-gated test
+# session, approved 2026-09-07, wave 2).
+#
+# ── HOUSEKEEPING (learned the hard way, S-4 round 1) ──────────────────────────
+# This flow MUST leave the app clean. A system sheet or an undismissed banner
+# left standing survives `stopApp` and `launchApp: clearState: true`, and
+# wedges every flow that runs after it — one un-dismissed Apple sheet turned a
+# single real failure into 4/4 red. Cell 3 dismisses the banner as part of the
+# PIN itself (that dismissibility IS the B-6 assertion) — but that only runs on
+# the happy path, and `executionOrder.continueOnFailure` defaults to true, so a
+# failure anywhere at or after Cell 2 used to leave the sheet standing for
+# every flow after this one. `onFlowComplete` below is the actual fix: Maestro
+# runs it whether the flow passed or failed, so it dismisses whatever was left
+# on screen regardless of where execution stopped. `config.yaml`'s
+# `executionOrder.flowsOrder` also pins this flow's run position explicitly —
+# before, it ran after `deeplink-matrix` by alphabetical luck, not by design.
+appId: app.gogotravel
+name: sign-in-cancel-surface
+tags:
+  - release
+  - env-no-apple-account
+onFlowComplete:
+  - runFlow:
+      when:
+        visible: "Close"
+      commands:
+        - tapOn: "Close"
+  - runFlow:
+      when:
+        visible:
+          id: "sign-in-error-dismiss"
+      commands:
+        - tapOn:
+            id: "sign-in-error-dismiss"
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: "sign-in-screen"
+    timeout: 20000
+
+# ── Cell 1 · the Google door is present and closed ────────────────────────────
+- assertVisible:
+    id: "sign-in-button-google"
+    enabled: false
+
+# ── Cell 2 · tapping Apple reaches the native provider ────────────────────────
+- tapOn:
+    id: "sign-in-button-apple"
+- extendedWaitUntil:
+    visible: "Close"
+    timeout: 15000
+- tapOn: "Close"
+- extendedWaitUntil:
+    visible:
+      id: "sign-in-screen"
+    timeout: 20000
+
+# ── Cell 3 · the failure surfaces (B-6) and is dismissible ────────────────────
+- assertVisible:
+    id: "sign-in-error"
+- tapOn:
+    id: "sign-in-error-dismiss"
+- assertNotVisible:
+    id: "sign-in-error"

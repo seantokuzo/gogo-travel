@@ -153,9 +153,7 @@ it("WALKTHROUGH: linked rows land on ITEM DETAIL per kind with tab stacks intact
   // (routing via item/[itemId] would only R-itin-27-replace itself there).
   await fireEvent.press(await screen.findByTestId(`place-detail-list-item-${ITEM_LODGING_ID}`));
   await waitFor(() =>
-    expect(result.getPathname()).toBe(
-      `/${TEST_TRIP_ID}/itinerary/booking/${BOOKING_LODGING_ID}`,
-    ),
+    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/booking/${BOOKING_LODGING_ID}`),
   );
   expect(await screen.findByTestId("booking-detail-screen")).toBeOnTheScreen();
 
@@ -170,9 +168,7 @@ it("WALKTHROUGH: linked rows land on ITEM DETAIL per kind with tab stacks intact
   // ---- Leg 5: Add to day → the item/new modal in the itinerary stack,
   // prefilled place_visit + place (R-map-12).
   await fireEvent.press(screen.getByTestId("place-detail-button-add-to-day"));
-  await waitFor(() =>
-    expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/new`),
-  );
+  await waitFor(() => expect(result.getPathname()).toBe(`/${TEST_TRIP_ID}/itinerary/item/new`));
   expect(await screen.findByTestId("itinerary-item-new-screen")).toBeOnTheScreen();
   const params = result.getSearchParams();
   expect(params["category"]).toBe("place_visit");

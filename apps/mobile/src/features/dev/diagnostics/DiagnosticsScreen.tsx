@@ -27,12 +27,7 @@ import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 
-import {
-  explainApiBaseUrl,
-  isGoogleConfigured,
-  resolveApiBaseUrl,
-  useGoogleSignIn,
-} from "@/auth";
+import { explainApiBaseUrl, isGoogleConfigured, resolveApiBaseUrl, useGoogleSignIn } from "@/auth";
 import { AppText, Badge, Button, Card, PageHeader } from "@/components";
 
 import { installConsoleTap, readConsoleTap } from "./console-tap";

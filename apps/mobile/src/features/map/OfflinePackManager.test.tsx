@@ -21,10 +21,7 @@ import { settle } from "@/test-utils/settle";
 import { makeActiveTrip, makePastTrip } from "@/test-utils/trip-fixtures";
 
 import { OfflinePackManager } from "./OfflinePackManager";
-import {
-  clearPackAnnotationsForTests,
-  writePackAnnotation,
-} from "./offline-pack-annotation";
+import { clearPackAnnotationsForTests, writePackAnnotation } from "./offline-pack-annotation";
 import { resetOfflinePacksForTests } from "./offline-pack-controller";
 import { packRegionKeyFor } from "./offline-packs";
 
@@ -33,8 +30,9 @@ const LIGHT_STYLE = "mapbox://styles/mapbox/light-v11";
 interface OfflineManagerMock {
   getPack: jest.Mock;
 }
-const om = (jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } })
-  .__mock.offlineManager;
+const om = (
+  jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
+).__mock.offlineManager;
 
 /**
  * Saved-pack device state = annotation AND the SDK pack it records

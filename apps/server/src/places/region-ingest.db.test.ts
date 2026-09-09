@@ -202,7 +202,14 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
     // places_lat_lng_idx; a non-sargable regression (cast/abs() on the
     // column) leaves only the penalized seq scan and fails here.
     const probe: SpineRecord[] = [
-      { sourceId: "probe-1", name: "Probe Venue", lat: 38.7067, lng: -9.1459, category: null, wikiRef: null },
+      {
+        sourceId: "probe-1",
+        name: "Probe Venue",
+        lat: 38.7067,
+        lng: -9.1459,
+        category: null,
+        wikiRef: null,
+      },
     ];
     const { sql: text, params } = crossSourceDuplicateQuery(db, "fsq_os", probe).toSQL();
 
@@ -232,9 +239,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       const [staled] = await db
         .update(schema.places)
         .set({ name: "STALE NAME SENTINEL" })
-        .where(
-          and(eq(schema.places.source, "overture"), eq(schema.places.sourceId, "ovt-castelo")),
-        )
+        .where(and(eq(schema.places.source, "overture"), eq(schema.places.sourceId, "ovt-castelo")))
         .returning();
       expect(staled?.name).toBe("STALE NAME SENTINEL");
       // (b) GHOST a row — upstream disappearance is NOT row removal; a
@@ -367,10 +372,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       const sleep = vi.fn<(ms: number) => Promise<void>>(() => Promise.resolve());
       const before = await placesCount();
 
-      const outcomes = await ingestRegionCell(
-        depsWith({ datasets: {}, sleep }),
-        portoCell,
-      );
+      const outcomes = await ingestRegionCell(depsWith({ datasets: {}, sleep }), portoCell);
 
       expect(outcomes.map((o) => o.status)).toEqual(["failed", "failed"]);
       expect(outcomes[0]?.error).toMatch(/not configured/);
@@ -396,8 +398,22 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
           await Promise.resolve(); // async seam parity with the real reader
           if (opts.source === "fsq_os") return;
           const batch: RawSpineRecord[] = [
-            { sourceId: "ovt-syd-1", name: "Sydney Opera House", lat: -33.8568, lng: 151.2153, category: "landmark", wikiRef: null },
-            { sourceId: "ovt-syd-2", name: "Royal Botanic Garden", lat: -33.8642, lng: 151.2166, category: "garden", wikiRef: null },
+            {
+              sourceId: "ovt-syd-1",
+              name: "Sydney Opera House",
+              lat: -33.8568,
+              lng: 151.2153,
+              category: "landmark",
+              wikiRef: null,
+            },
+            {
+              sourceId: "ovt-syd-2",
+              name: "Royal Botanic Garden",
+              lat: -33.8642,
+              lng: 151.2166,
+              category: "garden",
+              wikiRef: null,
+            },
           ];
           yield batch;
           // Real reader errors embed the dataset location — deterministic
@@ -406,10 +422,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
         },
       };
 
-      const outcomes = await ingestRegionCell(
-        depsWith({ reader: midStreamReader }),
-        sydneyCell,
-      );
+      const outcomes = await ingestRegionCell(depsWith({ reader: midStreamReader }), sydneyCell);
 
       expect(outcomes[0]?.status).toBe("failed");
       expect(outcomes[0]?.error).toContain("mid-stream explosion");
@@ -445,16 +458,20 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
           attempts += 1;
           if (attempts < 3) throw new Error(`transient ${attempts}`);
           yield [
-            { sourceId: "ovt-paris-1", name: "Tour Eiffel", lat: 48.8584, lng: 2.2945, category: "landmark", wikiRef: null },
+            {
+              sourceId: "ovt-paris-1",
+              name: "Tour Eiffel",
+              lat: 48.8584,
+              lng: 2.2945,
+              category: "landmark",
+              wikiRef: null,
+            },
           ] satisfies RawSpineRecord[];
         },
       };
       const sleep = vi.fn<(ms: number) => Promise<void>>(() => Promise.resolve());
 
-      const outcomes = await ingestRegionCell(
-        depsWith({ reader: flakyReader, sleep }),
-        parisCell,
-      );
+      const outcomes = await ingestRegionCell(depsWith({ reader: flakyReader, sleep }), parisCell);
 
       expect(outcomes[0]).toMatchObject({ source: "overture", status: "ready", rowCount: 1 });
       expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([1_000, 2_000]);
@@ -485,12 +502,26 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
           if (opts.source === "overture") {
             if (!overtureHealthy) throw new Error("overture snapshot unavailable");
             yield [
-              { sourceId: "ovt-rome-market", name: "Mercato Centrale Roma", lat: 41.90101, lng: 12.50121, category: "market", wikiRef: null },
+              {
+                sourceId: "ovt-rome-market",
+                name: "Mercato Centrale Roma",
+                lat: 41.90101,
+                lng: 12.50121,
+                category: "market",
+                wikiRef: null,
+              },
             ] satisfies RawSpineRecord[];
             return;
           }
           yield [
-            { sourceId: "fsq-rome-twin", name: "Mercato Centrale Roma", lat: 41.901, lng: 12.5012, category: fsqCategory, wikiRef: null },
+            {
+              sourceId: "fsq-rome-twin",
+              name: "Mercato Centrale Roma",
+              lat: 41.901,
+              lng: 12.5012,
+              category: fsqCategory,
+              wikiRef: null,
+            },
           ] satisfies RawSpineRecord[];
         },
       };
@@ -532,7 +563,10 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
   describe("trip-create + destination-change triggers", () => {
     let app: ReturnType<typeof createApp>;
     let signer: AccessTokenSigner;
-    let trigger: { enqueueDestination: ReturnType<typeof vi.fn>; enqueueSearchMiss: ReturnType<typeof vi.fn> };
+    let trigger: {
+      enqueueDestination: ReturnType<typeof vi.fn>;
+      enqueueSearchMiss: ReturnType<typeof vi.fn>;
+    };
 
     let seq = 0;
     const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;

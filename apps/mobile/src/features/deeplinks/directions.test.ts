@@ -124,9 +124,7 @@ describe("directionsUrlFor — the guard the UI cannot pin (R-itin-4)", () => {
 
   it("agrees with what the builder produced, end to end", () => {
     const ready = buildDirectionsUrl({ origin: "A", destination: "B", mode: "walking" });
-    expect(directionsUrlFor(ready)).toBe(
-      `${BASE}&origin=A&destination=B&travelmode=walking`,
-    );
+    expect(directionsUrlFor(ready)).toBe(`${BASE}&origin=A&destination=B&travelmode=walking`);
     // The unnamed-place_visit shape: no URL is constructed at all, so there is
     // nothing a mis-wired press could open (Interpretation 11).
     const unnamed = buildDirectionsUrl({ origin: "A", destination: null, mode: "walking" });

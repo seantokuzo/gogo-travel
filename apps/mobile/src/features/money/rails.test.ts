@@ -5,12 +5,7 @@
  * URL-encoding, PayPal currency pinning, JPY zero-decimal formatting, USD
  * rail gating, no-stub absence, and the R-cmoney-28 charge gate.
  */
-import {
-  buildRails,
-  railAmountText,
-  VENMO_TXN_CHARGE_ENABLED,
-  type RailHandles,
-} from "./rails";
+import { buildRails, railAmountText, VENMO_TXN_CHARGE_ENABLED, type RailHandles } from "./rails";
 
 const NO_HANDLES: RailHandles = {
   venmo_username: null,
@@ -77,9 +72,7 @@ describe("buildRails — §2.5 formats verbatim", () => {
       { ...NO_HANDLES, zelle_handle: "alex@example.com", zelle_display_name: "Alex P" },
       USD_CTX,
     );
-    expect(rails).toEqual([
-      { kind: "zelle", handle: "alex@example.com", displayName: "Alex P" },
-    ]);
+    expect(rails).toEqual([{ kind: "zelle", handle: "alex@example.com", displayName: "Alex P" }]);
   });
 
   it("orders rails per the §2.8 inventory (venmo · cashapp · paypal · zelle)", () => {

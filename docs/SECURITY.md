@@ -13,6 +13,6 @@
 
 ## Findings
 
-| ID | Date | Severity | Finding | Status | Fixed in |
-|----|------|----------|---------|--------|----------|
-| _(none yet)_ | | | | | |
+| ID           | Date | Severity | Finding | Status | Fixed in |
+| ------------ | ---- | -------- | ------- | ------ | -------- |
+| _(none yet)_ |      |          |         |        |          |

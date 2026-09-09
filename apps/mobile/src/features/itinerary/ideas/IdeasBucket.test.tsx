@@ -416,13 +416,11 @@ it("the schedule sheet's Day picker seeds from the trip start (B-10 seed-chain p
   await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day"));
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day-picker").props.date,
-  ).toBe(new Date(2027, 2, 1, 12).getTime());
-  // Close the picker card, then the sheet, draining its exit (SHEET TAX).
-  await fireEvent.press(
-    screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"),
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day-picker").props.date).toBe(
+    new Date(2027, 2, 1, 12).getTime(),
   );
+  // Close the picker card, then the sheet, draining its exit (SHEET TAX).
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-input-day-sheet-close"));
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
@@ -445,9 +443,9 @@ it("B-16 prefill: an idea that carries date/times opens the sheet with them as t
 
   // VALUES, not seeds: the rows read back their set value (DateField /
   // TimeField expose `${label}, ${value}` once a value exists)…
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, 2027-03-02");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, 2027-03-02",
+  );
   expect(
     screen.getByTestId("itinerary-ideas-schedule-input-start-time").props.accessibilityLabel,
   ).toBe("Start time (optional), 14:30");
@@ -478,9 +476,9 @@ it("B-16 prefill control: an idea without carried times still opens empty, confi
   await fireEvent.press(screen.getByTestId("itinerary-ideas-toggle"));
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
 
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, select date",
+  );
   expect(screen.getByText("Select date")).toBeOnTheScreen();
   expect(screen.getAllByText("Select time")).toHaveLength(2);
   expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
@@ -520,9 +518,9 @@ it("B-16 prefill freshness: state never leaks across bookings — close/reopen A
   // Leg 1a: the with-times idea opens prefilled…
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
   expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, 2027-03-02");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, 2027-03-02",
+  );
 
   // …close (drain the exit — SHEET TAX)…
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));
@@ -531,9 +529,9 @@ it("B-16 prefill freshness: state never leaks across bookings — close/reopen A
   // Leg 1b: …and the timeless idea reopens EMPTY — nothing carried over.
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
   expect(screen.getByText('Add "TeamLab Planets" to a day')).toBeOnTheScreen();
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, select date",
+  );
   expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
 
   // Leg 2: switch targets while the sheet is OPEN (no null pass-through).
@@ -542,9 +540,9 @@ it("B-16 prefill freshness: state never leaks across bookings — close/reopen A
   // leak class — so these assertions are the pin's discriminating arm.
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${WITH_TIMES_IDEA_ID}`));
   expect(screen.getByText('Add "Sumo tournament" to a day')).toBeOnTheScreen();
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, 2027-03-02");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, 2027-03-02",
+  );
   expect(
     screen.getByTestId("itinerary-ideas-schedule-input-start-time").props.accessibilityLabel,
   ).toBe("Start time (optional), 14:30");
@@ -555,9 +553,9 @@ it("B-16 prefill freshness: state never leaks across bookings — close/reopen A
 
   // And back the other way: with-times → timeless, still no leak.
   await fireEvent.press(screen.getByTestId(`itinerary-ideas-schedule-${BOOKING_IDEA_ID}`));
-  expect(
-    screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel,
-  ).toBe("Day, select date");
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day").props.accessibilityLabel).toBe(
+    "Day, select date",
+  );
   expect(screen.getByTestId("itinerary-ideas-schedule-button-confirm")).toBeDisabled();
 
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-sheet-close"));

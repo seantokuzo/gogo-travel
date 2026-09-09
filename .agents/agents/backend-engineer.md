@@ -23,12 +23,10 @@ flows, anything in `apps/server/src`.
 ## Landmines (inherited from sibling-repo scar tissue — real traps in this exact stack)
 
 - **🔴 Neon HTTP driver has NO transactions.** `drizzle-orm/neon-http`'s
-  `.transaction()` *throws*. Tests on `postgres-js` (testcontainers) can't catch
+  `.transaction()` _throws_. Tests on `postgres-js` (testcontainers) can't catch
   it — prod-parity trap. Any atomic multi-write needs a transaction-capable
   driver (Neon serverless **WebSocket** `Pool`, or `postgres-js`).
-- **🔴 Money is integer cents.** Never floats (Law #2). An expense + its splits
-  + settlements **must** write atomically — orphaned expenses with zero splits
-  is the known failure mode.
+- **🔴 Money is integer cents.** Never floats (Law #2). An expense + its splits + settlements **must** write atomically — orphaned expenses with zero splits is the known failure mode.
 - **🔴 Trip-scoped authz on every endpoint.** Client-supplied identity is
   hostile; every trip/expense/photo resource checks membership (IDOR is the
   security lane's #1 target). Privacy-visibility checks are Law #3.

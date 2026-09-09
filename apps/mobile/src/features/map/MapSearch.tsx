@@ -69,7 +69,12 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-export function MapSearch({ tripId, destination, onSelectResult, onResultsChange }: MapSearchProps) {
+export function MapSearch({
+  tripId,
+  destination,
+  onSelectResult,
+  onResultsChange,
+}: MapSearchProps) {
   const s = useStyles();
   const [query, setQuery] = useState("");
 
@@ -104,9 +109,7 @@ export function MapSearch({ tripId, destination, onSelectResult, onResultsChange
         // B-20: autocorrect fights foreign place names (destination-search parity).
         autoCorrect={false}
         helper={
-          trimmed !== "" && !searchable
-            ? "Keep typing — search starts at 2 characters."
-            : undefined
+          trimmed !== "" && !searchable ? "Keep typing — search starts at 2 characters." : undefined
         }
         trailing={
           query !== "" ? (
