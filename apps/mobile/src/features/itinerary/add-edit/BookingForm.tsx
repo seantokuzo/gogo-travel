@@ -56,8 +56,15 @@ import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
 
+import { ApiRequestError } from "@/auth";
 import { AppText, Badge, Button, ErrorBanner, Input, SegmentedControl } from "@/components";
-import { useCreateBooking, useScheduleBooking, useTripOffline, useUpdateBooking } from "@/data";
+import {
+  isOfflineError,
+  useCreateBooking,
+  useScheduleBooking,
+  useTripOffline,
+  useUpdateBooking,
+} from "@/data";
 import { DeeplinkPanel } from "@/features/deeplinks";
 import { DateField } from "@/features/trips";
 
@@ -88,6 +95,13 @@ import { FlightNumberField } from "./FlightNumberField";
 import { defaultZoneFor, rememberTripZone } from "./last-zone-store";
 import { OptionChips } from "./OptionChips";
 import { PlacePickerField } from "./PlacePickerField";
+import { requiredBookingFieldKeys } from "./required-fields";
+import {
+  bannerForFieldErrors,
+  failureFromApiError,
+  failureFromIssues,
+  type SaveFailure,
+} from "./save-errors";
 import { TimeField } from "./TimeField";
 import { TimeZoneField } from "./TimeZoneField";
 import { useFormConflicts } from "./useFormConflicts";
@@ -112,7 +126,20 @@ export interface BookingFormProps {
    */
   onWriteLanded(): void;
   onSaved(): void;
+  /**
+   * A save was REFUSED (B-26). The error banner is pinned to the top of the
+   * form (R-ds-17) and Save is at the bottom, so on a real phone a refusal
+   * lands entirely off screen — which is what "save still failed" with no
+   * visible reason looked like in device QA. The host owns the scroller, so
+   * it owns bringing the banner back into view.
+   */
+  onSaveBlocked?(): void;
 }
+
+/** Last-resort banner copy — used only when the failure carries no reason. */
+const CREATE_FALLBACK = "Couldn't save the booking. Try again.";
+const UPDATE_FALLBACK = "Couldn't save the changes. Try again.";
+const OFFLINE_SAVE_ERROR = "You're offline — the booking wasn't saved. Try again once you're back.";
 
 const STATUS_LABELS: Readonly<Record<BookingStatus, string>> = {
   idea: "Idea",
@@ -140,6 +167,7 @@ export function BookingForm({
   onDirty,
   onWriteLanded,
   onSaved,
+  onSaveBlocked,
 }: BookingFormProps) {
   const s = useStyles();
   const editing = booking !== undefined;
@@ -202,6 +230,50 @@ export function BookingForm({
   /** Create+schedule chain: created but the day assignment failed (module doc). */
   const [savedToIdeas, setSavedToIdeas] = useState(false);
 
+  /**
+   * B-26: the schema decides which fields carry a required marker. Read at
+   * render so the contract and the UI cannot drift (`required-fields.ts`).
+   */
+  const requiredKeys = requiredBookingFieldKeys(category);
+
+  /**
+   * A rejected mutation → the reason the SERVER gave (B-26 / B-8 SECONDARY).
+   * `ApiRequestError.message` is the envelope's own `error.message`, which
+   * the contract documents as "Human-readable, safe to display" — the
+   * service-level rules ("the category's primary end time precedes its start
+   * time") answer with exactly that and nothing structured, which is why the
+   * old generic banner erased the single most useful sentence in the flow.
+   *
+   * A transport failure is NOT a validation reason: `status === 0` says the
+   * request never reached the server, so it gets the offline copy instead of
+   * "network request failed" (R-map-22's degrade posture).
+   */
+  const saveFailureFor = (error: unknown, fallback: string): SaveFailure => {
+    if (isOfflineError(error)) {
+      return { fieldErrors: {}, banner: OFFLINE_SAVE_ERROR };
+    }
+    if (error instanceof ApiRequestError) {
+      return failureFromApiError(
+        category,
+        { status: error.status, message: error.message, details: error.details },
+        fallback,
+      );
+    }
+    return { fieldErrors: {}, banner: fallback };
+  };
+
+  /**
+   * B-26 (B-8 SECONDARY): a refusal writes its reasons onto the fields that
+   * own them and puts whatever is left in the banner. Field errors are
+   * REPLACED, not merged: this is the answer to the attempt just made, so a
+   * message from the previous one must not linger beside it.
+   */
+  const reportFailure = (failure: SaveFailure): void => {
+    setFieldErrors(failure.fieldErrors);
+    setFormError(failure.banner);
+    onSaveBlocked?.();
+  };
+
   const schedule = useScheduleBooking(trip.id, {
     onMutationSuccess: () => onSaved(),
     onMutationError: () => {
@@ -230,12 +302,12 @@ export function BookingForm({
       }
       onSaved();
     },
-    onMutationError: () => setFormError("Couldn't save the booking. Try again."),
+    onMutationError: (error) => reportFailure(saveFailureFor(error, CREATE_FALLBACK)),
   });
 
   const update = useUpdateBooking(trip.id, {
     onMutationSuccess: () => onSaved(),
-    onMutationError: () => setFormError("Couldn't save the changes. Try again."),
+    onMutationError: (error) => reportFailure(saveFailureFor(error, UPDATE_FALLBACK)),
   });
 
   const pending = create.isPending || schedule.isPending || update.isPending;
@@ -423,6 +495,11 @@ export function BookingForm({
 
     if (Object.values(errors).some((message) => message !== "") || built.details === null) {
       setFieldErrors(errors);
+      // B-26: the field messages are at the top of a form whose Save button
+      // is at the bottom — say so in the banner AND bring it into view,
+      // instead of refusing silently below the fold.
+      setFormError(bannerForFieldErrors(category, errors));
+      onSaveBlocked?.();
       return;
     }
     setFieldErrors({});
@@ -452,7 +529,9 @@ export function BookingForm({
       };
       const parsed = BookingCreateSchema.safeParse(candidate);
       if (!parsed.success) {
-        setFormError("The booking details don't validate — check the fields.");
+        // B-26 (B-8 SECONDARY): the issues name the exact key and say why.
+        // The old generic sentence threw all of that away.
+        reportFailure(failureFromIssues(category, parsed.error.issues, CREATE_FALLBACK));
         return;
       }
       create.mutate(parsed.data);
@@ -471,7 +550,7 @@ export function BookingForm({
     };
     const parsed = BookingUpdateSchema.safeParse(candidate);
     if (!parsed.success) {
-      setFormError("The booking details don't validate — check the fields.");
+      reportFailure(failureFromIssues(category, parsed.error.issues, UPDATE_FALLBACK));
       return;
     }
     update.mutate({ bookingId: booking.id, input: parsed.data });
@@ -499,6 +578,15 @@ export function BookingForm({
       {/* R-itin-20: inline, non-blocking — save is never gated on it. */}
       <ConflictNotice conflicts={conflicts} />
 
+      {/* B-26: the marker is only legible if something says what it means.
+          Rendered off the DERIVED set, so a contract with no required field
+          shows no legend rather than a lie. */}
+      {requiredKeys.size > 0 ? (
+        <AppText role="caption" color="muted" testID="itinerary-item-new-required-legend">
+          * Required
+        </AppText>
+      ) : null}
+
       <Input
         label="Name"
         value={title}
@@ -506,6 +594,7 @@ export function BookingForm({
         placeholder="e.g. Park Hyatt Tokyo"
         maxLength={200}
         error={fieldErrors["title"] || undefined}
+        required={requiredKeys.has("title")}
         testID="itinerary-item-new-input-title"
       />
 
@@ -656,6 +745,7 @@ export function BookingForm({
                   paired !== undefined && paired.date !== "" ? paired.date : trip.start_date
                 }
                 error={fieldErrors[field.key] || undefined}
+                required={requiredKeys.has(field.key)}
                 testID={`itinerary-item-new-input-${kebab(field.key)}`}
               />
             );
@@ -670,6 +760,7 @@ export function BookingForm({
                 settledValue={settledAirline}
                 maxLength={traits.maxLength}
                 error={fieldErrors[field.key] || undefined}
+                required={requiredKeys.has(field.key)}
                 testID={`itinerary-item-new-input-${kebab(field.key)}`}
               />
             );
@@ -701,6 +792,7 @@ export function BookingForm({
                 autoCorrect={traits.autoCorrect}
                 maxLength={traits.maxLength}
                 error={fieldErrors[field.key] || undefined}
+                required={requiredKeys.has(field.key)}
                 testID={`itinerary-item-new-input-${kebab(field.key)}`}
               />
             );
@@ -717,6 +809,7 @@ export function BookingForm({
               autoCorrect={traits.autoCorrect}
               maxLength={traits.maxLength}
               error={fieldErrors[field.key] || undefined}
+              required={requiredKeys.has(field.key)}
               testID={`itinerary-item-new-input-${kebab(field.key)}`}
             />
           );
@@ -737,6 +830,7 @@ export function BookingForm({
             keyboardType={minorUnitDigits(currencyText) === 0 ? "number-pad" : "decimal-pad"}
             helper="Whole amount — stored as exact cents."
             error={fieldErrors["price"] || undefined}
+            required={requiredKeys.has("price")}
             testID="itinerary-item-new-input-price"
           />
         </View>
@@ -752,6 +846,7 @@ export function BookingForm({
             autoCorrect={false}
             maxLength={3}
             error={fieldErrors["currency"] || undefined}
+            required={requiredKeys.has("currency")}
             testID="itinerary-item-new-input-currency"
           />
         </View>
@@ -769,6 +864,7 @@ export function BookingForm({
         autoCorrect={false}
         maxLength={100}
         error={fieldErrors["confirmation"] || undefined}
+        required={requiredKeys.has("confirmation")}
         testID="itinerary-item-new-input-confirmation"
       />
 

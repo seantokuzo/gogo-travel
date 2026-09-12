@@ -34,6 +34,8 @@ export interface FlightNumberFieldProps {
   autoCorrect: boolean | undefined;
   maxLength: number;
   error?: string;
+  /** B-26: schema-derived required marker (passthrough to `Input`). */
+  required?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -60,6 +62,7 @@ export function FlightNumberField({
   autoCorrect,
   maxLength,
   error,
+  required,
   testID,
 }: FlightNumberFieldProps) {
   const s = useStyles();
@@ -83,6 +86,7 @@ export function FlightNumberField({
         autoCorrect={autoCorrect}
         maxLength={maxLength}
         error={error}
+        required={required}
         testID={testID}
       />
       {suggest && airline !== null ? (
