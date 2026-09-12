@@ -69,6 +69,19 @@ describe("R-nav-21 — each modal is declared in its owning stack", () => {
     expect(screens).toHaveLength(2);
   });
 
+  /**
+   * B-25 rider: `TripSwitcher`'s "All trips" row navigates to `(trips)/index`
+   * straight from the press handler that closes the DS Sheet, with no
+   * `onExited` deferral. That is only safe while the destination is NOT a
+   * `presentation: "modal"` route (mobile.md 🔴 B-19 — the RNScreens
+   * `_updatingModals` wedge). Make the dependency explicit and falsifiable
+   * here rather than leaving it implied by the arity check above.
+   */
+  it("B-25: the trip list itself is NOT a modal — the switcher's undeferred exit depends on it", () => {
+    const { screens } = declaredConfig(TripsLayout);
+    expect(screens.find((s) => s.name === "index")?.presentation).toBeUndefined();
+  });
+
   it("itinerary tab stack declares `item/new` as a modal and pins index", () => {
     const { initialRouteName, screens } = declaredConfig(ItineraryStackLayout);
     expect(initialRouteName).toBe("index");

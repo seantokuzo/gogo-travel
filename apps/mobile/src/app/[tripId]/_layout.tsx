@@ -29,7 +29,12 @@
  *    in-flight hold, or an offline cached mount never move the stamp. The
  *    gate lives on the stamp itself (not just shell placement) so a future
  *    shell refactor can't silently regress it.
- * 5. TRIP SWITCHER (R-nav-23): hosted here, renders only with 2+ active trips.
+ * 5. TRIP SWITCHER (R-nav-23 + B-25): hosted here, and rendered on EVERY
+ *    trip screen. Entering a trip replaces the stack, so the tab shell has
+ *    no back affordance — the switcher bar is the only way out, and its
+ *    sheet carries the "All trips" row back to `(trips)`. It is therefore
+ *    NOT gated on the active-trip count any more (that gate made one-active
+ *    and all-planning/past accounts a navigation dead end).
  *
  * expo-router 57 note: the root `Tabs` export is deprecated —
  * `expo-router/js-tabs` is the sanctioned JS-tabs entry.
