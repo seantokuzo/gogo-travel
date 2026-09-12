@@ -29,7 +29,7 @@ import {
 } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useLocalSearchParams, useNavigation, useRouter, type Href } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 
 import { ConfirmDialog, EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
@@ -97,6 +97,7 @@ export default function ItineraryItemNewScreen() {
   const [writeLanded, setWriteLanded] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
   const bypassGuardRef = useRef(false);
+  const scrollRef = useRef<ScrollView>(null);
   const pendingDismissRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
 
@@ -169,6 +170,16 @@ export default function ItineraryItemNewScreen() {
   };
 
   const onDirty = (): void => setDirty(true);
+  /**
+   * B-26: a refused save renders its banner at the TOP of the form while the
+   * Save button sits at the bottom — on a phone the refusal is entirely off
+   * screen ("save still failed" with nothing visible saying why). The
+   * ScrollView is this screen's, so bringing the banner back is this
+   * screen's job.
+   */
+  const onSaveBlocked = useCallback((): void => {
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  }, []);
   /** A write landed while the form stays up (partial-success) — see BookingForm. */
   const onWriteLanded = (): void => {
     setDirty(false);
@@ -202,6 +213,7 @@ export default function ItineraryItemNewScreen() {
           onDirty={onDirty}
           onWriteLanded={onWriteLanded}
           onSaved={onSaved}
+          onSaveBlocked={onSaveBlocked}
         />
       );
     } else if (bookingQuery.isError) {
@@ -285,6 +297,7 @@ export default function ItineraryItemNewScreen() {
         onDirty={onDirty}
         onWriteLanded={onWriteLanded}
         onSaved={onSaved}
+        onSaveBlocked={onSaveBlocked}
       />
     );
   }
@@ -304,7 +317,11 @@ export default function ItineraryItemNewScreen() {
         ]}
       />
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={s.content}
+          keyboardShouldPersistTaps="handled"
+        >
           {body}
         </ScrollView>
       </KeyboardAvoidingView>

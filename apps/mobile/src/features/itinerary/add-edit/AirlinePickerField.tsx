@@ -35,6 +35,8 @@ export interface AirlinePickerFieldProps {
   /** Wire cap for `flight.airline` (booking.ts `optionalString`). */
   maxLength: number;
   error?: string;
+  /** B-26: schema-derived required marker (passthrough to `Input`). */
+  required?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -58,6 +60,7 @@ export function AirlinePickerField({
   settledValue,
   maxLength,
   error,
+  required,
   testID,
 }: AirlinePickerFieldProps) {
   const s = useStyles();
@@ -95,6 +98,7 @@ export function AirlinePickerField({
         autoCorrect={false}
         maxLength={maxLength}
         error={error}
+        required={required}
         trailing={
           value !== "" ? (
             <Pressable
