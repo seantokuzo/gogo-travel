@@ -20,6 +20,7 @@ import { DEFAULT_AIRPORTS } from "@/test-utils/reference-fixtures";
 
 import { TIME_ZONE_CATALOG_DATA } from "./time-zone-catalog.data";
 import {
+  foldZoneText,
   normalizeZoneQuery,
   searchTimeZones,
   timeZoneCatalog,
@@ -98,6 +99,31 @@ describe("normalizeZoneQuery", () => {
     expect(normalizeZoneQuery("America/Los-Angeles")).toBe("america los angeles");
     expect(normalizeZoneQuery("Los   Angeles")).toBe("los angeles");
   });
+
+  it("B-26: folds accents, so a typed 'Zürich' reaches the ASCII catalog", () => {
+    expect(normalizeZoneQuery("Zürich")).toBe("zurich");
+    expect(normalizeZoneQuery("São Paulo")).toBe("sao paulo");
+    // Decomposed input (an iOS keyboard can hand back either form) folds the
+    // same way — the strip is on the combining marks, not on precomposed
+    // code points only.
+    expect(normalizeZoneQuery("Zu\u0308rich")).toBe("zurich");
+  });
+});
+
+describe("foldZoneText (B-26 — the ONE rule both sides of the search run)", () => {
+  it("is idempotent, so folding an already-folded haystack is a no-op", () => {
+    for (const raw of ["Port-au-Prince", "São Paulo", "America/Los_Angeles", "UTC"]) {
+      expect(foldZoneText(foldZoneText(raw))).toBe(foldZoneText(raw));
+    }
+  });
+
+  it("keeps the base letter rather than dropping the accented one", () => {
+    // The failure mode this guards: a naive `[^a-z0-9]` strip turns
+    // "Bogotá" into "bogot", which matches nothing either.
+    expect(foldZoneText("Bogotá")).toBe("bogota");
+    expect(foldZoneText("Curaçao")).toBe("curacao");
+    expect(foldZoneText("Malmö")).toBe("malmo");
+  });
 });
 
 describe("searchTimeZones", () => {
@@ -121,6 +147,50 @@ describe("searchTimeZones", () => {
     expect(searchTimeZones("", 5)).toHaveLength(5);
     expect(searchTimeZones("")).toHaveLength(timeZoneCatalog().length);
     expect(searchTimeZones("   ")).toHaveLength(timeZoneCatalog().length);
+  });
+
+  it("B-26: an ACCENTED city name matches the ASCII IANA id it belongs to", () => {
+    // Each of these returned ZERO rows before B-26 — the accent never
+    // reached the catalog, so the zone was unreachable by its own name.
+    const cases: [query: string, id: string][] = [
+      ["Zürich", "Europe/Zurich"],
+      ["São Paulo", "America/Sao_Paulo"],
+      ["Bogotá", "America/Bogota"],
+      ["Cancún", "America/Cancun"],
+      ["Reykjavík", "Atlantic/Reykjavik"],
+      ["Asunción", "America/Asuncion"],
+    ];
+    for (const [query, id] of cases) {
+      expect(searchTimeZones(query).map((entry) => entry.id)).toContain(id);
+    }
+    // The unaccented spelling keeps working — the fold widened, it did not
+    // move the acceptance set.
+    expect(searchTimeZones("Zurich").map((entry) => entry.id)).toContain("Europe/Zurich");
+  });
+
+  it("B-26: a HYPHENATED zone is reachable by its own name, in either spelling", () => {
+    // The regression: the query normalizer spaced `-` while the haystack
+    // kept it, so `America/Port-au-Prince` matched NEITHER "port au prince"
+    // NOR "Port-au-Prince" — its full name was unsearchable in every
+    // spelling. All four hyphenated ids in the catalog had it.
+    for (const query of ["port au prince", "Port-au-Prince", "port_au_prince"]) {
+      expect(searchTimeZones(query).map((entry) => entry.id)).toContain("America/Port-au-Prince");
+    }
+    expect(searchTimeZones("Porto-Novo").map((entry) => entry.id)).toContain("Africa/Porto-Novo");
+    expect(searchTimeZones("Blanc-Sablon").map((entry) => entry.id)).toContain(
+      "America/Blanc-Sablon",
+    );
+    expect(searchTimeZones("Ust-Nera").map((entry) => entry.id)).toContain("Asia/Ust-Nera");
+  });
+
+  it("B-26: widening did not turn matching into 'everything matches'", () => {
+    // Falsification for both arms above: an accent-folding search that had
+    // become permissive would answer these too.
+    expect(searchTimeZones("zzzznotazone")).toEqual([]);
+    expect(searchTimeZones("Zürichhhh")).toEqual([]);
+    expect(searchTimeZones("port au prinze")).toEqual([]);
+    // Still exactly-substring: no fuzzy/edit-distance crept in.
+    expect(searchTimeZones("Zurch")).toEqual([]);
   });
 
   it("returns nothing for junk rather than everything", () => {
