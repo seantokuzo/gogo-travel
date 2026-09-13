@@ -57,6 +57,17 @@
  * for its undeferred same-tab push. So both rows navigate straight from the
  * press handler and pay no ~200 ms exit-deferral tax.
  *
+ * SAFE-AREA TOP (B-27): the bar is flush with the top of the window on every
+ * trip screen, so IT pays `insets.top` — deliberately through
+ * `useSafeAreaInsets()` and not the `useTopInset()` hook the screens' headers
+ * use. The hook returns 0 under a claiming ancestor; the bar must claim
+ * unconditionally, and reading the raw inset is what makes that true even if
+ * someone later wraps this bar in a `TopInsetBoundary` by accident. The
+ * matching half is in `[tripId]/_layout`: the tabs below sit inside a
+ * `TopInsetBoundary claimed`, so `PageHeader` there adds token spacing only
+ * instead of a second copy of the inset (~59 pt of dead space on a notch
+ * device before this). `components/top-inset.tsx` is the canonical write-up.
+ *
  * Data: the same `useTrips` query key the entry redirect warms — no second
  * fetch on the launch path, and the sheet's contents only mount while the RN
  * `Modal` is presented, so the always-on cost is the bar's one row of chrome.

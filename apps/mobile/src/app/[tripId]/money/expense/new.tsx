@@ -19,7 +19,14 @@ import { useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 
 import { useSessionStore } from "@/auth";
-import { ConfirmDialog, EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorBanner,
+  PageHeader,
+  Skeleton,
+  TopInsetBoundary,
+} from "@/components";
 import { useExpense, useTripMembers } from "@/data";
 import { ExpenseForm } from "@/features/money";
 import { useTripContext } from "@/navigation/trip-context";
@@ -186,46 +193,54 @@ export default function ExpenseNewScreen() {
     body = <Skeleton variant="rect" height={240} testID="expense-new-loading" />;
   }
 
+  // B-27: presented natively OVER the trip shell, so the switcher bar is not
+  // above it — this screen starts a fresh top edge and re-claims the safe area
+  // exactly as it did before the boundary existed.
   return (
-    <View style={s.screen} testID="expense-new-screen">
-      <PageHeader
-        title={editing ? "Edit expense" : "Add expense"}
-        testID="expense-new-header"
-        trailing={[
-          {
-            icon: "close",
-            label: "Cancel",
-            onPress: close,
-            testID: "expense-new-button-cancel",
-          },
-        ]}
-      />
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-          {body}
-        </ScrollView>
-      </KeyboardAvoidingView>
+    <TopInsetBoundary claimed={false}>
+      <View style={s.screen} testID="expense-new-screen">
+        <PageHeader
+          title={editing ? "Edit expense" : "Add expense"}
+          testID="expense-new-header"
+          trailing={[
+            {
+              icon: "close",
+              label: "Cancel",
+              onPress: close,
+              testID: "expense-new-button-cancel",
+            },
+          ]}
+        />
+        <KeyboardAvoidingView
+          style={s.flex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+            {body}
+          </ScrollView>
+        </KeyboardAvoidingView>
 
-      <ConfirmDialog
-        visible={confirmVisible}
-        title={editing ? "Discard these changes?" : "Discard this expense?"}
-        body="Nothing you've entered will be saved."
-        confirmLabel="Discard"
-        destructive
-        onConfirm={() => {
-          setConfirmVisible(false);
-          bypassGuardRef.current = true;
-          const dismiss = pendingDismissRef.current;
-          pendingDismissRef.current = null;
-          if (dismiss) dismiss();
-          else close();
-        }}
-        onCancel={() => {
-          pendingDismissRef.current = null;
-          setConfirmVisible(false);
-        }}
-        testID="expense-new-button-cancel"
-      />
-    </View>
+        <ConfirmDialog
+          visible={confirmVisible}
+          title={editing ? "Discard these changes?" : "Discard this expense?"}
+          body="Nothing you've entered will be saved."
+          confirmLabel="Discard"
+          destructive
+          onConfirm={() => {
+            setConfirmVisible(false);
+            bypassGuardRef.current = true;
+            const dismiss = pendingDismissRef.current;
+            pendingDismissRef.current = null;
+            if (dismiss) dismiss();
+            else close();
+          }}
+          onCancel={() => {
+            pendingDismissRef.current = null;
+            setConfirmVisible(false);
+          }}
+          testID="expense-new-button-cancel"
+        />
+      </View>
+    </TopInsetBoundary>
   );
 }

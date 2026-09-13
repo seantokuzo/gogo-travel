@@ -32,7 +32,14 @@ import { useLocalSearchParams, useNavigation, useRouter, type Href } from "expo-
 import { useEffect, useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
 
-import { ConfirmDialog, EmptyState, ErrorBanner, PageHeader, Skeleton } from "@/components";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorBanner,
+  PageHeader,
+  Skeleton,
+  TopInsetBoundary,
+} from "@/components";
 import { useBooking, useItinerary } from "@/data";
 import {
   ADD_OPTION_LABELS,
@@ -289,55 +296,63 @@ export default function ItineraryItemNewScreen() {
     );
   }
 
+  // B-27: presented natively OVER the trip shell, so the switcher bar is not
+  // above it — this screen starts a fresh top edge and re-claims the safe area
+  // exactly as it did before the boundary existed.
   return (
-    <View style={s.screen} testID="itinerary-item-new-screen">
-      <PageHeader
-        title={title}
-        testID="itinerary-item-new-header"
-        trailing={[
-          {
-            icon: "close",
-            label: "Cancel",
-            onPress: close,
-            testID: "itinerary-item-new-button-cancel",
-          },
-        ]}
-      />
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-          {body}
-        </ScrollView>
-      </KeyboardAvoidingView>
+    <TopInsetBoundary claimed={false}>
+      <View style={s.screen} testID="itinerary-item-new-screen">
+        <PageHeader
+          title={title}
+          testID="itinerary-item-new-header"
+          trailing={[
+            {
+              icon: "close",
+              label: "Cancel",
+              onPress: close,
+              testID: "itinerary-item-new-button-cancel",
+            },
+          ]}
+        />
+        <KeyboardAvoidingView
+          style={s.flex}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <ScrollView contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+            {body}
+          </ScrollView>
+        </KeyboardAvoidingView>
 
-      <ConfirmDialog
-        visible={confirmVisible}
-        title={writeLanded ? "Discard these changes?" : "Discard this entry?"}
-        // After a partial success the booking EXISTS (create landed, only the
-        // day assignment failed) — claiming "nothing will be saved" there
-        // reads as "your entry is gone" and invites a duplicate re-create.
-        // `dirty` correctly re-arms on any later edit, so this dialog is
-        // reachable in that state and its copy has to stay true.
-        body={
-          writeLanded
-            ? "Your booking is already saved in Ideas — only the edits you've made since then will be lost."
-            : "Nothing you've entered will be saved."
-        }
-        confirmLabel="Discard"
-        destructive
-        onConfirm={() => {
-          setConfirmVisible(false);
-          bypassGuardRef.current = true;
-          const dismiss = pendingDismissRef.current;
-          pendingDismissRef.current = null;
-          if (dismiss) dismiss();
-          else close();
-        }}
-        onCancel={() => {
-          pendingDismissRef.current = null;
-          setConfirmVisible(false);
-        }}
-        testID="itinerary-item-new-button-cancel"
-      />
-    </View>
+        <ConfirmDialog
+          visible={confirmVisible}
+          title={writeLanded ? "Discard these changes?" : "Discard this entry?"}
+          // After a partial success the booking EXISTS (create landed, only the
+          // day assignment failed) — claiming "nothing will be saved" there
+          // reads as "your entry is gone" and invites a duplicate re-create.
+          // `dirty` correctly re-arms on any later edit, so this dialog is
+          // reachable in that state and its copy has to stay true.
+          body={
+            writeLanded
+              ? "Your booking is already saved in Ideas — only the edits you've made since then will be lost."
+              : "Nothing you've entered will be saved."
+          }
+          confirmLabel="Discard"
+          destructive
+          onConfirm={() => {
+            setConfirmVisible(false);
+            bypassGuardRef.current = true;
+            const dismiss = pendingDismissRef.current;
+            pendingDismissRef.current = null;
+            if (dismiss) dismiss();
+            else close();
+          }}
+          onCancel={() => {
+            pendingDismissRef.current = null;
+            setConfirmVisible(false);
+          }}
+          testID="itinerary-item-new-button-cancel"
+        />
+      </View>
+    </TopInsetBoundary>
   );
 }
