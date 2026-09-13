@@ -382,6 +382,15 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
       const boot = await bootOnFreePort({ NODE_ENV: "production", ...vars });
       expect(boot.sawBanner).toBe(true);
       expect(boot.stderr).not.toContain("health-only");
+      // Architecture review round-1 #2: this is the ONE arm that actually
+      // exercises `index.ts`'s new B-28 migration-check wiring (full auth →
+      // `if (authDeps)` block runs → `checkMigrationState(getDb())` against
+      // the deliberately-unreachable FAKE_DB_URL → caught → warned). No
+      // other suite touches `src/index.ts` at all. Falsification: moving the
+      // migration-state block after `appOptions` is built, or dropping the
+      // `await` on `checkMigrationState`, makes this warn line never appear
+      // (or appear malformed) → RED.
+      expect(boot.stderr).toContain("[boot] could not determine migration state");
     },
   );
 
