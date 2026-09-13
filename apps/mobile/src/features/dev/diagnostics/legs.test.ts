@@ -25,6 +25,7 @@ import {
   runEnvLeg,
   runHealthLeg,
   runLastErrorLeg,
+  runMigrationsLeg,
   runSecureStoreLeg,
   type SecureStoreLike,
 } from "./legs";
@@ -497,5 +498,124 @@ describe("leg 6 — last dev error (B-6 read-back)", () => {
     // to what readConsoleTap actually returns — this line reds on drift.
     const result = await runLastErrorLeg({ readTap: readConsoleTap });
     expect(["pass", "fail"]).toContain(result.status);
+  });
+});
+
+describe("leg 7 — migration state (B-28)", () => {
+  function fetchWithBody(body: unknown, status = 200) {
+    return async () => ({ ok: status < 400, status, json: async () => body });
+  }
+
+  it("happy: pending empty → CURRENT, summary names the applied count", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: { onDisk: 4, applied: 4, pending: [] },
+      }),
+    });
+    expect(result.status).toBe("current");
+    expect(result.summary).toBe("current (4 applied)");
+    expect(result.evidence).toContain("pending: (none)");
+  });
+
+  it("happy: non-empty pending → PENDING, naming EVERY tag (not just a count)", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: {
+          onDisk: 4,
+          applied: 2,
+          pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
+        },
+      }),
+    });
+    expect(result.status).toBe("pending");
+    // Falsification: rendering just `${pending.length} pending` (a bare
+    // count) instead of the tags would still pass a length-only assertion —
+    // assert the ACTUAL tags are present, not just a count.
+    expect(result.summary).toContain("0002_lowly_venom");
+    expect(result.summary).toContain("0003_outstanding_doctor_spectrum");
+    expect(result.evidence).toContain("- 0002_lowly_venom");
+    expect(result.evidence).toContain("- 0003_outstanding_doctor_spectrum");
+  });
+
+  it("empty/absent: an older server's response (no `migrations` key) → UNKNOWN, distinct from CURRENT", async () => {
+    // Falsification: treating an absent field as "pending: []" would make
+    // this assert "current" instead — the whole point of the optional
+    // field is that absence is NOT evidence of currency.
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({ ok: true, version: "0.0.1" }),
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.summary).toContain("older server");
+  });
+
+  it("adversarial: a `migrations` object that fails the shared schema → UNKNOWN, never crashes the leg", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: { onDisk: 4, applied: -1, pending: [] },
+      }),
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.evidence).toMatch(/did not match HealthResponseSchema/);
+  });
+
+  it("error: the round-trip itself fails → UNKNOWN with the exact cause, never a generic banner", async () => {
+    const cause = new TypeError("Network request failed");
+    (cause as { cause?: unknown }).cause = new Error("connection refused to 192.168.1.69:3000");
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: async () => {
+        throw cause;
+      },
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.evidence).toContain("TypeError: Network request failed");
+    expect(result.evidence).toContain("connection refused to 192.168.1.69:3000");
+  });
+
+  it("error: a non-JSON response body → UNKNOWN, not a throw", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: async () => ({
+        ok: true,
+        status: 200,
+        json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON")),
+      }),
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.evidence).toContain("SyntaxError");
+  });
+
+  it("boundary: a throwing baseUrl resolver → UNKNOWN with that cause (unresolvable ≠ unreachable)", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => {
+        throw new Error("Insecure API base URL");
+      },
+      fetchFn: fetchWithBody({ ok: true, version: "0.0.1" }),
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.evidence).toContain("Insecure API base URL");
+  });
+
+  it("boundary: exactly one pending migration still reports it as a named tag, not just '1 pending'", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: { onDisk: 4, applied: 3, pending: ["0003_outstanding_doctor_spectrum"] },
+      }),
+    });
+    expect(result.status).toBe("pending");
+    expect(result.summary).toContain("0003_outstanding_doctor_spectrum");
   });
 });

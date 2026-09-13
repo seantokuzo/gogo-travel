@@ -13,6 +13,8 @@
  * B-5 lesson: every fact here is measured ON the device runtime that renders
  * it, never assumed from the Mac side.
  */
+import { HealthResponseSchema } from "@gogo/shared/api/health";
+
 import type { ApiBaseUrlResolution } from "@/auth";
 
 import type { ConsoleTapSnapshot } from "./console-tap";
@@ -461,6 +463,106 @@ export async function runLastErrorLeg(deps: LastErrorLegDeps): Promise<LegResult
       `capturing since: ${since}`,
       `captured: ${snap.count}`,
       `last: ${snap.last.text}`,
+    ].join("\n"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Leg 7 — server migration state (B-28)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tri-state outcome — deliberately NOT a `LegResult`: "the server didn't
+ * report this" is a real, distinct third state (an older, pre-B-28 server),
+ * not a failure of THIS leg. `summary`/`evidence` still match `LegResult`'s
+ * shape so the presentational `LegRow` can render either.
+ */
+export type MigrationsLegResult =
+  | { status: "current"; summary: string; evidence: string }
+  | { status: "pending"; summary: string; evidence: string }
+  | { status: "unknown"; summary: string; evidence: string };
+
+export interface MigrationsLegDeps {
+  /** `resolveApiBaseUrl` — the URL the app's real client would dial. */
+  baseUrl: () => string;
+  fetchFn: HealthLegDeps["fetchFn"];
+}
+
+/**
+ * GET `<base>/health` and read its optional `migrations` field.
+ * CURRENT: field present, `pending` empty. PENDING: field present, `pending`
+ * non-empty — names every tag, never just a count. UNKNOWN: base-URL
+ * resolution threw, the round-trip failed, the body didn't parse as JSON, OR
+ * the response matched `HealthResponseSchema` but omitted `migrations`
+ * (an older server that predates B-28) — all four collapse to the same
+ * "we don't know" state because none of them is evidence the DB is either
+ * current or behind.
+ */
+export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<MigrationsLegResult> {
+  let url: string;
+  try {
+    url = `${deps.baseUrl()}/health`;
+  } catch (err) {
+    return {
+      status: "unknown",
+      summary: "no base URL to probe (resolution threw)",
+      evidence: describeError(err),
+    };
+  }
+
+  let res: Awaited<ReturnType<MigrationsLegDeps["fetchFn"]>>;
+  try {
+    res = await deps.fetchFn(url);
+  } catch (err) {
+    return {
+      status: "unknown",
+      summary: "health round-trip failed — exact cause below",
+      evidence: [`GET ${url}`, describeError(err)].join("\n"),
+    };
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    return {
+      status: "unknown",
+      summary: "health response was not parseable JSON",
+      evidence: [`GET ${url}`, `status: ${res.status}`, describeError(err)].join("\n"),
+    };
+  }
+
+  const parsed = HealthResponseSchema.safeParse(body);
+  if (!parsed.success || parsed.data.migrations === undefined) {
+    return {
+      status: "unknown",
+      summary: "server does not report migration state (older server, pre-B-28)",
+      evidence: [
+        `GET ${url}`,
+        `status: ${res.status}`,
+        parsed.success
+          ? "response parsed but has no `migrations` field"
+          : `response did not match HealthResponseSchema: ${parsed.error.message}`,
+      ].join("\n"),
+    };
+  }
+
+  const { onDisk, applied, pending } = parsed.data.migrations;
+  if (pending.length === 0) {
+    return {
+      status: "current",
+      summary: `current (${applied} applied)`,
+      evidence: [`onDisk: ${onDisk}`, `applied: ${applied}`, "pending: (none)"].join("\n"),
+    };
+  }
+  return {
+    status: "pending",
+    summary: `${pending.length} pending: ${pending.join(", ")}`,
+    evidence: [
+      `onDisk: ${onDisk}`,
+      `applied: ${applied}`,
+      "pending:",
+      ...pending.map((tag) => `  - ${tag}`),
     ].join("\n"),
   };
 }

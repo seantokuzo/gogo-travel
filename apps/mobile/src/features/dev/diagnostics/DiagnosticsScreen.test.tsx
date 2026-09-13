@@ -68,8 +68,25 @@ afterEach(() => {
   resetConsoleTapForTests();
 });
 
+/**
+ * Distinguishes the health leg's fetch call from the migrations leg's: both
+ * hit the exact same `/health` URL, but `runHealthLeg` always passes an
+ * `init` (abort signal) and `runMigrationsLeg` never does (B-28's leg 7
+ * needs no cancellation) — so `init` presence is a reliable per-call
+ * discriminator without coupling to call ORDER.
+ */
+function withMigrations(migrations: unknown) {
+  return async (
+    _url: string,
+    init?: unknown,
+  ): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> =>
+    init
+      ? { ok: true, status: 200, json: async () => ({ ok: true, version: "0.0.1" }) }
+      : { ok: true, status: 200, json: async () => ({ ok: true, version: "0.0.1", migrations }) };
+}
+
 describe("DiagnosticsScreen (real default wiring)", () => {
-  it("renders unauthed with real auth modules and settles ALL six legs — no throw, no generic states", async () => {
+  it("renders unauthed with real auth modules and settles ALL seven legs — no throw, no generic states", async () => {
     // No session seeding of any kind: the panel must not depend on auth state.
     await renderWithTheme(<DiagnosticsScreen />);
     expect(screen.getByTestId("diagnostics-screen")).toBeOnTheScreen();
@@ -110,6 +127,14 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     // Leg 6 — console tap installed by the panel's own mount effect.
     expect(screen.getByTestId("diagnostics-evidence-last-error")).toHaveTextContent(/captured: 0/);
     expect(screen.getByTestId("diagnostics-status-last-error")).toHaveTextContent("PASS");
+
+    // Leg 7 — migration state (B-28): the default fixture's `/health` body
+    // has no `migrations` key (an older-server shape), so this settles to
+    // the distinct UNKNOWN state, never PASS/FAIL/CURRENT.
+    expect(screen.getByTestId("diagnostics-status-migrations")).toHaveTextContent("UNKNOWN");
+    expect(screen.getByTestId("diagnostics-evidence-migrations")).toHaveTextContent(
+      /no `migrations` field/,
+    );
   });
 
   it("health leg FAILS with the exact transport cause — never a generic banner (B-6)", async () => {
@@ -130,7 +155,15 @@ describe("DiagnosticsScreen (real default wiring)", () => {
   it("legs are individually re-runnable: rerunning health fetches again WITHOUT rerunning others", async () => {
     await renderWithTheme(<DiagnosticsScreen />);
     await drainLegs();
-    expect(fetchMock.mock.calls.length).toBe(1);
+    // Two legs hit `/health` on mount: leg 2 (health) and leg 7 (migrations,
+    // B-28) — distinguish by `init` presence (see `withMigrations` above),
+    // never by a bare total that a future leg addition would silently
+    // reinterpret.
+    const healthCallsAfterMount = fetchMock.mock.calls.filter(
+      (call) => call[1] !== undefined,
+    ).length;
+    expect(healthCallsAfterMount).toBe(1);
+    expect(fetchMock.mock.calls.length).toBe(2);
 
     const secureStore = jest.requireMock("expo-secure-store") as {
       setItemAsync: jest.Mock;
@@ -140,7 +173,13 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     await act(async () => {
       await fireEvent.press(screen.getByTestId("diagnostics-button-rerun-health"));
     });
-    expect(fetchMock.mock.calls.length).toBe(2);
+    const healthCallsAfterRerun = fetchMock.mock.calls.filter(
+      (call) => call[1] !== undefined,
+    ).length;
+    expect(healthCallsAfterRerun).toBe(2);
+    // The migrations leg (leg 7) did NOT rerun — only ITS one mount-time
+    // call has no `init`.
+    expect(fetchMock.mock.calls.filter((call) => call[1] === undefined).length).toBe(1);
     expect(screen.getByTestId("diagnostics-status-health")).toHaveTextContent("PASS");
     // Individual rerun: the secure-store leg did NOT run again (falsification:
     // wire rerun to re-mount every leg → red).
@@ -179,6 +218,65 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     // Falsification: drop the runId check in useLegRunner → the late 599
     // overwrites and both pins below red.
     expect(screen.getByTestId("diagnostics-evidence-health")).toHaveTextContent(/status: 200/);
+    expect(screen.getByTestId("diagnostics-status-health")).toHaveTextContent("PASS");
+  });
+
+  // ---------------------------------------------------------------------
+  // Leg 7 — migration state (B-28): the three rendered states.
+  // ---------------------------------------------------------------------
+
+  it("migrations leg: CURRENT (pending empty) renders green with the applied count", async () => {
+    fetchMock.mockImplementation(withMigrations({ onDisk: 4, applied: 4, pending: [] }));
+    await renderWithTheme(<DiagnosticsScreen />);
+    await drainLegs();
+    expect(screen.getByTestId("diagnostics-status-migrations")).toHaveTextContent("CURRENT");
+    const evidence = screen.getByTestId("diagnostics-evidence-migrations");
+    expect(evidence).toHaveTextContent(/applied: 4/);
+    expect(evidence).toHaveTextContent(/pending: \(none\)/);
+  });
+
+  it("migrations leg: PENDING renders red, naming EVERY pending tag (not just a count)", async () => {
+    fetchMock.mockImplementation(
+      withMigrations({
+        onDisk: 4,
+        applied: 2,
+        pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
+      }),
+    );
+    await renderWithTheme(<DiagnosticsScreen />);
+    await drainLegs();
+    expect(screen.getByTestId("diagnostics-status-migrations")).toHaveTextContent("PENDING");
+    const evidence = screen.getByTestId("diagnostics-evidence-migrations");
+    expect(evidence).toHaveTextContent(/0002_lowly_venom/);
+    expect(evidence).toHaveTextContent(/0003_outstanding_doctor_spectrum/);
+  });
+
+  it("migrations leg: field absent (older server) renders a DISTINCT unknown state — never conflated with CURRENT", async () => {
+    // Falsification: treating an absent `migrations` field as "current"
+    // would make the FIRST assertion below fail instead — the whole point
+    // of the optional field is that absence is not evidence of currency.
+    await renderWithTheme(<DiagnosticsScreen />);
+    await drainLegs();
+    const badge = screen.getByTestId("diagnostics-status-migrations");
+    expect(badge).toHaveTextContent("UNKNOWN");
+    expect(badge).not.toHaveTextContent("CURRENT");
+    expect(badge).not.toHaveTextContent("PENDING");
+  });
+
+  it("migrations leg is individually re-runnable, independent of the health leg", async () => {
+    fetchMock.mockImplementation(withMigrations({ onDisk: 4, applied: 4, pending: [] }));
+    await renderWithTheme(<DiagnosticsScreen />);
+    await drainLegs();
+    expect(screen.getByTestId("diagnostics-status-migrations")).toHaveTextContent("CURRENT");
+
+    fetchMock.mockImplementation(
+      withMigrations({ onDisk: 4, applied: 3, pending: ["0003_outstanding_doctor_spectrum"] }),
+    );
+    await act(async () => {
+      await fireEvent.press(screen.getByTestId("diagnostics-button-rerun-migrations"));
+    });
+    expect(screen.getByTestId("diagnostics-status-migrations")).toHaveTextContent("PENDING");
+    // The health leg's own status is untouched by the migrations rerun.
     expect(screen.getByTestId("diagnostics-status-health")).toHaveTextContent("PASS");
   });
 });
