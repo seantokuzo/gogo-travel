@@ -27,6 +27,11 @@
  * does. Creation failure surfaces inline and preserves the typed text; the
  * row itself becomes a non-interactive "Creating…" status while a create is
  * in flight, so a second tap has nothing to press (no double-submit).
+ * `onMutationSuccess` ignores a SUPERSEDED create (R1 B1 review): if the
+ * user picks or retypes a different destination while the POST is still in
+ * flight, the eventual success must not clobber it — the busy row's own
+ * label binds to the mutation's `variables`, never live state, for the same
+ * reason.
  *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.
@@ -179,6 +184,11 @@ export default function TripNewScreen() {
   // selectedPlace + the canonical name, clear any stale destination error).
   const createCustomDestination = useCreateCustomDestination({
     onMutationSuccess: (place) => {
+      // R1 B1 (blocking): a slow create must never clobber a destination
+      // the user picked (or retyped) while the POST was in flight. Compare
+      // the LIVE query against what actually got created, not against the
+      // text the create was fired for — a superseded create is a no-op.
+      if (destinationQuery.trim() !== place.name) return;
       setSelectedPlace(place);
       setDestinationQuery(place.name);
       if (fieldErrors.destination) {
@@ -380,7 +390,12 @@ export default function TripNewScreen() {
                   ) : createCustomDestination.isPending ? (
                     <View style={s.results}>
                       <ListItem
-                        title={`Creating "${trimmedDestinationQuery}"…`}
+                        // The busy title binds to the MUTATION'S OWN
+                        // variables, not live state (R1 B1): if the user
+                        // keeps typing while this POST is still in flight,
+                        // the label must keep naming what is actually being
+                        // created, never a newer, unrelated query.
+                        title={`Creating "${(createCustomDestination.variables ?? "").trim()}"…`}
                         leading={
                           <ActivityIndicator
                             size="small"

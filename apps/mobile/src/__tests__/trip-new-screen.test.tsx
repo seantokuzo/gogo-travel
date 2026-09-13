@@ -500,6 +500,58 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
       screen.getByText("That destination name isn't valid — try editing it."),
     ).toBeOnTheScreen();
   });
+
+  it("R1 B1 (blocking): a slow create must not clobber a destination picked while it was in flight", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const request = mockApi({
+      "GET /places/search": (input) => {
+        const q = (input as { query?: { q?: string } }).query?.q;
+        return Promise.resolve(
+          q === "Kyoto" ? { items: [KYOTO], nextCursor: null } : { items: [], nextCursor: null },
+        );
+      },
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    });
+    await renderScreen();
+
+    // Fire the custom create for "Nowhereville" and hold it open.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    await fireEvent.press(row);
+    await screen.findByTestId("trip-new-list-item-custom-spinner");
+
+    // The user changes their mind WHILE the create is still in flight and
+    // picks a real spine result instead.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+
+    // NOW the superseded create resolves — it must be a no-op.
+    await act(async () => {
+      resolveCreate(CUSTOM_PLACE);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+    const createDestinationCalls = request.mock.calls.filter(
+      ([d]) => (d as { path: string }).path === "/places",
+    );
+    expect(createDestinationCalls).toHaveLength(1); // the POST genuinely fired — this IS the race
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    // The trip must POST Kyoto — never the abandoned custom Null Island row.
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
+    );
+  });
 });
 
 describe("submit (R-tripui-7)", () => {
