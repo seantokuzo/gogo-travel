@@ -530,6 +530,25 @@ screen in settings (the profile surface lives off the trips-list header
 avatar button — navigation spec §1). `GET /auth/sessions` +
 `DELETE /auth/sessions/:id` stay in v1. (Resolved 2026-07-09, Gate 2)
 
+---
+
+### POST /auth/e2e/session (TEST-ONLY)
+
+**Auth**: None (mounted only when `E2E_SESSION_DOOR=1` and an explicit
+`NODE_ENV` of `development`/`test` and a >=32-char `E2E_SESSION_DOOR_SECRET`
+are all set; additionally gated, as defense-in-depth, on the request's
+**socket peer** being loopback/private — never a header)
+
+**Request** `E2eSessionRequest`
+
+**Response 200** `SignInResponse`
+
+**Errors**: 401 `UNAUTHENTICATED` (uniform — every failure, including "route
+not mounted," returns this identical envelope; no 400, no 404, no 429)
+
+See `.specs/testing/session-door.spec.md` (S-4 wave 2) for the full threat
+model, gates, and requirements (R-door-1..15).
+
 #### 3.4.2 Users & profile
 
 ---
@@ -868,6 +887,15 @@ until there are ≥ 2 server instances.
   failures correlate in logs without logging tokens.
 - Payment-handle writes are format+HEAD validation only; no Venmo traffic
   ever (R-user-7 — ToS red line, research § ToS red lines).
+- The E2E session door (`.specs/testing/session-door.spec.md`) is the only
+  route that issues tokens without provider verification. It mounts only on
+  a positive opt-in (`E2E_SESSION_DOOR=1` explicitly set, `NODE_ENV`
+  explicitly `development` or `test`, and a >=32-char
+  `E2E_SESSION_DOOR_SECRET`) — a defaulted/absent `NODE_ENV` never satisfies
+  it — and, as defense-in-depth, additionally rejects any request whose
+  socket peer is not loopback/private. A production server holding either
+  door variable refuses to boot, and every failure is the same uniform 401
+  an unknown path returns.
 
 ### 3.7 `@gogo/shared` additions (per R-shared-14 module pattern)
 
@@ -885,6 +913,12 @@ ciphertext) gets **no** shared schema — it never crosses the wire.
 `createPresignedUpload(key, content_type, byte_size, ttl)` +
 `objectExists(key)`; implemented per provider at P-3 (schema spec §3.7
 escalation). The avatar endpoints depend only on the port.
+
+`domains/e2e.ts` (S-4 wave 2, `.specs/testing/session-door.spec.md`) is a
+shared module deliberately excluded from the `src/index.ts` barrel —
+`E2eSessionRequest`, `e2eEndpoints` are imported only via the
+`@gogo/shared/domains/e2e` subpath, by exactly the door's server and mobile
+implementers.
 
 ### 3.8 Out of scope (explicit)
 
