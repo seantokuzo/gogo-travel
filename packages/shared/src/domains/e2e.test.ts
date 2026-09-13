@@ -16,10 +16,17 @@ import type { EndpointDescriptor } from "../api/descriptor.js";
 import { SignInResponseSchema } from "./auth.js";
 import { E2eSessionRequestSchema, E2eUserKeySchema, e2eEndpoints } from "./e2e.js";
 
-// Built via fromCharCode, never as a literal source byte/glyph, so the
+// Built via fromCharCode, never as a literal source byte, so the
 // adversarial fixtures below carry a real NUL / em dash at RUNTIME without
-// putting a raw control byte or non-ASCII glyph in this source file
-// (`.claude/rules/mobile.md` Hermes-UTF-16 landmine; ci.md ASCII posture).
+// a raw CONTROL byte landing in this source file — a literal NUL is what
+// makes git treat a file as binary (`.claude/rules/server.md`/`mobile.md`
+// NUL-byte landmine); that constraint is about control bytes, not
+// non-ASCII in general. This file's `describe` titles below carry ordinary
+// non-ASCII prose glyphs (`§`, `—`) as plain source characters with no ill
+// effect — this is a Node/vitest suite, not a Hermes mobile bundle, so the
+// separate UTF-16-storage `strings`-probe landmine (`.claude/rules/mobile.md`)
+// does not apply here.
+
 const NUL = String.fromCharCode(0);
 const EM_DASH = String.fromCharCode(0x2014);
 
