@@ -131,10 +131,9 @@ unaffected and keeps its existing day-sectioned form.
   to exceed it — no trip-length cap in v1. Paging/scroll position is
   independent per density (switching density does not attempt to preserve
   scroll offset beyond re-landing on the R-itin-17 rule).
-- **R-itin-35 (Month)** `[NEEDS CLARIFICATION: confirm this is the intended
-shape for "month" — see Questions for Sean #2 in the PR body; the
-requirement below is the recommended default]`: WHEN density is **Month**
-  THE SYSTEM SHALL render a true month-overview grid (weeks × 7 day cells,
+- **R-itin-35 (Month)** (Ruled 2026-09-13, Sean — PR #71 Question #2:
+  option (a), true month-overview grid, confirmed): WHEN density is
+  **Month** THE SYSTEM SHALL render a true month-overview grid (weeks × 7 day cells,
   no hour axis) for the month containing the current landing day
   (R-itin-17's rule); each cell SHALL show up to 3 compact item-count dots
   plus a "+N" overflow marker, and multi-day bookings (lodging spans,
@@ -296,10 +295,9 @@ requirement below is the recommended default]`: WHEN density is **Month**
   ("Athens — GMT+2", never a bare offset — same convention as
   `TimeZoneField`). WHEN the derived set has fewer than 2 distinct zones
   THE SYSTEM SHALL hide the switcher entirely (nothing to switch between).
-- **R-itin-38 (effect + default)** `[NEEDS CLARIFICATION: what selecting a
-zone actually changes — see Questions for Sean #1 in the PR body; the
-requirement below is the recommended default]`: WHEN a zone is selected
-  THE SYSTEM SHALL show it as an informational header label near the
+- **R-itin-38 (effect + default)** (Ruled 2026-09-13, Sean — PR #71
+  Question #1: option (a), display-only, no math, confirmed): WHEN a zone
+  is selected THE SYSTEM SHALL show it as an informational header label near the
   R-itin-9 view toggle ("Times shown in {city} — GMT±X") with NO effect on
   any rendered item time (itinerary items are trip-local wall-clock by
   design, §3.3 — there is nothing to convert); selection persists locally
@@ -525,8 +523,8 @@ Tapping opens a Sheet listing every derived zone (same row shape as
 `TimeZoneField`'s picker — city + "GMT±X" computed at the zone's
 description-date, B-9 precedent) plus a static "Trip default" entry that
 re-applies R-itin-38's default rule. Selecting a row closes the Sheet and
-updates the header label only — R-itin-38 flags this as the exact
-question needing Sean's confirmation before build.
+updates the header label only — R-itin-38's display-only effect, ruled
+2026-09-13.
 
 ### 2.7 Deeplink-out URL construction (exact — every row cites research)
 
@@ -658,13 +656,9 @@ convention (tokens §2.9).
   category enum value + migration), which this spec deliberately does not
   propose (Autonomy Contract #6 — scope/schema changes are Sean's call,
   not an improvisation this batch).
-- **Live timezone conversion** — R-itin-38's recommended default is a
-  display-only label; converting every item's time into the selected zone
-  (option (b) in the PR body's Question #1) is out of scope unless Sean
-  picks it.
-- **Month view's exact shape** — R-itin-35 ships the recommended true
-  month-overview grid but is marked `[NEEDS CLARIFICATION]`; see the PR
-  body's Question #2.
+- **Live timezone conversion** — R-itin-38 is display-only (Ruled
+  2026-09-13, Sean — PR #71 Question #1); converting every item's time
+  into the selected zone (the rejected option (b)) is out of scope.
 
 ---
 
@@ -708,8 +702,7 @@ original four Gate 2 (2026-07-09) markers resolved: two at the schema spec
 (multi-day → spanning item with lane/point-row rendering → R-itin-31;
 dates required), two owned here (party size → member-count default,
 inline-editable → R-itin-32; plan-mode mini-map → deferred to polish).
-**Two NEW markers added by the Sean QA feature batch 2026-09-06 (this
-amendment, pending Sean's spec sign-off — not yet a Gate):** R-itin-35
-(month view's exact shape) and R-itin-38 (timezone-switcher selection
-effect) — both ship a recommended default; see the PR body's Questions for
-Sean #1/#2. Not approvable until those two clear._
+Two markers opened by the Sean QA feature batch 2026-09-06 amendment —
+R-itin-35 (month view's exact shape) and R-itin-38 (timezone-switcher
+selection effect) — both **Ruled 2026-09-13, Sean** (PR #71 Questions
+#1/#2, both confirmed the recommended default). Zero markers remain._

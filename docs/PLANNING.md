@@ -449,11 +449,11 @@ pnpm test && pnpm build`
   the moment the four QUEUE rows below flip.
 - **Spec:** `.specs/client/itinerary.spec.md` R-itin-33..41,
   `.specs/api/itinerary-bookings.spec.md` R-ib-8 (amended),
-  `.specs/shared/contracts.spec.md` §3.4 (booking.ts sync). Two
-  `[NEEDS CLARIFICATION]` markers open (R-itin-35 month shape, R-itin-38
-  timezone-switcher effect) — see the spec PR body's Questions for Sean;
-  T-7.14 and the header-label half of T-7.12 are gated on those answers
-  specifically, not just general sign-off.
+  `.specs/shared/contracts.spec.md` §3.4 (booking.ts sync). Both spec
+  markers **Ruled 2026-09-13, Sean** (PR #71 Questions #1/#2): R-itin-35
+  month shape = true month-overview grid; R-itin-38 timezone-switcher
+  effect = display-only, no math. Zero markers remain — T-7.14 and T-7.12
+  are unblocked to their full specced scope, no longer answer-gated.
 - **Conflict analysis (file-ownership sets, so Wave 1 can run as 4
   parallel worktrees with zero shared-file writes):**
   - **T-7.10** (server+shared) — owns `apps/server/src/bookings/**`,
@@ -471,10 +471,13 @@ pnpm test && pnpm build`
     `grid/model.ts`, `GridSurface.tsx` (density prop plumbing) + a NEW
     `grid-density.ts` persistence file + a NEW `DensitySegment.tsx`
     component + tests.
-  - **T-7.14** (mobile, Wave 2) — owns a NEW
-    `apps/mobile/src/features/itinerary/month/` directory
-    (`MonthSurface.tsx`, `model.ts` + tests). `depends_on: [T-7.13]`
-    (shares the density-persistence type/key, not just convention).
+  - **T-7.14** (mobile, Wave 2 — FIRM, R-itin-35 ruled true month-overview
+    grid) — owns a NEW `apps/mobile/src/features/itinerary/month/`
+    directory: `MonthSurface.tsx` (week × 7 day-cell render, no hour
+    axis), `model.ts` (week/day-cell layout — item-count dots + "+N"
+    overflow, multi-day spanning-bar segments per R-itin-31/36, tap → Day
+    density routing) + tests. `depends_on: [T-7.13]` (shares the
+    density-persistence type/key, not just convention).
   - **T-7.15** (mobile, Wave 2) — owns
     `apps/mobile/src/features/itinerary/ideas/IdeasBucket.tsx`,
     `ideas/ScheduleSheet.tsx`, `ideas/ideas-model.ts`, plus whichever
@@ -490,9 +493,10 @@ T-7.14]`.
 - **Wave plan:** **Wave 1** (4× parallel worktrees) — T-7.10 ∥ T-7.11 ∥
   T-7.12 ∥ T-7.13. **Wave 2** (2× parallel worktrees) — T-7.14 ∥ T-7.15.
   **Wave 3** (serial) — T-7.16.
-- **Size:** T-7.10 S · T-7.11 S · T-7.12 M · T-7.13 M · T-7.14 L (new
-  component class, gated on R-itin-35's clarification — may shrink or
-  reshape once Sean answers) · T-7.15 M · T-7.16 S.
+- **Size:** T-7.10 S · T-7.11 S · T-7.12 M · T-7.13 M · T-7.14 L (final —
+  a genuinely new component class, week-grid + dot/overflow rendering +
+  spanning bars; no longer provisional now R-itin-35 is ruled) · T-7.15 M
+  · T-7.16 S.
 - **Test matrix owed (`.claude/rules/testing.md`), per task:**
   - T-7.10: happy (schedule with `status: 'booked'`) · error (illegal
     transition still 400s) · boundary (omitted `status` = byte-identical
