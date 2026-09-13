@@ -25,6 +25,7 @@ import {
   type BookingWithItems,
 } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import { ScrollView } from "react-native";
 
 import ItineraryItemNewScreen from "@/app/[tripId]/itinerary/item/new";
 import { TripProvider } from "@/navigation/trip-context";
@@ -164,6 +165,31 @@ it("no ?category= → the 10-option step; picking flight mounts its form + partn
   // their fields exist; enablement logic is DeeplinkPanel's own suite.
   expect(screen.getByTestId("itinerary-item-new-button-search-kayak")).toBeDisabled();
   expect(screen.getByTestId("itinerary-item-new-button-search-skyscanner")).toBeDisabled();
+});
+
+// ---------------------------------------------------------------------------
+// B-26 R1 (round-1 review B4) — the USER-VISIBLE half of the B-26 fix is the
+// SCROLL, not just the callback firing. `BookingForm.save-failure.test.tsx`
+// only pins `onSaveBlocked` being CALLED; nothing pinned that the screen's
+// own `ScrollView` actually moves. Sean's report was "I filled out what I
+// thought should be enough info and save still failed" — the banner rendered
+// but stayed off screen. Falsification: gutting `onSaveBlocked`'s body in
+// `app/[tripId]/itinerary/item/new.tsx` (deleting the `scrollRef.current?.
+// scrollTo(...)` call) turns this RED while every other screen/form suite
+// stays green (recorded in the PR body mutation table).
+// ---------------------------------------------------------------------------
+it("B-26 R1: a blocked save scrolls the form back to the top, not just fires a callback", async () => {
+  const scrollSpy = jest.spyOn(ScrollView.prototype, "scrollTo");
+  await renderScreen({ category: "flight" });
+
+  // Empty name — the cheapest client-side save-block, and the exact "I
+  // filled out what I thought should be enough info" shape: no server round
+  // trip needed for the banner to render off screen.
+  await fireEvent.press(screen.getByTestId("itinerary-item-new-button-save"));
+
+  expect(screen.getByTestId("itinerary-item-new-error")).toBeOnTheScreen();
+  expect(scrollSpy).toHaveBeenCalledWith({ y: 0, animated: true });
+  scrollSpy.mockRestore();
 });
 
 it("B-20: code fields uppercase as-you-type; a bad IATA code blocks save with a field error", async () => {

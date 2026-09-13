@@ -282,6 +282,13 @@ export function BookingForm({
       // claiming nothing was saved.
       setSavedToIdeas(true);
       onWriteLanded();
+      // B-26 R1 (round-1 review A4): the "saved to Ideas" warning renders at
+      // the TOP of the form (same as every other banner) while the user's
+      // finger is on Save at the BOTTOM — without this, a refusal here is
+      // the identical off-screen "it did nothing" symptom B-26 exists to
+      // kill, on the one path where something already landed server-side
+      // (retrying would duplicate the booking).
+      onSaveBlocked?.();
     },
   });
 
