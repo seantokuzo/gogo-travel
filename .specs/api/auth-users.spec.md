@@ -547,7 +547,7 @@ are all set; additionally gated, as defense-in-depth, on the request's
 not mounted," returns this identical envelope; no 400, no 404, no 429)
 
 See `.specs/testing/session-door.spec.md` (S-4 wave 2) for the full threat
-model, gates, and requirements (R-door-1..14).
+model, gates, and requirements (R-door-1..15).
 
 #### 3.4.2 Users & profile
 
