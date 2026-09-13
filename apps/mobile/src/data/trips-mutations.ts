@@ -141,16 +141,20 @@ export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place
 }
 
 /**
- * Non-blank after trim — the gate for the B-7 empty-results custom-
- * destination row, kept as a pure function (not inline JSX) on purpose:
- * `searchActive`/`results.length === 0` alone are not quite enough — a
- * `useDeferredValue` lag window can leave `searchActive` reading true
- * against a STALE deferred query for one tick after the user clears the
- * input, so the render call site needs its OWN check against the LIVE
- * query. That lag never materializes under jest's synchronous renderer
- * (`destinationQuery`/`deferredQuery` stay in lockstep there), so the JSX
- * call site can't be mutation-verified directly — this pure export can be,
- * and is (trips-mutations.test.tsx).
+ * Non-blank after trim — a pure function, used as `handleCreateCustomDestination`'s
+ * defense-in-depth guard against `deferredQuery` (B-7 review R1 A3): the
+ * render gate no longer duplicates this check — `searchActive` already
+ * requires `isSearchableDestinationQuery(deferredQuery)` (≥4 chars) before
+ * the row can render at all, which is strictly stronger than non-blank, so
+ * a SEPARATE JSX call site against the LIVE `destinationQuery` was both
+ * redundant AND wrong: a `useDeferredValue` lag window could leave
+ * `searchActive` reading true against a STALE deferred query for one tick
+ * after the user cleared the input, while the row/mutate argument (also
+ * fixed by R1 A3 to read `deferredQuery`, never `destinationQuery`) would
+ * then create a custom place for text the user never searched. That lag
+ * never materializes under jest's synchronous renderer, so this guard's
+ * call site isn't independently mutation-verifiable there either — this
+ * pure export is (trips-mutations.test.tsx).
  */
 export function isNonBlankDestinationQuery(raw: string): boolean {
   return raw.trim() !== "";

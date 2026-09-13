@@ -23,15 +23,25 @@
  * query, an inline row offers `Use "<typed text>" as a custom destination`.
  * One tap creates a permanent `source='custom'` place (`POST /places`,
  * `useCreateCustomDestination`) and selects it — no map-drop screen this
- * pass (queued separately); trip save unblocks the same way a spine pick
- * does. Creation failure surfaces inline and preserves the typed text; the
- * row itself becomes a non-interactive "Creating…" status while a create is
- * in flight, so a second tap has nothing to press (no double-submit).
+ * pass; trip save unblocks the same way a spine pick does. Creation failure
+ * surfaces inline and preserves the typed text; the row itself becomes a
+ * non-interactive "Creating…" status while a create is in flight, so a
+ * second tap has nothing to press (no double-submit).
  * `onMutationSuccess` ignores a SUPERSEDED create (R1 B1 review): if the
  * user picks or retypes a different destination while the POST is still in
  * flight, the eventual success must not clobber it — the busy row's own
  * label binds to the mutation's `variables`, never live state, for the same
- * reason.
+ * reason. The row/mutate argument itself is the SEARCHED text
+ * (`deferredQuery`), never the live `destinationQuery` (R1 A3) — a fast
+ * typist could otherwise create a place for text that was never actually
+ * searched; a failed create's error also resets on the next query change
+ * (R1 A2), and the input caps at 200 chars mirroring `PlaceNameSchema`
+ * (R1 A4). `PlaceCreateSchema` requires coordinates today, so `lat`/`lng`
+ * ride as a fixed `(0, 0)` placeholder until real coordinate capture ships
+ * as its own cross-component pass, B-7 part 3 (`B-7/nullable-custom-coords`)
+ * — until then the map tab degrades for any trip built on a custom
+ * destination (search bbox pinned to Null Island, ocean camera/offline
+ * pack); disclosed in trips.spec.md R-tripui-23.
  *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.
@@ -174,7 +184,9 @@ export default function TripNewScreen() {
   const deferredQuery = useDeferredValue(destinationQuery);
   const searchActive = selectedPlace === null && isSearchableDestinationQuery(deferredQuery);
   const search = usePlaceSearch(selectedPlace === null ? deferredQuery : "");
-  const trimmedDestinationQuery = destinationQuery.trim();
+  // The custom-destination row/create argument is the SEARCHED text, not
+  // the live query (R1 A3) — see the module doc and `handleCreateCustomDestination`.
+  const trimmedSearchedDestinationQuery = deferredQuery.trim();
 
   const createTrip = useCreateTrip();
 
@@ -201,9 +213,11 @@ export default function TripNewScreen() {
     // stops being pressable while pending) — a render race should never be
     // the ONLY thing standing between a tap and a second in-flight create.
     if (createCustomDestination.isPending) return;
-    if (!isNonBlankDestinationQuery(destinationQuery)) return;
-    createCustomDestination.mutate(destinationQuery);
-  }, [createCustomDestination, destinationQuery]);
+    // Guards `deferredQuery` (what actually gets created — R1 A3), not the
+    // live `destinationQuery`.
+    if (!isNonBlankDestinationQuery(deferredQuery)) return;
+    createCustomDestination.mutate(deferredQuery);
+  }, [createCustomDestination, deferredQuery]);
 
   const dirty = name !== "" || destinationQuery !== "" || startDate !== "" || endDate !== "";
   // The dialog decision needs the CURRENT dirty state inside a listener
@@ -349,6 +363,12 @@ export default function TripNewScreen() {
                 // Editing after a pick voids it — lat/lng must always match
                 // the visible text (structured input, no free-text fallback).
                 setSelectedPlace(null);
+                // R1 A2 (advisory): a stale create FAILURE must not survive
+                // a query change — TanStack only clears `isError` on the
+                // next `mutate()`, so without this a single failed create
+                // permanently hides the plain create-row/idle state behind
+                // the OLD error banner for every later query.
+                if (createCustomDestination.isError) createCustomDestination.reset();
                 if (fieldErrors.destination) {
                   setFieldErrors((prev) => ({ ...prev, destination: undefined }));
                 }
@@ -357,6 +377,10 @@ export default function TripNewScreen() {
               // B-20: autocorrect fights foreign place names — the core input
               // of a travel app's destination search.
               autoCorrect={false}
+              // Mirrors the name field + PlaceNameSchema's 200-char cap
+              // (R1 A2/A4 boundary) — without it a >200-char custom
+              // destination was a reachable, avoidable 400.
+              maxLength={200}
               helper={
                 selectedPlace === null && destinationQuery !== "" && !searchActive
                   ? "Keep typing — search starts at 4 characters."
@@ -379,9 +403,7 @@ export default function TripNewScreen() {
                   <AppText role="caption" color="muted">
                     No places matched — try a different spelling.
                   </AppText>
-                  {!isNonBlankDestinationQuery(
-                    destinationQuery,
-                  ) ? null : createCustomDestination.isError ? (
+                  {createCustomDestination.isError ? (
                     <ErrorBanner
                       message={createCustomDestinationErrorMessage(createCustomDestination.error)}
                       onRetry={handleCreateCustomDestination}
@@ -408,9 +430,9 @@ export default function TripNewScreen() {
                   ) : (
                     <View style={s.results}>
                       <ListItem
-                        title={`Use "${trimmedDestinationQuery}" as a custom destination`}
+                        title={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
                         onPress={handleCreateCustomDestination}
-                        accessibilityLabel={`Use "${trimmedDestinationQuery}" as a custom destination`}
+                        accessibilityLabel={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
                         testID="trip-new-list-item-custom"
                       />
                     </View>

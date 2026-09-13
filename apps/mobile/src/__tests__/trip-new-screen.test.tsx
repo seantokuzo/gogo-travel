@@ -552,6 +552,76 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
       expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
     );
   });
+
+  it("R1 A2 (advisory): a failed create does not permanently hide the row for a later query", async () => {
+    let shouldFail = true;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        shouldFail
+          ? Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "bad"))
+          : Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Bad Name");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+
+    // The user abandons that text for a new query — this is a FRESH
+    // zero-result state, not a retry of the old failure, so the OLD error
+    // (and its stale retry target) must not survive the query change.
+    shouldFail = false;
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Grandma Cabin");
+    await waitFor(() =>
+      expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull(),
+    );
+    expect(await screen.findByTestId("trip-new-list-item-custom")).toHaveTextContent(
+      'Use "Grandma Cabin" as a custom destination',
+    );
+  });
+
+  it("R1 A2/A4 boundary: the destination input caps at 200 chars, mirroring the name field + PlaceNameSchema", async () => {
+    mockApi();
+    await renderScreen();
+    expect(screen.getByTestId("trip-new-input-destination").props.maxLength).toBe(200);
+  });
+
+  it("R1 A4 boundary: a 200-char custom destination creates cleanly; 201 chars hits the server's validation branch", async () => {
+    const name200 = "n".repeat(200);
+    const name201 = "n".repeat(201);
+    const receivedNames: string[] = [];
+    const request = mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": (input) => {
+        const body = (input as { body?: { name?: string } }).body;
+        const sentName = body?.name ?? "";
+        receivedNames.push(sentName);
+        if (sentName.length > 200) {
+          return Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "too long"));
+        }
+        return Promise.resolve({ ...CUSTOM_PLACE, name: sentName });
+      },
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), name200);
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe(name200);
+    expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull();
+
+    // 201 chars exceeds the visual cap but is still reachable through
+    // `fireEvent.changeText` (it calls the handler directly, bypassing
+    // native `maxLength` enforcement) — a real device blocks this at the
+    // keyboard; this pin covers the server-validation branch defensively.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), name201);
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(receivedNames).toEqual([name200, name201]);
+  });
 });
 
 describe("submit (R-tripui-7)", () => {
