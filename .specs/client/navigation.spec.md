@@ -49,9 +49,18 @@
 - **R-nav-23**: WHEN an authenticated user cold-launches the app and two or
   more trips are active THE SYSTEM SHALL land on the **most-recently-viewed**
   active trip's today tab (falling back to the trip list when none of them
-  has ever been viewed), and the trip header SHALL offer a trip-switcher
-  affordance for moving between active trips without returning to the list.
-  (Resolved 2026-07-09, Gate 2)
+  has ever been viewed). THE trip header SHALL offer a trip-switcher
+  affordance on EVERY trip screen, unconditionally — not gated on 2+ active
+  trips (B-25, PR #66, Sean's shape decision 2026-09-11: a single-trip
+  account still needs a way out of the trip shell, since entering a trip has
+  no back affordance). The switcher's sheet lists an "All trips" row (routes
+  to the trip list, independent of the trips query — pressable even mid-load
+  or on a failed read) plus EVERY trip grouped active → upcoming → past (the
+  trip list's own `groupTripsIntoSections`, not just the active set), with
+  the current trip checkmarked; sheet title is "Trips" (was "Active trips" —
+  renamed, it now lists everything). (Landing-tab half resolved 2026-07-09,
+  Gate 2; switcher-affordance half amended 2026-09-11, B-25 — supersedes the
+  original "between active trips" scope below.)
 
 ### Deep links (gogo universal links + custom scheme)
 
@@ -132,8 +141,9 @@
   view of the same queue from the More tab.
   (Resolved 2026-07-09, Gate 2)
 - **Multiple concurrently-active trips on launch** — land on the
-  most-recently-viewed active trip's today tab; header trip switcher between
-  active trips (R-nav-23). (Resolved 2026-07-09, Gate 2)
+  most-recently-viewed active trip's today tab; header trip switcher,
+  unconditional, spans every trip (R-nav-23, amended 2026-09-11 B-25).
+  (Resolved 2026-07-09, Gate 2)
 - **Settle-up request links for non-members** — require app install +
   account in v1; membership required, so R-nav-15 applies unchanged and
   R-nav-13 has **no** unauthenticated branch (no web surface exists to fall
@@ -211,8 +221,9 @@ Layout responsibilities:
 - **`[tripId]/_layout`** owns the Tabs navigator, fetches/validates
   membership before rendering children (R-nav-20), resolves the initial tab
   (R-nav-7/8) from trip status, provides trip context (id, role, dates,
-  theme) to all tabs, and hosts the header trip-switcher affordance when 2+
-  trips are active (R-nav-23).
+  theme) to all tabs, and hosts the header trip-switcher affordance
+  unconditionally, on every trip screen (R-nav-23, amended 2026-09-11 B-25 —
+  no longer gated on 2+ active trips).
 - **Each tab directory** is its own Stack → per-tab history (R-nav-10).
 
 _(Synced 2026-07-18, post-T-4.4 — two clarifications from the build, no
@@ -451,16 +462,20 @@ Fixed rules:
    post-PR #49, QA-wave batch)_
 5. IDs are stable across renders and refactors — E2E flows match on them
    (landmine: flows point at the REAL UI).
-6. _(Synced 2026-07-26, post-T-6.6 R1)_ Guard/link surfaces the build added:
-   screen prefixes `no-access` and `trip-error` (rule 2 applies:
-   `no-access-screen`, `trip-error-screen`); layout-hosted component base
-   `trip-switcher` (R-nav-23 affordance — `-button` / `-sheet` /
-   `-list-item-{tripId}`); element nouns `banner` (`trip-error-banner`) and
-   `link-notice` (`trip-list-link-notice`, the R-nav-17 notice). HOLD
-   surfaces are NON-screens: transient boot/guard holds carry no `-screen`
-   suffix — `entry-splash`, `trip-loading` (joining T-5.7's
-   `sign-in-splash`); a screen-scoped loading region derives
-   `<screen>-loading` (`invite-join-loading`).
+6. _(Synced 2026-07-26, post-T-6.6 R1; extended 2026-09-13 post-PR #66/B-25)_
+   Guard/link surfaces the build added: screen prefixes `no-access` and
+   `trip-error` (rule 2 applies: `no-access-screen`, `trip-error-screen`);
+   layout-hosted component base `trip-switcher` (R-nav-23 affordance —
+   `-button` / `-sheet` / `-list-item-{tripId}`, plus B-25's exit row
+   `-list-item-all-trips` — a static qualifier, tripIds are UUIDs so no
+   collision — and the derived non-interactive current-trip marker
+   `-list-item-{tripId}-check`, rule-4 shape); element nouns `banner`
+   (`trip-error-banner`) and `link-notice` (`trip-list-link-notice`, the
+   R-nav-17 notice); `trip-error-button-trips` (B-25's "Back to trips" exit
+   on the trip-load error path). HOLD surfaces are NON-screens: transient
+   boot/guard holds carry no `-screen` suffix — `entry-splash`,
+   `trip-loading` (joining T-5.7's `sign-in-splash`); a screen-scoped
+   loading region derives `<screen>-loading` (`invite-join-loading`).
 
 Examples: `sign-in-button-apple`, `trip-list-fab-create`,
 `trip-list-list-item-{tripId}`, `itinerary-view-toggle`,
