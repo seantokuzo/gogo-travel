@@ -186,30 +186,57 @@ string): boolean` — co-located with `clientIp` in
   T3-deliverable clauses — a cap with no distinguishable signal and no
   scheduled cleanup owner stalls the lane silently after roughly 80 runs with
   no way to tell why, see §5.4.)
-- **R-door-15 (E2E runner/flow app-id parameterization, review round 2):**
-  THE SYSTEM SHALL NOT hard-code a bundle identifier in `scripts/e2e.sh` or
-  in any `.maestro/**/*.yaml` flow's `appId:` field. `scripts/e2e.sh` SHALL
-  resolve the target app id from `GOGO_E2E_APP_ID` (operator-settable, the
-  same override pattern as `MAESTRO_EXPECTED_VERSION`/`--device`) and SHALL
-  default it to `app.gogotravel.e2edoor` — the door build's id, matching
-  §5.2's decided default-merge-gate cadence — when the variable is unset; a
-  caller running the periodic door-free proof (`session-door-absent`, §5.2)
-  SHALL set `GOGO_E2E_APP_ID=app.gogotravel` explicitly, since the runner
-  SHALL NOT infer the variant from `--tags`/`--flow` selection. Every flow's
-  `appId:` field SHALL read `${APP_ID}` — Maestro's own env-var substitution,
-  the documented pattern for a cross-build app id (`appId: ${APP_ID}` in the
-  flow, `-e APP_ID=<value>`/`--env APP_ID=<value>` on the CLI) — rather than
-  a literal, with the runner injecting the resolved value via `-e
-APP_ID=<value>` on the `maestro test` invocation it already builds. The
-  existing installed-app check (`scripts/e2e.sh:168`) SHALL run against the
-  resolved value instead of the literal, so it doubles as the runner's own
-  variant self-check: an install of the wrong variant fails this check by
-  construction (the resolved id is simply not what is installed), and the
-  `die()` message SHALL name the resolved id, not a fixed string, so a
-  wrong-variant run is diagnosable from the failure text alone. (Review
-  round 2: the previous hard-coded `app.gogotravel` in both the script and
-  all seven flow files contradicted §5.2's own default-cadence decision —
-  see §5.2.)
+- **R-door-15 (E2E runner/flow app-id parameterization, review round 2,
+  revised round 3 — lane-scoped defaults):** THE SYSTEM SHALL NOT hard-code
+  a single bundle identifier for every lane in `scripts/e2e.sh` or in any
+  `.maestro/**/*.yaml` flow's `appId:` field — there is no one hard-coded
+  default; each lane resolves its own, and every lane's default is
+  env-overridable. `scripts/e2e.sh` SHALL accept a `--variant
+door|dev|doorfree` flag selecting which lane's default applies. When
+  `--variant` is omitted the runner SHALL derive it from the existing
+  `--tags` selection: `--tags dev` (today's dev-build-only filter) implies
+  `dev`; every other invocation — including the default, no-flag run, which
+  is today's default merge-gate cadence (§5.2) — implies `door`. The runner
+  SHALL NOT derive `doorfree` from `--tags`/`--flow`: the periodic door-free
+  proof (`session-door-absent`, §5.2) selects the **same** default tag
+  filter as the door lane (both exclude only `dev`) and differs _only_ in
+  which build is installed, so a caller running that proof SHALL pass
+  `--variant doorfree` explicitly (or set `GOGO_E2E_APP_ID` directly). Each
+  variant's default app id:
+
+  - `door` (default merge gate, §5.2) → `app.gogotravel.e2edoor`
+  - `dev` (`--tags dev`, Debug build, flow AUTHORING only) → `app.gogotravel`
+  - `doorfree` (the periodic door-free proof) → `app.gogotravel`
+
+  `GOGO_E2E_APP_ID` (operator-settable, the same override pattern as
+  `MAESTRO_EXPECTED_VERSION`/`--device`), when set, SHALL override the
+  `--variant`-derived default outright, for any variant. Every flow's
+  `appId:` field SHALL read `${APP_ID}` — Maestro's own env-var
+  substitution, the documented pattern for a cross-build app id (`appId:
+${APP_ID}` in the flow, `-e APP_ID=<value>`/`--env APP_ID=<value>` on the
+  CLI) — rather than a literal, with the runner injecting the resolved
+  value via `-e APP_ID=<value>` on the `maestro test` invocation it already
+  builds. The existing installed-app check (`scripts/e2e.sh:168`) SHALL run
+  against the resolved value instead of the literal, so it doubles as the
+  runner's own lane self-check: an install of the wrong variant fails this
+  check by construction (the resolved id is simply not what is installed),
+  and the `die()` message SHALL name both the resolved id and the active
+  `--variant`, not a fixed string, so a wrong-variant run is diagnosable
+  from the failure text alone.
+
+  (Review round 2: the previous hard-coded `app.gogotravel` in both the
+  script and all seven flow files contradicted §5.2's own default-cadence
+  decision — see §5.2. Review round 3, fix-verifier round 2: round 2's
+  single **global** default of `app.gogotravel.e2edoor` silently broke the
+  `dev` lane — `bash scripts/e2e.sh --tags dev` runs against a Debug build
+  whose id is the un-suffixed `app.gogotravel`
+  (`.maestro/diagnostics-panel-dev.yaml`), so it would resolve `.e2edoor`,
+  find nothing installed, and `die()` on every dev-lane run — and the
+  requirement's own first two sentences self-contradicted, hard-coding
+  `.e2edoor` as THE default in the same breath as forbidding hard-coding a
+  bundle id. Fixed by making the default **lane-specific** instead of
+  global, per above: no single hard-coded id, only lane defaults, every one
+  overridable.)
 
 ### 2.1 Test obligations (review round 1, B2)
 
@@ -218,18 +245,19 @@ satisfied by a test T3 or T4 ships in the same commit as the behavior. This
 table is the floor, not the ceiling — ordinary matrix coverage (happy/error/
 boundary/adversarial per `.claude/rules/testing.md`) still applies on top.
 
-| Requirement | Test obligation (at minimum)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R-door-1    | Mount matrix crossing `NODE_ENV` (unset/defaulted, misspelled e.g. `"Production"`, `production`, explicit `development`, explicit `test`) × `E2E_SESSION_DOOR` (unset, `"1"`) × secret (absent, 31 chars, 32+ chars). Only the all-pass cell mounts the route; every other cell does not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| R-door-2    | `NODE_ENV=production` + secret set, and separately + `E2E_SESSION_DOOR=1` set with no secret — both throw at `loadEnv()`; assert the thrown message contains the variable NAME(s) and never a value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| R-door-3    | For every failure mode — route absent, secret wrong, secret prefix-correct-but-wrong (e.g. right length, one byte off), disallowed peer, unresolvable (`"unknown"`) peer, malformed body, oversized body (over `BODY_LIMIT_MAX_BYTES`), ineligible fixture row (`google_sub` set / `deleted_at` set), rate-limited, a replayed/reused secret across calls — assert byte-identical status, body, and header set against a request to an unmounted/unknown path.                                                                                                                                                                                                                                                                                                                                                                                                    |
-| R-door-4    | Mint via the door → rotate once → replay the original refresh token → assert the token family is revoked (mirrors the real-sign-in assertion in `tokens-routes.db.test.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| R-door-5    | A row matching `apple_sub = e2e:K` that instead carries a `google_sub`, and separately one with a non-null `deleted_at`, are both rejected with `reason=fixture_conflict` and the uniform 401.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| R-door-7    | `https://api.<prod-host>` as the resolved API base is pinned inert-with-no-request (spy the injected `api`, assert zero calls); a local/private base with the secret inlined issues the request.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| R-door-9    | The 21st call from one peer inside a fake-clock minute gets the same uniform 401 with **no** `Retry-After` header present (not a `429`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| R-door-11   | Peer `127.0.0.1` / `::1` → allowed; `::ffff:10.0.0.5` (normalised to a private address) → allowed; a public peer → 401; peer `"unknown"` (the `app.request()` default) → 401; a spoofed `Host: 127.0.0.1` header from an injected non-loopback peer → 401 (proves the header is ignored). Separately, unit-pin `isLoopbackOrPrivatePeer` directly (no `app.request()` needed): `127.0.0.1`, `::1`, `10.0.0.1`, `172.16.0.1`, `192.168.0.1`, `fc00::1`, `::ffff:10.0.0.5`, `[::1]` → `true`; `8.8.8.8`, `0.0.0.0`, `169.254.0.1`, `fe80::1`, `"unknown"`, `""`, `null` → `false`.                                                                                                                                                                                                                                                                                  |
-| R-door-12   | Mutation-verify: swap `timingSafeEqual` for `===` in the door's compare and confirm a pin goes RED.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| R-door-14   | With `E2E_DOOR_MAX_FIXTURE_USERS` set low (e.g. 2) via test config, the 3rd distinct `user_key` is rejected with the uniform 401 while the first 2 keys still resolve; no existing row is touched; the rejection's wire response is byte-identical to every other 401 (folded into R-door-3) while its server log line carries `reason=fixture_cap`, distinguishable from a `reason=secret_mismatch` log line for the same request shape. Separately (T3, `scripts/e2e-cleanup.mjs`): running cleanup against a mixed set — `e2e:`-prefixed fixture users plus a real, non-`e2e:` user who owns a trip — removes only the `e2e:`-prefixed rows and their owned trips/memberships, leaves the real user and trip untouched, and afterward a find-or-create for a previously-capped key succeeds again (proves capacity was actually freed, not just rows renamed). |
+| Requirement | Test obligation (at minimum)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-door-1    | Mount matrix crossing `NODE_ENV` (unset/defaulted, misspelled e.g. `"Production"`, `production`, explicit `development`, explicit `test`) × `E2E_SESSION_DOOR` (unset, `"1"`) × secret (absent, 31 chars, 32+ chars). Only the all-pass cell mounts the route; every other cell does not.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| R-door-2    | `NODE_ENV=production` + secret set, and separately + `E2E_SESSION_DOOR=1` set with no secret — both throw at `loadEnv()`; assert the thrown message contains the variable NAME(s) and never a value.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| R-door-3    | For every failure mode — route absent, secret wrong, secret prefix-correct-but-wrong (e.g. right length, one byte off), disallowed peer, unresolvable (`"unknown"`) peer, malformed body, oversized body (over `BODY_LIMIT_MAX_BYTES`), ineligible fixture row (`google_sub` set / `deleted_at` set), rate-limited, a replayed/reused secret across calls — assert byte-identical status, body, and header set against a request to an unmounted/unknown path.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| R-door-4    | Mint via the door → rotate once → replay the original refresh token → assert the token family is revoked (mirrors the real-sign-in assertion in `tokens-routes.db.test.ts`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| R-door-5    | A row matching `apple_sub = e2e:K` that instead carries a `google_sub`, and separately one with a non-null `deleted_at`, are both rejected with `reason=fixture_conflict` and the uniform 401.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| R-door-7    | `https://api.<prod-host>` as the resolved API base is pinned inert-with-no-request (spy the injected `api`, assert zero calls); a local/private base with the secret inlined issues the request.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| R-door-9    | The 21st call from one peer inside a fake-clock minute gets the same uniform 401 with **no** `Retry-After` header present (not a `429`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| R-door-11   | Peer `127.0.0.1` / `::1` → allowed; `::ffff:10.0.0.5` (normalised to a private address) → allowed; a public peer → 401; peer `"unknown"` (the `app.request()` default) → 401; a spoofed `Host: 127.0.0.1` header from an injected non-loopback peer → 401 (proves the header is ignored). Separately, unit-pin `isLoopbackOrPrivatePeer` directly (no `app.request()` needed): `127.0.0.1`, `::1`, `10.0.0.1`, `172.16.0.1`, `192.168.0.1`, `fc00::1`, `::ffff:10.0.0.5`, `[::1]` → `true`; `8.8.8.8`, `0.0.0.0`, `169.254.0.1`, `fe80::1`, `"unknown"`, `""`, `null` → `false`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| R-door-12   | Mutation-verify: swap `timingSafeEqual` for `===` in the door's compare and confirm a pin goes RED.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| R-door-14   | With `E2E_DOOR_MAX_FIXTURE_USERS` set low (e.g. 2) via test config, the 3rd distinct `user_key` is rejected with the uniform 401 while the first 2 keys still resolve; no existing row is touched; the rejection's wire response is byte-identical to every other 401 (folded into R-door-3) while its server log line carries `reason=fixture_cap`, distinguishable from a `reason=secret_mismatch` log line for the same request shape. Separately (T3, `scripts/e2e-cleanup.mjs`): running cleanup against a mixed set — `e2e:`-prefixed fixture users plus a real, non-`e2e:` user who owns a trip — removes only the `e2e:`-prefixed rows and their owned trips/memberships, leaves the real user and trip untouched, and afterward a find-or-create for a previously-capped key succeeds again (proves capacity was actually freed, not just rows renamed). (Review round 3, §5.4 ordering:) a trip with one `e2e:`-prefixed owner and one real, non-`e2e:` member survives cleanup byte-for-byte untouched and the fixture owner is logged skipped (not deleted, not retried) — the mixed-membership skip; a trip whose members are ALL `e2e:`-prefixed (the flows 6-10 shape, owner + at least one other fixture member) is deleted in step 1 and every fixture that was on it is freed — the multi-fixture-member trip case; and a fixture user whose step-3 `deleteAccount` call transiently loses a race with a step-1 trip delete still in flight succeeds on the retry pass with no operator action — the retry pass. |
+| R-door-15   | Lane-default matrix: the default invocation (no `--variant`, no `--tags dev`) resolves `app.gogotravel.e2edoor`; `--tags dev` with no explicit `--variant` resolves `app.gogotravel`; `--variant doorfree` resolves `app.gogotravel`; `GOGO_E2E_APP_ID` set explicitly overrides every lane's default, including `door` and `dev`. Mismatch: run any variant against a simulator with the wrong app id installed and assert `scripts/e2e.sh:168`'s check hard-fails with a named, non-generic `die()` message — the text names both the resolved app id and the active `--variant`, not a fixed string.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 **Test-design note, recorded not required (review round 1, A5/Finding 10):**
 under `app.request()` every in-process request shares the same unresolvable
@@ -721,9 +749,11 @@ run installs the `.e2edoor` app and then has the runner die looking for the
 un-suffixed one — every default-cadence run would hard-fail, not because
 anything is actually broken, but because the runner and the flow files never
 learned the bundle-identity decision existed. Fixed normatively by R-door-15:
-the bundle id becomes a single env-driven value the runner resolves and
-threads through every flow file via Maestro's own `-e`/`${VAR}` mechanism,
-instead of a literal baked into eight separate files.
+the bundle id becomes a per-lane, env-driven value the runner resolves
+(door lane, dev lane, door-free lane each with their own default, every one
+`GOGO_E2E_APP_ID`-overridable) and threads through every flow file via
+Maestro's own `-e`/`${VAR}` mechanism, instead of a literal baked into eight
+separate files.
 
 **Decided cadence:** the door-free build + `session-door-absent` run on every
 PR that touches door code (server gate, client gate, the route, or the
@@ -755,8 +785,14 @@ Every run starts from a virgin user, so flows are deterministic with no reset
 primitive needed. The runner (T5, `scripts/e2e.sh`) generates
 `RUN_ID="$STAMP"` (it already computes `STAMP`) and passes `-e RUN_ID="$RUN_ID"`
 on every invocation; no secret is ever passed to Maestro. Cost, accepted:
-the local dev DB accumulates fixture users; cleaning means dropping and
-re-migrating the dev DB.
+the local dev DB accumulates fixture users. **Revised, review round 3:**
+dropping and re-migrating the dev database remains available as a **local
+developer convenience**, for a throwaway dev DB nobody else depends on — it
+is not, and was never meant to be, the lane's cleanup mechanism, and stating
+it here read as though it were (fix-verifier round 2 flagged this as a
+standing contradiction with the T3 mechanism below). `scripts/e2e-cleanup.mjs`
+(below) is the mechanism for any shared or long-lived database, and the only
+one the lane itself relies on to reclaim R-door-14 capacity.
 
 **Bounded growth guard (R-door-14, review round 1 A3).** Without a cap, the
 door is an unbounded authenticated-principal factory: every distinct
@@ -818,18 +854,72 @@ violate and abort mid-cleanup. Reusing `deleteAccount`'s soft-delete
 sidesteps all of that: it already satisfies every one of those constraints
 for a real account, so it satisfies them for a disposable fixture account
 for free, with no second hard-delete implementation to keep in sync with the
-schema as new domains land. `scripts/e2e-cleanup.mjs` SHALL therefore select
-every `users.id` whose `apple_sub` matches `e2e:%` — never any other row;
-this is the entire scoping guarantee against ever touching a real account —
-and call `deleteAccount` for each. A scrubbed row's `apple_sub` becomes
-`null`, so it no longer matches the door's `WHERE apple_sub = 'e2e:' || K`
-find-or-create lookup or R-door-14's cap count: **this is what "clearing
-capacity" means** — the cap counts _live_ `e2e:`-prefixed identities, and
-cleanup drives that count back to zero without a single hard delete. The
-scrubbed row itself persists (the same trade-off a real deletion already
-accepts), and a subsequent door call for the same `user_key` finds no live
-match and creates a fresh row, exactly as R-door-5's find-or-create already
-specifies for a key with no live identity.
+schema as new domains land. `scripts/e2e-cleanup.mjs` SHALL select every
+`users.id` whose `apple_sub` matches `e2e:%` — never any other row; this is
+the entire scoping guarantee against ever touching a real account — as the
+candidate set; **the ordering below (review round 3) governs the sequence**
+in which it calls `deleteAccount` against that set, so `deleteAccount`'s
+existing owner-transfer guard (`OwnerTransferRequiredError`,
+`account-deletion.ts:184`) does not stall on the very multi-member fixture
+trips (flows 6–10) this cleanup exists to reclaim. A scrubbed row's
+`apple_sub` becomes `null`, so it no longer matches the door's `WHERE
+apple_sub = 'e2e:' || K` find-or-create lookup or R-door-14's cap count:
+**this is what "clearing capacity" means** — the cap counts _live_
+`e2e:`-prefixed identities, and cleanup drives that count back to zero
+without a single hard delete. The scrubbed row itself persists (the same
+trade-off a real deletion already accepts), and a subsequent door call for
+the same `user_key` finds no live match and creates a fresh row, exactly as
+R-door-5's find-or-create already specifies for a key with no live identity.
+
+**Ordering — the release valve must not jam on its own target case (review
+round 2 A3 named the cap; fix-verifier round 2 found the naive "call
+`deleteAccount` for every row, any order" cleanup stalls on exactly the case
+it exists to fix).** `deleteAccount` throws `OwnerTransferRequiredError`
+(`account-deletion.ts:184`) before any write when its caller solely owns a
+trip that still has another **live** member — fixture or real, the guard
+does not distinguish. Flows 6–10 (expense splitting) are specified to leave
+multi-member fixture trips (fixture user A owns a trip fixture user B still
+belongs to), which is exactly that shape. `scripts/e2e-cleanup.mjs` SHALL
+run in this order:
+
+1. **All-fixture trips first.** Classify every trip the candidate set owns
+   by whether ALL of its live members are `e2e:`-prefixed. For every trip
+   that is, delete the trip through the existing `DELETE /trips/:tripId`
+   path (R-trips-8, schema §3.6 cascade), invoked in that trip's owner's
+   context — **never** via `deleteAccount` for this step — so the
+   multi-fixture-member case is gone before any fixture's `deleteAccount`
+   call can trip the owner guard on it.
+2. **Ownerless fixtures next.** Call `deleteAccount` for every remaining
+   `e2e:`-prefixed user who, after step 1, owns no trip at all. These can
+   never hit `OwnerTransferRequiredError` — the guard only fires for an
+   owner — so they always succeed.
+3. **Remaining fixture owners.** Call `deleteAccount` for every
+   `e2e:`-prefixed user who still owns a trip. By construction (step 1
+   removed every all-fixture trip) any trip such a user still owns has at
+   least one live **non-fixture** member, so `deleteAccount` throws
+   `OwnerTransferRequiredError` for it. This is expected, not a failure to
+   retry: catch it, log `skip: trip <id> has a non-fixture member — never
+deleted or reassigned`, and leave both the user and the trip untouched.
+   This is the "never touches a trip with a non-fixture member" guarantee —
+   enforced by the guard `deleteAccount` already has, not a second check the
+   script re-implements.
+4. **Retry pass.** Re-run steps 1–3 once more against whatever `e2e:`-
+   prefixed rows are still live. A trip's membership can change between the
+   classification query and a given `deleteAccount` call (e.g. a step-1
+   trip delete for one fixture's trip completes while a step-3 call for
+   another fixture on a different trip is in flight), so a second pass
+   resolves anything the first pass's snapshot missed, with no operator
+   action.
+5. **Per-user error handling.** Any error other than
+   `OwnerTransferRequiredError` that `deleteAccount` throws for a given user
+   SHALL be caught, logged with that user's `id` and `user_key`, and SHALL
+   NOT abort the run for the remaining users — one bad fixture row must not
+   block reclaiming the other 499.
+6. **Exit status.** After the retry pass the script SHALL print the count of
+   `e2e:`-prefixed rows still live and SHALL exit non-zero if that count is
+   greater than zero — whether the reason is a logged mixed-membership skip
+   or a genuinely stuck row — so a non-zero exit always means "capacity was
+   not fully reclaimed, check the log," never a silent partial run.
 
 **Rejected: a `reset: true` request field that
 deletes the fixture user's trips** — that puts a destructive data operation
