@@ -280,7 +280,11 @@ function migrationsBadge(state: MigrationsRowState): { label: string; tone: Badg
  * and a distinct amber UNKNOWN when the server doesn't say (older server,
  * unreachable, or an unparseable response) — never conflated with CURRENT.
  */
-function MigrationsRow({ run }: { run: () => ReturnType<typeof runMigrationsLeg> }) {
+function MigrationsRow({
+  run,
+}: {
+  run: (signal: AbortSignal) => ReturnType<typeof runMigrationsLeg>;
+}) {
   const { state, rerun } = useMigrationsLegRunner(run);
   return (
     <LegRow
@@ -321,7 +325,8 @@ export function DiagnosticsScreen({ deps }: { deps?: DiagnosticsDeps }) {
     return runLastErrorLeg({ readTap: readConsoleTap });
   }, []);
   const migrationsRun = useCallback(
-    () => runMigrationsLeg({ baseUrl: resolveApiBaseUrl, fetchFn: wired.fetchFn }),
+    (signal: AbortSignal) =>
+      runMigrationsLeg({ baseUrl: resolveApiBaseUrl, fetchFn: wired.fetchFn, signal }),
     [wired],
   );
 

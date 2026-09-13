@@ -486,17 +486,30 @@ export interface MigrationsLegDeps {
   /** `resolveApiBaseUrl` — the URL the app's real client would dial. */
   baseUrl: () => string;
   fetchFn: HealthLegDeps["fetchFn"];
+  timeoutMs?: number;
+  /**
+   * External cancellation (component unmount) — aborts the in-flight request
+   * early, same socket-leak guard as leg 2's internal 8s watchdog
+   * (`use-migrations-leg-runner.ts` wires this to its cleanup). Optional:
+   * tests that don't exercise unmount can omit it.
+   */
+  signal?: AbortSignal;
 }
 
 /**
  * GET `<base>/health` and read its optional `migrations` field.
- * CURRENT: field present, `pending` empty. PENDING: field present, `pending`
- * non-empty — names every tag, never just a count. UNKNOWN: base-URL
- * resolution threw, the round-trip failed, the body didn't parse as JSON, OR
- * the response matched `HealthResponseSchema` but omitted `migrations`
- * (an older server that predates B-28) — all four collapse to the same
- * "we don't know" state because none of them is evidence the DB is either
- * current or behind.
+ * CURRENT: field present, `pendingCount` zero. PENDING: field present,
+ * `pendingCount` non-zero — names every tag when the server includes them
+ * (`development`/`test`), a count only otherwise (the server redacts exact
+ * schema-change slugs on this unauthenticated endpoint outside dev/test —
+ * architecture review round-1 #3). UNKNOWN: base-URL resolution threw, the
+ * round-trip failed or timed out, the body didn't parse as JSON, the body
+ * didn't match `HealthResponseSchema`, OR the response matched the schema
+ * but omitted `migrations` (an older server that predates B-28) — all of
+ * these collapse to the same "we don't know" state because none of them is
+ * evidence the DB is either current or behind (review round-1 C3 split the
+ * SUMMARY between the last two so a captive portal / proxy doesn't read as
+ * "stale server build").
  */
 export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<MigrationsLegResult> {
   let url: string;
@@ -510,15 +523,36 @@ export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<Migrati
     };
   }
 
+  // Same 8s watchdog as leg 2 (review round-1 C4) — a half-dead server that
+  // completes the TCP handshake but never answers must not leave this row
+  // RUNNING forever. Also observes `deps.signal` so the runner's unmount
+  // cleanup can cancel the in-flight request instead of merely discarding
+  // its eventual result (closing the socket-leak half of the same finding).
+  const timeoutMs = deps.timeoutMs ?? HEALTH_TIMEOUT_MS;
+  const abort = new AbortController();
+  const onExternalAbort = () => abort.abort();
+  deps.signal?.addEventListener("abort", onExternalAbort);
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+
   let res: Awaited<ReturnType<MigrationsLegDeps["fetchFn"]>>;
   try {
-    res = await deps.fetchFn(url);
+    res = await deps.fetchFn(url, { signal: abort.signal });
   } catch (err) {
+    const timedOut = abort.signal.aborted;
     return {
       status: "unknown",
-      summary: "health round-trip failed — exact cause below",
-      evidence: [`GET ${url}`, describeError(err)].join("\n"),
+      summary: timedOut
+        ? `no response within ${timeoutMs}ms — request aborted`
+        : "health round-trip failed — exact cause below",
+      evidence: [
+        `GET ${url}`,
+        ...(timedOut ? [`timeout after ${timeoutMs}ms`] : []),
+        describeError(err),
+      ].join("\n"),
     };
+  } finally {
+    clearTimeout(timer);
+    deps.signal?.removeEventListener("abort", onExternalAbort);
   }
 
   let body: unknown;
@@ -534,9 +568,17 @@ export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<Migrati
 
   const parsed = HealthResponseSchema.safeParse(body);
   if (!parsed.success || parsed.data.migrations === undefined) {
+    // C3: a schema-parse failure (captive portal, proxy, or any response
+    // that isn't shaped like this server at all) is a DIFFERENT problem
+    // than a genuinely absent `migrations` field (an older, pre-B-28
+    // server that otherwise parses fine) — one banner for both cost B-5/B-6
+    // two rounds each; don't repeat it here.
+    const summary = parsed.success
+      ? "server does not report migration state (older server, pre-B-28)"
+      : "unexpected response — captive portal or proxy?";
     return {
       status: "unknown",
-      summary: "server does not report migration state (older server, pre-B-28)",
+      summary,
       evidence: [
         `GET ${url}`,
         `status: ${res.status}`,
@@ -547,22 +589,37 @@ export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<Migrati
     };
   }
 
-  const { onDisk, applied, pending } = parsed.data.migrations;
-  if (pending.length === 0) {
+  const { onDisk, applied, pending, pendingCount } = parsed.data.migrations;
+  if (pendingCount === 0) {
     return {
       status: "current",
       summary: `current (${applied} applied)`,
       evidence: [`onDisk: ${onDisk}`, `applied: ${applied}`, "pending: (none)"].join("\n"),
     };
   }
+  if (pending.length > 0) {
+    // development/test: the server includes every tag.
+    return {
+      status: "pending",
+      summary: `${pending.length} pending: ${pending.join(", ")}`,
+      evidence: [
+        `onDisk: ${onDisk}`,
+        `applied: ${applied}`,
+        "pending:",
+        ...pending.map((tag) => `  - ${tag}`),
+      ].join("\n"),
+    };
+  }
+  // Every other env: the server redacts exact tag names on this
+  // unauthenticated endpoint (architecture review round-1 #3) — count only.
   return {
     status: "pending",
-    summary: `${pending.length} pending: ${pending.join(", ")}`,
+    summary: `${pendingCount} pending (names hidden outside development/test)`,
     evidence: [
       `onDisk: ${onDisk}`,
       `applied: ${applied}`,
-      "pending:",
-      ...pending.map((tag) => `  - ${tag}`),
+      `pendingCount: ${pendingCount}`,
+      "pending tag names redacted by the server outside development/test",
     ].join("\n"),
   };
 }

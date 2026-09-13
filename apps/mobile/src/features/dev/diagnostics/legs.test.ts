@@ -502,6 +502,8 @@ describe("leg 6 — last dev error (B-6 read-back)", () => {
 });
 
 describe("leg 7 — migration state (B-28)", () => {
+  const CHECKED_AT = "2026-01-01T00:00:00.000Z";
+
   function fetchWithBody(body: unknown, status = 200) {
     return async () => ({ ok: status < 400, status, json: async () => body });
   }
@@ -512,7 +514,13 @@ describe("leg 7 — migration state (B-28)", () => {
       fetchFn: fetchWithBody({
         ok: true,
         version: "0.0.1",
-        migrations: { onDisk: 4, applied: 4, pending: [] },
+        migrations: {
+          onDisk: 4,
+          applied: 4,
+          pending: [],
+          pendingCount: 0,
+          checkedAt: CHECKED_AT,
+        },
       }),
     });
     expect(result.status).toBe("current");
@@ -520,7 +528,7 @@ describe("leg 7 — migration state (B-28)", () => {
     expect(result.evidence).toContain("pending: (none)");
   });
 
-  it("happy: non-empty pending → PENDING, naming EVERY tag (not just a count)", async () => {
+  it("happy: non-empty pending → PENDING, naming EVERY tag (not just a count) — the development/test shape", async () => {
     const result = await runMigrationsLeg({
       baseUrl: () => "http://192.168.1.69:3000/api",
       fetchFn: fetchWithBody({
@@ -530,6 +538,8 @@ describe("leg 7 — migration state (B-28)", () => {
           onDisk: 4,
           applied: 2,
           pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
+          pendingCount: 2,
+          checkedAt: CHECKED_AT,
         },
       }),
     });
@@ -543,7 +553,27 @@ describe("leg 7 — migration state (B-28)", () => {
     expect(result.evidence).toContain("- 0003_outstanding_doctor_spectrum");
   });
 
-  it("empty/absent: an older server's response (no `migrations` key) → UNKNOWN, distinct from CURRENT", async () => {
+  it("happy: pending redacted (count-only) outside development/test → PENDING with a count, names withheld", async () => {
+    // Architecture review round-1 #3: `/health` echoes an EMPTY `pending`
+    // array with a truthful `pendingCount` outside dev/test. Falsification:
+    // keying off `pending.length === 0` instead of `pendingCount === 0`
+    // would misreport this shape as CURRENT.
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: { onDisk: 4, applied: 2, pending: [], pendingCount: 2, checkedAt: CHECKED_AT },
+      }),
+    });
+    expect(result.status).toBe("pending");
+    expect(result.summary).toContain("2 pending");
+    expect(result.summary).not.toMatch(/0002_lowly_venom|0003_outstanding_doctor_spectrum/);
+    expect(result.evidence).toContain("pendingCount: 2");
+    expect(result.evidence).toContain("redacted");
+  });
+
+  it("empty/absent: an older server's response (no `migrations` key) → UNKNOWN, distinct from CURRENT, summary names it a pre-B-28 server", async () => {
     // Falsification: treating an absent field as "pending: []" would make
     // this assert "current" instead — the whole point of the optional
     // field is that absence is NOT evidence of currency.
@@ -553,9 +583,15 @@ describe("leg 7 — migration state (B-28)", () => {
     });
     expect(result.status).toBe("unknown");
     expect(result.summary).toContain("older server");
+    expect(result.evidence).toMatch(/no `migrations` field/);
   });
 
-  it("adversarial: a `migrations` object that fails the shared schema → UNKNOWN, never crashes the leg", async () => {
+  it("adversarial: a `migrations` object that fails the shared schema → UNKNOWN with a DISTINCT summary from the genuinely-absent-field case (review round-1 C3)", async () => {
+    // Falsification: collapsing this back to the same "older server"
+    // summary as the absent-field case would make the second assertion
+    // fail — a captive portal / proxy response must not read as "go check
+    // the deploy," which cost B-5/B-6 two rounds on the panel built to
+    // prevent exactly this.
     const result = await runMigrationsLeg({
       baseUrl: () => "http://192.168.1.69:3000/api",
       fetchFn: fetchWithBody({
@@ -566,6 +602,8 @@ describe("leg 7 — migration state (B-28)", () => {
     });
     expect(result.status).toBe("unknown");
     expect(result.evidence).toMatch(/did not match HealthResponseSchema/);
+    expect(result.summary).not.toContain("older server");
+    expect(result.summary).toMatch(/captive portal|proxy/);
   });
 
   it("error: the round-trip itself fails → UNKNOWN with the exact cause, never a generic banner", async () => {
@@ -580,6 +618,54 @@ describe("leg 7 — migration state (B-28)", () => {
     expect(result.status).toBe("unknown");
     expect(result.evidence).toContain("TypeError: Network request failed");
     expect(result.evidence).toContain("connection refused to 192.168.1.69:3000");
+  });
+
+  it("boundary: no response within timeoutMs → UNKNOWN, aborts DETERMINISTICALLY (review round-1 C4 — same watchdog as leg 2)", async () => {
+    // Mirrors leg 2's own timeout pin exactly: RN's real vendored
+    // whatwg-fetch rejects aborts with its OWN AbortError and ignores
+    // AbortSignal.reason, so "timeout after Nms" can only come from the
+    // leg's own signal.aborted branch. Falsification: drop that branch (or
+    // the timer) from runMigrationsLeg → red.
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://10.0.0.9:3000/api",
+      fetchFn: (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(Object.assign(new Error("Aborted"), { name: "AbortError" })),
+          );
+        }),
+      timeoutMs: 30,
+    });
+    expect(result.status).toBe("unknown");
+    expect(result.summary).toContain("no response within 30ms");
+    expect(result.evidence).toContain("timeout after 30ms");
+    expect(result.evidence).toContain("AbortError: Aborted");
+  });
+
+  it("boundary: an external `signal` (component unmount) aborts the in-flight request the same way the timeout does", async () => {
+    // Pins the wiring `useMigrationsLegRunner` depends on: `runMigrationsLeg`
+    // must observe `deps.signal` and actually abort its OWN internal
+    // controller when it fires. Falsification: dropping the
+    // `deps.signal?.addEventListener("abort", ...)` wiring makes
+    // `sawAbort` stay false and the promise never settle (test times out).
+    const controller = new AbortController();
+    let sawAbort = false;
+    const resultPromise = runMigrationsLeg({
+      baseUrl: () => "http://10.0.0.9:3000/api",
+      fetchFn: (_input, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            sawAbort = true;
+            reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
+          });
+        }),
+      signal: controller.signal,
+      timeoutMs: 60_000,
+    });
+    controller.abort();
+    const result = await resultPromise;
+    expect(sawAbort).toBe(true);
+    expect(result.status).toBe("unknown");
   });
 
   it("error: a non-JSON response body → UNKNOWN, not a throw", async () => {
@@ -612,7 +698,13 @@ describe("leg 7 — migration state (B-28)", () => {
       fetchFn: fetchWithBody({
         ok: true,
         version: "0.0.1",
-        migrations: { onDisk: 4, applied: 3, pending: ["0003_outstanding_doctor_spectrum"] },
+        migrations: {
+          onDisk: 4,
+          applied: 3,
+          pending: ["0003_outstanding_doctor_spectrum"],
+          pendingCount: 1,
+          checkedAt: CHECKED_AT,
+        },
       }),
     });
     expect(result.status).toBe("pending");
