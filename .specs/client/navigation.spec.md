@@ -457,6 +457,10 @@ Fixed rules:
    suffix — `entry-splash`, `trip-loading` (joining T-5.7's
    `sign-in-splash`); a screen-scoped loading region derives
    `<screen>-loading` (`invite-join-loading`).
+7. _(Synced 2026-09-13, S-4 wave 2)_ Test-surface screen prefix
+   `e2e-session` (rule 2: `e2e-session-screen`); non-interactive markers
+   `e2e-session-screen-inert`, `e2e-session-pending`, `e2e-session-ready`,
+   `e2e-session-error`.
 
 Examples: `sign-in-button-apple`, `trip-list-fab-create`,
 `trip-list-list-item-{tripId}`, `itinerary-view-toggle`,
