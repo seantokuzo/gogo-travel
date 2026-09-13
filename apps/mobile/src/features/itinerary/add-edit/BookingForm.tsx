@@ -887,6 +887,7 @@ export function BookingForm({
             onDirty();
             setPlace(selected !== null ? { id: selected.id, name: selected.name } : null);
           }}
+          required={requiredKeys.has("place")}
           testID="itinerary-item-new-input-place"
         />
       ) : (

@@ -27,11 +27,14 @@ import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 import * as requiredFieldsModule from "./required-fields";
 
 /**
- * Optionality of the ONE key this file mutates. Read inside the factory (a
+ * Optionality of the keys this file mutates. Read inside the factory (a
  * `jest.mock` factory may not close over anything initialized later), so a
- * test can flip it before rendering.
+ * test can flip either before rendering.
  */
-const schemaState: { confirmationRequired: boolean } = { confirmationRequired: false };
+const schemaState: { confirmationRequired: boolean; placeRequired: boolean } = {
+  confirmationRequired: false,
+  placeRequired: false,
+};
 
 jest.mock("@gogo/shared", () => {
   const actual = jest.requireActual("@gogo/shared");
@@ -49,6 +52,14 @@ jest.mock("@gogo/shared", () => {
           confirmation_code: schemaState.confirmationRequired
             ? { safeParse: (value: unknown) => ({ success: value !== undefined }) }
             : base.shape.confirmation_code,
+          // B-26 R1 (round-1 review A5): `place_id` is the ONE key that maps
+          // to a form control (`PlacePickerField`) OUTSIDE `CATEGORY_FIELDS`
+          // — the exact spot the drift guard's `continue` used to trust
+          // blindly. Flipping it here exercises the REAL control, not a
+          // static allowlist.
+          place_id: schemaState.placeRequired
+            ? { safeParse: (value: unknown) => ({ success: value !== undefined }) }
+            : base.shape.place_id,
         };
       },
     },
@@ -87,6 +98,7 @@ afterEach(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   schemaState.confirmationRequired = false;
+  schemaState.placeRequired = false;
   jest.restoreAllMocks();
 });
 
@@ -149,4 +161,24 @@ it("A6: requiredBookingFieldKeys is memoized on category — not re-derived on e
   // CATEGORY never changed, so a memoized derivation calls the function zero
   // additional times.
   expect(spy.mock.calls.length).toBe(afterMount);
+});
+
+it("A5: place_id has a control that CAN show a marker — required-fields.ts:125's drift guard hole, closed at the control", async () => {
+  // `CREATE_KEY_TO_FORM_KEY` maps `place_id` → `"place"`, the ONE key that
+  // maps to a control OUTSIDE `CATEGORY_FIELDS` (title/price/currency/
+  // confirmation are the others, and are plain `Input`s that already
+  // supported `required`). `PlacePickerField` had NO `required` prop before
+  // this fix — the marker would silently vanish exactly where the derived
+  // set claims a field needs one. Falsification: dropping `required` from
+  // `PlacePickerField`'s `<Input>` passthrough (or from `BookingForm`'s call
+  // site) makes this RED while every other arm in this file stays green.
+  schemaState.placeRequired = true;
+  await renderForm();
+  await act(async () => {
+    await fireEvent.press(screen.getByTestId("itinerary-item-new-button-place"));
+  });
+  expect(screen.getByTestId("itinerary-item-new-input-place-required")).toBeOnTheScreen();
+  expect(screen.getByTestId("itinerary-item-new-required-legend")).toHaveTextContent("* Required");
+  // And Name is still marked — the derivation widened, it did not move.
+  expect(screen.getByTestId("itinerary-item-new-input-title-required")).toBeOnTheScreen();
 });

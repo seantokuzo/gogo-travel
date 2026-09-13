@@ -72,12 +72,24 @@ describe("requiredBookingFieldKeys, against the REAL contract", () => {
     // mark it. Only `Input`-backed kinds carry `required`; `datetime` and
     // `enum` render their own labels and would silently drop it.
     const MARKABLE_KINDS = new Set(["text", "int", "url", "iata", "airline"]);
+    // Common-section keys (round-1 review A5): NOT in `CATEGORY_FIELDS` (they
+    // render outside the per-category loop), so the kind check above can't
+    // see them at all. Each is verified markable BY NAME rather than
+    // silently trusted — `place` is the exact gap A5 found: it fell through
+    // this exact "not in CATEGORY_FIELDS" branch via
+    // `CREATE_KEY_TO_FORM_KEY`'s `place_id` → `place` mapping while
+    // `PlacePickerField` had no `required` prop to show one. An allowlist
+    // that must be EXTENDED for any newly-required common key (rather than a
+    // bare `continue`) is what makes a future repeat of exactly this
+    // impossible to miss silently — the test fails LOUD, not green-by-skip.
+    const COMMON_MARKABLE_KEYS = new Set(["title", "price", "currency", "confirmation", "place"]);
     for (const category of CATEGORIES) {
       for (const key of requiredBookingFieldKeys(category)) {
         const field = CATEGORY_FIELDS[category].find((candidate) => candidate.key === key);
-        // Common-section keys (`title`, `price`, `currency`, `confirmation`)
-        // are not in CATEGORY_FIELDS and are all plain `Input`s.
-        if (field === undefined) continue;
+        if (field === undefined) {
+          expect(COMMON_MARKABLE_KEYS.has(key)).toBe(true);
+          continue;
+        }
         expect(MARKABLE_KINDS.has(field.kind)).toBe(true);
       }
     }

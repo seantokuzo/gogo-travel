@@ -29,6 +29,8 @@ export interface PlacePickerFieldProps {
   selected: { id: string; name: string } | null;
   onSelect(place: Place | null): void;
   error?: string;
+  /** B-26 R1: schema-derived required marker (passthrough to `Input`). */
+  required?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -50,6 +52,7 @@ export function PlacePickerField({
   selected,
   onSelect,
   error,
+  required,
   testID,
 }: PlacePickerFieldProps) {
   const s = useStyles();
@@ -80,6 +83,7 @@ export function PlacePickerField({
             : undefined
         }
         error={error}
+        required={required}
         trailing={
           selected !== null ? (
             <Pressable
