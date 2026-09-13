@@ -18,9 +18,12 @@
  *
  * Falsification (R-test-7) stated per test.
  */
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, inject, it } from "vitest";
+import { decideBootMigrationAction } from "../boot-migration-check.js";
 import { checkMigrationState } from "./migration-state.js";
 import {
   createDatabaseBehindByOne,
@@ -32,16 +35,22 @@ import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
 const dockerAvailable = inject("dbAvailable");
 const REAL_JOURNAL_URL = new URL("../../drizzle/meta/_journal.json", import.meta.url);
+const REAL_DRIZZLE_DIR = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
 describe.skipIf(!dockerAvailable)("checkMigrationState — real Postgres shapes (B-28)", () => {
   let suiteDb: SuiteDb | undefined;
   let rawDb: RawDb | BehindDatabase | undefined;
+  let journalScratchDir: string | undefined;
 
   afterEach(async () => {
     await suiteDb?.drop();
     suiteDb = undefined;
     await rawDb?.drop();
     rawDb = undefined;
+    if (journalScratchDir) {
+      await rm(journalScratchDir, { recursive: true, force: true });
+      journalScratchDir = undefined;
+    }
   });
 
   it("current: a fully-migrated clone reports zero pending, applied === onDisk", async () => {
@@ -76,5 +85,45 @@ describe.skipIf(!dockerAvailable)("checkMigrationState — real Postgres shapes 
 
     expect(state.pending).toEqual([behind.pendingTag]);
     expect(state.applied).toBe(state.onDisk - 1);
+  }, 30_000);
+
+  it("review round-1 C1 (blocking), against REAL Postgres: a non-monotonic `when` for the unapplied entry still reports it pending", async () => {
+    // Reviewer's exact reproduction, run against a REAL Postgres migrated
+    // by the REAL drizzle-orm migrator (not a stub): apply every on-disk
+    // entry except the last (same technique as `createDatabaseBehindByOne`
+    // — the last entry's real `.sql`/hash is never inserted), then read
+    // state against a SCRATCH COPY of the full journal whose last entry's
+    // `when` has been rewritten to be SMALLER than an already-applied
+    // entry's `when` — the exact "renumbered idx, `when` left alone" merge
+    // shape. Falsification: reintroducing any `entry.when` comparison into
+    // `checkMigrationState` reds this (a watermark check agrees nothing is
+    // pending here).
+    const behind = await createDatabaseBehindByOne("migration_state_nonmono");
+    rawDb = behind;
+
+    journalScratchDir = await mkdtemp(join(tmpdir(), "gogo-migrate-nonmono-"));
+    await cp(REAL_DRIZZLE_DIR, journalScratchDir, { recursive: true });
+    const journalPath = join(journalScratchDir, "meta", "_journal.json");
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      entries: { tag: string; when: number }[];
+    };
+    const lastIdx = journal.entries.length - 1;
+    const original = journal.entries[lastIdx];
+    const previous = journal.entries[lastIdx - 1];
+    if (!original || !previous) throw new Error("unreachable — real journal has ≥2 entries");
+    expect(original.tag).toBe(behind.pendingTag);
+    const rewrittenWhen = previous.when - 1000;
+    journal.entries[lastIdx] = { ...original, when: rewrittenWhen };
+    expect(rewrittenWhen).toBeLessThan(previous.when);
+    await writeFile(journalPath, JSON.stringify(journal, null, 2), "utf8");
+
+    const state = await checkMigrationState(behind.db, {
+      journalUrl: pathToFileURL(journalPath),
+    });
+    expect(state.pending).toEqual([behind.pendingTag]);
+    expect(state.applied).toBe(state.onDisk - 1);
+
+    const devDecision = decideBootMigrationAction("development", state);
+    expect(devDecision.action).toBe("refuse");
   }, 30_000);
 });

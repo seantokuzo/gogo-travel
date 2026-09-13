@@ -13,9 +13,29 @@
  *  - The vendored source itself, `node_modules/.pnpm/drizzle-orm@0.45.2.../
  *    drizzle-orm/pg-core/dialect.js` `PgDialect.migrate()`: one row per
  *    applied migration in `drizzle.__drizzle_migrations(id serial, hash
- *    text, created_at bigint)`, `created_at` = the journal entry's `when`
- *    (epoch millis) — matches `fresh-install.db.test.ts`'s own pin
- *    (`select count(*) from drizzle.__drizzle_migrations`).
+ *    text NOT NULL, created_at bigint)` — matches
+ *    `fresh-install.db.test.ts`'s own pin (`select count(*) from
+ *    drizzle.__drizzle_migrations`).
+ *
+ * 🔴 Review round-1 C1 (blocking) — drift was a TIMESTAMP WATERMARK, and a
+ * watermark lies the moment the journal isn't monotonic in `idx` order.
+ * Two branches each `drizzle-kit generate`; A's entry stamps `when = T_late`
+ * and merges first, B's stamps `when = T_early` and merges second. Resolving
+ * the `_journal.json` conflict the normal way (renumber `idx`, leave `when`
+ * alone — this repo's parallel-wave workflow makes that a live hazard, not a
+ * curiosity) leaves `entries[N].when < entries[N-1].when`. The REAL
+ * migrator (`pg-core/dialect.js:56-71`, verified via Context7 AND the
+ * vendored source at the pinned version) reads `lastDbMigration` ONCE
+ * (`order by created_at desc limit 1`) and skips entry N forever the moment
+ * some earlier-applied entry's `created_at` exceeds N's `when` — a watermark
+ * comparison agrees nothing is pending in that exact shape. Fix: compute
+ * `pending` as the SET DIFFERENCE of on-disk migrations vs applied rows, BY
+ * HASH (the migrator's own `__drizzle_migrations.hash` column — confirmed
+ * present via Context7 AND `pg-core/dialect.js:47-52`'s `CREATE TABLE`,
+ * `hash text NOT NULL`), not by comparing timestamps at all. Each on-disk
+ * hash is computed exactly the way `drizzle-orm/migrator.js`'s
+ * `readMigrationFiles` does — `sha256(readFile(<tag>.sql))` — so it always
+ * matches what a real `db:migrate` run would have inserted.
  *
  * 🔴 Driver-shape trap (same family as `db/pg-errors.ts`'s documented one):
  * `db.execute(sql\`...\`)` on the raw-SQL/no-fields path returns the FULL
@@ -24,7 +44,9 @@
  * confirmed by reading both drivers' `session.js` at the pinned version.
  * `extractRows` normalizes both shapes; never destructure `.rows` inline.
  */
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import type { MigrationState } from "@gogo/shared/api/health";
@@ -114,11 +136,37 @@ async function readJournal(journalUrl: URL): Promise<MigrationJournalEntry[]> {
 }
 
 /**
+ * `sha256(fileContents)` of `<migrationsRoot>/<tag>.sql` — byte-for-byte the
+ * same computation `drizzle-orm/migrator.js`'s `readMigrationFiles` performs
+ * (`crypto.createHash("sha256").update(query).digest("hex")` over the same
+ * `fs.readFileSync(...).toString()` read), so this always agrees with what a
+ * real `db:migrate` run inserted into `__drizzle_migrations.hash`. A missing
+ * `.sql` file for an on-disk journal entry is a journal/on-disk integrity
+ * problem — thrown as `MigrationJournalError`, same family as a malformed
+ * entry, and (like every other journal error) surfaces BEFORE the database
+ * is ever touched.
+ */
+async function hashMigrationFile(migrationsRoot: string, tag: string): Promise<string> {
+  const sqlPath = join(migrationsRoot, `${tag}.sql`);
+  let contents: string;
+  try {
+    contents = await readFile(sqlPath, "utf8");
+  } catch (err) {
+    throw new MigrationJournalError(
+      `migration file missing for on-disk journal entry "${tag}": ${sqlPath}`,
+      { cause: err },
+    );
+  }
+  return createHash("sha256").update(contents).digest("hex");
+}
+
+/**
  * Read-only on-disk-vs-applied comparison.
  *
- * Throws `MigrationJournalError` if the journal can't be read/parsed — this
- * check runs BEFORE the database is ever touched, so a broken journal never
- * masquerades as a DB problem.
+ * Throws `MigrationJournalError` if the journal (or an on-disk `.sql` file
+ * it names) can't be read/parsed/hashed — this check runs BEFORE the
+ * database is ever touched, so a broken journal never masquerades as a DB
+ * problem.
  *
  * Any OTHER error from the database query (connection refused, auth
  * failure, timeout, …) propagates UNCHANGED — never masked or reworded into
@@ -127,30 +175,66 @@ async function readJournal(journalUrl: URL): Promise<MigrationJournalEntry[]> {
  * error this function absorbs is "the tracking table/schema doesn't exist"
  * (a database that has never been migrated), which is a legitimate
  * zero-applied state, not a failure.
+ *
+ * `pending` is the SET DIFFERENCE (by hash) of on-disk migrations vs applied
+ * rows — see the module doc for why a timestamp watermark (the pre-round-1
+ * approach) silently agrees "nothing pending" when the journal isn't
+ * monotonic. `checkedAt` stamps when THIS read happened (ISO-8601,
+ * R-shared-11) — `/health` (`app.ts`) recomputes this at most once per TTL
+ * instead of freezing the boot-time value forever.
  */
 export async function checkMigrationState(
   db: DbClient,
   options?: { journalUrl?: URL },
 ): Promise<MigrationState> {
-  const entries = await readJournal(options?.journalUrl ?? DEFAULT_JOURNAL_URL);
+  const journalUrl = options?.journalUrl ?? DEFAULT_JOURNAL_URL;
+  const journalPath = fileURLToPath(journalUrl);
+  // `<journalPath>` is `<migrationsRoot>/meta/_journal.json` — the `.sql`
+  // files this check hashes live one level up, directly under
+  // `<migrationsRoot>` (matches drizzle-kit's own layout).
+  const migrationsRoot = dirname(dirname(journalPath));
+  const entries = await readJournal(journalUrl);
+  const hashedEntries = await Promise.all(
+    entries.map(async (entry) => ({
+      tag: entry.tag,
+      hash: await hashMigrationFile(migrationsRoot, entry.tag),
+    })),
+  );
 
-  let applied = 0;
-  let maxCreatedAt = 0;
+  let appliedHashes: string[] = [];
   try {
-    const result = await db.execute(
-      sql`select count(*) as count, coalesce(max(created_at), 0) as max_created_at from drizzle.__drizzle_migrations`,
-    );
-    const rows = extractRows<{ count: unknown; max_created_at: unknown }>(result);
-    applied = Number(rows[0]?.count ?? 0);
-    maxCreatedAt = Number(rows[0]?.max_created_at ?? 0);
+    const result = await db.execute(sql`select hash from drizzle.__drizzle_migrations`);
+    const rows = extractRows<{ hash: unknown }>(result);
+    appliedHashes = rows.map((row) => String(row.hash));
   } catch (err) {
     if (!isUndefinedRelation(err)) throw err;
-    applied = 0;
-    maxCreatedAt = 0;
+    appliedHashes = [];
   }
 
-  const pending = entries.filter((entry) => entry.when > maxCreatedAt).map((entry) => entry.tag);
-  return { onDisk: entries.length, applied, pending };
+  const appliedSet = new Set(appliedHashes);
+  const applied = appliedHashes.length;
+  let pending = hashedEntries.filter((entry) => !appliedSet.has(entry.hash)).map((e) => e.tag);
+
+  // Defensive (review round-1 C1): even when every on-disk hash IS matched
+  // by some applied row, a COUNT mismatch — extra/duplicate rows in the
+  // tracking table that don't map 1:1 onto the journal — is still drift.
+  // Never let that read as "ok" just because the by-hash difference came up
+  // empty; `decideBootMigrationAction` branches on `pending.length` alone,
+  // so an empty `pending` here MUST mean "truly current," not "unaccounted
+  // for."
+  if (pending.length === 0 && applied !== entries.length) {
+    pending = [
+      `<applied/on-disk count mismatch: applied=${applied}, onDisk=${entries.length} — every on-disk migration matches an applied row by hash, but the counts don't reconcile>`,
+    ];
+  }
+
+  return {
+    onDisk: entries.length,
+    applied,
+    pending,
+    pendingCount: pending.length,
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 /** The actionable boot/health message: names every pending tag (never just a count) and the exact migrate command. Shared by the dev-refuse and warn-elsewhere paths (`boot-migration-check.ts`) so the two behaviors never drift apart in wording. */
