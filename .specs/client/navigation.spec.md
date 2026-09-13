@@ -444,7 +444,11 @@ Fixed rules:
    `{testID}-scrim` (Sheet), `{testID}-back` (PageHeader); non-interactive
    derived IDs: `{testID}-spinner` (Button loading), `{testID}-error` /
    `{testID}-field` (Input), `tab-bar-{key}-badge` / `tab-bar-{key}-dot`
-   (TabNav). _(Synced 2026-07-18, post-T-4.3)_
+   (TabNav). _(Synced 2026-07-18, post-T-4.3)_ Shared `PickerCard`
+   (screen-anchored bottom modal card behind DateField/TimeField overflow,
+   B-10a/B-10b): `{testID}-sheet`, `{testID}-sheet-done`,
+   `{testID}-sheet-close`, `{testID}-sheet-scrim`. _(Synced 2026-09-13,
+   post-PR #49, QA-wave batch)_
 5. IDs are stable across renders and refactors — E2E flows match on them
    (landmine: flows point at the REAL UI).
 6. _(Synced 2026-07-26, post-T-6.6 R1)_ Guard/link surfaces the build added:
