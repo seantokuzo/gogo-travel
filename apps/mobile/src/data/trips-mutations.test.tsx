@@ -311,3 +311,64 @@ describe("useCreateCustomDestination (B-7 — empty-results fallback, R-tripui-2
     await unmount();
   });
 });
+
+describe("useCreateCustomDestination cache invalidation (B-7 review R1 B2, blocking)", () => {
+  const NOWHEREVILLE = makePlace({
+    id: "88888888-8888-4888-8888-888888888888",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    lat: 0,
+    lng: 0,
+    category: null,
+    created_by: "11111111-1111-4111-8111-111111111111",
+  });
+
+  it("invalidates the place-search family so a just-created place is not re-offered under PROD staleTime", async () => {
+    let searchCalls = 0;
+    const request = spyRequest();
+    request.mockImplementation((descriptor: unknown) => {
+      if (descriptor === placeEndpoints.searchPlaces) {
+        searchCalls += 1;
+        // Call 1 (pre-create): genuinely empty. Call 2 (post-invalidation
+        // refetch): the place now exists — this is what an un-invalidated
+        // 5-min-fresh cache would NEVER re-fetch to discover.
+        return Promise.resolve(
+          searchCalls === 1
+            ? { items: [], nextCursor: null }
+            : { items: [NOWHEREVILLE], nextCursor: null },
+        );
+      }
+      if (descriptor === placeEndpoints.createPlace) {
+        return Promise.resolve(NOWHEREVILLE);
+      }
+      return Promise.reject(new Error("unexpected request"));
+    });
+
+    const client = makeTestQueryClient();
+    // A1 advisory: the harness's global staleTime:0 makes this whole defect
+    // class invisible — apply PROD staleTime to exactly the places/search
+    // family so the pin actually exercises the "stale empty page" bug.
+    client.setQueryDefaults(queryKeys.placeSearchRoot, { staleTime: 1000 * 60 * 5 });
+    const wrapper = makeWrapper(client);
+
+    const search = await renderHook(() => usePlaceSearch("Nowhereville"), { wrapper });
+    await waitFor(() => expect(search.result.current.isSuccess).toBe(true));
+    expect(search.result.current.data?.items).toEqual([]);
+
+    const create = await renderHook(() => useCreateCustomDestination(), { wrapper });
+    await act(async () => {
+      await create.result.current.mutateAsync("Nowhereville");
+    });
+
+    // Falsification: comment out the `invalidateQueries` call in the hook's
+    // onSuccess and this waitFor times out — the mounted search observer
+    // keeps serving the pre-create empty page for the rest of prod's 5-min
+    // staleTime window, and `searchCalls` never advances past 1.
+    await waitFor(() => expect(search.result.current.data?.items).toEqual([NOWHEREVILLE]));
+    expect(searchCalls).toBe(2);
+
+    await search.unmount();
+    await create.unmount();
+  });
+});

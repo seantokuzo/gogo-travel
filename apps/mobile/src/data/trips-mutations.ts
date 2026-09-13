@@ -1,8 +1,9 @@
 /**
  * T-6.7 data module (CT-1/CT-2) — the trip-list infinite query, the
- * create-trip mutation, and the destination place search. Lives in its own
- * file (not `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the
- * data layer in their own modules, so parallel lanes only ever touch
+ * create-trip mutation, the destination place search, and (B-7) the
+ * custom-destination create fallback. Lives in its own file (not
+ * `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the data layer
+ * in their own modules, so parallel lanes only ever touch
  * `query-client.ts`/`index.ts` additively.
  *
  * Conventions carried from T-5.8/T-6.6 (`hooks.ts`):
@@ -184,6 +185,7 @@ export interface CreateCustomDestinationOptions {
 export function useCreateCustomDestination(
   options?: CreateCustomDestinationOptions,
 ): UseMutationResult<Place, Error, string> {
+  const qc = useQueryClient();
   return useMutation({
     // Trim at the hook boundary (the `usePlaceSearch`/`normalizeSearchText`
     // precedent above: one normalization owner, not "the caller remembered
@@ -194,7 +196,20 @@ export function useCreateCustomDestination(
       apiClient.request(placeEndpoints.createPlace, {
         body: { name: rawName.trim(), lat: 0, lng: 0 },
       }),
-    onSuccess: (place) => options?.onMutationSuccess?.(place),
+    onSuccess: (place) => {
+      // B-7 review R1 B2 (blocking): with no invalidation, the EMPTY
+      // `placeSearch(q)` page fetched before this create stays fresh under
+      // prod's 5-min staleTime — the row gets re-offered for a place that
+      // now exists, and `places` has no uniqueness constraint for custom
+      // rows (`source_id IS NULL`), so a second tap mints a duplicate. This
+      // can't target one exact key (the create doesn't know every `q` that
+      // would now match), so it invalidates the WHOLE `placeSearch` family —
+      // default `refetchType: "active"` refetches any mounted search
+      // observer immediately, which is exactly the screen that just created
+      // this place.
+      void qc.invalidateQueries({ queryKey: queryKeys.placeSearchRoot });
+      options?.onMutationSuccess?.(place);
+    },
     onError: (error) => options?.onMutationError?.(error),
   });
 }
