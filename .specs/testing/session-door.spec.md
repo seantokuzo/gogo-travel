@@ -57,19 +57,30 @@ domain is a placeholder and serves no AASA).
 Numbering continues `auth-users.spec.md`'s `R-auth-*` family as its own
 prefix, `R-door-*`, scoped to this spec.
 
-- **R-door-1 (server double gate):** WHEN the server boots THE SYSTEM SHALL
-  mount `POST /auth/e2e/session` only if `NODE_ENV` is not `production` AND
-  `E2E_SESSION_DOOR_SECRET` is set to a value of at least 32 characters;
-  otherwise the route SHALL NOT exist.
+- **R-door-1 (server triple gate, positive opt-in):** WHEN the server boots
+  THE SYSTEM SHALL mount `POST /auth/e2e/session` only if ALL of: (a)
+  `process.env.NODE_ENV` was **explicitly provided** and is `development` or
+  `test` — a defaulted/absent `NODE_ENV` SHALL NOT satisfy this condition;
+  (b) `E2E_SESSION_DOOR_SECRET` is set and >= 32 chars; (c)
+  `E2E_SESSION_DOOR=1` is set explicitly. Otherwise the route SHALL NOT
+  exist. (Review round 1, B3: closes the "hosted deploy forgets to set
+  `NODE_ENV`" hole — see §3.8. `env.ts` exposes condition (a) cheaply as
+  `NODE_ENV_EXPLICIT: z.boolean()`, derived in `loadEnv` from
+  `source.NODE_ENV !== undefined`, keeping `loadEnv()` the only
+  `process.env` reader per `.claude/rules/server.md`.)
 - **R-door-2 (fail closed in production):** WHEN `NODE_ENV` is `production`
-  AND `E2E_SESSION_DOOR_SECRET` is set THE SYSTEM SHALL refuse to boot with an
-  error naming the variable and never its value.
+  AND (`E2E_SESSION_DOOR_SECRET` is set OR `E2E_SESSION_DOOR` is set) THE
+  SYSTEM SHALL refuse to boot with an error naming the offending variable(s)
+  and never a value.
 - **R-door-3 (no oracle):** WHEN a request to `POST /auth/e2e/session` fails
-  for any reason — route absent, wrong secret, malformed body, ineligible
-  fixture row, rate limited — THE SYSTEM SHALL return the identical `401
-UNAUTHENTICATED` envelope an unauthenticated request to an unknown path
-  returns, and SHALL record the real reason only in the server log with the
-  `requestId`.
+  for any reason — route absent, wrong secret, disallowed or unresolvable
+  request peer, malformed body, oversized body, ineligible fixture row, rate
+  limited — THE SYSTEM SHALL return the identical `401 UNAUTHENTICATED`
+  envelope an unauthenticated request to an unknown path returns, and SHALL
+  record the real reason only in the server log with the `requestId`.
+  (Review round 1, B4: "oversized body" and "disallowed or unresolvable
+  request peer" were added to the enumeration — see §3.6's body-size-ordering
+  note and R-door-11.)
 - **R-door-4 (ordinary session):** WHEN the door mints a session THE SYSTEM
   SHALL create it through the same `createSessionWithTokens` path sign-in
   uses, so rotation, reuse-theft family revocation, `/auth/logout`, session
@@ -85,11 +96,16 @@ UNAUTHENTICATED` envelope an unauthenticated request to an unknown path
   ASCII-only boot warning naming the route, and SHALL log every mint with
   `requestId`, `sessionId`, `user_key` and whether the user was created —
   never the secret, the tokens, or the email.
-- **R-door-7 (client build gate):** THE SYSTEM SHALL open the client door
-  only when `EXPO_PUBLIC_E2E_DOOR_SECRET` was inlined at build time with at
-  least 32 characters; a build without it SHALL render an inert,
-  non-zero-framed marker at `gogo://e2e-session` and SHALL issue no network
-  request.
+- **R-door-7 (client build gate + local-destination gate):** THE SYSTEM
+  SHALL open the client door only when `EXPO_PUBLIC_E2E_DOOR_SECRET` was
+  inlined at build time with at least 32 characters **AND** the resolved API
+  base URL's host satisfies `isLocalOrPrivateHost`
+  (`apps/mobile/src/auth/config.ts`). A build failing either condition SHALL
+  render an inert, non-zero-framed marker at `gogo://e2e-session` and SHALL
+  issue no network request; the secret SHALL NEVER be transmitted to a
+  non-local host. (Review round 1, B5 scenario A: the build-inlined secret
+  must not leave the rig over the wire just because the same build was later
+  pointed at a hosted API base.)
 - **R-door-8 (clean slate):** WHEN the client door runs THE SYSTEM SHALL
   complete boot hydration, then perform a full local sign-out reset (session
   store, secure-store refresh token, query cache, tab memory, last-viewed
@@ -103,6 +119,77 @@ UNAUTHENTICATED` envelope an unauthenticated request to an unknown path
   mode-700 directory outside the repository worktree and print those paths
   plus the run's `~/.maestro/tests/<ts>/maestro.log` path; a failed copy SHALL
   fail the run.
+- **R-door-11 (request peer gate):** WHEN the door receives a request THE
+  SYSTEM SHALL derive the caller address from the **socket peer** (`clientIp`
+  / `getConnInfo(c).remote.address`, `apps/server/src/http/rate-limit.ts:137`)
+  — NEVER from the `Host`, `X-Forwarded-For`, `X-Real-IP`, or `Forwarded`
+  headers — and SHALL reject with the uniform 401 unless the peer, after
+  normalisation (stripping an IPv4-mapped IPv6 prefix `::ffff:` and bracket
+  forms `[::1]` → `::1`), is IPv4/IPv6 loopback (`127.0.0.0/8`, `::1`) or a
+  private range (RFC-1918, ULA `fc00::/7`), evaluated before the secret
+  comparison and before any database access. `0.0.0.0`, link-local addresses,
+  and any name-based match (`.local` or otherwise) SHALL be rejected. An
+  unresolvable peer (including the `"unknown"` value `clientIp` returns when
+  there is no socket, e.g. under `app.request()`) SHALL be treated as
+  **disallowed**. The peer resolver SHALL be injectable
+  (`peerOf?: (c) => string | null`, defaulting to `clientIp`) so tests can
+  drive both the allowed and disallowed sides without a real socket. (Review
+  round 1, B1: replaces the original `Host`-header predicate, which an
+  attacker fully controls. Defense-in-depth relative to R-door-1 — see §3.8.)
+- **R-door-12 (constant-time secret):** WHEN the door compares the presented
+  secret THE SYSTEM SHALL compare SHA-256 digests with
+  `crypto.timingSafeEqual` and SHALL NOT use `===`, `==`, `.localeCompare`,
+  or any short-circuiting comparison. (Review round 1, B2: promotes §3.5's
+  prose-only comparison method to a normative, test-obligated requirement.)
+- **R-door-13 (constant-work floor, SHOULD):** WHEN the door rejects a
+  request for any reason THE SYSTEM SHOULD perform the same
+  SHA-256-digest-and-`timingSafeEqual` work it performs on a valid attempt —
+  including when the route is not mounted (a fixed-cost dummy comparison) or
+  the body fails to parse — so response latency does not reveal whether the
+  route exists. Advisory strength (SHOULD, not SHALL): closes the review
+  round 1 A2 timing side-channel but is not required for the primary
+  security property, since R-door-1's positive opt-in and R-door-11's peer
+  gate already prevent exploitation without both a deliberately-configured
+  rig and network access to it.
+- **R-door-14 (fixture cap):** WHEN a find-or-create for a new `user_key`
+  would create the **N+1**th distinct `e2e:`-prefixed fixture user on the
+  server (N = `E2E_DOOR_MAX_FIXTURE_USERS`, a boot constant defaulting to
+  **500**) THE SYSTEM SHALL reject with the uniform 401
+  (`reason=fixture_cap`) instead of creating the row; lookups of **already
+  existing** keys are unaffected. This is a bounded escape hatch, not a
+  reset — it never deletes a row, and it is not reachable through the door
+  (see §5.4's fixture-cleanup note). (Review round 1, A3.)
+
+### 2.1 Test obligations (review round 1, B2)
+
+No requirement above is satisfied by a reading of the code; each is
+satisfied by a test T3 or T4 ships in the same commit as the behavior. This
+table is the floor, not the ceiling — ordinary matrix coverage (happy/error/
+boundary/adversarial per `.claude/rules/testing.md`) still applies on top.
+
+| Requirement | Test obligation (at minimum)                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-door-1    | Mount matrix crossing `NODE_ENV` (unset/defaulted, misspelled e.g. `"Production"`, `production`, explicit `development`, explicit `test`) × `E2E_SESSION_DOOR` (unset, `"1"`) × secret (absent, 31 chars, 32+ chars). Only the all-pass cell mounts the route; every other cell does not.                                                                                                                                                                      |
+| R-door-2    | `NODE_ENV=production` + secret set, and separately + `E2E_SESSION_DOOR=1` set with no secret — both throw at `loadEnv()`; assert the thrown message contains the variable NAME(s) and never a value.                                                                                                                                                                                                                                                           |
+| R-door-3    | For every failure mode — route absent, secret wrong, secret prefix-correct-but-wrong (e.g. right length, one byte off), disallowed peer, unresolvable (`"unknown"`) peer, malformed body, oversized body (over `BODY_LIMIT_MAX_BYTES`), ineligible fixture row (`google_sub` set / `deleted_at` set), rate-limited, a replayed/reused secret across calls — assert byte-identical status, body, and header set against a request to an unmounted/unknown path. |
+| R-door-4    | Mint via the door → rotate once → replay the original refresh token → assert the token family is revoked (mirrors the real-sign-in assertion in `tokens-routes.db.test.ts`).                                                                                                                                                                                                                                                                                   |
+| R-door-5    | A row matching `apple_sub = e2e:K` that instead carries a `google_sub`, and separately one with a non-null `deleted_at`, are both rejected with `reason=fixture_conflict` and the uniform 401.                                                                                                                                                                                                                                                                 |
+| R-door-7    | `https://api.<prod-host>` as the resolved API base is pinned inert-with-no-request (spy the injected `api`, assert zero calls); a local/private base with the secret inlined issues the request.                                                                                                                                                                                                                                                               |
+| R-door-9    | The 21st call from one peer inside a fake-clock minute gets the same uniform 401 with **no** `Retry-After` header present (not a `429`).                                                                                                                                                                                                                                                                                                                       |
+| R-door-11   | Peer `127.0.0.1` / `::1` → allowed; `::ffff:10.0.0.5` (normalised to a private address) → allowed; a public peer → 401; peer `"unknown"` (the `app.request()` default) → 401; a spoofed `Host: 127.0.0.1` header from an injected non-loopback peer → 401 (proves the header is ignored).                                                                                                                                                                      |
+| R-door-12   | Mutation-verify: swap `timingSafeEqual` for `===` in the door's compare and confirm a pin goes RED.                                                                                                                                                                                                                                                                                                                                                            |
+| R-door-14   | With `E2E_DOOR_MAX_FIXTURE_USERS` set low (e.g. 2) via test config, the 3rd distinct `user_key` is rejected with the uniform 401 while the first 2 keys still resolve; no existing row is touched.                                                                                                                                                                                                                                                             |
+
+**Test-design note, recorded not required (review round 1, A5/Finding 10):**
+under `app.request()` every in-process request shares the same unresolvable
+`"unknown"` peer. Combined with R-door-9's per-peer rate limit, this means
+every in-process door test in one suite file shares **one** rate-limit
+bucket keyed on `"unknown"`. A suite that calls the door route more than 20
+times against a fake clock inside one simulated minute will start 401-ing
+for reasons unrelated to what it asserts. T3's suite SHALL either inject
+distinct peers per test case (via R-door-11's injectable resolver) or
+reset/advance the rate-limit store between cases that are not themselves
+testing R-door-9.
 
 ---
 
@@ -119,24 +206,33 @@ design choice below follows from that.
 
 ### 3.2 The gates, named
 
-| #                       | Side   | Gate                          | Allowed value                                                                                                                                     | Default                                                  |
-| ----------------------- | ------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| G1                      | server | `NODE_ENV`                    | anything **except** `production` (enum stays `development` / `test` / `production` — see §3.3)                                                    | `development`                                            |
-| G2                      | server | `E2E_SESSION_DOOR_SECRET`     | string, **>=32 chars**; absent means the route is not mounted                                                                                     | absent                                                   |
-| G3                      | client | `EXPO_PUBLIC_E2E_DOOR_SECRET` | string, **>=32 chars**, inlined by Metro at build time; absent means the door module never issues a request and the route renders an inert marker | absent                                                   |
-| G4                      | server | boot refusal                  | `NODE_ENV === "production"` **AND** G2 set means `loadEnv()` throws, so the process never reaches `serve()`                                       | —                                                        |
-| **G5 (decided, §8 Q4)** | server | **request host**              | the resolved request `Host` SHALL be loopback, RFC-1918, or `.local`; the door SHALL reject with the uniform 401 otherwise, regardless of G1/G2   | n/a — enforced unconditionally when the route is mounted |
+| #                    | Side   | Gate                                | Allowed value                                                                                                                                                                                                 | Default                                                  |
+| -------------------- | ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| **G0 (added, R2)**   | server | `E2E_SESSION_DOOR`                  | must be **explicitly** `1`; anything else (including absent) means the route is not mounted                                                                                                                   | absent                                                   |
+| **G1 (revised, R2)** | server | `NODE_ENV`                          | must be **explicitly provided** (not defaulted) and `development` or `test` (enum stays `development` / `test` / `production` — see §3.3)                                                                     | absent/defaulted ⇒ fails this gate                       |
+| G2                   | server | `E2E_SESSION_DOOR_SECRET`           | string, **>=32 chars**; absent means the route is not mounted                                                                                                                                                 | absent                                                   |
+| G3                   | client | `EXPO_PUBLIC_E2E_DOOR_SECRET`       | string, **>=32 chars**, inlined by Metro at build time; absent means the door module never issues a request and the route renders an inert marker                                                             | absent                                                   |
+| **G4 (revised, R2)** | server | boot refusal                        | `NODE_ENV === "production"` **AND** (G2 set OR G0 set) means `loadEnv()` throws, so the process never reaches `serve()`                                                                                       | —                                                        |
+| **G5 (revised, R2)** | server | **request peer** (defense-in-depth) | the **socket peer** (never a header) SHALL be loopback or private-range, normalised for IPv4-mapped/bracketed forms (R-door-11); the door SHALL reject with the uniform 401 otherwise, regardless of G0/G1/G2 | n/a — enforced unconditionally when the route is mounted |
 
-The door exists only at `G1 AND G2 AND G5` on the server and only works at
-`G1 AND G2 AND G3 AND G5` end to end. G5 uses the **same predicate**
-`apps/mobile/src/auth/config.ts` already uses for its cleartext-transport
-guard, so the two ends of the rig agree on what "local" means (decided §8 Q4
-option (b)) — this closes the residual risk named in §3.8: a hosted
-environment that forgets `NODE_ENV` (which defaults to `development`) and
-therefore clears G1 is still blocked by G5 unless it is also reachable at a
-loopback/private address, which a real deploy is not. A physical-device rig
-on the LAN still works (RFC-1918 is allowed); a tunnelled rig (ngrok and
-friends) needs a deliberate override, out of scope for T1–T4.
+The door exists only at `G0 AND G1 AND G2 AND G5` on the server and only
+works at `G0 AND G1 AND G2 AND G3 AND G5` end to end.
+
+**G5 was revised in review round 1 (B1/B3).** The original draft evaluated
+the request `Host` header against the same loopback/RFC-1918/`.local`
+predicate the client uses for its cleartext-transport guard
+(`apps/mobile/src/auth/config.ts`). That header is attacker-controlled — a
+`Host: 127.0.0.1` line in a curl request passes the predicate from anywhere
+on the internet — so G5 now reads the **socket peer**, never a header
+(R-door-11), and is **defense-in-depth**, not the primary closure of the
+"forgot to configure anything" deploy risk. That closure is now G0+G1
+(R-door-1): the door requires `E2E_SESSION_DOOR=1` and an explicitly
+provided `NODE_ENV`, so a server that never had either variable touched
+never mounts the route, full stop, independent of what network it is
+reachable from. See §3.8 for why G5 alone is insufficient behind a reverse
+proxy. A physical-device rig on the LAN still works (RFC-1918 peers are
+allowed); a tunnelled rig (ngrok and friends) needs a deliberate override,
+out of scope for T1–T4.
 
 Nothing in the repo, in `.env.example`, in `app.json`, or in any default
 build command sets G2 or G3. Both come from `scripts/gen-test-env.mjs`, which
@@ -145,8 +241,8 @@ throwaway-material pattern T-S3.1 already established for the 8 auth vars.
 
 ### 3.3 Why not `NODE_ENV="e2e"`
 
-Sean's "if we want to be more targeted" is served by G2, not by a new
-`NODE_ENV` value. `apps/server/src/env.ts` pins
+Sean's "if we want to be more targeted" is served by G0 (`E2E_SESSION_DOOR`)
+and G2 (the secret), not by a new `NODE_ENV` value. `apps/server/src/env.ts` pins
 `NODE_ENV: z.enum(["development","test","production"])` and `index.ts`/`app.ts`
 branch on `=== "development"` / `=== "production"`. Adding a fourth value
 silently turns off the dev request log, changes the health-only-boot refusal
@@ -193,11 +289,17 @@ configuration accident away from nothing:
   (that is how the physical-device rig works — `apps/mobile/src/auth/config.ts`
   tiers 2/3 derive a LAN URL on purpose). Anyone on the coffee-shop wifi
   could mint sessions.
-- `env.ts` **defaults `NODE_ENV` to `development`**. A hosted environment
-  that forgets to set `NODE_ENV` passes G1. The secret (and now G5) is what
-  still holds in that case.
-- A preview/staging deploy that inherits a rig's env file passes G1 if it
-  runs `NODE_ENV=development`. The secret again holds.
+- `env.ts` **defaults `NODE_ENV` to `development`** when the var is absent —
+  but G1 (R-door-1) now requires `NODE_ENV` to be **explicitly** provided, so
+  a hosted environment that forgets to set it fails G1 outright and never
+  reaches G0/G2. (Review round 1, B3: before that fix, G1 accepted the
+  default, and only the secret — plus a since-revised, header-based G5 —
+  held; see §3.8.)
+- A preview/staging deploy that inherits a **whole** rig env file — where
+  `NODE_ENV=development`, `E2E_SESSION_DOOR=1`, and the secret are all
+  present because they were copied wholesale — passes G0 and G1 regardless.
+  The secret (G2) is what holds in that specific case; G5 is a second line
+  behind it.
 
 **Decided (§8 Q2, option (a)): secret transport to the client is
 build-inlined (G3), never URL-carried.** The deep link carries only
@@ -229,8 +331,8 @@ Contract: **`POST /auth/e2e/session` has exactly two observable responses.**
 2. `401` + the identical `UNAUTHENTICATED` envelope
    (`apiError(c, "UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE)`) for **every**
    other outcome: route not mounted (`requireAuth`'s own 401 fires), wrong
-   secret, disallowed host, malformed body, bad `user_key` shape, ineligible
-   fixture row, rate limited.
+   secret, disallowed or unresolvable request peer, malformed body, oversized
+   body, bad `user_key` shape, ineligible fixture row, rate limited.
 
 This deliberately **deviates from `rejectInvalidBody`** (which the rest of
 the server uses to return `400 VALIDATION_FAILED`): a 400 would prove the
@@ -242,15 +344,46 @@ The real reason is logged server-side with the `requestId` — that is how a
 misconfigured rig gets debugged:
 `[auth] e2e door rejected (requestId=..., reason=secret_mismatch)`.
 
+**Body-size ordering (review round 1, B4).** `apps/server/src/app.ts` mounts
+`createRequireAuth` (`:198`) before the app-wide `bodyLimit` (`:213`) —
+deliberately, per the ordering comment at `:204-210` and the pin at
+`app.test.ts:297` ("an oversized UNAUTHENTICATED body is the uniform 401,
+never a 413 oracle"). That ordering means a request to an **allowlisted**
+path — which the door path becomes once mounted (§4.3) — sails past
+`requireAuth` and hits the app-wide `bodyLimit`, which answers with `413
+PAYLOAD_TOO_LARGE`. A `413` on the door path and a `401` on an unrecognised
+path is exactly the oracle this section forbids: it tells an attacker the
+route exists without ever guessing the secret. The door router SHALL
+therefore mount its **own** body guard, evaluated **before** the app-wide
+`bodyLimit` can observe the request — a per-route `bodyLimit` whose
+`onError` returns `apiError(c, "UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE)`
+(never `PAYLOAD_TOO_LARGE`), capped at or below `BODY_LIMIT_MAX_BYTES`
+(`apps/server/src/config.ts:371`). A test SHALL assert that an oversized
+body to the door path and an oversized body to an unknown path produce
+byte-identical status, body, and header sets (folded into R-door-3).
+
 ### 3.7 Rate limit + audit posture
 
 - **Rate limit** (new `RATE_LIMITS.e2eDoor`, `apps/server/src/config.ts`):
-  **20/min and 200/day per IP**, keyed with the existing `clientIp` resolver
-  (never `X-Forwarded-For` — `.claude/rules/server.md`). Sized off the
+  **20/min and 200/day per IP**, keyed with the same peer resolver R-door-11
+  uses (never `X-Forwarded-For` — `.claude/rules/server.md`). Sized off the
   measured lane: PR #61's four-flow release run took 178.188 s, i.e. roughly
   one door call per 30 s; 20/min leaves headroom for `--flow`-loop authoring
   without leaving a secret-grinding surface open. Deliberately not reusing
   `RATE_LIMITS.signIn` (10/min) — a tight authoring loop would trip it.
+  **The door does NOT mount the generic `rateLimit([...])` middleware**
+  (review round 1, A1) — that middleware's only rejection is `429
+RATE_LIMITED` plus a `Retry-After` header, which would itself be a
+  door-exists oracle and a direct R-door-3/R-door-9 violation. Instead the
+  handler charges the rate-limit store directly
+  (`deps.store.hit("e2eDoor:" + peer, ...)`) and, on a limit hit, falls
+  through to the exact same uniform 401 every other failure mode returns —
+  own bucket, no `429`, no `Retry-After`, ever.
+- **Constant-work floor** (R-door-13, SHOULD, review round 1 A2): perform the
+  digest-compare-and-`timingSafeEqual` work on every rejection path —
+  including a fixed-cost dummy comparison when the route would not even be
+  mounted, and when the body fails to parse — so response latency does not
+  additionally reveal whether the door exists on a quiet host.
 - **Boot warning** (`index.ts`, alongside the existing object-storage / Mapbox
   notes): `[boot] E2E SESSION DOOR ENABLED - POST /auth/e2e/session mints sessions without provider verification. Local test rigs only.`
   ASCII only, no em dash: a non-ASCII byte makes Hermes store a literal as
@@ -263,33 +396,53 @@ misconfigured rig gets debugged:
 
 ### 3.8 What happens if the gate is set in production by mistake — fail closed, loudly
 
-Four layers, in order of firing:
+Five layers, in order of firing:
 
 1. **G4 / `loadEnv` throws.** A cross-field check in `EnvSchema`
-   (`superRefine`): `NODE_ENV === "production" && E2E_SESSION_DOOR_SECRET !== undefined`
-   yields `Invalid environment configuration - E2E_SESSION_DOOR_SECRET: must not be set when NODE_ENV is production`.
+   (`superRefine`): `NODE_ENV === "production" && (E2E_SESSION_DOOR_SECRET !== undefined || E2E_SESSION_DOOR !== undefined)`
+   yields `Invalid environment configuration - E2E_SESSION_DOOR_SECRET (or E2E_SESSION_DOOR): must not be set when NODE_ENV is production`.
    `loadEnv()` is called at the top of `index.ts` before anything else, and
    it reports **names only, never values** — keep that. The process exits
    non-zero; the deploy's health check never goes green; the platform rolls
    back. It does **not** "ignore the variable and carry on", because a server
    that silently drops a security-relevant config value teaches operators
    that the value is inert.
-2. **Router builder returns `null`.** Even if layer 1 were bypassed (a future
-   caller constructing `Env` by hand), `buildE2eDoorDeps(env)` returns `null`
-   unless `NODE_ENV !== "production"` **and** the secret is present and >=32
-   chars. `createApp` mounts nothing for `null`.
-3. **G5 host check.** Even if layers 1–2 were bypassed (a future caller
-   mounting the router directly), every request the handler sees is still
-   checked against the loopback/RFC-1918/`.local` predicate before anything
-   else runs, and rejected with the uniform 401 otherwise.
-4. **Client.** A build without G3 renders `e2e-session-screen-inert` and
-   issues no request.
+2. **G0/G1 positive opt-in.** Even outside `production`, the route mounts
+   only if `E2E_SESSION_DOOR=1` was explicitly set AND `NODE_ENV` was
+   explicitly provided as `development` or `test`. A server that never had
+   either variable touched — which is every server that did not deliberately
+   opt in — never reaches layer 3, regardless of what `NODE_ENV` defaults to
+   or what network it sits on. This is the layer that actually closes the
+   "forgot to configure anything" deploy risk (see Residual risk below).
+3. **Router builder returns `null`.** Even if layers 1–2 were bypassed (a
+   future caller constructing `Env` by hand), `buildE2eDoorDeps(env)` returns
+   `null` unless G0 AND G1 AND G2 all hold. `createApp` mounts nothing for
+   `null`.
+4. **G5 peer check (defense-in-depth).** Even if layers 1–3 were bypassed (a
+   future caller mounting the router directly), every request the handler
+   sees is still checked against the loopback/RFC-1918/ULA **socket peer**
+   before anything else runs, and rejected with the uniform 401 otherwise.
+5. **Client.** A build without G3, or whose resolved API base is not
+   local/private (R-door-7), renders `e2e-session-screen-inert` and issues no
+   request.
 
-**Residual risk, named — and closed by G5:** a production deploy that forgets
-`NODE_ENV` entirely defaults to `development` and therefore clears G1. Before
-G5, G2 alone would have to hold (nobody sets the secret) with no
-environmental backstop; **with G5, that deploy is additionally inert unless
-it is reachable at a loopback/private address, which a real deploy is not.**
+**Residual risk, named — and NOT fully closed by G5 (review round 1, B3):**
+the risk this section originally worried about was a production deploy that
+forgets `NODE_ENV` entirely, which defaults to `development` and clears the
+old G1. **G0/G1's positive opt-in closes that risk directly** — a server
+that never had `E2E_SESSION_DOOR=1` and an explicit `NODE_ENV` set never
+mounts the route, independent of any default. G5 is retained as a second
+line, but it is **not** sufficient on its own behind the deploy topology
+this app actually uses: a container behind a reverse proxy or load balancer
+(Fly, Render, ECS, k8s — every realistic host for this stack) sees the proxy
+as its socket peer, typically at an RFC-1918 address (`10.x.x.x`,
+`172.17.x.x`) — **peer-is-private is the normal state of a proxied
+production app, not evidence of a local rig.** If G0/G1 were ever bypassed
+on such a host, G5 would clear too and would not save it. G5's real value is
+against a _direct_, unproxied exposure (a dev server bound to `0.0.0.0`
+reachable from a LAN or the open internet with no proxy in front) — it is
+not a backstop for the proxied-production case, which is exactly why making
+G0/G1 a positive opt-in rather than a default is load-bearing.
 
 ---
 
@@ -460,9 +613,42 @@ Both are Release configuration, Hermes, embedded bundle, `__DEV__ === false`
 # door-free (App-Store-shaped) - flows 1-4 + session-door-absent
 cd apps/mobile && LANG=en_US.UTF-8 npx expo run:ios --configuration Release
 
-# door build - flows 5-10
-cd apps/mobile && EXPO_PUBLIC_E2E_DOOR_SECRET="..." LANG=en_US.UTF-8 npx expo run:ios --configuration Release
+# door build - flows 5-10. Secret sourced from the gitignored, mode-600
+# apps/server/.env.test (scripts/gen-test-env.mjs) -- NEVER typed inline: an
+# inline assignment lands in shell history verbatim and is visible in
+# `ps -e` to any local process while the build runs (review round 1, B5
+# scenario C). T3 extends gen-test-env.mjs to also write
+# E2E_SESSION_DOOR_SECRET / EXPO_PUBLIC_E2E_DOOR_SECRET into that file.
+cd apps/mobile && set -a && . ../server/.env.test && set +a && \
+  LANG=en_US.UTF-8 npx expo run:ios --configuration Release
 ```
+
+**Bundle-identity guard (review round 1, B5 scenario B).** A door build and
+a door-free build are otherwise byte-identical at the point of upload — the
+only difference is a string literal folded into the Hermes bundle by
+`babel-preset-expo`'s `inline-env-vars` plugin, which no human inspecting an
+`.ipa`/`.app` can tell apart (§3.4 already forbids trying to prove this with
+`strings | grep`). `apps/mobile/app.json` is currently **static** (no
+`app.config.js`/`.ts`), so nothing in the repo can vary the bundle
+identifier per build today. T4 SHALL convert it to a dynamic
+`app.config.ts` (Expo SDK 57 supports `.js`/`.ts` config alongside or in
+place of `app.json` — verify the exact API against the installed version via
+Context7 before implementing; CLAUDE.md "What NOT to do": never guess a
+library API or version) whose exported config function reads
+`process.env.EXPO_PUBLIC_E2E_DOOR_SECRET` **at prebuild/build time** — this
+runs as a plain Node script during `expo prebuild`/`expo run`, not inside
+the JS bundle, so it sees the shell env directly and needs no babel inlining
+— and, when the var is present, appends `.e2edoor` to `ios.bundleIdentifier`
+(`app.gogotravel` → `app.gogotravel.e2edoor`) and ` (E2E)` to `name`. A door
+build can then never be archived or uploaded under the shipping app's App
+Store Connect record: Apple's upload pipeline keys off `CFBundleIdentifier`,
+and `app.gogotravel.e2edoor` has no matching App Store Connect app record to
+receive it. **Verification:** a test (T4) invokes the `app.config.ts` export
+directly with and without the env var set and asserts the two resulting
+`bundleIdentifier`/`name` values differ — no native build needed for the
+pin. The black-box `session-door-absent` Maestro flow (§3.4) separately
+proves the door-free build's runtime _behavior_; this proves the door
+build's _identity_ can never collide with the shippable one.
 
 **Decided cadence:** the door-free build + `session-door-absent` run on every
 PR that touches door code (server gate, client gate, the route, or the
@@ -492,7 +678,25 @@ primitive needed. The runner (T5, `scripts/e2e.sh`) generates
 `RUN_ID="$STAMP"` (it already computes `STAMP`) and passes `-e RUN_ID="$RUN_ID"`
 on every invocation; no secret is ever passed to Maestro. Cost, accepted:
 the local dev DB accumulates fixture users; cleaning means dropping and
-re-migrating the dev DB. **Rejected: a `reset: true` request field that
+re-migrating the dev DB.
+
+**Bounded growth guard (R-door-14, review round 1 A3).** Without a cap, the
+door is an unbounded authenticated-principal factory: every distinct
+`user_key` find-or-creates a `users` row plus an `entitlements` row,
+R-door-9 only bounds the _rate_ (200/day per peer) not the _total_, and
+every per-user quota in the system (avatar upload, payment handles, the AI
+daily caps) becomes effectively unbounded once enough fixture principals
+exist. `E2E_DOOR_MAX_FIXTURE_USERS` (boot constant, default **500**) caps
+the total distinct `e2e:`-prefixed users the door will ever create; past the
+cap, find-or-create for a _new_ key rejects with the uniform 401
+(`reason=fixture_cap`) while lookups of **existing** keys keep working. This
+is not the rejected reset primitive below — it never deletes anything, it
+only stops creating more. Clearing capacity is an **operator-run cleanup
+script** (T3/T5 to land and name it, e.g. `scripts/e2e-cleanup.mjs`),
+invoked explicitly and manually, never by the door itself and never
+automatically per-run — scoped to rows whose `apple_sub` starts with `e2e:`.
+
+**Rejected: a `reset: true` request field that
 deletes the fixture user's trips** — that puts a destructive data operation
 behind the secret (Autonomy trigger #5 territory) and is not specified here.
 The door SHALL NOT delete or reset any data, ever (this is permanent, not a
@@ -539,7 +743,11 @@ protects:
   `e2e:`-prefixed fixture rows (§5.4).
 - Never introduce a new token-issuance code path — it rides the exact rails
   a real sign-in uses (§4.4, R-door-4).
-- Never accept a request from a non-loopback, non-private host, even with a
-  correct secret (§3.2 G5, decided §8 Q4).
+- Never mount without an **explicit** `E2E_SESSION_DOOR=1` and an explicit
+  `NODE_ENV` — no default configuration turns it on (§3.2 G0/G1, R-door-1).
+- Never accept a request from a non-loopback, non-private **socket peer**,
+  even with a correct secret (§3.2 G5, R-door-11).
+- Never create more than `E2E_DOOR_MAX_FIXTURE_USERS` fixture users without
+  an operator-run cleanup in between (§5.4, R-door-14).
 - Never widen `apps/server/src/app.ts`'s exported `PUBLIC_ALLOWLIST` constant
   or change its pinned size (§4.3).

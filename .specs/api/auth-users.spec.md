@@ -534,9 +534,10 @@ avatar button — navigation spec §1). `GET /auth/sessions` +
 
 ### POST /auth/e2e/session (TEST-ONLY)
 
-**Auth**: None (mounted only on a non-production server holding
-`E2E_SESSION_DOOR_SECRET`, additionally gated on the request host being
-loopback/private)
+**Auth**: None (mounted only when `E2E_SESSION_DOOR=1` and an explicit
+`NODE_ENV` of `development`/`test` and a >=32-char `E2E_SESSION_DOOR_SECRET`
+are all set; additionally gated, as defense-in-depth, on the request's
+**socket peer** being loopback/private — never a header)
 
 **Request** `E2eSessionRequest`
 
@@ -546,7 +547,7 @@ loopback/private)
 not mounted," returns this identical envelope; no 400, no 404, no 429)
 
 See `.specs/testing/session-door.spec.md` (S-4 wave 2) for the full threat
-model, gates, and requirements (R-door-1..10).
+model, gates, and requirements (R-door-1..14).
 
 #### 3.4.2 Users & profile
 
@@ -887,11 +888,14 @@ until there are ≥ 2 server instances.
 - Payment-handle writes are format+HEAD validation only; no Venmo traffic
   ever (R-user-7 — ToS red line, research § ToS red lines).
 - The E2E session door (`.specs/testing/session-door.spec.md`) is the only
-  route that issues tokens without provider verification. It is
-  double-gated (`NODE_ENV !== "production"` plus a >=32-char
-  `E2E_SESSION_DOOR_SECRET`), additionally requires a loopback/private
-  request host, a production server holding the secret refuses to boot, and
-  every failure is the same uniform 401 an unknown path returns.
+  route that issues tokens without provider verification. It mounts only on
+  a positive opt-in (`E2E_SESSION_DOOR=1` explicitly set, `NODE_ENV`
+  explicitly `development` or `test`, and a >=32-char
+  `E2E_SESSION_DOOR_SECRET`) — a defaulted/absent `NODE_ENV` never satisfies
+  it — and, as defense-in-depth, additionally rejects any request whose
+  socket peer is not loopback/private. A production server holding either
+  door variable refuses to boot, and every failure is the same uniform 401
+  an unknown path returns.
 
 ### 3.7 `@gogo/shared` additions (per R-shared-14 module pattern)
 
