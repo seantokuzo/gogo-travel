@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { createLocalJWKSet, generateKeyPair } from "jose";
 import { describe, expect, it, vi } from "vitest";
+import { HealthResponseSchema, type MigrationState } from "@gogo/shared/api/health";
 import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
 import type { AuthRouterDeps } from "./auth/routes.js";
 import type { BookingsRouterDeps } from "./bookings/routes.js";
@@ -26,6 +27,96 @@ describe("GET /api/health", () => {
     const body = (await res.json()) as { ok: boolean; version: string };
     expect(body.ok).toBe(true);
     expect(body.version).toBe(pkg.version);
+  });
+});
+
+describe("GET /api/health — migrations wiring (review round-1 F1: was entirely unpinned)", () => {
+  const MIGRATIONS: MigrationState = {
+    onDisk: 4,
+    applied: 3,
+    pending: ["0003_outstanding_doctor_spectrum"],
+    pendingCount: 1,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  it("echoes the boot-time migrations snapshot, round-tripping through HealthResponseSchema", async () => {
+    // Falsification: reverting the handler to the pre-B-28 `{ ok, version }`
+    // shape makes `parsed.migrations` undefined — this pin goes red.
+    const testApp = createApp({ migrations: MIGRATIONS });
+    const res = await testApp.request("/api/health");
+    expect(res.status).toBe(200);
+    const parsed = HealthResponseSchema.parse(await res.json());
+    expect(parsed.migrations).toEqual(MIGRATIONS);
+  });
+
+  it("omits `migrations` entirely (not a null/undefined key) when createApp is given none", async () => {
+    const testApp = createApp({});
+    const res = await testApp.request("/api/health");
+    const body = (await res.json()) as Record<string, unknown>;
+    expect("migrations" in body).toBe(false);
+  });
+});
+
+describe("GET /api/health — lazy migrations refresh with a TTL (review round-1 C5: was a boot-time-only snapshot, frozen forever)", () => {
+  const PENDING: MigrationState = {
+    onDisk: 4,
+    applied: 3,
+    pending: ["0003_x"],
+    pendingCount: 1,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const CURRENT: MigrationState = {
+    onDisk: 4,
+    applied: 4,
+    pending: [],
+    pendingCount: 0,
+    checkedAt: "2026-01-01T00:00:31.000Z",
+  };
+
+  it("recomputes at most once per 30s: two /health calls 31s apart differ; a third call inside the new TTL is cached", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn(() => Promise.resolve(CURRENT));
+      const testApp = createApp({ migrations: PENDING, migrationsRefresh: refresh });
+
+      // t=0: served straight from the boot-time snapshot — no refresh yet.
+      const first = await testApp.request("/api/health");
+      const firstBody = (await first.json()) as { migrations: MigrationState };
+      expect(firstBody.migrations).toEqual(PENDING);
+      expect(refresh).not.toHaveBeenCalled();
+
+      // Falsification: dropping the TTL check (always calling `refresh`, or
+      // never calling it) makes this next assertion red either way.
+      vi.advanceTimersByTime(31_000);
+      const second = await testApp.request("/api/health");
+      const secondBody = (await second.json()) as { migrations: MigrationState };
+      expect(secondBody.migrations).toEqual(CURRENT);
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      // t=31s+ε (within the new TTL window): still cached — no second call.
+      const third = await testApp.request("/api/health");
+      const thirdBody = (await third.json()) as { migrations: MigrationState };
+      expect(thirdBody.migrations).toEqual(CURRENT);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a recompute failure keeps serving the last good snapshot — never fails /health", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn(() => Promise.reject(new Error("boom: db unreachable mid-recheck")));
+      const testApp = createApp({ migrations: PENDING, migrationsRefresh: refresh });
+      vi.advanceTimersByTime(31_000);
+      const res = await testApp.request("/api/health");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { migrations: MigrationState };
+      expect(body.migrations).toEqual(PENDING);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -32,3 +32,30 @@ export function decideBootMigrationAction(
     ? { action: "refuse", message }
     : { action: "warn", message };
 }
+
+/**
+ * `NODE_ENV` values that get FULL pending migration tag names on
+ * `/api/health`; every other env gets `pendingCount` only (architecture
+ * review round-1 #3 — `/health` is the one unauthenticated public route,
+ * R-authz-1, and exact schema-change slugs are internal state that shouldn't
+ * leak to an unauthenticated caller in prod during a deploy-ordering race).
+ * Deliberately the SAME two envs the test suites run under, so local dev and
+ * CI both see the full names the panel is built to show.
+ */
+export const HEALTH_TAG_NAME_ENVS: ReadonlySet<Env["NODE_ENV"]> = new Set(["development", "test"]);
+
+/**
+ * Wire-shapes a `MigrationState` for `/api/health`: full pending tag names
+ * in `development`/`test`, count-only (empty `pending`, real `pendingCount`)
+ * everywhere else. Never affects the boot-time refuse/warn DECISION —
+ * `decideBootMigrationAction` always runs against the untouched value
+ * `checkMigrationState` returned; this only shapes what an unauthenticated
+ * caller sees.
+ */
+export function shapeMigrationStateForHealth(
+  nodeEnv: Env["NODE_ENV"],
+  state: MigrationState,
+): MigrationState {
+  if (HEALTH_TAG_NAME_ENVS.has(nodeEnv)) return state;
+  return { ...state, pending: [] };
+}

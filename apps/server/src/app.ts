@@ -145,22 +145,65 @@ export interface CreateAppOptions {
   /**
    * Boot-time migration-state snapshot (B-28) — computed ONCE at startup
    * (`src/index.ts`'s `checkMigrationState` + `decideBootMigrationAction`,
-   * the same computation that decides refuse-vs-warn) and echoed on every
-   * `/api/health` response. Absent on DB-less/health-only boots (most
-   * tests, dev without auth configured) OR when the boot-time check itself
-   * could not determine a state (DB unreachable / journal unreadable —
-   * `index.ts` warns and passes nothing rather than fail `/health`). The
+   * the same computation that decides refuse-vs-warn) and echoed on
+   * `/api/health` as the INITIAL value. Absent on DB-less/health-only boots
+   * (most tests, dev without auth configured) OR when the boot-time check
+   * itself could not determine a state (DB unreachable / journal unreadable
+   * — `index.ts` warns and passes nothing rather than fail `/health`). The
    * mobile diagnostics panel renders that absence as a distinct "unknown"
    * state, never as an error (`@gogo/shared/api/health`'s `migrations` is
    * optional for exactly this reason).
-   *
-   * Deliberately a static snapshot, not a live per-request re-check: a
-   * per-request DB round trip would land on the SAME `/health` path LB /
-   * uptime probes hit (see `PUBLIC_ALLOWLIST`'s HEAD-probe note above),
-   * turning a liveness check into a DB-availability check. Restart to
-   * refresh.
    */
   migrations?: MigrationState;
+  /**
+   * Lazy-refresh hook for the migrations snapshot (review round-1 C5):
+   * `/api/health` recomputes at most once per `MIGRATIONS_SNAPSHOT_TTL_MS`
+   * by calling this instead of echoing `migrations` forever — a boot-time-
+   * only snapshot meant the panel's own "rerun" button could never observe
+   * a migration that finished AFTER boot (staleness was real, not just
+   * theoretical: the doc comment said "restart to refresh," which nothing
+   * surfaced to a caller). `index.ts` wires this to
+   * `() => checkMigrationState(getDb())`, wire-shaped by NODE_ENV the same
+   * way the initial `migrations` value was. Deliberately still NOT a
+   * per-request DB round trip on every hit — only after the TTL elapses,
+   * so `/api/health` stays cheap for LB/uptime probes (see
+   * `PUBLIC_ALLOWLIST`'s HEAD-probe note above) between refreshes. A
+   * recompute failure keeps serving the last good snapshot rather than
+   * failing `/health` (same "don't mask, don't fail" posture as the
+   * boot-time check). Omitted in tests that only care about the static
+   * initial value — `migrations` alone then never refreshes.
+   */
+  migrationsRefresh?: () => Promise<MigrationState>;
+}
+
+/** `/api/health` recomputes its migrations snapshot at most this often (review round-1 C5) — the boot-time value is otherwise frozen for the life of the process. */
+export const MIGRATIONS_SNAPSHOT_TTL_MS = 30_000;
+
+/**
+ * A tiny TTL cache in front of an optional refresh hook. Exported only for
+ * `app.test.ts`'s fake-timer pin; every other caller goes through
+ * `CreateAppOptions.migrationsRefresh`.
+ */
+export function createMigrationsSnapshotCache(
+  initial: MigrationState,
+  refresh?: () => Promise<MigrationState>,
+  ttlMs: number = MIGRATIONS_SNAPSHOT_TTL_MS,
+): () => Promise<MigrationState> {
+  let snapshot = initial;
+  let lastCheckedMs = Date.now();
+  return async () => {
+    if (!refresh) return snapshot;
+    if (Date.now() - lastCheckedMs < ttlMs) return snapshot;
+    try {
+      snapshot = await refresh();
+    } catch {
+      // Keep serving the last good snapshot — a transient recheck failure
+      // must not fail /health or erase the last known-good state (same
+      // don't-mask posture as index.ts's boot-time catch).
+    }
+    lastCheckedMs = Date.now();
+    return snapshot;
+  };
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -236,13 +279,15 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     }),
   );
 
-  app.get("/api/health", (c) =>
-    c.json(
-      options.migrations
-        ? { ok: true, version, migrations: options.migrations }
-        : { ok: true, version },
-    ),
-  );
+  const migrationsSnapshot = options.migrations
+    ? createMigrationsSnapshotCache(options.migrations, options.migrationsRefresh)
+    : undefined;
+
+  app.get("/api/health", async (c) => {
+    if (!migrationsSnapshot) return c.json({ ok: true, version });
+    const migrations = await migrationsSnapshot();
+    return c.json({ ok: true, version, migrations });
+  });
 
   if (options.auth) {
     // Descriptor paths (`/auth/apple`, …) mount under the same `/api` base

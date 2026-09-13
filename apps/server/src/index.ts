@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import type { MigrationState } from "@gogo/shared/api/health";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
-import { decideBootMigrationAction } from "./boot-migration-check.js";
+import { decideBootMigrationAction, shapeMigrationStateForHealth } from "./boot-migration-check.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
 import { buildBudgetsDeps } from "./budgets/wire.js";
 import { getDb } from "./db/index.js";
@@ -131,8 +131,17 @@ if (authDeps) {
     fx: buildFxDeps(),
     // Boot-time snapshot for `/api/health` (B-28) — omitted (not `undefined`,
     // `exactOptionalPropertyTypes`) when the check above couldn't determine
-    // a state; see `CreateAppOptions.migrations`.
-    ...(migrationState ? { migrations: migrationState } : {}),
+    // a state; see `CreateAppOptions.migrations`. Wire-shaped by NODE_ENV
+    // (review round-1 #3 — full pending tag names only in dev/test) and
+    // paired with a refresh hook so `/health` doesn't freeze this forever
+    // (review round-1 C5).
+    ...(migrationState
+      ? {
+          migrations: shapeMigrationStateForHealth(env.NODE_ENV, migrationState),
+          migrationsRefresh: async () =>
+            shapeMigrationStateForHealth(env.NODE_ENV, await checkMigrationState(getDb())),
+        }
+      : {}),
   };
   travelLegs.startStalenessJob();
 }

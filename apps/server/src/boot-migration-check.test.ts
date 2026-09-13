@@ -12,15 +12,29 @@
  * applied comparison there.
  */
 import { describe, expect, it } from "vitest";
-import { decideBootMigrationAction, REFUSE_ON_PENDING_ENVS } from "./boot-migration-check.js";
+import {
+  decideBootMigrationAction,
+  HEALTH_TAG_NAME_ENVS,
+  REFUSE_ON_PENDING_ENVS,
+  shapeMigrationStateForHealth,
+} from "./boot-migration-check.js";
 import { MIGRATE_COMMAND } from "./db/migration-state.js";
 import type { MigrationState } from "./db/migration-state.js";
 
-const CURRENT: MigrationState = { onDisk: 4, applied: 4, pending: [] };
+const FIXED_CHECKED_AT = "2026-01-01T00:00:00.000Z";
+const CURRENT: MigrationState = {
+  onDisk: 4,
+  applied: 4,
+  pending: [],
+  pendingCount: 0,
+  checkedAt: FIXED_CHECKED_AT,
+};
 const BEHIND: MigrationState = {
   onDisk: 4,
   applied: 2,
   pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
+  pendingCount: 2,
+  checkedAt: FIXED_CHECKED_AT,
 };
 
 describe("decideBootMigrationAction — the refuse/warn matrix (B-28 locked decision)", () => {
@@ -61,6 +75,8 @@ describe("decideBootMigrationAction — the refuse/warn matrix (B-28 locked deci
       onDisk: 4,
       applied: 3,
       pending: ["0003_outstanding_doctor_spectrum"],
+      pendingCount: 1,
+      checkedAt: FIXED_CHECKED_AT,
     });
     expect(decision.action).toBe("refuse");
     if (decision.action !== "refuse") throw new Error("unreachable");
@@ -72,5 +88,34 @@ describe("decideBootMigrationAction — the refuse/warn matrix (B-28 locked deci
     // widens or narrows the refuse set without updating this test — the
     // "one-line switch" the PR body points at.
     expect([...REFUSE_ON_PENDING_ENVS]).toEqual(["development"]);
+  });
+});
+
+describe("shapeMigrationStateForHealth — dev/test get tag names, everyone else gets a count (architecture review round-1 #3)", () => {
+  it("development: pending tag names pass through unchanged", () => {
+    expect(shapeMigrationStateForHealth("development", BEHIND)).toEqual(BEHIND);
+  });
+
+  it("test: pending tag names pass through unchanged", () => {
+    expect(shapeMigrationStateForHealth("test", BEHIND)).toEqual(BEHIND);
+  });
+
+  it("production: pending tag NAMES are redacted to an empty array, but pendingCount stays accurate", () => {
+    // Falsification: dropping the env branch (always returning `state`
+    // unchanged) makes `pending` non-empty here — this is the exact
+    // unauthenticated-disclosure the architecture lane flagged.
+    const shaped = shapeMigrationStateForHealth("production", BEHIND);
+    expect(shaped.pending).toEqual([]);
+    expect(shaped.pendingCount).toBe(2);
+    expect(shaped.onDisk).toBe(BEHIND.onDisk);
+    expect(shaped.applied).toBe(BEHIND.applied);
+  });
+
+  it("boundary: a current (empty-pending) state is unaffected by env — nothing to redact", () => {
+    expect(shapeMigrationStateForHealth("production", CURRENT)).toEqual(CURRENT);
+  });
+
+  it("HEALTH_TAG_NAME_ENVS contains ONLY development and test", () => {
+    expect([...HEALTH_TAG_NAME_ENVS].sort()).toEqual(["development", "test"]);
   });
 });
