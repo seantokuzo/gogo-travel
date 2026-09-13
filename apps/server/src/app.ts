@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import type { MigrationState } from "@gogo/shared/api/health";
 import { authEndpoints } from "@gogo/shared/domains/auth";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
@@ -141,6 +142,25 @@ export interface CreateAppOptions {
    * wiring bug like every other surface.
    */
   fx?: FxRouterDeps;
+  /**
+   * Boot-time migration-state snapshot (B-28) — computed ONCE at startup
+   * (`src/index.ts`'s `checkMigrationState` + `decideBootMigrationAction`,
+   * the same computation that decides refuse-vs-warn) and echoed on every
+   * `/api/health` response. Absent on DB-less/health-only boots (most
+   * tests, dev without auth configured) OR when the boot-time check itself
+   * could not determine a state (DB unreachable / journal unreadable —
+   * `index.ts` warns and passes nothing rather than fail `/health`). The
+   * mobile diagnostics panel renders that absence as a distinct "unknown"
+   * state, never as an error (`@gogo/shared/api/health`'s `migrations` is
+   * optional for exactly this reason).
+   *
+   * Deliberately a static snapshot, not a live per-request re-check: a
+   * per-request DB round trip would land on the SAME `/health` path LB /
+   * uptime probes hit (see `PUBLIC_ALLOWLIST`'s HEAD-probe note above),
+   * turning a liveness check into a DB-availability check. Restart to
+   * refresh.
+   */
+  migrations?: MigrationState;
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -216,7 +236,13 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     }),
   );
 
-  app.get("/api/health", (c) => c.json({ ok: true, version }));
+  app.get("/api/health", (c) =>
+    c.json(
+      options.migrations
+        ? { ok: true, version, migrations: options.migrations }
+        : { ok: true, version },
+    ),
+  );
 
   if (options.auth) {
     // Descriptor paths (`/auth/apple`, …) mount under the same `/api` base

@@ -1,8 +1,12 @@
 import { serve } from "@hono/node-server";
+import type { MigrationState } from "@gogo/shared/api/health";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { decideBootMigrationAction } from "./boot-migration-check.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
 import { buildBudgetsDeps } from "./budgets/wire.js";
+import { getDb } from "./db/index.js";
+import { checkMigrationState } from "./db/migration-state.js";
 import { buildExpensesDeps } from "./expenses/wire.js";
 import { buildFxDeps } from "./fx/wire.js";
 import { buildItineraryDeps } from "./itinerary/wire.js";
@@ -39,6 +43,38 @@ if (authDeps) {
 
 let appOptions: Parameters<typeof createApp>[0] = {};
 if (authDeps) {
+  // Migration-state gate (B-28, STATE.md "migration-state drift is silent
+  // end to end"): compare on-disk migrations against what's actually
+  // applied to the connected DB. `development` REFUSES to serve on pending
+  // migrations (exit non-zero, naming every pending tag + the migrate
+  // command); every OTHER NODE_ENV warns loudly and keeps serving — this
+  // must never take prod down. `boot-migration-check.ts`'s
+  // REFUSE_ON_PENDING_ENVS is the ONE line to flip if `development` should
+  // soften to WARN-only instead.
+  //
+  // A failure of the CHECK ITSELF (journal unreadable, or the DB is
+  // unreachable) is a DIFFERENT problem than "pending migrations" — we
+  // can't even name pending tags in that case, so it is never turned into a
+  // refuse and never masked into a migration-state message: the real cause
+  // is warned loudly (don't-mask B-28 landmine) and boot continues, exactly
+  // as it did before this check existed.
+  let migrationState: MigrationState | undefined;
+  try {
+    migrationState = await checkMigrationState(getDb());
+  } catch (err) {
+    const cause = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.warn(`[boot] could not determine migration state — ${cause}`);
+  }
+  if (migrationState) {
+    const decision = decideBootMigrationAction(env.NODE_ENV, migrationState);
+    if (decision.action === "refuse") {
+      throw new Error(decision.message);
+    }
+    if (decision.action === "warn") {
+      console.warn(`[boot] ${decision.message}`);
+    }
+  }
+
   // Places ingest rides the trips deps: trip create / destination change
   // fire the post-commit region-ingest trigger (T-6.4, R-places-1) — async,
   // fire-and-forget, never blocks a request. Unconfigured dataset URLs are
@@ -93,6 +129,10 @@ if (authDeps) {
     // FX proxy (T-9.4; P-9 ruling ③): keyless Frankfurter v2 behind
     // requireAuth + a per-day cache + a per-user rate limit.
     fx: buildFxDeps(),
+    // Boot-time snapshot for `/api/health` (B-28) — omitted (not `undefined`,
+    // `exactOptionalPropertyTypes`) when the check above couldn't determine
+    // a state; see `CreateAppOptions.migrations`.
+    ...(migrationState ? { migrations: migrationState } : {}),
   };
   travelLegs.startStalenessJob();
 }
