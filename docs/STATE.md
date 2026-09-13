@@ -25,6 +25,71 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
+### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
+
+Sean ran device QA against `main` (`427bf08`) on his own phone, 2026-09-11
+into 2026-09-12. Two PRs came out of it, plus a concrete process failure
+worth its own landmine.
+
+- **PR #66 `427bf08`** (B-25 — trip-switcher exit + error-path exit,
+  merged): `TripSwitcherBar`'s `activeTrips.length < 2` gate is gone — the
+  bar renders on every trip screen, and its sheet now lists every trip (not
+  just active ones) via an "All trips" row that replaces to `(trips)`.
+  Round-1 fix (`0dd855e`) corrected a blocking finding: the dominant entry
+  path (`(trips)/index` → `router.push`) needs `router.dismissTo`, not
+  `router.replace`, or leaving a trip stacks a second, phantom trip list.
+  `TripErrorState` also gained a "Back to trips" exit. Several review
+  findings were deferred rather than blocking — see the new QUEUE rows
+  below.
+- **PR #67 `B-26/booking-form-ux` — OPEN, NOT merged.** Fixes the
+  time-zone picker's unscrollable 12-row cap (moves search+list into a
+  `PickerCard` modal with a real `FlatList`), widens zone-name matching
+  (accents, hyphenated IANA ids), adds required-field markers derived from
+  the shared Zod schemas, and maps server/client validation failures onto
+  the field that owns them instead of a generic banner (closes half of
+  B-8's SECONDARY; the client-side ordering pre-check half stays open,
+  Autonomy #6 scope call). Not device-verified; awaiting review.
+- **Device QA — B-19 CONFIRMED FIXED.** First device confirmation of the
+  itinerary-freeze fix (PR #60 `ef241ef`, the RNScreens foreign-modal
+  wedge). Sean: "Freeze is fixed." QUEUE row flipped to `done`. This does
+  not itself flip a feature-ledger row (B-19 was a bug fix, not a
+  ledger-tracked feature) — but it clears the itinerary-freeze blocker that
+  stood in front of the P-7 phase-QA ledger pass (F-043..F-054, still
+  pending per QUEUE/Blockers), and is the evidence to cite when that pass
+  runs.
+- **Device QA — airport/airline reference search CONFIRMED WORKING** once
+  Sean's dev DB was brought current (see the new landmine below).
+- **Remaining findings, filed as new QUEUE Active rows:** a doubled top
+  safe-area inset now universal on every trip screen since PR #66 removed
+  the 2-active-trips gate (P2, needs Sean's device eyes on the fix);
+  `.specs/client/navigation.spec.md` R-nav-23/§2.1 still describe the old
+  2+-active gate (P2 spec-sync); `TripSwitcher.tsx`'s `ScrollView` +
+  `.map()` over up to 100 rows (P3, deferred from #66 review); a flaky
+  `money-screen.test.tsx` in-flight-PUT pin, characterised as pre-existing
+  and NOT a #66 regression (P3); the reference-search E2E gap feeding S-4
+  wave 2 (P1); and a migration-state check (P1, see below).
+- **B-7 re-confirmed from the opposite side.** Sean hit the places
+  cold-start deadlock again, this time saving a new trip rather than
+  searching for a place: "we don't allow saving the trip if we don't find
+  the location ... we only have a few hardcoded" (the 20
+  `seed-qa-places.mjs` rows). Same root cause as the original filing, now
+  confirmed from both directions. QUEUE row updated; still `blocked` on
+  Sean's spec ruling; flagged as next session's work.
+
+#### NEW failed-approach landmine — migration-state drift is silent end to end
+
+Sean's dev DB was **two migrations behind** (`0002` — 4,133 airports + 893
+airlines seed; `0003` — re-tightens the booking `NOT VALID` CHECK) for an
+entire QA cycle before anyone noticed. **Nothing caught it:** the server
+booted clean (no migration-state check at boot), the client gated and fired
+its reference-search calls correctly, and CI was green (CI runs migrations
+fresh every time, so a stale _local_ DB is invisible to it). The only
+symptom was every airport/airline/flight-lookup search returning a 500 with
+no signal anywhere pointing at "your DB is behind." Filed as a P1 QUEUE row
+(migration-state check): a boot-time WARN or refuse-to-serve in
+`development` on pending migrations > 0, and/or a `gogo://diagnostics` leg
+reporting applied-vs-on-disk migration counts.
+
 ### REVIEW LOOP CLOSE-OUT 2026-09-07/08 — all seven PRs merged (#58–#64); B-8 CLOSED end to end; E2E lane live
 
 Continuation of "REVIEW WAVE 2026-09-07" below (#58 `67055a1` / #60 `ef241ef`
@@ -1022,10 +1087,11 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 - **`.claude/agent-memory/` is untracked and not gitignored (P3, Sean's
   call — QUEUE Active row).** Already being written to; will appear as noise
   in every `git status` until committed or ignored.
-- **Device QA still owed:** the F-0xx ledger flips, B-19's freeze check
-  (device recipe in the landmines above and the PR #60 body), and the P-9
+- **Device QA still owed:** the F-0xx ledger flips, and the P-9
   spec-pass batch (43+ interpretations) plus the other Sean-gated spec
-  decisions already tracked in `docs/QUEUE.md`.
+  decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
+  DONE** — confirmed fixed on a real device 2026-09-11 (see the
+  2026-09-11/12 section above).
 - **Mapbox account + access token** (escalation #3, PARKED — does not block
   the P-7 build; adapters are fixture-driven behind ports). Needed for: live
   travel-leg QA (P-7 phase QA at the earliest) and the P-8 `@rnmapbox/maps`
