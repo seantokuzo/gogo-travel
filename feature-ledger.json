@@ -2197,6 +2197,73 @@
         "Cold launch to interactive trip list under an agreed budget on a mid-tier device"
       ],
       "passes": false
+    },
+    {
+      "id": "F-119",
+      "area": "itinerary",
+      "title": "Overnight/multi-day flights show separate Departs/Arrives rows in list view",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-36"
+      ],
+      "verification": [
+        "A real date-line-crossing flight (e.g. Tokyo departure, LA arrival) renders TWO rows in list mode: a Departs row on the departure day and an Arrives row on the arrival day, both tappable to the same booking-detail screen",
+        "DB proof: the booking's itinerary_items table holds exactly ONE row (day + end_day set), never two — the same F-051-class single-row check applied to a real fixture",
+        "A same-day flight (no end_day, or end_day equal to day) still renders as a single row with no Departs/Arrives split",
+        "Grid mode is unchanged: the same flight still renders clipped at midnight with a +1 tail (F-051 criterion 3 still holds)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "F-120",
+      "area": "itinerary",
+      "title": "Per-trip calendar timezone switcher (flight/train zones, city-labeled)",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-37",
+        "R-itin-38"
+      ],
+      "verification": [
+        "A trip with flight/train bookings crossing 2+ IANA zones shows a switcher populated with exactly the distinct departs_tz/arrives_tz zones, each city-labeled ('Athens — GMT+2'), never a bare offset",
+        "A single-zone trip (or one with zero flight/train bookings) hides the switcher entirely",
+        "Selecting a zone updates the header label only; no itinerary item's displayed time changes (device-verified against the approved effect from PR Question #1)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "F-121",
+      "area": "itinerary",
+      "title": "Calendar view density: 3-day / month / trip-span",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-33",
+        "R-itin-34",
+        "R-itin-35"
+      ],
+      "verification": [
+        "Grid mode's density segment switches between Day/3-day/Month/Trip-span, each persisting per trip independently of the list/grid toggle",
+        "3-day and Trip-span render the same hour-timeline blocks/overlap/gap-tap behavior as Day, just with more simultaneous day columns",
+        "Month renders a true week-grid with item-count dots and multi-day booking spanning bars, no hour axis; tapping a day cell switches to Day density landing on that date"
+      ],
+      "passes": false
+    },
+    {
+      "id": "F-122",
+      "area": "itinerary",
+      "title": "Ideas flow rework: Planned/Booked status actions replace Add to day",
+      "phase": "P-7",
+      "requirements": [
+        "R-itin-11",
+        "R-itin-40",
+        "R-itin-41"
+      ],
+      "verification": [
+        "An idea card in the bucket shows Planned/Booked buttons (not Add to day); tapping either requires a valid day before the transition commits, with inline errors for an empty day or an end time before start",
+        "Tapping Booked on a timeless idea transitions idea to booked and schedules the item in one call (no intermediate planned state visible)",
+        "Tapping Planned/Booked on an idea that ALREADY carries known times (the pre-existing B-16 dead end) shows them read-only and succeeds via a status-only PATCH — no VALIDATION_FAILED banner",
+        "An idea with no date stays legal and untouched when neither button is pressed"
+      ],
+      "passes": false
     }
   ]
 }
