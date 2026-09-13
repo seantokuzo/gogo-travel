@@ -592,7 +592,7 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     const name200 = "n".repeat(200);
     const name201 = "n".repeat(201);
     const receivedNames: string[] = [];
-    const request = mockApi({
+    mockApi({
       "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
       "POST /places": (input) => {
         const body = (input as { body?: { name?: string } }).body;
