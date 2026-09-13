@@ -21,7 +21,12 @@
  * one-line source edit, not something to keep committed as dead branchy
  * test code).
  */
-import { pickerCardMaxHeight } from "./PickerCard";
+import { fireEvent, screen } from "@testing-library/react-native";
+import { Text } from "react-native";
+
+import { renderWithTheme } from "@/test-utils/render";
+
+import { PickerCard, pickerCardMaxHeight } from "./PickerCard";
 
 describe("pickerCardMaxHeight (B-26 R1)", () => {
   it("no keyboard: the static 85% window fraction, matching the DS Sheet's own posture", () => {
@@ -56,5 +61,81 @@ describe("pickerCardMaxHeight (B-26 R1)", () => {
 
   it("boundary: the keyboard leaves exactly the gap and nothing else — a zero-height ceiling, not a negative one", () => {
     expect(pickerCardMaxHeight(100, 84)).toBe(0);
+  });
+});
+
+/**
+ * The modal avoider's layout/hit-testing shape (B-26 R2 — round-2 review
+ * regression + the unpinned half of B2).
+ *
+ * RNTL's `fireEvent.press` invokes a matched element's handler directly; it
+ * does not simulate real touch propagation or z-order hit-testing, so a test
+ * that presses `{testID}-sheet-scrim` (DateField.test.tsx / TimeField.test.tsx)
+ * cannot see either defect below — both stayed green through the regression.
+ * These pins assert the STRUCTURE the fixes depend on instead.
+ *
+ * 1. `pointerEvents="box-none"` on the `KeyboardAvoidingView`'s host View
+ *    (round-2 regression). Without it, giving `modalAvoider` `flex: 1` (next
+ *    point) makes that View cover the whole modal; declared after the scrim
+ *    in the tree, it paints and hit-tests ABOVE it with the platform default
+ *    `pointerEvents` ("auto"), silently swallowing every tap on the dimmed
+ *    area outside the card. Confirmed at the pinned RN 0.86.2
+ *    `KeyboardAvoidingView.js`: `pointerEvents` is not among the props it
+ *    destructures (`behavior`, `children`, `contentContainerStyle`,
+ *    `enabled`, `keyboardVerticalOffset`, `style`, `onLayout`) — the rest,
+ *    `...props`, is spread onto the host `View` unchanged in every
+ *    `behavior` branch (`padding` included), so it forwards straight through.
+ *    Falsification: drop `pointerEvents="box-none"` from the
+ *    `KeyboardAvoidingView` in `PickerCard.tsx` → RED.
+ * 2. `flex: 1` + `justifyContent: "flex-end"` on `modalAvoider` (B-26 R1's
+ *    fix — shipped unpinned; reverting just the `flex: 1` left all 59
+ *    then-existing tests green). Falsification: drop `flex: 1` from
+ *    `modalAvoider` in `PickerCard.tsx` (leaving `justifyContent: "flex-end"`)
+ *    → RED.
+ *
+ * Located via the card's testID rather than by the props under test, so a
+ * mutation that removes those props can't also make the node "not found" —
+ * it has to fail the `toBe`/`toEqual` assertion on a node the test still finds.
+ */
+describe("PickerCard modal avoider — layout + hit-testing shape (B-26 R2)", () => {
+  function renderCard() {
+    return renderWithTheme(
+      <PickerCard label="Zone" visible onClose={() => undefined} testID="pc">
+        <Text testID="pc-child">rows</Text>
+      </PickerCard>,
+    );
+  }
+
+  it("the KeyboardAvoidingView host lets taps outside the card fall through to the scrim (pointerEvents box-none)", async () => {
+    await renderCard();
+    const card = screen.getByTestId("pc-sheet");
+    const avoider = card.parent;
+    expect(avoider).not.toBeNull();
+    // Falsification: remove `pointerEvents="box-none"` from the
+    // KeyboardAvoidingView → this reads undefined → RED.
+    expect(avoider?.props.pointerEvents).toBe("box-none");
+  });
+
+  it("the avoider is fixed to the modal's full height, not content-sized (flex: 1 + flex-end)", async () => {
+    await renderCard();
+    const card = screen.getByTestId("pc-sheet");
+    const avoider = card.parent;
+    expect(avoider).not.toBeNull();
+    const mergedStyle = Object.assign({}, ...[avoider?.props.style].flat());
+    // Falsification: drop `flex: 1` from `modalAvoider` → this reads
+    // `undefined`, not `1` → RED (the B-26 R1 fix, shipped unpinned).
+    expect(mergedStyle.flex).toBe(1);
+    expect(mergedStyle.justifyContent).toBe("flex-end");
+  });
+
+  it("the scrim is still the dismiss path once the avoider is box-none", async () => {
+    const onClose = jest.fn();
+    await renderWithTheme(
+      <PickerCard label="Zone" visible onClose={onClose} testID="pc">
+        <Text testID="pc-child">rows</Text>
+      </PickerCard>,
+    );
+    await fireEvent.press(screen.getByTestId("pc-sheet-scrim", { includeHiddenElements: true }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

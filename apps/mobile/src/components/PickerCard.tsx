@@ -45,6 +45,23 @@
  * static fraction — a static 85%/0.7 cap doesn't shrink when the keyboard
  * eats real room (the exact B2 scenario).
  *
+ * B-26 R2 (round-2 review — regression introduced by the R1 `flex: 1` fix
+ * above): giving `modalAvoider` `flex: 1` makes the `KeyboardAvoidingView`
+ * cover the ENTIRE modal, not just the card. RN's `KeyboardAvoidingView`
+ * (confirmed at the pinned 0.86.2 source: it destructures only `behavior`,
+ * `children`, `contentContainerStyle`, `enabled`, `keyboardVerticalOffset`,
+ * `style`, `onLayout` and spreads the rest — `...props` — onto its host
+ * `View` in every `behavior` branch, including `"padding"`) renders a plain
+ * `View` with the platform default `pointerEvents` ("auto") over that whole
+ * box. Declared AFTER `modalScrim` in the tree, it paints (and hit-tests)
+ * above the scrim — so a tap on the dimmed area above the card landed on
+ * this invisible full-screen `View` instead of falling through to the
+ * scrim's `onPress`, and only the close X could dismiss. Fix:
+ * `pointerEvents="box-none"` on the `KeyboardAvoidingView` — the avoider
+ * itself is never the touch target, but `modalCard` (its child) still is,
+ * so a tap anywhere outside the card now falls through to `modalScrim`
+ * beneath while the card's own Pressables (Done/close) keep working.
+ *
  * testIDs derive from the owning FIELD's base id (nav §2.7 rule-4):
  * card `{testID}-sheet`, commit `{testID}-sheet-done`, cancel
  * `{testID}-sheet-close` / `{testID}-sheet-scrim`.
@@ -212,6 +229,7 @@ export function PickerCard({
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}
           style={s.modalAvoider}
+          pointerEvents="box-none"
         >
           <View
             style={[
