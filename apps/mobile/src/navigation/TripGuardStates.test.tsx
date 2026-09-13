@@ -10,12 +10,14 @@ import { renderWithTheme } from "@/test-utils/render";
 import { NoAccessState, TripErrorState, TripLoadingState } from "./TripGuardStates";
 
 const mockReplace = jest.fn();
+const mockDismissTo = jest.fn();
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ replace: mockReplace, back: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace, dismissTo: mockDismissTo, back: jest.fn() }),
 }));
 
 afterEach(() => {
   mockReplace.mockClear();
+  mockDismissTo.mockClear();
 });
 
 describe("NoAccessState (R-nav-15)", () => {
@@ -28,10 +30,14 @@ describe("NoAccessState (R-nav-15)", () => {
     ).toBeOnTheScreen();
   });
 
-  it("its action replaces to the trip list", async () => {
+  it("its action DISMISSES to the trip list — never replaces", async () => {
     await renderWithTheme(<NoAccessState />);
     await fireEvent.press(screen.getByTestId("no-access-button-trips"));
-    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/(trips)"));
+    // `replace` swaps the route at `state.index` in place, so on the push
+    // entry path (`(trips)` already below) it would stack a SECOND trip list;
+    // see the primitive section of `TripSwitcher.tsx`.
+    await waitFor(() => expect(mockDismissTo).toHaveBeenCalledWith("/(trips)"));
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });
 
@@ -46,5 +52,11 @@ describe("TripLoadingState / TripErrorState", () => {
     await renderWithTheme(<TripErrorState onRetry={onRetry} />);
     await fireEvent.press(screen.getByTestId("trip-error-banner-retry"));
     expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("B-25: the error surface also carries an EXIT — it renders outside TripShell, so the switcher is not behind it", async () => {
+    await renderWithTheme(<TripErrorState onRetry={jest.fn()} />);
+    await fireEvent.press(screen.getByTestId("trip-error-button-trips"));
+    await waitFor(() => expect(mockDismissTo).toHaveBeenCalledWith("/(trips)"));
   });
 });
