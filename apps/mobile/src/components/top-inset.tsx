@@ -27,9 +27,12 @@
  * switcher bar is not above it, and a pageSheet's top edge is not the
  * window's. React context can't see that distinction, so every trip-shell
  * modal must RE-OPEN the boundary with `claimed={false}` (they do:
- * `itinerary/item/new`, `money/expense/new`). The modal set is pinned to
- * exactly those two by `__tests__/modal-presentation.test.ts`, so a third one
- * can't be added without an author being forced back through this note.
+ * `itinerary/item/new`, `money/expense/new`). `__tests__/modal-presentation.test.ts`
+ * asserts the declared screen config of ALL FIVE trip-shell tab stacks
+ * (today, map, itinerary, money, more) — the three with no modal today
+ * (today, map, more) are pinned to an empty screen set — so a modal added to
+ * ANY of them fails that stack's assertion and forces an author back through
+ * this note before it can ship un-reopened.
  */
 import { createContext, use } from "react";
 import type { ReactNode } from "react";

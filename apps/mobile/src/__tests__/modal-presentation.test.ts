@@ -18,6 +18,9 @@ import type { ReactElement, ReactNode } from "react";
 import TripsLayout from "@/app/(trips)/_layout";
 import ItineraryStackLayout from "@/app/[tripId]/itinerary/_layout";
 import MoneyStackLayout from "@/app/[tripId]/money/_layout";
+import TodayStackLayout from "@/app/[tripId]/today/_layout";
+import MapStackLayout from "@/app/[tripId]/map/_layout";
+import MoreStackLayout from "@/app/[tripId]/more/_layout";
 
 jest.mock("@/navigation/stack-options", () => ({
   useStackScreenOptions: () => ({}),
@@ -100,5 +103,27 @@ describe("R-nav-21 — each modal is declared in its owning stack", () => {
     const { initialRouteName, screens } = declaredConfig(MoneyStackLayout);
     expect(initialRouteName).toBe("index");
     expect(screens).toEqual([{ name: "expense/new", presentation: "modal" }]);
+  });
+
+  /**
+   * top-inset.tsx's note claims the trip-shell modal set is pinned to exactly
+   * two routes "so a third one can't be added without an author being forced
+   * back through this note." Before this trio, that claim was false: `today`,
+   * `map` and `more` each render a bare `<Stack screenOptions={…} />` with no
+   * screens declared at all, so they were inspected by no suite here — a
+   * `presentation: "modal"` screen added to any of them would stay invisible
+   * to `git diff`'s reviewers and green through this whole file. Pinning them
+   * to an empty screen set makes adding one a declared, reviewable act.
+   */
+  it("today tab stack declares no modal screens", () => {
+    expect(declaredConfig(TodayStackLayout).screens).toEqual([]);
+  });
+
+  it("map tab stack declares no modal screens", () => {
+    expect(declaredConfig(MapStackLayout).screens).toEqual([]);
+  });
+
+  it("more tab stack declares no modal screens", () => {
+    expect(declaredConfig(MoreStackLayout).screens).toEqual([]);
   });
 });
