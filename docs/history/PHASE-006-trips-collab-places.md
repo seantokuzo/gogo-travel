@@ -100,3 +100,88 @@ Sean spec-pass batch (leave placement, join-entry home, archive surface,
   `.specs/client/trips.spec.md`, `.specs/client/navigation.spec.md`.
 - Full per-PR review narratives: QUEUE.md "Recently done" rows T-6.1..T-6.9
   (this archive is the summary; QUEUE rows are the detail).
+
+---
+
+## Appendix A — rotated out of `docs/STATE.md` on 2026-09-13
+
+> Appended 2026-09-13 during a STATE rotation (STATE was 1102 lines against the
+> ~800–1000 advisory cap). The body above is unchanged; everything below was
+> living in `STATE.md § P-6` and is moved here so the section can be reduced to a
+> pointer. Two things kept it out of the original archive: the phase-QA checklist
+> is still un-run, and the landmine digest was deliberately parked in STATE for
+> P-7+ to trip over. P-7/P-8/P-9 are all code-complete now, and the mobile half of
+> the digest has since been codified in `.claude/rules/mobile.md`, so the digest's
+> live duty is over. It is preserved verbatim-in-substance below.
+
+### A.1 — PHASE-QA CHECKLIST (still un-run; ledger F-030..F-042 stays `passes:false`)
+
+Live tracking row: `docs/QUEUE.md` "P-6 phase QA (ledger F-030..F-042 flips)",
+status `blocked` on Sean. Rebuild precondition met 2026-08-15 (dev client rebuilt
+on `main@293d0ef`, datetimepicker baked); the blocker since then is CREDENTIALS,
+not the build — there is no signed-in path on the simulator. QA was PARKED by Sean
+2026-08-16; the two unblock options (a) real OAuth/server env or (b) an approved
+`__DEV__` session door stand recorded in the QUEUE row and in the P-8 PHASE-QA
+attempt bullet. Run on sim before any ledger flip:
+
+1. Two-account collab loop: create → invite (share sheet opens) → join via
+   `gogo://` link → role change → transfer → remove (T-6.2 / T-6.8 / T-6.9).
+2. Warm-start deep-link URL transport (the jest-untestable leg, T-6.6).
+3. Offline cached-shell mount (source-verified only so far, T-6.6).
+4. Native universal-link modals (T-6.6).
+5. Trip create golden path with the native range picker + destination typeahead
+   (T-6.7).
+6. Settings: edit name / destination / dates / theme / currency; stale-409
+   two-device conflict; leave (non-owner); delete (owner); owner-leave 409 copy
+   (T-6.9).
+7. Trip list: pagination past page 1; offline refocus retains rows with the banner
+   (T-6.7).
+
+B-2 note: press→settle act-stabilization is load-sensitive under
+harsher-than-CI starvation. If act warnings resurface under host contention,
+that is the class.
+
+### A.2 — Live landmine digest (the classes P-7+ actually hit)
+
+Client / query cache:
+
+- **TanStack v5 drops per-call `mutate` callbacks for superseded calls.** NEVER
+  hang per-call callbacks on a shared mutation instance; use the hook-level
+  `onMutationError` / `onMutationSuccess` seam (`members.ts` and
+  `trip-settings.ts` are the precedents) or pending-gate every affordance. This
+  bit P-6 twice: T-6.8 found it, T-6.9 reintroduced it.
+- **KEY-CACHE LAW:** `["trip-list"]` is a disjoint root. NOTHING may live under a
+  `["trips", ...]` prefix except the trip-detail subtree that the guard's 404-scrub
+  evicts. `invalidateTripLists(qc)` is the ONLY sanctioned list invalidation. New
+  keys join the detail subtree or take their own disjoint root.
+- **The conflict latch must be CONSUMED on every terminal path** (re-seed, effect,
+  dismiss). Invariant: latch armed ⟺ notice visible.
+- **The DS Sheet is hit-testable through its ~200ms exit animation.** Until the
+  DS-level guard lands (QUEUE row), every new sheet consumer needs its own
+  pending-gate posture.
+- `expect_updated_at` always reads the FRESH context row, never the seeded form
+  snapshot.
+
+Server:
+
+- Write predicates on role-bearing rows PIN the role (EPQ re-evaluation lands
+  unguarded writes on a promoted row version after a lock wait).
+- Global lock order is users → trip_members → invites. Extend it, never reorder.
+- Cascade lock order equals FK-trigger CREATION order — fence multi-row deleters
+  with an ordered `FOR UPDATE` SELECT.
+- Membership INSERTs take the caller's `users` row `FOR SHARE` (live-only) FIRST.
+- Atomic multi-writes use the WebSocket `Pool` / `postgres-js`, never Neon-HTTP.
+- timestamptz µs-vs-ms: `date_trunc('milliseconds')` for wire equality.
+- Raw `Date` params crash postgres-js drizzle `sql` templates — bind an ISO string
+  plus an explicit cast.
+- Membership aggregates join LIVE users only.
+
+Tests:
+
+- Key-presence authz needs falsy-value pins.
+- Observer-less cache assertions pin `gcTime: Infinity`.
+- RNTL v14 async-act boundaries are awaited.
+- Server DB suites once needed `--no-file-parallelism` for Testcontainers
+  contention. RETIRED 2026-08-30 by T-S3.3 (PR #44) — the shared globalSetup
+  container plus TEMPLATE clones. Kept here only so the historical instruction
+  reads as superseded, not current.

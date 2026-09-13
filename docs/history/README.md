@@ -21,9 +21,13 @@ patterns worth repeating, surprises worth remembering, surviving follow-ups.
 
 ## Index
 
-| ID                       | Title | Status |
-| ------------------------ | ----- | ------ |
-| _(no phases closed yet)_ |       |        |
+| ID                                                   | Title                                 | Status                                           |
+| ---------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
+| [PHASE-002](PHASE-002-upfront-spec-suite.md)         | Research + upfront spec suite         | Closed 2026-07-10                                |
+| [PHASE-003](PHASE-003-foundations.md)                | Foundations: scaffold, shared, schema | Closed 2026-07-16                                |
+| [PHASE-004](PHASE-004-design-system-navigation.md)   | Design system + navigation skeleton   | Closed 2026-07-22 (ledger F-010..F-017 flipped)  |
+| [PHASE-005](PHASE-005-auth-profiles-entitlements.md) | Auth, profiles & entitlements         | Code-complete 2026-07-25 (ledger pends OAuth QA) |
+| [PHASE-006](PHASE-006-trips-collab-places.md)        | Trips, collaboration & places spine   | Code-complete 2026-07-31 (ledger pends phase QA) |
 
 ## See also
 

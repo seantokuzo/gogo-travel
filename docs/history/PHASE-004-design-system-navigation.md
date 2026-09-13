@@ -86,3 +86,29 @@ means JS-only changes need no rebuild — kill+reopen the app.
 - Unidentified one-time LogBox warnings toast on device (never reproduced
   under the console watcher; QA passed regardless) — watch for recurrence.
 - B-1 (F-001 ledger amendment protocol) still awaits Sean's nod.
+
+---
+
+## Appendix A — rotated out of `docs/STATE.md` on 2026-09-13
+
+> Appended 2026-09-13 during a STATE rotation. The body above already carried the
+> phase record, the evidence sweep and the device-install recipe. These are the
+> `STATE.md § P-4` lines it did not carry, preserved before that section is reduced
+> to a pointer.
+
+- **Dev QA doors on the trip list** (both `__DEV__`-only): a component gallery and
+  an "Open sample trip" entry. The sample-trip door was RETIRED by T-6.6, which is
+  why P-6 phase QA has no signed-in path on the simulator — see PHASE-006 Appendix
+  A.1.
+- **Toolchain gotchas from this phase**, each since given a durable home: node
+  `>=22.9` for the env-file flag (now `package.json` `engines`); mobile TypeScript
+  `~6.0.3` is Expo's own pin, independent of the root TS (now
+  `.claude/rules/mobile.md`); a PG assignment cast ROUNDS `numeric` → `bigint`, so
+  the app-boundary `z.int` is the real gate (this is the B-1 ledger-amendment
+  blocker, tracked in `docs/QUEUE.md` § Blocked); CocoaPods needs a UTF-8 locale
+  and JS-only changes reach the device app via kill+reopen with Metro (both already
+  in the device-install section above).
+- **CI guard self-collision:** a comment inside `.github/workflows/**` must never
+  contain the literal trigger keys the guard job greps for — the guard scans the
+  whole workflow directory and will match its own prose. Moved to
+  `.claude/rules/ci.md`.

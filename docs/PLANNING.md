@@ -226,9 +226,9 @@ trip+place, offline-downloadable).
 | ID   | Type  | Title                                                                                                                     | Status                                                                                   | Priority | Depends on      |
 | ---- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------- | --------------- |
 | P-1  | Phase | Workflow foundation (port machinery, CLAUDE.md, docs, ADRs 1-3, stack decision)                                           | in-progress                                                                              | P0       | —               |
-| P-2  | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | in-progress                                                                              | P0       | P-1             |
+| P-2  | Phase | Research + upfront spec suite (product research, architecture, data model, per-feature specs, feature ledger, phase plan) | done ([archive](history/PHASE-002-upfront-spec-suite.md))                                | P0       | P-1             |
 | P-3  | Phase | Foundations: monorepo scaffold + `@gogo/shared` + DB schema                                                               | done ([archive](history/PHASE-003-foundations.md))                                       | P0       | P-2             |
-| P-4  | Phase | Design system + navigation skeleton                                                                                       | done                                                                                     | P0       | P-3             |
+| P-4  | Phase | Design system + navigation skeleton                                                                                       | done ([archive](history/PHASE-004-design-system-navigation.md))                          | P0       | P-3             |
 | P-5  | Phase | Auth, profiles & entitlements                                                                                             | done ([archive](history/PHASE-005-auth-profiles-entitlements.md), ledger pends OAuth QA) | P0       | P-3, P-4        |
 | P-6  | Phase | Trips, collaboration & places spine                                                                                       | done ([archive](history/PHASE-006-trips-collab-places.md), ledger pends phase QA)        | P0       | P-5             |
 | P-7  | Phase | Itinerary & bookings (incl. deeplink-out)                                                                                 | in-progress since 2026-07-31                                                             | P0       | P-6             |
@@ -265,7 +265,7 @@ trip+place, offline-downloadable).
 
 ### P-2 — Research + upfront spec suite
 
-- **Status:** queued · **Priority:** P0
+- **Status:** done — CLOSED 2026-07-10, all three approval gates passed, [archive](history/PHASE-002-upfront-spec-suite.md) · **Priority:** P0
 - **Goal:** Specs complete enough to "one-shot" the build with minimal ambiguity.
   Front-load ALL the human-in-the-loop: interview Sean until zero
   `[NEEDS CLARIFICATION]` markers remain, then the build phases run autonomously.

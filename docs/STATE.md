@@ -828,110 +828,32 @@ ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
   presses before the closing commit — the hook-level v5 mutation seam is
   what handles that overlap, so that seam rule still binds.
 
-### P-6 — Trips, collaboration & places spine (CODE-COMPLETE 2026-07-31 → archived; PHASE QA PENDING)
+### Rotated phases — archived, pointers only (rotated 2026-09-13)
 
-- 9/9 tasks merged (PRs #2–#10, every judge merge/high). Narrative archived:
-  [PHASE-006](history/PHASE-006-trips-collab-places.md); per-PR detail in
-  QUEUE "Recently done". Ledger **F-030..F-042 stays `passes:false`** until
-  the checklist below runs (Law #7).
-- **PHASE-QA CHECKLIST (run on sim before ledger flips; rebuild precondition
-  ✅ MET 2026-08-15 — dev client rebuilt on main@293d0ef, datetimepicker
-  baked; the blocker is now CREDS, not the build — no signed-in path on sim;
-  QA PARKED by Sean 2026-08-16 — the (a)/(b) unblock options stand recorded
-  in the P-8 PHASE-QA ATTEMPT bullet + QUEUE row):** ① two-account collab loop:
-  create → invite (share sheet opens) → join via gogo:// link → role change →
-  transfer → remove (T-6.2/6.8/6.9); ② warm-start deep-link URL transport
-  (jest-untestable leg, T-6.6); ③ offline cached-shell mount
-  (source-verified only, T-6.6); ④ native universal-link modals (T-6.6);
-  ⑤ trip create golden path w/ native range picker + destination typeahead
-  (T-6.7); ⑥ settings: edit name/destination/dates/theme/currency, stale-409
-  two-device conflict, leave (non-owner), delete (owner), owner-leave 409
-  copy (T-6.9); ⑦ trip list: pagination past page 1, offline refocus retains
-  rows w/ banner (T-6.7). **B-2 note:** press→settle act-stabilization is
-  load-sensitive under harsher-than-CI starvation — if act warnings
-  resurface under host contention, that's the class.
-- **LIVE LANDMINE DIGEST (P-7+ hits these classes — full narratives in the
-  archive):**
-  - **TanStack v5 drops per-call mutate callbacks for superseded calls** —
-    NEVER hang per-call callbacks on a shared mutation instance; use the
-    hook-level `onMutationError`/`onMutationSuccess` seam (members.ts +
-    trip-settings.ts precedents) or pending-gate every affordance. Bit P-6
-    twice (T-6.8 found it; T-6.9 reintroduced it).
-  - **KEY-CACHE LAW:** `["trip-list"]` is a disjoint root; NOTHING may live
-    under a `["trips", ...]` prefix except the trip-detail subtree the
-    guard's 404-scrub evicts. `invalidateTripLists(qc)` is the ONLY
-    sanctioned list invalidation. New P-7 keys (itinerary, bookings) must
-    join the detail subtree or their own disjoint root — decide at T-7.4.
-  - **Conflict latch must be CONSUMED on every terminal path** (re-seed,
-    effect, dismiss); invariant: latch armed ⟺ notice visible.
-  - **DS Sheet is hit-testable through its ~200ms exit animation** — QUEUE
-    row for the DS-level guard; until it lands, every new sheet consumer
-    needs its own pending-gate posture.
-  - `expect_updated_at` always reads the FRESH context row, never the seeded
-    form snapshot.
-  - **Server:** write predicates on role-bearing rows PIN the role (EPQ
-    re-eval); global lock order users → trip_members → invites (extend, don't
-    reorder, if P-7 adds locked tables); cascade lock order = FK-trigger
-    CREATION order — fence multi-row deleters with an ordered `FOR UPDATE`
-    SELECT; membership INSERTs take the caller's users row FOR SHARE
-    (live-only) FIRST; atomic multi-writes use the WS `Pool`/`postgres-js`,
-    never Neon-HTTP; timestamptz µs-vs-ms — `date_trunc('milliseconds')`
-    for wire equality; raw `Date` params crash postgres-js drizzle `sql`
-    templates — bind ISO string + explicit cast; membership aggregates join
-    LIVE users only.
-  - **Tests:** key-presence authz needs falsy-value pins; observer-less
-    cache asserts pin `gcTime: Infinity`; RNTL v14 async-act boundaries
-    awaited; server DB suites run `--no-file-parallelism` (Testcontainers
-    contention, QUEUE P1).
+Closed/code-complete phases live in `docs/history/`, not here (doc-homes rule:
+STATE rotation is Claude's job). Their landmine digests, phase-QA checklists and
+port-source notes were appended to the archives on 2026-09-13 before this section
+was trimmed — nothing was dropped.
 
-### P-5 — Auth, profiles & entitlements (CODE-COMPLETE 2026-07-25 → archived)
-
-- **P-5 done, ledger pending QA.** T-5.1..T-5.8 merged CI-green — full server +
-  client auth stack. Archived: [PHASE-005](history/PHASE-005-auth-profiles-entitlements.md).
-  **Ledger F-018..F-029 stays `passes:false`** — verification = the feature
-  exercised in the running app (Law #7), which needs Sean's OAuth credentials
-  (Apple Sign-In entitlement + `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`) + server env
-  (`APPLE_CLIENT_ID` / `GOOGLE_CLIENT_IDS` + ES256/Apple keys). Flips after
-  on-device QA (same pattern as P-4's F-010..F-017).
-- **Deferred (tracked in QUEUE):** avatar UPLOAD → P-12 (object storage,
-  Sean-deferred 2026-07-24; client ships avatar _display_ only) — carry the
-  `avatar_key`→server-signed-read-URL security note into the P-12 wire;
-  notification-priming onboarding step → P-6 push seam. F-024/F-025 land
-  partially, verify fully at P-12.
-- **Testcontainers contention — RESOLVED 2026-08-30 (PR #44, T-S3.3):** the shared
-  globalSetup container + template clones replaced 20+ per-suite boots; `--no-file-parallelism`
-  retired; plain `vitest run` is safe and ~6× faster. Watch-mode caveat: the template
-  migrates once per process — restart the watcher after editing `drizzle/`.
-- Review-mode: local 5-lane pipeline + fresh impartial judge is the standard gate;
-  `/code-review ultra` optional (2 free left), substitutable by a deep local
-  self-review when Sean waives it.
-
-### P-4 — Design system + navigation skeleton (CLOSED 2026-07-22)
-
-- **4/4 build tasks + 2 direct commits merged; ledger F-010..F-017 ALL
-  flipped** (sim evidence sweep + Sean's full device-QA pass on iPhone 15
-  Pro — checklist cleared 2026-07-22). Archive:
-  `docs/history/PHASE-004-design-system-navigation.md` (incl. the
-  device-install bootstrap recipe + landmine list). Mobile suite 152 tests.
-- First native builds: simulator AND Sean's iPhone. Dev QA doors on trip
-  list: Component gallery + Open sample trip (both `__DEV__`-only).
-- Gotchas for future sessions: node >=22.9 (env-file flag); mobile TS ~6.0.3
-  is Expo's pin; guard-job comments must never contain literal trigger keys;
-  PG assignment cast rounds numeric->bigint (app-boundary z.int is the gate);
-  CocoaPods needs UTF-8 locale; JS-only changes reach the device app via
-  kill+reopen (Metro), no rebuild.
-
-### P-2 — Upfront spec suite (CLOSED 2026-07-10)
-
-- Gates 1+2+3 ALL passed. 18 spec files, ~280 EARS requirements, zero markers.
-  `feature-ledger.json` (118 features F-001..F-118) + frozen roadmap P-3..P-14
-  in PLANNING § Phase Detail. Notable resolver calls: editors edit/delete only
-  their OWN expenses; sole-owner account deletion → 409 transfer-first.
-- **Port sources, for archaeology:** `../the-bach` (in-session 5-lane review
-  pipeline — its ADR-002 is our ADR-003; commands; hooks), `../get-sean-done`
-  (canonical GSD template: doc system, autonomous loop, naming ADRs),
-  `../bartling-bachelor` (product exemplar — mobile PWA, design system, itinerary
-  UX), `../roi-gen` (STATE discipline), `../seantokuzo-mcp` (rules/hooks patterns).
+- **P-6 — Trips, collaboration & places spine** (code-complete 2026-07-31; ledger
+  F-030..F-042 still `passes:false`, phase QA still un-run) →
+  [PHASE-006](history/PHASE-006-trips-collab-places.md). **Appendix A.1** is the
+  ①–⑦ sim checklist that gates those flips; **A.2** is the P-6 landmine digest
+  (TanStack v5 mutate-callback seam, KEY-CACHE LAW, conflict-latch invariant, DS
+  Sheet exit window, EPQ role pins, lock order, timestamptz parity, postgres-js
+  `Date` binding, test-pin rules). Live tracking row: QUEUE "P-6 phase QA",
+  `blocked` on Sean since 2026-08-16.
+- **P-5 — Auth, profiles & entitlements** (code-complete 2026-07-25; ledger
+  F-018..F-029 pends OAuth creds + server env from Sean) →
+  [PHASE-005](history/PHASE-005-auth-profiles-entitlements.md).
+- **P-4 — Design system + navigation skeleton** (CLOSED 2026-07-22; ledger
+  F-010..F-017 all flipped on Sean's device pass) →
+  [PHASE-004](history/PHASE-004-design-system-navigation.md), which carries the
+  device-install bootstrap recipe.
+- **P-2 — Upfront spec suite** (CLOSED 2026-07-10; 18 specs, ~280 EARS
+  requirements, the 118-row feature ledger, the frozen P-3..P-14 roadmap) →
+  [PHASE-002](history/PHASE-002-upfront-spec-suite.md), which carries the
+  sibling-repo port sources for archaeology.
 
 ## In-flight decisions
 

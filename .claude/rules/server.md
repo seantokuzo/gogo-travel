@@ -17,5 +17,6 @@ paths: ["apps/server/**"]
 - 🟡 **Never embed raw control bytes in test string literals** — use `\uNNNN` escapes. A literal NUL/BEL flags the file binary to git, breaking grep/review tooling (caught T-5.1 in `user.test.ts`, re-caught T-5.2 in `sign-in.test.ts`). The `\p{Cc}`-strip tests are the usual offender.
 - ESM + NodeNext: relative imports need `.js` extensions. Responses shaped, not raw DB rows.
 - No `console.log` (boot banner in `index.ts` is the lone exception). New logic ⇒ new vitest tests, happy path + error/edge.
+- 🟡 **The shared PG test container migrates its TEMPLATE database ONCE per vitest process** (T-S3.3, PR #44 — this is what retired `--no-file-parallelism`). In watch mode, editing `drizzle/` does NOT re-migrate the template: restart the watcher or every suite clones a stale schema.
 - Migration for every schema change once the DB exists (Law #6).
 - Done = root gate green: `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
