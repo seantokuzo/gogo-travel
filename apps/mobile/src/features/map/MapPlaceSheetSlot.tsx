@@ -44,8 +44,8 @@ import type { Place } from "@gogo/shared";
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import { useCallback } from "react";
 import { StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useTopInset } from "@/components";
 import { useSavedPlaces } from "@/data";
 import { useTripContext } from "@/navigation/trip-context";
 
@@ -95,7 +95,9 @@ export function MapPlaceSheetSlot({
 }: MapPlaceSheetSlotProps) {
   const s = useStyles();
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
+  // Same top-overlay band as the day-filter strip, inside the trip shell —
+  // the switcher bar owns the safe-area top here (B-27).
+  const topInset = useTopInset();
   // The slot mounts under the [tripId] layout's TripProvider by contract
   // (the screen renders it) — destination coords are schema-guaranteed.
   const trip = useTripContext();
@@ -124,11 +126,11 @@ export function MapPlaceSheetSlot({
   return (
     <>
       <View
-        style={[
-          s.searchOverlay,
-          { paddingTop: insets.top + theme.space[2] + DAY_FILTER_CLEARANCE },
-        ]}
+        style={[s.searchOverlay, { paddingTop: topInset + theme.space[2] + DAY_FILTER_CLEARANCE }]}
         pointerEvents="box-none"
+        // Derived non-interactive id (§2.7 rule 4) — same top band as
+        // `map-top-overlay`, same B-27 ownership.
+        testID="map-search-overlay"
       >
         <MapSearch
           tripId={tripId}
