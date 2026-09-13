@@ -884,9 +884,15 @@ run in this order:
 
 1. **All-fixture trips first.** Classify every trip the candidate set owns
    by whether ALL of its live members are `e2e:`-prefixed. For every trip
-   that is, delete the trip through the existing `DELETE /trips/:tripId`
-   path (R-trips-8, schema §3.6 cascade), invoked in that trip's owner's
-   context — **never** via `deleteAccount` for this step — so the
+   that is, delete the trip in-process — the same operator-script shape
+   `apps/server/src/db/prune-auth.ts` already uses for `pruneAuthRows`,
+   calling straight into the service layer instead of over HTTP — by
+   invoking the trip-delete service function directly with the fixture
+   owner's user id as the actor (R-trips-8, schema §3.6 cascade); this is
+   **not** `DELETE /trips/:tripId` (that route sits behind
+   `requireTripMember("owner")`, and an offline script has no session to
+   satisfy it), so no HTTP request, no credentials, and no session door are
+   involved — **never** via `deleteAccount` for this step — so the
    multi-fixture-member case is gone before any fixture's `deleteAccount`
    call can trip the owner guard on it.
 2. **Ownerless fixtures next.** Call `deleteAccount` for every remaining
@@ -902,7 +908,14 @@ run in this order:
 deleted or reassigned`, and leave both the user and the trip untouched.
    This is the "never touches a trip with a non-fixture member" guarantee —
    enforced by the guard `deleteAccount` already has, not a second check the
-   script re-implements.
+   script re-implements. A fixture that OWNS a trip with a live non-fixture
+   member is skipped and reported by id, not deleted or reassigned — a
+   fixture that is merely a **member**, not the owner, of a real trip has no
+   owned trip and is fully handled by step 2 instead — and the skipped
+   owner keeps its `E2E_DOOR_MAX_FIXTURE_USERS` cap slot until an operator
+   resolves it manually (transfer the trip's ownership, or remove the real
+   member), so the script's non-zero exit (step 6) names these skipped-owner
+   ids separately from any transient per-user failure logged under step 5.
 4. **Retry pass.** Re-run steps 1–3 once more against whatever `e2e:`-
    prefixed rows are still live. A trip's membership can change between the
    classification query and a given `deleteAccount` call (e.g. a step-1
