@@ -48,7 +48,15 @@ import { createStyles } from "@gogo/tokens/react";
 import { useCallback, useState } from "react";
 import { FlatList, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
 
-import { AppText, Input, ListItem, PickerCard, usePickerFocus } from "@/components";
+import {
+  AppText,
+  Input,
+  ListItem,
+  PickerCard,
+  pickerCardMaxHeight,
+  useKeyboardHeight,
+  usePickerFocus,
+} from "@/components";
 
 import { searchTimeZones, timeZoneSlug, type TimeZoneEntry } from "./time-zone-catalog";
 import { describeTimeZone, referenceInstantFor } from "./zoned-time";
@@ -60,8 +68,19 @@ import { describeTimeZone, referenceInstantFor } from "./zoned-time";
  */
 const INITIAL_ROWS = 14;
 
-/** Card height ceiling, as a fraction of the window (DS Sheet's 85% posture). */
-const CARD_HEIGHT_FRACTION = 0.7;
+/**
+ * B-26 R1 (round-1 review B2): budget reserved, inside the card's own
+ * `pickerCardMaxHeight` ceiling, for everything that ISN'T the list — header
+ * row + search `Input` + the card's own top/bottom padding and the
+ * `cardBody` gap between them. Deliberately generous (the review's own
+ * measured chrome was ~172pt on an iPhone 15) so the list's computed cap
+ * never eats into the header/search input's room; the list only ever ends
+ * up SMALLER than it could be, never overflowing past the card.
+ */
+const NON_LIST_CHROME_ESTIMATE = 200;
+
+/** However tight the budget gets, keep enough room for a couple of rows. */
+const MIN_LIST_HEIGHT = 120;
 
 export interface TimeZoneFieldProps {
   label: string;
@@ -134,6 +153,7 @@ export function TimeZoneField({
 }: TimeZoneFieldProps) {
   const s = useStyles();
   const { height: windowHeight } = useWindowDimensions();
+  const keyboardHeight = useKeyboardHeight();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const hasError = error !== undefined && error.length > 0;
@@ -146,9 +166,13 @@ export function TimeZoneField({
   usePickerFocus(open, close);
 
   // Bounded by the CARD, not by a result cap: the whole filtered catalog is
-  // handed to the virtualizer, which renders a window of it.
+  // handed to the virtualizer, which renders a window of it. The list's own
+  // cap is carved out of the SAME keyboard-aware ceiling `PickerCard` applies
+  // to the card itself (B-26 R1) — with the keyboard up, both shrink
+  // together instead of the list staying a stale, too-tall fixed size.
   const results: TimeZoneEntry[] = open ? searchTimeZones(query) : [];
-  const listMaxHeight = Math.round(windowHeight * CARD_HEIGHT_FRACTION);
+  const cardMaxHeight = pickerCardMaxHeight(windowHeight, keyboardHeight);
+  const listMaxHeight = Math.max(MIN_LIST_HEIGHT, cardMaxHeight - NON_LIST_CHROME_ESTIMATE);
 
   const dismiss = (): void => {
     setQuery("");

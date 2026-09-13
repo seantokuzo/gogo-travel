@@ -27,17 +27,64 @@
  * input is not buried under the keyboard (a no-op for the native pickers,
  * which focus nothing).
  *
+ * B-26 R1 (round-1 review B2 — device QA found the zone search input pushed
+ * entirely off screen with the keyboard up). Root cause: `modalAvoider` had
+ * no `flex`, so it was CONTENT-sized; `behavior="padding"` (read at the
+ * pinned RN 0.86.2 `KeyboardAvoidingView.js`) adds the keyboard's full
+ * height as its OWN `paddingBottom`, which grew the content-sized avoider
+ * past the screen and pushed it up off the top — `modalRoot`'s
+ * `justifyContent: "flex-end"` bottom-anchors an over-tall child without
+ * clamping it. Fix: `modalAvoider` gets `flex: 1` so its box is FIXED to the
+ * modal's full height (the padding then only eats into its CONTENT room,
+ * never grows the box itself), and `modalCard` gets a `maxHeight` ceiling
+ * (`pickerCardMaxHeight`) that accounts for the keyboard — Yoga clamps a
+ * node's own box at `maxHeight` regardless of its children's content, so the
+ * header and (for a search picker) the input — the first children in the
+ * column — always land inside the visible card, whatever the last child
+ * (a long list) does. Keyboard height comes from `useKeyboardHeight`, not a
+ * static fraction — a static 85%/0.7 cap doesn't shrink when the keyboard
+ * eats real room (the exact B2 scenario).
+ *
  * testIDs derive from the owning FIELD's base id (nav §2.7 rule-4):
  * card `{testID}-sheet`, commit `{testID}-sheet-done`, cancel
  * `{testID}-sheet-close` / `{testID}-sheet-scrim`.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import type { ReactNode } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View } from "react-native";
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon } from "./Icon";
 import { AppText } from "./Text";
+import { useKeyboardHeight } from "./useKeyboardHeight";
+
+/** Card height ceiling with no keyboard — the DS Sheet's own 85% posture (`Sheet.tsx`). */
+const CARD_HEIGHT_FRACTION = 0.85;
+
+/** Breathing room kept above the keyboard's top edge when one is up. */
+const KEYBOARD_GAP = 16;
+
+/**
+ * The card's `maxHeight` ceiling — whichever is SMALLER of the static 85%
+ * cap and the room actually left once the keyboard (if any) is accounted
+ * for. Pure and exported so the layout math is pinnable without a real
+ * layout engine (jest has none) or a real keyboard: `.claude/rules/testing.md`
+ * §2's boundary case is a window height with a simulated keyboard height.
+ */
+export function pickerCardMaxHeight(windowHeight: number, keyboardHeight: number): number {
+  const capped = Math.round(windowHeight * CARD_HEIGHT_FRACTION);
+  if (keyboardHeight <= 0) return capped;
+  const available = Math.round(windowHeight - keyboardHeight - KEYBOARD_GAP);
+  return Math.max(0, Math.min(capped, available));
+}
 
 export interface PickerCardProps {
   /** Field label — the card's header title + a11y naming for its actions. */
@@ -72,8 +119,11 @@ const useStyles = createStyles((t) =>
     // the pickers' intrinsic sizes (calendar ~320pt, spinner) always fit.
     modalRoot: { flex: 1, justifyContent: "flex-end" },
     // B-26: the avoider owns the bottom anchor so its keyboard padding
-    // pushes the card up rather than stretching it.
-    modalAvoider: { justifyContent: "flex-end" },
+    // pushes the card up rather than stretching it. B-26 R1: `flex: 1` fixes
+    // this box to the modal's full height — without it the box is
+    // content-sized, and `behavior="padding"`'s keyboard paddingBottom grows
+    // that box past the screen instead of just eating into its content room.
+    modalAvoider: { flex: 1, justifyContent: "flex-end" },
     modalScrim: {
       position: "absolute",
       top: 0,
@@ -88,6 +138,12 @@ const useStyles = createStyles((t) =>
       borderTopRightRadius: t.radius.xl,
       paddingHorizontal: t.space[4],
       paddingTop: t.space[3],
+      // NOT `overflow: "hidden"` — `t.elevation[3]`'s iOS drop shadow renders
+      // OUTSIDE this box and clipping would erase it card-wide. `maxHeight`
+      // (below, inline) is Yoga's own hard ceiling on this box regardless of
+      // children, and the list's own height budget (TimeZoneField) keeps its
+      // content within that ceiling — the caller-side `results` wrapper
+      // already clips the list rows specifically.
       ...t.elevation[3],
     },
     modalHeader: {
@@ -131,11 +187,15 @@ export function PickerCard({
   const { theme } = useTheme();
   const s = useStyles();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const keyboardHeight = useKeyboardHeight();
 
   if (Platform.OS !== "ios" && !alwaysModal) {
     // Android's native picker dialogs self-anchor and self-dismiss.
     return <>{children}</>;
   }
+
+  const cardMaxHeight = pickerCardMaxHeight(windowHeight, keyboardHeight);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -154,7 +214,10 @@ export function PickerCard({
           style={s.modalAvoider}
         >
           <View
-            style={[s.modalCard, { paddingBottom: insets.bottom + theme.space[4] }]}
+            style={[
+              s.modalCard,
+              { paddingBottom: insets.bottom + theme.space[4], maxHeight: cardMaxHeight },
+            ]}
             accessibilityViewIsModal
             testID={`${testID}-sheet`}
           >
