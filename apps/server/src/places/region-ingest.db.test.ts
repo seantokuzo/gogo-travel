@@ -65,6 +65,15 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Base wall-clock for the suite; refresh-window math derives from it. */
 const T0 = new Date("2026-07-25T12:00:00.000Z");
 
+/**
+ * B-7 fix: migration `drizzle/0004_destination_tier_seed.sql` seeds `places`
+ * with a permanent, committed Overture destination tier (6,927 rows,
+ * `reference-data/README.md`) present on every migrated template BEFORE this
+ * suite's own fixture rows land — `placesCount()` is table-wide, so every
+ * absolute pin below is baseline + fixture rows, not fixture rows alone.
+ */
+const DESTINATION_TIER_ROW_COUNT = 6927;
+
 describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", () => {
   let suiteDb: SuiteDb;
   let client: postgres.Sql;
@@ -139,7 +148,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       }
 
       // Fixture inventory: 5 overture + 5 fsq survive normalize+dedup.
-      expect(await placesCount()).toBe(10);
+      expect(await placesCount()).toBe(DESTINATION_TIER_ROW_COUNT + 10);
 
       // NFC normalization: the fixture name is NFD; the stored row is NFC.
       const belem = await placeBySourceId("overture", "ovt-belem-tower");
@@ -260,7 +269,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
 
       // Row counts stable (PL-1 acceptance): 10 fixture rows + the surviving
       // ghost — upsert never insert-dupes, refresh never deletes (R-places-2).
-      expect(await placesCount()).toBe(11);
+      expect(await placesCount()).toBe(DESTINATION_TIER_ROW_COUNT + 11);
       expect(await placeBySourceId("overture", "ovt-ghost-vanished")).toBeDefined();
 
       // Refresh PROPAGATED: the staled row healed back to the dataset value
@@ -294,7 +303,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect((await regionRowOf(centerCell.key, "overture"))?.ingestedAt?.getTime()).toBe(
         t91.getTime(),
       );
-      expect(await placesCount()).toBe(11);
+      expect(await placesCount()).toBe(DESTINATION_TIER_ROW_COUNT + 11);
     },
   );
 
@@ -339,7 +348,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect(failedRow?.error).not.toContain(CORRUPT_FIXTURE);
       expect(failedRow?.ingestedAt?.getTime()).toBe(t91.getTime());
       expect(failedRow?.rowCount).toBe(4);
-      expect(await placesCount()).toBe(11);
+      expect(await placesCount()).toBe(DESTINATION_TIER_ROW_COUNT + 11);
       expect(await placeBySourceId("fsq_os", "fsq-pasteis")).toBeDefined();
     },
   );
@@ -359,7 +368,7 @@ describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", 
       expect(healed?.status).toBe("ready");
       expect(healed?.error).toBeNull();
       expect(healed?.ingestedAt?.getTime()).toBe(t183.getTime());
-      expect(await placesCount()).toBe(11);
+      expect(await placesCount()).toBe(DESTINATION_TIER_ROW_COUNT + 11);
     },
   );
 
