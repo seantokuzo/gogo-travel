@@ -13,12 +13,18 @@
  * mock hides render-time crashes in the thing you are testing).
  */
 import type { BookingCategory } from "@gogo/shared";
-import { act, screen } from "@testing-library/react-native";
+import { act, fireEvent, screen } from "@testing-library/react-native";
 
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { seedAuthenticated } from "@/test-utils/session-fixtures";
 import { makeTrip, mockNavApi } from "@/test-utils/trip-fixtures";
+
+// A LOCAL, unmocked module (the `@gogo/shared` mock below only touches
+// `BookingCreateSchema`) — Babel's CJS interop makes `BookingForm`'s
+// `requiredBookingFieldKeys(category)` call resolve through this same
+// namespace object at call time, so `jest.spyOn` below sees every call.
+import * as requiredFieldsModule from "./required-fields";
 
 /**
  * Optionality of the ONE key this file mutates. Read inside the factory (a
@@ -121,4 +127,26 @@ it("MUTATION: make the SCHEMA require confirmation_code and the marker follows",
   );
   // And Name is still marked — the derivation widened, it did not move.
   expect(screen.getByTestId("itinerary-item-new-input-title-required")).toBeOnTheScreen();
+});
+
+it("A6: requiredBookingFieldKeys is memoized on category — not re-derived on every keystroke", async () => {
+  // BookingForm.tsx:237 runs ~9 `safeParse(undefined)` probes over
+  // BookingCreateSchema.shape plus the category's BookingDetails member,
+  // needlessly re-run on every re-render (every `onChangeText`) without a
+  // `useMemo`. Falsification: dropping the `useMemo([category])` dependency
+  // array (or the memo entirely) makes the spy's count grow with keystrokes
+  // instead of staying flat.
+  const spy = jest.spyOn(requiredFieldsModule, "requiredBookingFieldKeys");
+  await renderForm();
+  const afterMount = spy.mock.calls.length;
+  expect(afterMount).toBeGreaterThan(0);
+
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "S");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "SF");
+  await fireEvent.changeText(screen.getByTestId("itinerary-item-new-input-title"), "SFO");
+
+  // Three keystrokes re-render the form (title is controlled state) but the
+  // CATEGORY never changed, so a memoized derivation calls the function zero
+  // additional times.
+  expect(spy.mock.calls.length).toBe(afterMount);
 });

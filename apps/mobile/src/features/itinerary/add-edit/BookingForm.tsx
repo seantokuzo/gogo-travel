@@ -53,7 +53,7 @@ import {
   type TripWithRole,
 } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { ApiRequestError } from "@/auth";
@@ -231,10 +231,14 @@ export function BookingForm({
   const [savedToIdeas, setSavedToIdeas] = useState(false);
 
   /**
-   * B-26: the schema decides which fields carry a required marker. Read at
-   * render so the contract and the UI cannot drift (`required-fields.ts`).
+   * B-26: the schema decides which fields carry a required marker. Derived
+   * from `category` alone so the contract and the UI cannot drift
+   * (`required-fields.ts`) — `useMemo`'d (B-26 R1, round-1 review A6)
+   * because the derivation runs ~9 `safeParse(undefined)` probes over
+   * `BookingCreateSchema.shape` plus the category's `BookingDetails` member,
+   * and this component re-renders on every keystroke in every field.
    */
-  const requiredKeys = requiredBookingFieldKeys(category);
+  const requiredKeys = useMemo(() => requiredBookingFieldKeys(category), [category]);
 
   /**
    * A rejected mutation → the reason the SERVER gave (B-26 / B-8 SECONDARY).
