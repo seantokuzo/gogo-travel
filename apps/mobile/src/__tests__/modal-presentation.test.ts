@@ -18,6 +18,9 @@ import type { ReactElement, ReactNode } from "react";
 import TripsLayout from "@/app/(trips)/_layout";
 import ItineraryStackLayout from "@/app/[tripId]/itinerary/_layout";
 import MoneyStackLayout from "@/app/[tripId]/money/_layout";
+import TodayStackLayout from "@/app/[tripId]/today/_layout";
+import MapStackLayout from "@/app/[tripId]/map/_layout";
+import MoreStackLayout from "@/app/[tripId]/more/_layout";
 
 jest.mock("@/navigation/stack-options", () => ({
   useStackScreenOptions: () => ({}),
@@ -69,6 +72,27 @@ describe("R-nav-21 — each modal is declared in its owning stack", () => {
     expect(screens).toHaveLength(2);
   });
 
+  /**
+   * B-25 rider: `TripSwitcher`'s "All trips" row navigates to `(trips)/index`
+   * straight from the press handler that closes the DS Sheet, with no
+   * `onExited` deferral. That is only safe while the destination is NOT a
+   * `presentation: "modal"` route (mobile.md 🔴 B-19 — the RNScreens
+   * `_updatingModals` wedge). Make the dependency explicit and falsifiable
+   * here rather than leaving it implied by the arity check above.
+   */
+  it("B-25: the trip list itself is NOT a modal — the switcher's undeferred exit depends on it", () => {
+    const { screens } = declaredConfig(TripsLayout);
+    // Assert what actually holds. `(trips)/_layout` declares only `new` and
+    // `capture/onboarding`, so `find(s => s.name === "index")` is `undefined`
+    // and reading `?.presentation` off it passed because the SUBJECT was
+    // absent, not because it was non-modal (round-1 review) — the same
+    // expression would have stayed green with `index` declared modal under a
+    // different spelling. An UNDECLARED screen inherits the stack's default
+    // presentation, which is non-modal (card); a future `<Stack.Screen
+    // name="index" …>` here reds this and forces the B-19 question again.
+    expect(screens.map((s) => s.name)).not.toContain("index");
+  });
+
   it("itinerary tab stack declares `item/new` as a modal and pins index", () => {
     const { initialRouteName, screens } = declaredConfig(ItineraryStackLayout);
     expect(initialRouteName).toBe("index");
@@ -79,5 +103,27 @@ describe("R-nav-21 — each modal is declared in its owning stack", () => {
     const { initialRouteName, screens } = declaredConfig(MoneyStackLayout);
     expect(initialRouteName).toBe("index");
     expect(screens).toEqual([{ name: "expense/new", presentation: "modal" }]);
+  });
+
+  /**
+   * top-inset.tsx's note claims the trip-shell modal set is pinned to exactly
+   * two routes "so a third one can't be added without an author being forced
+   * back through this note." Before this trio, that claim was false: `today`,
+   * `map` and `more` each render a bare `<Stack screenOptions={…} />` with no
+   * screens declared at all, so they were inspected by no suite here — a
+   * `presentation: "modal"` screen added to any of them would stay invisible
+   * to `git diff`'s reviewers and green through this whole file. Pinning them
+   * to an empty screen set makes adding one a declared, reviewable act.
+   */
+  it("today tab stack declares no modal screens", () => {
+    expect(declaredConfig(TodayStackLayout).screens).toEqual([]);
+  });
+
+  it("map tab stack declares no modal screens", () => {
+    expect(declaredConfig(MapStackLayout).screens).toEqual([]);
+  });
+
+  it("more tab stack declares no modal screens", () => {
+    expect(declaredConfig(MoreStackLayout).screens).toEqual([]);
   });
 });

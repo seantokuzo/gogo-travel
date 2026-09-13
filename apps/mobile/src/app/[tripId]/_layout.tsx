@@ -29,7 +29,24 @@
  *    in-flight hold, or an offline cached mount never move the stamp. The
  *    gate lives on the stamp itself (not just shell placement) so a future
  *    shell refactor can't silently regress it.
- * 5. TRIP SWITCHER (R-nav-23): hosted here, renders only with 2+ active trips.
+ * 5. TRIP SWITCHER (R-nav-23 + B-25): hosted here, and rendered on EVERY
+ *    trip screen. Native headers are off app-wide (`stack-options.ts`), so
+ *    the tab shell shows no back chrome, and on the cold-launch entry path
+ *    (`app/index` redirects into the last-viewed trip) there is no route
+ *    underneath to swipe back to either — the switcher bar is the way out,
+ *    and its sheet carries the "All trips" row back to `(trips)`. It is
+ *    therefore NOT gated on the active-trip count any more (that gate made
+ *    one-active and all-planning/past accounts a navigation dead end).
+ *    NOTE the two entry shapes: entering from the list is a PUSH, cold
+ *    launch mounts `[tripId]` alone — which is why the exit is a
+ *    `dismissTo` and not a `replace` (see `TripSwitcher.tsx`).
+ *    The guard surfaces below (`NoAccessState`, `TripErrorState`) render
+ *    OUTSIDE `TripShell`, so they carry their own exit — same reason.
+ *    Because the bar is flush with the top of the window, the bar — not the
+ *    screens' `PageHeader` — owns the safe-area top under this layout, which
+ *    is what the `TopInsetBoundary` below declares (B-27; the canonical
+ *    write-up, including why natively presented modals must re-open it,
+ *    is `components/top-inset.tsx`).
  *
  * expo-router 57 note: the root `Tabs` export is deprecated —
  * `expo-router/js-tabs` is the sanctioned JS-tabs entry.
@@ -43,7 +60,7 @@ import { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { ApiRequestError } from "@/auth";
-import { TabNav } from "@/components";
+import { TabNav, TopInsetBoundary } from "@/components";
 import { invalidateTripLists, queryClient, queryKeys, useTrip } from "@/data";
 import { stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
@@ -89,20 +106,30 @@ function TripShell({ trip }: { trip: TripWithRole }) {
   return (
     <TripProvider trip={trip}>
       <View style={s.shell}>
+        {/* Flush with the top of the window — it claims `insets.top` itself
+            and is therefore rendered OUTSIDE the boundary below. */}
         <TripSwitcherBar currentTrip={trip} />
-        <Tabs
-          initialRouteName={initialRouteName}
-          screenOptions={{ headerShown: false }}
-          tabBar={(props) => <TripTabBar {...props} />}
-        >
-          {/* Declared in spec order — the §2.1 tab bar is today · itinerary ·
-              map · money · more; TRIP_TAB_ITEMS mirrors it. */}
-          <Tabs.Screen name="today" />
-          <Tabs.Screen name="itinerary" />
-          <Tabs.Screen name="map" />
-          <Tabs.Screen name="money" />
-          <Tabs.Screen name="more" />
-        </Tabs>
+        {/* B-27: everything under the bar starts below the safe area already.
+            Provider only — it renders no view and cannot move a pixel by
+            itself; it just stops PageHeader re-adding an inset the bar paid.
+            Natively presented modals declared inside these tab stacks are
+            React descendants but NOT visually below the bar, so each re-opens
+            the boundary with `claimed={false}`. */}
+        <TopInsetBoundary claimed>
+          <Tabs
+            initialRouteName={initialRouteName}
+            screenOptions={{ headerShown: false }}
+            tabBar={(props) => <TripTabBar {...props} />}
+          >
+            {/* Declared in spec order — the §2.1 tab bar is today · itinerary ·
+                map · money · more; TRIP_TAB_ITEMS mirrors it. */}
+            <Tabs.Screen name="today" />
+            <Tabs.Screen name="itinerary" />
+            <Tabs.Screen name="map" />
+            <Tabs.Screen name="money" />
+            <Tabs.Screen name="more" />
+          </Tabs>
+        </TopInsetBoundary>
       </View>
     </TripProvider>
   );

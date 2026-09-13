@@ -74,9 +74,8 @@ import { useFocusEffect, useNavigation, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ComponentRef, RefObject } from "react";
 import { AppState, Pressable, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { EmptyState, ErrorBanner, Icon } from "@/components";
+import { EmptyState, ErrorBanner, Icon, useTopInset } from "@/components";
 import { useItinerary, useItineraryBookings, useSavedPlaces } from "@/data";
 import {
   buildPlaceIndex,
@@ -188,7 +187,9 @@ export default function MapScreen() {
   const navigation = useNavigation();
   const { theme, scheme } = useTheme();
   const s = useStyles();
-  const insets = useSafeAreaInsets();
+  // Floating chrome over the map, INSIDE the trip shell — the switcher bar
+  // above the tabs already claimed the top inset (B-27).
+  const topInset = useTopInset();
   const colors = mapColors(theme);
   const dayColors = mapDayColors(theme);
 
@@ -655,8 +656,11 @@ export default function MapScreen() {
       ) : null}
 
       <View
-        style={[s.topOverlay, { paddingTop: insets.top + theme.space[2] }]}
+        style={[s.topOverlay, { paddingTop: topInset + theme.space[2] }]}
         pointerEvents="box-none"
+        // Derived non-interactive id (§2.7 rule 4) — the top-chrome band whose
+        // safe-area ownership B-27 moved to the trip shell, assertable.
+        testID="map-top-overlay"
       >
         <MapDayFilterStrip
           chips={chips}

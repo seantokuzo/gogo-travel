@@ -4,16 +4,22 @@
  * back navigation (no haptic — §2.8: never on push/pop). Trailing actions
  * cap at 2 (spec); extras are dropped, each requires its own testID
  * (R-ds-20).
+ *
+ * The safe-area top is taken through `useTopInset()`, not `insets.top`
+ * directly (B-27): on most screens the header IS the topmost chrome and gets
+ * the full inset, but inside the trip shell `TripSwitcherBar` is above it and
+ * has already claimed it — see `top-inset.tsx`. `space[2]` is added on top
+ * either way, so the header keeps a deliberate gap in both positions.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon } from "./Icon";
 import type { IconName } from "./Icon";
 import { AppText } from "./Text";
+import { useTopInset } from "./top-inset";
 
 export interface PageHeaderAction {
   icon: IconName;
@@ -79,12 +85,12 @@ export function PageHeader({
   testID,
 }: PageHeaderProps) {
   const { theme } = useTheme();
-  const insets = useSafeAreaInsets();
+  const topInset = useTopInset();
   const router = useRouter();
   const s = useStyles();
 
   return (
-    <View style={[s.header, { paddingTop: insets.top + theme.space[2] }]} testID={testID}>
+    <View style={[s.header, { paddingTop: topInset + theme.space[2] }]} testID={testID}>
       <View style={s.row}>
         {leading === "back" ? (
           <Pressable

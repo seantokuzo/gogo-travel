@@ -20,11 +20,12 @@ It is always-resident context, so hold it to the leanness contract below.
 
 ## Files
 
-| Rule                    | Scopes                 | Purpose                                                                     |
-| ----------------------- | ---------------------- | --------------------------------------------------------------------------- |
-| `planning-doc-homes.md` | `docs/**`, `.specs/**` | What goes where; one home per doc                                           |
-| `review.md`             | review tooling         | Project review brief: priorities, path → specialist map, what NOT to flag   |
-| `ci.md`                 | `.github/workflows/**` | No cron / no LLM in CI (guard-enforced); gate command; prod-parity landmine |
-| `server.md`             | `apps/server/**`       | Hono/Drizzle + landmines                                                    |
-| `mobile.md`             | `apps/mobile/**`       | Expo/RN + landmines                                                         |
-| `shared.md`             | `packages/**`          | Zod SoT, money, DI, vitest pin                                              |
+| Rule                    | Scopes                 | Purpose                                                                      |
+| ----------------------- | ---------------------- | ---------------------------------------------------------------------------- |
+| `planning-doc-homes.md` | `docs/**`, `.specs/**` | What goes where; one home per doc                                            |
+| `review.md`             | review tooling         | Project review brief: priorities, path → specialist map, what NOT to flag    |
+| `ci.md`                 | `.github/workflows/**` | No cron / no LLM in CI (guard-enforced); gate command; prod-parity landmine  |
+| `server.md`             | `apps/server/**`       | Hono/Drizzle + landmines                                                     |
+| `mobile.md`             | `apps/mobile/**`       | Expo/RN + landmines                                                          |
+| `shared.md`             | `packages/**`          | Zod SoT, money, DI, vitest pin                                               |
+| `testing.md`            | tests, `.maestro/**`   | The bar a test clears: test-first, full matrix, mutation-verify, prod-shaped |

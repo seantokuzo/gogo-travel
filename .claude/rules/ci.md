@@ -18,6 +18,7 @@ mechanically; don't fight it.
   `gh pr diff` (T-7.5 shipped a 182-line module past five review lanes that
   could not see a line of it) and BSD `grep` exits 1 in silence. tsc/eslint
   pass regardless. Write the escape, never the byte.
+- **A workflow COMMENT must never contain the literal trigger keys the guard greps for** (P-4). The guard scans all of `.github/workflows/` and will match its own prose — that is why the existing steps assemble the patterns from split parts. Do the same, or phrase around them.
 - **Gate per CLAUDE.md § Quality Gates**; note `lint` includes `lint:root`
   (root configs + `.github/scripts/` — nothing else lints those). The guard
   job also runs `node --test .github/scripts/*.test.mjs` — the NUL guard's exit

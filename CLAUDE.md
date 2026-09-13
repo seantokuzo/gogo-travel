@@ -126,7 +126,17 @@ what NOT to flag: `.claude/rules/review.md`.
 ## Quality Gates (before any task counts as done)
 
 **CI gate command:** `pnpm lint && pnpm typecheck && pnpm test && pnpm build`
-— new logic ⇒ new tests, happy path + error/edge.
+
+**Testing standard — the bar is `.claude/rules/testing.md`; the strategy is
+[ADR-006](docs/decisions/ADR-006-testing-strategy-overhaul.md).** Four rules,
+because "new logic ⇒ new tests" alone kept shipping bugs to Sean's device:
+tests land in the SAME commit as the code, written first where the shape is
+known · cover the matrix (error, empty, offline, boundary, adversarial), never
+just the happy path · **mutation-verify every pin** — break what it guards,
+watch it go red, or it does not count · run against something prod-shaped
+(Hermes, the real driver, a migrated DB) — a green mock proves nothing about
+the device. Untested layers that keep biting: environment/migration state, and
+anything behind sign-in.
 
 ## Autonomous loop ("spec and walk away")
 

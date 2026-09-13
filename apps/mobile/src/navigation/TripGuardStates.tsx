@@ -8,12 +8,21 @@
  * no-flash posture; a NON-404 failure (network/5xx) is NOT a membership
  * verdict, so it gets a retry surface instead of a false "no access" — the
  * distinction matters offline (offline spec: cached active trips must mount).
+ *
+ * B-25 (round 1): BOTH failure surfaces carry an exit. They render OUTSIDE
+ * `TripShell`, so the switcher bar — the only way out of a trip — is not
+ * mounted behind them, and on the cold-launch path (`app/index` redirects
+ * straight into the last-viewed trip) there is no route underneath and no
+ * back gesture either. Without a "Back to trips" action a 5xx/timeout on
+ * `GET /trips/:tripId` is the B-25 dead end verbatim. The primitive is
+ * `dismissTo` for the same reason the switcher uses it — see the navigation
+ * primitive section of `TripSwitcher.tsx`.
  */
 import { createStyles } from "@gogo/tokens/react";
 import { useRouter } from "expo-router";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 
-import { EmptyState, ErrorBanner } from "@/components";
+import { Button, EmptyState, ErrorBanner } from "@/components";
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -43,7 +52,7 @@ export function NoAccessState() {
         body="This trip doesn't exist or you don't have access to it."
         action={{
           label: "Back to trips",
-          onPress: () => router.replace("/(trips)"),
+          onPress: () => router.dismissTo("/(trips)"),
           testID: "no-access-button-trips",
         }}
       />
@@ -61,15 +70,26 @@ export function TripLoadingState() {
   );
 }
 
-/** Transport/server failure — retryable, and NOT a membership verdict. */
+/**
+ * Transport/server failure — retryable, and NOT a membership verdict.
+ * Retry is the primary action; "Back to trips" is the B-25 egress (see the
+ * module doc) — a failing trip read must never be a one-way door.
+ */
 export function TripErrorState({ onRetry }: { onRetry(): void }) {
   const s = useStyles();
+  const router = useRouter();
   return (
     <View style={s.errorScreen} testID="trip-error-screen">
       <ErrorBanner
         message="Couldn't load this trip."
         onRetry={onRetry}
         testID="trip-error-banner"
+      />
+      <Button
+        title="Back to trips"
+        variant="secondary"
+        onPress={() => router.dismissTo("/(trips)")}
+        testID="trip-error-button-trips"
       />
     </View>
   );

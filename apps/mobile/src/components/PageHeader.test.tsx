@@ -1,11 +1,16 @@
 /**
  * PageHeader — header role on the title, back auto-wires the router, max 2
- * trailing actions, each with its own required testID.
+ * trailing actions, each with its own required testID, and (B-27) exactly ONE
+ * copy of the top safe-area inset: its own when it is the topmost chrome,
+ * none when a `TopInsetBoundary` says an ancestor already claimed it.
  */
 import { fireEvent, screen } from "@testing-library/react-native";
+import type { ReactElement } from "react";
+import { StyleSheet } from "react-native";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
-import { PageHeader } from "@/components";
-import { renderWithTheme } from "@/test-utils/render";
+import { PageHeader, TopInsetBoundary } from "@/components";
+import { lightTheme, renderWithTheme } from "@/test-utils/render";
 
 jest.mock("expo-router", () => {
   const back = jest.fn();
@@ -13,6 +18,27 @@ jest.mock("expo-router", () => {
 });
 
 const { __back: mockBack } = jest.requireMock("expo-router") as { __back: jest.Mock };
+
+/**
+ * A notch device's window insets. The suite-wide safe-area mock resolves
+ * `useSafeAreaInsets()` through `SafeAreaInsetsContext`, so providing it is
+ * enough to put a REAL, non-zero inset in front of the component — under the
+ * mock's 0 default every assertion below would pass with or without the fix.
+ */
+const DEVICE_INSETS = { top: 59, bottom: 34, left: 0, right: 0 };
+
+function renderWithDeviceInsets(ui: ReactElement) {
+  return renderWithTheme(
+    <SafeAreaInsetsContext.Provider value={DEVICE_INSETS}>{ui}</SafeAreaInsetsContext.Provider>,
+  );
+}
+
+function paddingTopOf(testID: string): number | undefined {
+  const style = StyleSheet.flatten(screen.getByTestId(testID).props.style) as {
+    paddingTop?: number;
+  };
+  return style.paddingTop;
+}
 
 describe("PageHeader", () => {
   beforeEach(() => jest.clearAllMocks());
@@ -75,5 +101,37 @@ describe("PageHeader", () => {
     expect(screen.getByTestId("a1")).toBeOnTheScreen();
     expect(screen.getByTestId("a2")).toBeOnTheScreen();
     expect(screen.queryByTestId("a3")).toBeNull();
+  });
+
+  describe("top safe area (B-27) — claimed exactly once", () => {
+    it("claims the full inset when it is the topmost chrome", async () => {
+      await renderWithDeviceInsets(<PageHeader title="Trip" testID="hdr" />);
+      expect(paddingTopOf("hdr")).toBe(DEVICE_INSETS.top + lightTheme.space[2]);
+    });
+
+    it("drops the inset — keeping its token gap — under a claiming boundary", async () => {
+      await renderWithDeviceInsets(
+        <TopInsetBoundary claimed>
+          <PageHeader title="Trip" testID="hdr" />
+        </TopInsetBoundary>,
+      );
+      // Not 0: the deliberate gap below the trip switcher bar is space[2].
+      expect(paddingTopOf("hdr")).toBe(lightTheme.space[2]);
+      expect(paddingTopOf("hdr")).not.toBe(DEVICE_INSETS.top + lightTheme.space[2]);
+    });
+
+    it("re-claims the inset when a nested boundary re-opens it (the native-modal case)", async () => {
+      // What `itinerary/item/new` and `money/expense/new` do: React
+      // descendants of the trip shell that are presented OVER it natively, so
+      // they start a fresh top edge and own it again.
+      await renderWithDeviceInsets(
+        <TopInsetBoundary claimed>
+          <TopInsetBoundary claimed={false}>
+            <PageHeader title="Add" testID="hdr" />
+          </TopInsetBoundary>
+        </TopInsetBoundary>,
+      );
+      expect(paddingTopOf("hdr")).toBe(DEVICE_INSETS.top + lightTheme.space[2]);
+    });
   });
 });

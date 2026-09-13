@@ -130,3 +130,24 @@ build, `EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID`, server running with
 fresh install → Apple **or** Google sign-in → onboarding (name → currency →
 style → handles, skip-all also valid) → trip list → profile (edit, handles,
 theme, sessions, sign-out, delete). Ledger F-018..F-029 flips after this passes.
+
+---
+
+## Appendix A — rotated out of `docs/STATE.md` on 2026-09-13
+
+> Appended 2026-09-13 during a STATE rotation. The body above already carried the
+> phase record; these were the only lines in `STATE.md § P-5` it did not, so they
+> are preserved here before the STATE section is reduced to a pointer.
+
+- **Testcontainers contention — RESOLVED 2026-08-30 (PR #44, T-S3.3).** The shared
+  `globalSetup` container plus TEMPLATE clones replaced 20+ per-suite boots;
+  `--no-file-parallelism` retired; plain `vitest run` is safe and roughly 6× faster.
+  Watch-mode caveat: the template migrates once per process, so restart the watcher
+  after editing `drizzle/`. That caveat has been moved to `.claude/rules/server.md`,
+  where it fires while someone is actually in `apps/server/**`.
+- **Review posture at the time (SUPERSEDED).** P-5 ran under the local 5-lane
+  pipeline plus a fresh impartial judge, with `/code-review ultra` optional
+  (2 free runs remained as of the P-5 close) and substitutable by a deep local
+  self-review when Sean waived it. That fixed 5-lane pipeline was retired
+  2026-09-07 (PR #65); the current gate is `/review-loop`, which picks its panel
+  from the diff. Recorded so the phase record reads correctly against its own era.
