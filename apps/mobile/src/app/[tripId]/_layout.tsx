@@ -30,11 +30,18 @@
  *    gate lives on the stamp itself (not just shell placement) so a future
  *    shell refactor can't silently regress it.
  * 5. TRIP SWITCHER (R-nav-23 + B-25): hosted here, and rendered on EVERY
- *    trip screen. Entering a trip replaces the stack, so the tab shell has
- *    no back affordance — the switcher bar is the only way out, and its
- *    sheet carries the "All trips" row back to `(trips)`. It is therefore
- *    NOT gated on the active-trip count any more (that gate made one-active
- *    and all-planning/past accounts a navigation dead end).
+ *    trip screen. Native headers are off app-wide (`stack-options.ts`), so
+ *    the tab shell shows no back chrome, and on the cold-launch entry path
+ *    (`app/index` redirects into the last-viewed trip) there is no route
+ *    underneath to swipe back to either — the switcher bar is the way out,
+ *    and its sheet carries the "All trips" row back to `(trips)`. It is
+ *    therefore NOT gated on the active-trip count any more (that gate made
+ *    one-active and all-planning/past accounts a navigation dead end).
+ *    NOTE the two entry shapes: entering from the list is a PUSH, cold
+ *    launch mounts `[tripId]` alone — which is why the exit is a
+ *    `dismissTo` and not a `replace` (see `TripSwitcher.tsx`).
+ *    The guard surfaces below (`NoAccessState`, `TripErrorState`) render
+ *    OUTSIDE `TripShell`, so they carry their own exit — same reason.
  *
  * expo-router 57 note: the root `Tabs` export is deprecated —
  * `expo-router/js-tabs` is the sanctioned JS-tabs entry.

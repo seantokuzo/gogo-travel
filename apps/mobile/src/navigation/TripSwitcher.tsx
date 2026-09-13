@@ -3,9 +3,11 @@
  * widened by B-25 from "switch between concurrently-active trips" to
  * "orientation + EGRESS".
  *
- * WHY (B-25, device QA): `[tripId]/_layout` is a tab navigator and entering a
- * trip REPLACES the stack, so no back affordance exists — this bar is the
- * only way out. It used to render nothing below two *active* trips and to
+ * WHY (B-25, device QA): `[tripId]/_layout` is a tab navigator under a stack
+ * with native headers off app-wide (`stack-options.ts`), so no back CHROME
+ * exists — and on the cold-launch entry path nothing sits below `[tripId]` to
+ * swipe back to either. This bar is the way out. It used to render nothing
+ * below two *active* trips and to
  * list only the active set, so the common case (one active trip, or a set
  * that is all planning/past) was a navigation DEAD END with no route back to
  * `(trips)`. Hence, deliberately:
@@ -20,11 +22,28 @@
  *     same helper (and therefore the same order + labels) the trip list
  *     screen uses, so the two surfaces can never disagree.
  *
- * Navigation primitive: `router.replace`, matching the pre-existing
- * `switchTo`. A push would stack a second trip list behind the trip you just
- * left (back would re-enter it), and on the R-nav-6/23 cold-launch-into-trip
- * path there is no trip list underneath to return to at all — replace is the
- * only primitive that reaches the list in BOTH entry shapes.
+ * Navigation primitive for the EXIT: `router.dismissTo` (a `POP_TO`), not
+ * `replace` (round-1 review). Two entry shapes reach a trip and the exit has
+ * to be right in both:
+ *
+ *  - FROM THE LIST (the dominant path): `(trips)/index` enters with
+ *    `router.push`, so the app stack is `["(trips)", "[tripId]"]`. expo-router's
+ *    `REPLACE` swaps the route AT `state.index`, in place (vendored
+ *    `react-navigation/routers/StackRouter.js`, `case 'REPLACE'`) — it never
+ *    pops back to an existing instance. It would leave
+ *    `["(trips)", "(trips)"]`: `stack-options.ts` keeps `gestureEnabled` on,
+ *    so an edge swipe from the trip list reveals a phantom identical trip
+ *    list, and every enter/exit cycle leaks one more live `(trips)/index`
+ *    (its SectionList + trips infinite-query observer) for the session.
+ *    `POP_TO` finds the `(trips)` already below and pops to THAT instance,
+ *    scroll position intact.
+ *  - COLD LAUNCH INTO A TRIP (R-nav-6/23): `app/index` redirects to the
+ *    last-viewed trip, so nothing sits underneath. `POP_TO`'s `index === -1`
+ *    branch (same file) drops the current route and appends a fresh
+ *    `(trips)` — byte-identical to what `replace` produced here.
+ *
+ * A plain `push` was never an option in either shape; `dismissTo` is the one
+ * primitive that is correct in both.
  *
  * B-19 (mobile.md 🔴 "never push a `presentation: modal` route in the same
  * handler that closes a DS Sheet") does NOT apply: `(trips)/_layout` declares
@@ -96,6 +115,11 @@ export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) 
   // upcoming → past, so the switcher can never present a different trip set
   // from the screen it links to.
   const sections = useMemo(() => groupTripsIntoSections(items ?? []), [items]);
+  // A FAILED REFETCH flips `status` to "error" while TanStack RETAINS the last
+  // successful page, so gating the note on `isError` alone printed "couldn't
+  // load your other trips" directly above a complete, correct, pressable list
+  // (round-1 review). Only a read with nothing to show is worth saying.
+  const readFailedWithNothingToShow = tripsQuery.isError && items === undefined;
 
   const switchTo = (tripId: string) => {
     setOpen(false);
@@ -106,10 +130,12 @@ export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) 
   };
 
   // B-25 egress. Deliberately independent of `tripsQuery`: the way out must
-  // survive an offline/failed trips read.
+  // survive an offline/failed trips read. `dismissTo`, never `replace` — see
+  // the module doc's primitive section (a replace duplicates the trip list on
+  // the push entry path).
   const goToTripList = () => {
     setOpen(false);
-    router.replace("/(trips)");
+    router.dismissTo("/(trips)");
   };
 
   return (
@@ -142,7 +168,7 @@ export function TripSwitcherBar({ currentTrip }: { currentTrip: TripWithRole }) 
             testID="trip-switcher-list-item-all-trips"
           />
           <View style={s.divider} />
-          {tripsQuery.isPending || tripsQuery.isError ? (
+          {tripsQuery.isPending || readFailedWithNothingToShow ? (
             <AppText role="caption" color="secondary" style={s.note}>
               {tripsQuery.isPending
                 ? "Loading your trips…"

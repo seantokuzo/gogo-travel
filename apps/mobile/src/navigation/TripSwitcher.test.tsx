@@ -1,36 +1,44 @@
 /**
  * Trip switcher bar (B-25 — the navigation dead end device QA hit).
  *
- * Entering a trip replaces the stack, so `[tripId]/_layout`'s tab shell has
- * no back affordance and this bar is the ONLY exit. The pins below are the
- * three properties that make it one:
+ * `[tripId]/_layout`'s tab shell has no back affordance, so this bar is the
+ * ONLY exit. The pins below are the properties that make it one:
  *
  *  - it renders with a single trip (the old `activeTrips.length < 2` gate
  *    rendered nothing at all for the exact account Sean was testing);
  *  - the sheet's "All trips" row leaves for the trip list, and does so even
  *    when the trips read failed — the way out must not depend on a network
  *    call;
+ *  - a FAILED REFETCH that retains data shows the retained list and no error
+ *    note (round-1 review: the note contradicted the list beneath it);
  *  - the sheet shows the WHOLE trip set (planning + past included), grouped
  *    by the trip list's own `groupTripsIntoSections`, with the current trip
  *    checkmarked.
  *
- * The undeferred navigation (no `onExited` round trip) is pinned here as an
- * ORDER claim — `setOpen(false)` then `replace`, in one handler. That is safe
- * only because the destination is not a `presentation: "modal"` route; the
- * route-config half of that argument is pinned in
- * `__tests__/modal-presentation.test.ts`, and the TripSwitcher module doc
- * carries the B-19 mechanism.
+ * `navCalls` records ROUTER CALLS ONLY. It therefore pins that the navigation
+ * is issued from the press handler itself and NOT deferred to the Sheet's
+ * `onExited` (the assertions run before any settle), and which primitive was
+ * used — nothing about `setOpen` ordering. An earlier revision framed it as a
+ * "close, THEN navigate" ORDER claim, which the log cannot observe: both are
+ * state updates coalesced into one commit, and the log is byte-identical
+ * either way (round-1 review, Law #7). Undeferred navigation is only safe
+ * because the destination is not a `presentation: "modal"` route; that half is
+ * pinned in `__tests__/modal-presentation.test.ts`, and the TripSwitcher
+ * module doc carries the B-19 mechanism.
  *
  * Route-level proof that the press actually LANDS on `(trips)` (mobile.md is
  * emphatic that imperative navigation can silently no-op inside the vendored
- * tab navigator) lives in `__tests__/trip-switcher-exit.test.tsx`, against
- * the real tree.
+ * tab navigator) lives against the real tree in
+ * `__tests__/trip-switcher-exit.test.tsx` (cold-launch entry shape) and
+ * `__tests__/trip-switcher-exit-from-list.test.tsx` (push entry shape — the
+ * one that discriminates `dismissTo` from `replace`).
  */
-import { fireEvent, screen, within } from "@testing-library/react-native";
+import { act, fireEvent, screen, within } from "@testing-library/react-native";
 
 import { TripSwitcherBar } from "./TripSwitcher";
+import { queryKeys } from "@/data";
 import { TEST_TRIP_ID, TRIP_B_ID, TRIP_C_ID } from "@/test-utils/ids";
-import { renderWithProviders } from "@/test-utils/render";
+import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { settle } from "@/test-utils/settle";
 import {
   makeActiveTrip,
@@ -39,19 +47,20 @@ import {
   mockNavApi,
 } from "@/test-utils/trip-fixtures";
 
-/** Ordered nav log — "close the sheet, then replace" is an ORDER claim. */
-const navSequence: [string, unknown][] = [];
-const mockReplace = jest.fn((href: unknown) => navSequence.push(["replace", href]));
-const mockPush = jest.fn((href: unknown) => navSequence.push(["push", href]));
+/** Router-call log: which primitive, with what href — see the file doc. */
+const navCalls: [string, unknown][] = [];
+const mockReplace = jest.fn((href: unknown) => navCalls.push(["replace", href]));
+const mockPush = jest.fn((href: unknown) => navCalls.push(["push", href]));
+const mockDismissTo = jest.fn((href: unknown) => navCalls.push(["dismissTo", href]));
 jest.mock("expo-router", () => ({
-  useRouter: () => ({ replace: mockReplace, push: mockPush }),
+  useRouter: () => ({ replace: mockReplace, push: mockPush, dismissTo: mockDismissTo }),
 }));
 
 const CURRENT = makePlanningTrip(TEST_TRIP_ID, { name: "Kyoto" });
 
 beforeEach(() => {
   jest.clearAllMocks();
-  navSequence.length = 0;
+  navCalls.length = 0;
 });
 
 afterEach(async () => {
@@ -83,17 +92,22 @@ it("renders for an all-planning/past account — the case that had NO affordance
   expect(screen.getByTestId("trip-switcher-button")).toBeOnTheScreen();
 });
 
-it("the sheet's 'All trips' row replaces to the trip list, after closing the sheet", async () => {
+it("the sheet's 'All trips' row dismisses to the trip list, and closes the sheet", async () => {
   await renderBar();
   await openSheet();
   await fireEvent.press(screen.getByTestId("trip-switcher-list-item-all-trips"));
 
-  expect(mockReplace).toHaveBeenCalledWith("/(trips)");
+  // `dismissTo`, not `replace`: on the push entry path REPLACE swaps the route
+  // at `state.index` in place and would leave a SECOND trip list on the stack.
+  // The route-level proof of the resulting stack shape lives in
+  // `__tests__/trip-switcher-exit-from-list.test.tsx`.
+  expect(mockDismissTo).toHaveBeenCalledWith("/(trips)");
+  expect(mockReplace).not.toHaveBeenCalled();
   expect(mockPush).not.toHaveBeenCalled();
-  // Order claim: the sheet is already closing when the replace is issued
-  // (`setOpen(false)` precedes it in the handler), and the navigation is NOT
-  // deferred to `onExited` — the destination is a plain card route.
-  expect(navSequence).toEqual([["replace", "/(trips)"]]);
+  // Asserted BEFORE any settle: the navigation is issued from the press
+  // handler, not deferred to the Sheet's `onExited` (safe only because the
+  // destination is a plain card route — see the file doc).
+  expect(navCalls).toEqual([["dismissTo", "/(trips)"]]);
   await settle();
   expect(screen.queryByTestId("trip-switcher-sheet")).toBeNull();
 });
@@ -108,7 +122,32 @@ it("the way out survives a failed trips read — the exit never depends on the q
   await openSheet();
   expect(screen.getByText(/Couldn't load your other trips/)).toBeOnTheScreen();
   await fireEvent.press(screen.getByTestId("trip-switcher-list-item-all-trips"));
-  expect(mockReplace).toHaveBeenCalledWith("/(trips)");
+  expect(mockDismissTo).toHaveBeenCalledWith("/(trips)");
+});
+
+it("a FAILED REFETCH that retains data lists the trips and shows NO error note", async () => {
+  // TanStack flips `status` to "error" on a failed refetch while KEEPING the
+  // last successful page, so an `isError`-only gate printed "couldn't load
+  // your other trips" directly above a complete, pressable list (round-1
+  // review). Offline foreground-refetch is the everyday way to hit it.
+  const client = makeTestQueryClient();
+  const request = mockNavApi({ trips: [CURRENT, makeActiveTrip(TRIP_B_ID, { name: "Lisbon" })] });
+  await renderWithProviders(<TripSwitcherBar currentTrip={CURRENT} />, { queryClient: client });
+  await settle();
+
+  request.mockRejectedValue(new Error("offline"));
+  await act(async () => {
+    await client.refetchQueries({ queryKey: queryKeys.trips });
+  });
+
+  // The premise, asserted — otherwise "no note" would hold vacuously.
+  expect(client.getQueryState(queryKeys.trips)?.status).toBe("error");
+  expect(client.getQueryData(queryKeys.trips)).not.toBeUndefined();
+
+  await openSheet();
+  expect(screen.queryByText(/Couldn't load your other trips/)).toBeNull();
+  expect(screen.getByTestId(`trip-switcher-list-item-${TRIP_B_ID}`)).toBeOnTheScreen();
+  expect(screen.getByTestId(`trip-switcher-list-item-${TEST_TRIP_ID}`)).toBeOnTheScreen();
 });
 
 it("lists NON-ACTIVE trips too, grouped active → upcoming → past like the trip list", async () => {
@@ -151,14 +190,16 @@ it("switching to another trip still replaces into that trip's root", async () =>
   await renderBar([CURRENT, makeActiveTrip(TRIP_B_ID)]);
   await openSheet();
   await fireEvent.press(screen.getByTestId(`trip-switcher-list-item-${TRIP_B_ID}`));
-  expect(navSequence).toEqual([["replace", `/${TRIP_B_ID}`]]);
+  // Trip→trip stays a REPLACE: it swaps the `[tripId]` route in place, which
+  // is exactly right — it must not add or remove a stack entry.
+  expect(navCalls).toEqual([["replace", `/${TRIP_B_ID}`]]);
 });
 
 it("pressing the CURRENT trip navigates nowhere — it just closes the sheet", async () => {
   await renderBar([CURRENT, makeActiveTrip(TRIP_B_ID)]);
   await openSheet();
   await fireEvent.press(screen.getByTestId(`trip-switcher-list-item-${TEST_TRIP_ID}`));
-  expect(navSequence).toEqual([]);
+  expect(navCalls).toEqual([]);
   await settle();
   expect(screen.queryByTestId("trip-switcher-sheet")).toBeNull();
 });

@@ -1,5 +1,7 @@
 /**
  * B-25 — the trip shell is not a dead end, against the REAL route tree.
+ * COLD-LAUNCH entry shape only (`renderApp` straight to `/<tripId>`); the
+ * push-from-the-list shape is `trip-switcher-exit-from-list.test.tsx`.
  *
  * `[tripId]/_layout` is a tab navigator and entering a trip replaces the
  * stack, so there is no back affordance: the switcher bar's "All trips" row
@@ -47,11 +49,13 @@ it("B-25: a single-trip account can leave the trip shell — switcher → All tr
   expect(await screen.findByTestId("trip-list-screen", {}, { timeout: 10000 })).toBeOnTheScreen();
   // Route groups are transparent in the URL — `(trips)/index` is "/".
   await waitFor(() => expect(result.getPathname()).toBe("/"), { timeout: 10000 });
-  // Replaced, not pushed: the root stack holds ONE route — the trip shell is
-  // gone, not parked underneath waiting for a back gesture to re-enter it.
-  // Replaced, not pushed — the app-level stack (inside `__root`) holds ONE
-  // route. A push would leave `[tripId]` parked beneath it, one back gesture
-  // from re-entering the trip the user just escaped.
+  // COLD-LAUNCH entry shape: nothing sat under `[tripId]`, so `dismissTo`
+  // takes StackRouter's `index === -1` POP_TO branch and drops the current
+  // route for a fresh `(trips)` — the app-level stack (inside `__root`) holds
+  // ONE route. The trip shell is gone, not parked underneath waiting for a
+  // back gesture to re-enter it. The PUSH entry shape (a `(trips)` already on
+  // the stack) is the discriminating one and lives in
+  // `trip-switcher-exit-from-list.test.tsx`.
   const appStack = result.getRouterState()?.routes[0]?.state;
   expect(appStack?.routes.map((route) => route.name)).toEqual(["(trips)"]);
 });

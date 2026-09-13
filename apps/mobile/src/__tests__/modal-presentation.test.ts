@@ -79,7 +79,15 @@ describe("R-nav-21 — each modal is declared in its owning stack", () => {
    */
   it("B-25: the trip list itself is NOT a modal — the switcher's undeferred exit depends on it", () => {
     const { screens } = declaredConfig(TripsLayout);
-    expect(screens.find((s) => s.name === "index")?.presentation).toBeUndefined();
+    // Assert what actually holds. `(trips)/_layout` declares only `new` and
+    // `capture/onboarding`, so `find(s => s.name === "index")` is `undefined`
+    // and reading `?.presentation` off it passed because the SUBJECT was
+    // absent, not because it was non-modal (round-1 review) — the same
+    // expression would have stayed green with `index` declared modal under a
+    // different spelling. An UNDECLARED screen inherits the stack's default
+    // presentation, which is non-modal (card); a future `<Stack.Screen
+    // name="index" …>` here reds this and forces the B-19 question again.
+    expect(screens.map((s) => s.name)).not.toContain("index");
   });
 
   it("itinerary tab stack declares `item/new` as a modal and pins index", () => {
