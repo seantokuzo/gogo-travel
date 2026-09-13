@@ -8,10 +8,12 @@ import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
-import { apiClient } from "@/auth";
+import { apiClient, ApiRequestError } from "@/auth";
 import {
+  isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
   queryKeys,
+  useCreateCustomDestination,
   useCreateTrip,
   usePlaceSearch,
   useTripList,
@@ -227,6 +229,85 @@ describe("usePlaceSearch (CT-2 — destination search)", () => {
       { query: { q: "Kyoto" } },
       { signal: expect.any(AbortSignal) },
     );
+    await unmount();
+  });
+});
+
+describe("isNonBlankDestinationQuery (B-7 — the empty-results row's own gate)", () => {
+  it("rejects empty and whitespace-only, accepts anything else after trim", () => {
+    expect(isNonBlankDestinationQuery("")).toBe(false);
+    expect(isNonBlankDestinationQuery("   ")).toBe(false);
+    expect(isNonBlankDestinationQuery("\t\n")).toBe(false);
+    expect(isNonBlankDestinationQuery("a")).toBe(true);
+    expect(isNonBlankDestinationQuery("  Nowhereville  ")).toBe(true);
+  });
+});
+
+describe("useCreateCustomDestination (B-7 — empty-results fallback, R-tripui-23)", () => {
+  const CUSTOM = makePlace({
+    id: "77777777-7777-4777-8777-777777777777",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    category: null,
+    created_by: "11111111-1111-4111-8111-111111111111",
+  });
+
+  it("POSTs exactly {name, lat: 0, lng: 0} trimmed — Law #3: the wire shape has no visibility field to widen", async () => {
+    const request = spyRequest();
+    request.mockResolvedValue(CUSTOM);
+    const { result, unmount } = await renderHook(() => useCreateCustomDestination(), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    let returned: unknown;
+    await act(async () => {
+      returned = await result.current.mutateAsync("  Nowhereville  ");
+    });
+
+    expect(request).toHaveBeenCalledWith(placeEndpoints.createPlace, {
+      body: { name: "Nowhereville", lat: 0, lng: 0 },
+    });
+    // Falsifies if a future edit rides `category`/`trip_id`/a visibility
+    // field along: the key set must stay EXACTLY the schema's own shape.
+    const body = (request.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(Object.keys(body).sort()).toEqual(["lat", "lng", "name"]);
+    expect(returned).toEqual(CUSTOM);
+    await unmount();
+  });
+
+  it("fires the hook-level onMutationSuccess seam with the created place", async () => {
+    const request = spyRequest();
+    request.mockResolvedValue(CUSTOM);
+    const onMutationSuccess = jest.fn();
+    const { result, unmount } = await renderHook(
+      () => useCreateCustomDestination({ onMutationSuccess }),
+      { wrapper: makeWrapper(makeTestQueryClient()) },
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync("Nowhereville");
+    });
+
+    expect(onMutationSuccess).toHaveBeenCalledWith(CUSTOM);
+    await unmount();
+  });
+
+  it("surfaces a create failure untouched (the REAL ApiRequestError, not a stub) and fires onMutationError", async () => {
+    const request = spyRequest();
+    const failure = new ApiRequestError(409, "CONFLICT", "boom");
+    request.mockRejectedValue(failure);
+    const onMutationError = jest.fn();
+    const { result, unmount } = await renderHook(
+      () => useCreateCustomDestination({ onMutationError }),
+      { wrapper: makeWrapper(makeTestQueryClient()) },
+    );
+
+    await act(async () => {
+      await expect(result.current.mutateAsync("Nowhereville")).rejects.toBe(failure);
+    });
+
+    expect(onMutationError).toHaveBeenCalledWith(failure);
     await unmount();
   });
 });

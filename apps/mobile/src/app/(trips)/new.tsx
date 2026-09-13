@@ -18,6 +18,16 @@
  * `UserPrefs.home_currency ?? 'USD'` (omitted from the body when unknown —
  * the server defaults 'USD'); `theme` is trip-settings'.
  *
+ * Custom-destination fallback (B-7, Sean ruling 2026-09-13, R-tripui-23):
+ * WHEN structured search settles with zero hits for a non-blank trimmed
+ * query, an inline row offers `Use "<typed text>" as a custom destination`.
+ * One tap creates a permanent `source='custom'` place (`POST /places`,
+ * `useCreateCustomDestination`) and selects it — no map-drop screen this
+ * pass (queued separately); trip save unblocks the same way a spine pick
+ * does. Creation failure surfaces inline and preserves the typed text; the
+ * row itself becomes a non-interactive "Creating…" status while a create is
+ * in flight, so a second tap has nothing to press (no double-submit).
+ *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.
  *
@@ -35,7 +45,14 @@ import { TripCreateSchema, type Place, type TripCreate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useNavigation, useRouter, type Href } from "expo-router";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
 
 import { ApiRequestError } from "@/auth";
 import {
@@ -48,7 +65,14 @@ import {
   PageHeader,
   Skeleton,
 } from "@/components";
-import { isSearchableDestinationQuery, useCreateTrip, useMe, usePlaceSearch } from "@/data";
+import {
+  isNonBlankDestinationQuery,
+  isSearchableDestinationQuery,
+  useCreateCustomDestination,
+  useCreateTrip,
+  useMe,
+  usePlaceSearch,
+} from "@/data";
 import { DateField } from "@/features/trips";
 
 /** Bounded result render (server page ≤ 50, default 20; typeahead wants few). */
@@ -94,6 +118,28 @@ function createErrorMessage(error: unknown): string {
   return "Couldn't create the trip. Retry?";
 }
 
+/**
+ * Same envelope mapping as `createErrorMessage`, for the custom-destination
+ * create (`POST /places`). 409 isn't documented for this endpoint today
+ * (places spec §3.3 lists only 400 `VALIDATION_FAILED`) — kept for
+ * symmetry with every other create-mutation error mapper in this screen and
+ * as a defensive branch if that ever changes.
+ */
+function createCustomDestinationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 400) {
+      return "That destination name isn't valid — try editing it.";
+    }
+    if (error.status === 409) {
+      return "That change conflicted with another update — try again.";
+    }
+    if (error.status === 0) {
+      return "No connection — check your network and retry.";
+    }
+  }
+  return "Couldn't create that destination. Retry?";
+}
+
 export default function TripNewScreen() {
   const s = useStyles();
   const router = useRouter();
@@ -123,8 +169,31 @@ export default function TripNewScreen() {
   const deferredQuery = useDeferredValue(destinationQuery);
   const searchActive = selectedPlace === null && isSearchableDestinationQuery(deferredQuery);
   const search = usePlaceSearch(selectedPlace === null ? deferredQuery : "");
+  const trimmedDestinationQuery = destinationQuery.trim();
 
   const createTrip = useCreateTrip();
+
+  // B-7 custom-destination fallback (Sean ruling 2026-09-13, R-tripui-23):
+  // one tap on the empty-results row creates + selects a permanent custom
+  // place. Success mirrors the pick-an-existing-result path exactly (fill
+  // selectedPlace + the canonical name, clear any stale destination error).
+  const createCustomDestination = useCreateCustomDestination({
+    onMutationSuccess: (place) => {
+      setSelectedPlace(place);
+      setDestinationQuery(place.name);
+      if (fieldErrors.destination) {
+        setFieldErrors((prev) => ({ ...prev, destination: undefined }));
+      }
+    },
+  });
+  const handleCreateCustomDestination = useCallback(() => {
+    // Defense in depth alongside the busy-row UI swap below (the row itself
+    // stops being pressable while pending) — a render race should never be
+    // the ONLY thing standing between a tap and a second in-flight create.
+    if (createCustomDestination.isPending) return;
+    if (!isNonBlankDestinationQuery(destinationQuery)) return;
+    createCustomDestination.mutate(destinationQuery);
+  }, [createCustomDestination, destinationQuery]);
 
   const dirty = name !== "" || destinationQuery !== "" || startDate !== "" || endDate !== "";
   // The dialog decision needs the CURRENT dirty state inside a listener
@@ -296,9 +365,42 @@ export default function TripNewScreen() {
                   testID="trip-new-error-search"
                 />
               ) : results.length === 0 ? (
-                <AppText role="caption" color="muted">
-                  No places matched — try a different spelling.
-                </AppText>
+                <View style={s.fieldGroup}>
+                  <AppText role="caption" color="muted">
+                    No places matched — try a different spelling.
+                  </AppText>
+                  {!isNonBlankDestinationQuery(
+                    destinationQuery,
+                  ) ? null : createCustomDestination.isError ? (
+                    <ErrorBanner
+                      message={createCustomDestinationErrorMessage(createCustomDestination.error)}
+                      onRetry={handleCreateCustomDestination}
+                      testID="trip-new-error-create-destination"
+                    />
+                  ) : createCustomDestination.isPending ? (
+                    <View style={s.results}>
+                      <ListItem
+                        title={`Creating "${trimmedDestinationQuery}"…`}
+                        leading={
+                          <ActivityIndicator
+                            size="small"
+                            testID="trip-new-list-item-custom-spinner"
+                          />
+                        }
+                        testID="trip-new-list-item-custom"
+                      />
+                    </View>
+                  ) : (
+                    <View style={s.results}>
+                      <ListItem
+                        title={`Use "${trimmedDestinationQuery}" as a custom destination`}
+                        onPress={handleCreateCustomDestination}
+                        accessibilityLabel={`Use "${trimmedDestinationQuery}" as a custom destination`}
+                        testID="trip-new-list-item-custom"
+                      />
+                    </View>
+                  )}
+                </View>
               ) : (
                 <View style={s.results}>
                   {results.map((place) => (

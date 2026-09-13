@@ -296,6 +296,212 @@ describe("destination structured search (§2.3 — Overture spine, no free text)
   });
 });
 
+describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-13)", () => {
+  const CUSTOM_PLACE = makePlace({
+    id: "77777777-7777-4777-8777-777777777777",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    // The placeholder coordinates the create mutation actually sends
+    // (`useCreateCustomDestination` doc) — a realistic mock echoes them
+    // back, not the fixture's default Kyoto lat/lng.
+    lat: 0,
+    lng: 0,
+    category: null,
+    coarse_category: "other",
+    wiki_ref: null,
+    created_by: TEST_USER.id,
+  });
+
+  it("is absent while the search request is still loading", async () => {
+    let resolveSearch!: (value: unknown) => void;
+    mockApi({
+      "GET /places/search": () =>
+        new Promise((resolve) => {
+          resolveSearch = resolve;
+        }),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    await act(async () => {
+      resolveSearch({ items: [], nextCursor: null });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(await screen.findByTestId("trip-new-list-item-custom")).toBeOnTheScreen();
+  });
+
+  it("is absent while real results render, and disappears again once the query is cleared", async () => {
+    mockApi();
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`);
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    // Blank/whitespace query: the whole results region (including the
+    // fallback row) closes — `searchActive` drops below the 4-char floor.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "   ");
+    await waitFor(() => expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull());
+  });
+
+  it("appears once search settles empty, and one tap creates + selects the trimmed text (save unblocks)", async () => {
+    const request = mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-new-input-destination"),
+      "  Nowhereville  ",
+    );
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    expect(row).toHaveTextContent('Use "Nowhereville" as a custom destination');
+
+    await pressSettled("trip-new-list-item-custom");
+
+    const createCalls = request.mock.calls.filter(
+      ([d]) => (d as { path: string }).path === "/places",
+    );
+    expect(createCalls).toHaveLength(1);
+    expect((createCalls[0][1] as { body: unknown }).body).toEqual({
+      name: "Nowhereville",
+      lat: 0,
+      lng: 0,
+    });
+
+    // Selected exactly like an existing-result pick: canonical name fills
+    // the input, the results region (row included) closes.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    // Save gate: the rest of the form + submit now succeeds with the
+    // custom place's placeholder coordinates riding the trip body.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Somewhere Trip");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: {
+          name: "Somewhere Trip",
+          destination_name: "Nowhereville",
+          destination_lat: 0,
+          destination_lng: 0,
+          start_date: "2027-05-01",
+          end_date: "2027-05-08",
+        },
+      }),
+    );
+  });
+
+  it("a genuinely held create shows the busy row (no double-submit — one tap has nothing left to press)", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    let posts = 0;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => {
+        posts += 1;
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+        });
+      },
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+
+    try {
+      await fireEvent.press(row);
+      expect(await screen.findByTestId("trip-new-list-item-custom-spinner")).toBeOnTheScreen();
+      expect(posts).toBe(1);
+
+      // The busy row replaces the pressable one (structural, not a
+      // `disabled` prop) — a second physical tap has no onPress to invoke.
+      const busyRow = screen.getByTestId("trip-new-list-item-custom");
+      await fireEvent.press(busyRow);
+      expect(posts).toBe(1);
+    } finally {
+      // Release + its follow-on notify batch INSIDE one act window (T-7.9
+      // rule) — releasing bare and letting a later findBy/waitFor poll catch
+      // the settle is the B-2 floating-act class (mobile.md).
+      await act(async () => {
+        for (const release of resolvers) release(CUSTOM_PLACE);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    await waitFor(() =>
+      expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville"),
+    );
+    expect(posts).toBe(1);
+  });
+
+  it("a 409 surfaces inline, keeps the typed text, and retry re-creates", async () => {
+    let fail = true;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        fail
+          ? Promise.reject(new ApiRequestError(409, "CONFLICT", "boom"))
+          : Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(
+      screen.getByText("That change conflicted with another update — try again."),
+    ).toBeOnTheScreen();
+    // Preserved, not cleared — a retry needs the same typed text.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    fail = false;
+    await pressSettled("trip-new-error-create-destination-retry");
+    await waitFor(() =>
+      expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull(),
+    );
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("a transport failure (status 0, offline) surfaces the offline message and keeps the typed text", async () => {
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.reject(new ApiRequestError(0, "NETWORK", "offline")),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(screen.getByText("No connection — check your network and retry.")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("a 400 surfaces the validation message (4xx branch distinct from 409/0)", async () => {
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "bad")),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(
+      screen.getByText("That destination name isn't valid — try editing it."),
+    ).toBeOnTheScreen();
+  });
+});
+
 describe("submit (R-tripui-7)", () => {
   it("POSTs the schema-shaped body with prefs.home_currency and replace-navigates into the trip", async () => {
     const request = mockApi({}, { me: { ...TEST_USER, prefs: { home_currency: "EUR" } } });

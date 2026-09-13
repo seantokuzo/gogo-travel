@@ -138,3 +138,63 @@ export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place
     enabled: isSearchableDestinationQuery(rawQuery),
   });
 }
+
+/**
+ * Non-blank after trim — the gate for the B-7 empty-results custom-
+ * destination row, kept as a pure function (not inline JSX) on purpose:
+ * `searchActive`/`results.length === 0` alone are not quite enough — a
+ * `useDeferredValue` lag window can leave `searchActive` reading true
+ * against a STALE deferred query for one tick after the user clears the
+ * input, so the render call site needs its OWN check against the LIVE
+ * query. That lag never materializes under jest's synchronous renderer
+ * (`destinationQuery`/`deferredQuery` stay in lockstep there), so the JSX
+ * call site can't be mutation-verified directly — this pure export can be,
+ * and is (trips-mutations.test.tsx).
+ */
+export function isNonBlankDestinationQuery(raw: string): boolean {
+  return raw.trim() !== "";
+}
+
+/** Hook-level seam (places.ts precedent) — see `useCreateCustomDestination` doc. */
+export interface CreateCustomDestinationOptions {
+  onMutationSuccess?(place: Place): void;
+  onMutationError?(error: unknown): void;
+}
+
+/**
+ * `POST /places` — the destination-search empty-results fallback (B-7, Sean
+ * ruling 2026-09-13, trips spec R-tripui-23): when structured search settles
+ * with zero hits, the picker offers to create the typed text as a permanent
+ * `source='custom'` place (`PlaceCreateSchema`: `name`, `lat`, `lng`,
+ * `category?` — no visibility field exists on the wire shape at all, so
+ * there is nothing here to accidentally widen past the schema default;
+ * creator-scoping is entirely the server's, per `search-query.ts`) and
+ * select it — no map-drop screen this pass (queued separately), so `lat`/
+ * `lng` are a fixed placeholder (`0, 0` — "Null Island"): the only job here
+ * is unblocking trip creation with a searchable, selectable destination.
+ * `category` is omitted (schema optional; server default `null` → coarse
+ * category `'other'`, same as the `scripts/seed-qa-places.mjs` precedent).
+ *
+ * Success/error ride the HOOK's OWN `useMutation` options, not a per-call
+ * `.mutate()` callback (the `places.ts` module-doc landmine: TanStack v5
+ * drops per-call callbacks for a superseded call — this hook is called at
+ * most once in flight by construction, but the seam stays consistent with
+ * every other mutation in this data layer).
+ */
+export function useCreateCustomDestination(
+  options?: CreateCustomDestinationOptions,
+): UseMutationResult<Place, Error, string> {
+  return useMutation({
+    // Trim at the hook boundary (the `usePlaceSearch`/`normalizeSearchText`
+    // precedent above: one normalization owner, not "the caller remembered
+    // to trim"). The request body carries EXACTLY `name`/`lat`/`lng` — no
+    // `category`, `trip_id`, or visibility field rides along (Law #3: the
+    // wire shape has no visibility knob to widen in the first place).
+    mutationFn: (rawName: string) =>
+      apiClient.request(placeEndpoints.createPlace, {
+        body: { name: rawName.trim(), lat: 0, lng: 0 },
+      }),
+    onSuccess: (place) => options?.onMutationSuccess?.(place),
+    onError: (error) => options?.onMutationError?.(error),
+  });
+}
