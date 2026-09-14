@@ -126,4 +126,50 @@ describe.skipIf(!dockerAvailable)("checkMigrationState — real Postgres shapes 
     const devDecision = decideBootMigrationAction("development", state);
     expect(devDecision.action).toBe("refuse");
   }, 30_000);
+
+  it("round-2 regression (blocking), against REAL Postgres: editing an ALREADY-APPLIED migration's .sql by one byte reports `modified`, never `pending` — dev decision is WARN, not refuse", async () => {
+    // Reviewer's exact reproduction against a real, fully-migrated clone (the
+    // REAL drizzle-orm migrator ran every on-disk entry): a scratch copy of
+    // the real journal + .sql files, with ONE already-applied file edited by
+    // a single byte. The row `checkMigrationState` reads back still carries
+    // the SAME `created_at` (nothing about the journal's `when` changed) but
+    // the file's hash no longer matches what the migrator recorded — arm
+    // (b), not (c). Falsification (mutation-verified by hand, recorded in
+    // the PR body): collapsing arm (b) into (c) in `checkMigrationState` —
+    // treating "a row exists for this `when` but the hash differs" the same
+    // as "no row at all" — moves this tag into `pending` and flips the dev
+    // decision to `refuse`, which is exactly the round-2 regression (an
+    // unrecoverable refuse: no `db:migrate` re-run fixes an edited,
+    // already-applied file).
+    suiteDb = await createSuiteDb("migration_state_modified");
+
+    journalScratchDir = await mkdtemp(join(tmpdir(), "gogo-migrate-modified-"));
+    await cp(REAL_DRIZZLE_DIR, journalScratchDir, { recursive: true });
+    const journalPath = join(journalScratchDir, "meta", "_journal.json");
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
+      entries: { tag: string; when: number }[];
+    };
+    const firstEntry = journal.entries[0];
+    if (!firstEntry) throw new Error("unreachable — real journal has ≥1 entry");
+    const sqlPath = join(journalScratchDir, `${firstEntry.tag}.sql`);
+    const original = await readFile(sqlPath, "utf8");
+    // Edit by exactly one byte (a trailing comment) — never touches what the
+    // real migrator already ran against `suiteDb`; this check is read-only.
+    await writeFile(sqlPath, `${original}-`, "utf8");
+    expect(await readFile(sqlPath, "utf8")).not.toBe(original);
+
+    const state = await checkMigrationState(suiteDb.db, {
+      journalUrl: pathToFileURL(journalPath),
+    });
+    expect(state.pending).toEqual([]);
+    expect(state.pendingCount).toBe(0);
+    expect(state.modified).toEqual([firstEntry.tag]);
+    expect(state.modifiedCount).toBe(1);
+
+    const devDecision = decideBootMigrationAction("development", state);
+    expect(devDecision.action).toBe("warn");
+    if (devDecision.action !== "warn") throw new Error("unreachable");
+    expect(devDecision.message).toContain(firstEntry.tag);
+    expect(devDecision.message).toMatch(/edited/i);
+  }, 30_000);
 });

@@ -27,15 +27,35 @@
  * migrator (`pg-core/dialect.js:56-71`, verified via Context7 AND the
  * vendored source at the pinned version) reads `lastDbMigration` ONCE
  * (`order by created_at desc limit 1`) and skips entry N forever the moment
- * some earlier-applied entry's `created_at` exceeds N's `when` — a watermark
- * comparison agrees nothing is pending in that exact shape. Fix: compute
- * `pending` as the SET DIFFERENCE of on-disk migrations vs applied rows, BY
- * HASH (the migrator's own `__drizzle_migrations.hash` column — confirmed
- * present via Context7 AND `pg-core/dialect.js:47-52`'s `CREATE TABLE`,
- * `hash text NOT NULL`), not by comparing timestamps at all. Each on-disk
- * hash is computed exactly the way `drizzle-orm/migrator.js`'s
- * `readMigrationFiles` does — `sha256(readFile(<tag>.sql))` — so it always
- * matches what a real `db:migrate` run would have inserted.
+ * some earlier-applied entry's `created_at` exceeds N's `when` — a WATERMARK
+ * (an ordering/threshold comparison against a single max) agrees nothing is
+ * pending in that exact shape. The round-1 fix replaced the watermark with a
+ * pure BY-HASH set difference (never reading `when` at all) — safe against
+ * non-monotonic journals, but it created the round-2 regression below.
+ *
+ * 🔴 Review round-2 regression (blocking) — a pure by-hash set difference
+ * cannot tell "never applied" (pending) apart from "applied, then the file
+ * was EDITED afterward" (the hash the migrator recorded no longer matches
+ * the on-disk hash): both simply have no matching hash anywhere in
+ * `__drizzle_migrations`, so an edited-after-apply migration misread as
+ * PENDING — and `development`'s refuse-on-pending posture then refused to
+ * boot UNRECOVERABLY (`db:migrate` cannot fix an edited file the migrator
+ * already believes it ran; drizzle only ever applies migrations whose
+ * `when` it hasn't seen before). Fix: match journal entries to applied rows
+ * by `when === created_at` FIRST — an EXACT per-entry equality lookup, NOT
+ * a watermark (it is immune to the round-1 non-monotonic-journal shape:
+ * equality doesn't care about ordering, only whether some row's
+ * `created_at` is bit-for-bit the entry's `when`). Three outcomes per entry:
+ *   (a) a row matches `when` AND its hash matches → cleanly applied.
+ *   (b) a row matches `when` but its hash DIFFERS → `modified` (the file was
+ *       edited after this exact migration ran) — always a WARN, never a
+ *       refuse, in every env (`decideBootMigrationAction`): unlike a
+ *       genuinely pending migration, no command fixes this.
+ *   (c) no row matches `when` at all → genuinely `pending` (never applied).
+ * The pre-existing applied-count-mismatch defensive arm (duplicate/orphaned
+ * tracking rows that don't map 1:1 onto the journal) still fires for
+ * whatever falls outside (a)-(c) — see the `pending.length === 0 && applied
+ * !== entries.length` guard below, unchanged from round 1.
  *
  * 🔴 Driver-shape trap (same family as `db/pg-errors.ts`'s documented one):
  * `db.execute(sql\`...\`)` on the raw-SQL/no-fields path returns the FULL
@@ -96,6 +116,28 @@ function extractRows<T>(result: unknown): T[] {
     return (result as { rows: T[] }).rows;
   }
   throw new Error(`migration-state: unrecognized db.execute() result shape: ${typeof result}`);
+}
+
+/**
+ * `__drizzle_migrations.created_at` is `bigint` — postgres-js (the test
+ * driver) returns `bigint` columns as a native JS `BigInt` by default
+ * (Context7, `porsager/postgres` "Numeric Type Handling": "bigint types are
+ * returned as JavaScript BigInt"), while node-postgres-wire drivers
+ * (`@neondatabase/serverless`, prod) conventionally return `int8` as a
+ * `string` to avoid precision loss. The journal's own `when` is a plain JS
+ * `number` (from JSON). Normalize every shape to `number` here so the
+ * `when === created_at` matching below is a same-type comparison — these are
+ * millisecond epoch stamps, far inside `Number.MAX_SAFE_INTEGER`, so the
+ * `bigint`→`number` narrowing never loses precision in practice. Same
+ * "throw on an unrecognized shape rather than silently coercing" posture as
+ * `extractRows`.
+ */
+function toCreatedAtMillis(raw: unknown): number {
+  if (typeof raw === "bigint" || typeof raw === "number") return Number(raw);
+  if (typeof raw === "string") return Number(raw);
+  throw new Error(
+    `migration-state: unrecognized __drizzle_migrations.created_at shape: ${typeof raw}`,
+  );
 }
 
 async function readJournal(journalUrl: URL): Promise<MigrationJournalEntry[]> {
@@ -176,12 +218,18 @@ async function hashMigrationFile(migrationsRoot: string, tag: string): Promise<s
  * (a database that has never been migrated), which is a legitimate
  * zero-applied state, not a failure.
  *
- * `pending` is the SET DIFFERENCE (by hash) of on-disk migrations vs applied
- * rows — see the module doc for why a timestamp watermark (the pre-round-1
- * approach) silently agrees "nothing pending" when the journal isn't
- * monotonic. `checkedAt` stamps when THIS read happened (ISO-8601,
- * R-shared-11) — `/health` (`app.ts`) recomputes this at most once per TTL
- * instead of freezing the boot-time value forever.
+ * Journal entries are matched to applied rows by `when === created_at` FIRST
+ * (round-2 fix — see the module doc's "review round-2 regression" for why a
+ * pure by-hash set difference isn't enough): a matching row with the SAME
+ * hash is cleanly `applied`; a matching row with a DIFFERENT hash is
+ * `modified` (edited after it ran — always a warn, never pending, never a
+ * refuse reason); no matching row at all is genuinely `pending`. The
+ * pre-existing applied/on-disk COUNT-mismatch defensive arm (review round-1
+ * C1: duplicate/orphaned tracking rows that don't map 1:1 onto the journal)
+ * still fires for whatever falls outside that three-way split. `checkedAt`
+ * stamps when THIS read happened (ISO-8601, R-shared-11) — `/health`
+ * (`app.ts`) recomputes this at most once per TTL instead of freezing the
+ * boot-time value forever.
  */
 export async function checkMigrationState(
   db: DbClient,
@@ -197,34 +245,72 @@ export async function checkMigrationState(
   const hashedEntries = await Promise.all(
     entries.map(async (entry) => ({
       tag: entry.tag,
+      when: entry.when,
       hash: await hashMigrationFile(migrationsRoot, entry.tag),
     })),
   );
 
-  let appliedHashes: string[] = [];
+  interface AppliedRow {
+    hash: string;
+    createdAt: number;
+  }
+  let appliedRows: AppliedRow[] = [];
   try {
-    const result = await db.execute(sql`select hash from drizzle.__drizzle_migrations`);
-    const rows = extractRows<{ hash: unknown }>(result);
-    appliedHashes = rows.map((row) => String(row.hash));
+    const result = await db.execute(sql`select hash, created_at from drizzle.__drizzle_migrations`);
+    const rows = extractRows<{ hash: unknown; created_at: unknown }>(result);
+    appliedRows = rows.map((row) => ({
+      hash: String(row.hash),
+      createdAt: toCreatedAtMillis(row.created_at),
+    }));
   } catch (err) {
     if (!isUndefinedRelation(err)) throw err;
-    appliedHashes = [];
+    appliedRows = [];
   }
 
-  const appliedSet = new Set(appliedHashes);
-  const applied = appliedHashes.length;
-  let pending = hashedEntries.filter((entry) => !appliedSet.has(entry.hash)).map((e) => e.tag);
+  const applied = appliedRows.length;
 
-  // Defensive (review round-1 C1): even when every on-disk hash IS matched
-  // by some applied row, a COUNT mismatch — extra/duplicate rows in the
-  // tracking table that don't map 1:1 onto the journal — is still drift.
-  // Never let that read as "ok" just because the by-hash difference came up
-  // empty; `decideBootMigrationAction` branches on `pending.length` alone,
-  // so an empty `pending` here MUST mean "truly current," not "unaccounted
-  // for."
+  // Group by `created_at` (not a Map<number,AppliedRow> — a corrupted/
+  // duplicated tracking table can carry more than one row for the same
+  // journal `when`, and the count-mismatch fallback below needs to see that,
+  // not have it silently collapsed).
+  const appliedByCreatedAt = new Map<number, AppliedRow[]>();
+  for (const row of appliedRows) {
+    const bucket = appliedByCreatedAt.get(row.createdAt);
+    if (bucket) bucket.push(row);
+    else appliedByCreatedAt.set(row.createdAt, [row]);
+  }
+
+  const pendingTags: string[] = [];
+  const modifiedTags: string[] = [];
+  for (const entry of hashedEntries) {
+    const matches = appliedByCreatedAt.get(entry.when);
+    if (!matches || matches.length === 0) {
+      // (c) no applied row was ever recorded for this entry's `when` at all.
+      pendingTags.push(entry.tag);
+    } else if (!matches.some((row) => row.hash === entry.hash)) {
+      // (b) a row DOES exist for this `when`, but none of them carry the
+      // CURRENT on-disk hash — the file was edited after it was applied.
+      // Never pending (running db:migrate cannot fix this) — see
+      // `formatModifiedMigrationsMessage`.
+      modifiedTags.push(entry.tag);
+    }
+    // (a) else: a row matches both `when` AND `hash` — cleanly applied,
+    // nothing to record.
+  }
+  let pending = pendingTags;
+  const modified = modifiedTags;
+
+  // Defensive (review round-1 C1, preserved unchanged by the round-2 by-
+  // created_at rework): even when every on-disk entry IS accounted for
+  // (matched cleanly or modified), a COUNT mismatch — extra/duplicate rows
+  // in the tracking table that don't map 1:1 onto the journal — is still
+  // drift. Never let that read as "ok" just because every entry matched;
+  // `decideBootMigrationAction` branches on `pending`/`modified` alone, so
+  // an empty `pending` here MUST mean "truly current or only modified," not
+  // "unaccounted for."
   if (pending.length === 0 && applied !== entries.length) {
     pending = [
-      `<applied/on-disk count mismatch: applied=${applied}, onDisk=${entries.length} — every on-disk migration matches an applied row by hash, but the counts don't reconcile>`,
+      `<applied/on-disk count mismatch: applied=${applied}, onDisk=${entries.length} — every on-disk migration matches an applied row, but the counts don't reconcile>`,
     ];
   }
 
@@ -233,6 +319,8 @@ export async function checkMigrationState(
     applied,
     pending,
     pendingCount: pending.length,
+    modified,
+    modifiedCount: modified.length,
     checkedAt: new Date().toISOString(),
   };
 }
@@ -243,5 +331,25 @@ export function formatMigrationStateMessage(state: MigrationState): string {
   return (
     `database is behind: ${state.pending.length} pending migration(s) [${tags}] ` +
     `(${state.applied}/${state.onDisk} applied) — run \`${MIGRATE_COMMAND}\` to apply them`
+  );
+}
+
+/**
+ * The actionable message for `modified`-after-apply migrations (round-2
+ * fix) — deliberately never suggests `MIGRATE_COMMAND`: drizzle's migrator
+ * only ever applies a `when` it hasn't recorded before, so re-running it
+ * cannot touch an already-applied, edited file. Names every tag so the
+ * developer knows exactly which file to restore or replace with a new
+ * migration. Always a WARN (`decideBootMigrationAction` never refuses on
+ * this alone) — unlike a genuinely pending migration, no command fixes it,
+ * so refusing to boot would be unrecoverable.
+ */
+export function formatModifiedMigrationsMessage(state: MigrationState): string {
+  const tags = state.modified.join(", ");
+  return (
+    `${state.modified.length} migration(s) were edited AFTER being applied [${tags}] — ` +
+    `the on-disk file no longer matches the hash recorded when it ran. This is NOT fixed by ` +
+    `running the migrate command (drizzle only applies migrations it hasn't recorded before) — ` +
+    `restore the original file, or make the change as a NEW migration instead`
   );
 }

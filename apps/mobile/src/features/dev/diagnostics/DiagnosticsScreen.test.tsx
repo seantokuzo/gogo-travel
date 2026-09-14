@@ -235,7 +235,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
   });
 
   // ---------------------------------------------------------------------
-  // Leg 7 — migration state (B-28): the three rendered states.
+  // Leg 7 — migration state (B-28): the four rendered states (MODIFIED
+  // added round-2).
   // ---------------------------------------------------------------------
 
   it("migrations leg: CURRENT (pending empty) renders green with the applied count", async () => {
@@ -245,6 +246,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
         applied: 4,
         pending: [],
         pendingCount: 0,
+        modified: [],
+        modifiedCount: 0,
         checkedAt: CHECKED_AT,
       }),
     );
@@ -263,6 +266,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
         applied: 2,
         pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
         pendingCount: 2,
+        modified: [],
+        modifiedCount: 0,
         checkedAt: CHECKED_AT,
       }),
     );
@@ -283,6 +288,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
         applied: 2,
         pending: [],
         pendingCount: 2,
+        modified: [],
+        modifiedCount: 0,
         checkedAt: CHECKED_AT,
       }),
     );
@@ -292,6 +299,31 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     const evidence = screen.getByTestId("diagnostics-evidence-migrations");
     expect(evidence).toHaveTextContent(/pendingCount: 2/);
     expect(evidence).toHaveTextContent(/redacted/);
+  });
+
+  it("migrations leg (round-2, B-28): MODIFIED renders with its OWN badge, distinct from PENDING and CURRENT", async () => {
+    fetchMock.mockImplementation(
+      withMigrationsOnMount({
+        onDisk: 4,
+        applied: 4,
+        pending: [],
+        pendingCount: 0,
+        modified: ["0001_edited_after_apply"],
+        modifiedCount: 1,
+        checkedAt: CHECKED_AT,
+      }),
+    );
+    await renderWithTheme(<DiagnosticsScreen />);
+    await drainLegs();
+    const badge = screen.getByTestId("diagnostics-status-migrations");
+    expect(badge).toHaveTextContent("MODIFIED");
+    // Falsification: rendering `modifiedCount > 0` with the same badge as
+    // PENDING (re-conflating the exact states the server-side fix split
+    // apart) makes this red — MODIFIED must never read as PENDING or CURRENT.
+    expect(badge).not.toHaveTextContent("PENDING");
+    expect(badge).not.toHaveTextContent("CURRENT");
+    const evidence = screen.getByTestId("diagnostics-evidence-migrations");
+    expect(evidence).toHaveTextContent(/0001_edited_after_apply/);
   });
 
   it("migrations leg: field absent (older server) renders a DISTINCT unknown state, with evidence that distinguishes it from a leg crash (review round-1 C2/F2)", async () => {
@@ -325,6 +357,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
         applied: 4,
         pending: [],
         pendingCount: 0,
+        modified: [],
+        modifiedCount: 0,
         checkedAt: CHECKED_AT,
       }),
     );
@@ -338,6 +372,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
         applied: 3,
         pending: ["0003_outstanding_doctor_spectrum"],
         pendingCount: 1,
+        modified: [],
+        modifiedCount: 0,
         checkedAt: CHECKED_AT,
       }),
     );
@@ -419,6 +455,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
               applied: 3,
               pending: ["0003_outstanding_doctor_spectrum"],
               pendingCount: 1,
+              modified: [],
+              modifiedCount: 0,
               checkedAt: CHECKED_AT,
             },
           }),
@@ -437,6 +475,8 @@ describe("DiagnosticsScreen (real default wiring)", () => {
             applied: 4,
             pending: [],
             pendingCount: 0,
+            modified: [],
+            modifiedCount: 0,
             checkedAt: CHECKED_AT,
           },
         }),

@@ -29,6 +29,17 @@ export const MigrationStateSchema = z.object({
   applied: z.number().int().nonnegative(),
   pending: z.array(z.string()),
   pendingCount: z.number().int().nonnegative(),
+  /**
+   * Tags whose on-disk `.sql` hash no longer matches the hash recorded when
+   * it was applied — i.e. the file was edited AFTER `db:migrate` ran it
+   * (round-2 fix: this used to misread as `pending`, which told a developer
+   * to run a command that cannot fix an already-applied, edited migration).
+   * Same dev/test-only-names-elsewhere posture as `pending`
+   * (`HEALTH_TAG_NAME_ENVS`) — read `modifiedCount` when you can't assume
+   * dev/test.
+   */
+  modified: z.array(z.string()),
+  modifiedCount: z.number().int().nonnegative(),
   /** ISO-8601 timestamp of when this snapshot was computed (R-shared-11) — a
    * boot-time value refreshed lazily on `/health` at most once per TTL
    * (`apps/server/src/app.ts`), never a live per-request re-check. */

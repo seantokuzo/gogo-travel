@@ -13,7 +13,11 @@
  * `Set()`) — nothing else in this file or its caller needs to move.
  */
 import type { Env } from "./env.js";
-import { formatMigrationStateMessage, type MigrationState } from "./db/migration-state.js";
+import {
+  formatMigrationStateMessage,
+  formatModifiedMigrationsMessage,
+  type MigrationState,
+} from "./db/migration-state.js";
 
 /** THE switch. `NODE_ENV` values that refuse to boot on pending migrations; every other value warns and keeps serving. */
 export const REFUSE_ON_PENDING_ENVS: ReadonlySet<Env["NODE_ENV"]> = new Set(["development"]);
@@ -21,16 +25,32 @@ export const REFUSE_ON_PENDING_ENVS: ReadonlySet<Env["NODE_ENV"]> = new Set(["de
 export type BootMigrationDecision =
   { action: "ok" } | { action: "warn"; message: string } | { action: "refuse"; message: string };
 
-/** Pure: given the env and an already-computed migration state, decide what boot should do. Never touches the filesystem or the database. */
+/**
+ * Pure: given the env and an already-computed migration state, decide what
+ * boot should do. Never touches the filesystem or the database.
+ *
+ * `modified` (round-2 fix, B-28) is ALWAYS a warn, in EVERY env, including
+ * `development` — never a refuse reason on its own: unlike a genuinely
+ * pending migration, no command fixes an already-applied file that was
+ * edited afterward, so refusing to boot over it would be unrecoverable.
+ * `pending` still drives refuse-vs-warn exactly as before; when BOTH are
+ * present the messages combine so neither problem is silently dropped.
+ */
 export function decideBootMigrationAction(
   nodeEnv: Env["NODE_ENV"],
   state: MigrationState,
 ): BootMigrationDecision {
-  if (state.pending.length === 0) return { action: "ok" };
-  const message = formatMigrationStateMessage(state);
-  return REFUSE_ON_PENDING_ENVS.has(nodeEnv)
-    ? { action: "refuse", message }
-    : { action: "warn", message };
+  if (state.pending.length === 0 && state.modified.length === 0) return { action: "ok" };
+
+  const messages: string[] = [];
+  if (state.pending.length > 0) messages.push(formatMigrationStateMessage(state));
+  if (state.modified.length > 0) messages.push(formatModifiedMigrationsMessage(state));
+  const message = messages.join(" | ");
+
+  if (state.pending.length > 0 && REFUSE_ON_PENDING_ENVS.has(nodeEnv)) {
+    return { action: "refuse", message };
+  }
+  return { action: "warn", message };
 }
 
 /**
@@ -45,17 +65,17 @@ export function decideBootMigrationAction(
 export const HEALTH_TAG_NAME_ENVS: ReadonlySet<Env["NODE_ENV"]> = new Set(["development", "test"]);
 
 /**
- * Wire-shapes a `MigrationState` for `/api/health`: full pending tag names
- * in `development`/`test`, count-only (empty `pending`, real `pendingCount`)
- * everywhere else. Never affects the boot-time refuse/warn DECISION —
- * `decideBootMigrationAction` always runs against the untouched value
- * `checkMigrationState` returned; this only shapes what an unauthenticated
- * caller sees.
+ * Wire-shapes a `MigrationState` for `/api/health`: full pending/modified
+ * tag names in `development`/`test`, count-only (empty arrays, real
+ * `pendingCount`/`modifiedCount`) everywhere else. Never affects the
+ * boot-time refuse/warn DECISION — `decideBootMigrationAction` always runs
+ * against the untouched value `checkMigrationState` returned; this only
+ * shapes what an unauthenticated caller sees.
  */
 export function shapeMigrationStateForHealth(
   nodeEnv: Env["NODE_ENV"],
   state: MigrationState,
 ): MigrationState {
   if (HEALTH_TAG_NAME_ENVS.has(nodeEnv)) return state;
-  return { ...state, pending: [] };
+  return { ...state, pending: [], modified: [] };
 }

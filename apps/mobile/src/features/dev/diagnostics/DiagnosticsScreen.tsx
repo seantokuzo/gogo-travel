@@ -266,19 +266,29 @@ function GoogleLegRow() {
   );
 }
 
-/** Badge derivation for the migrations row's tri-state outcome (B-28) — current/pending/unknown, distinct from the pass/fail-only `statusBadge`. */
+/** Badge derivation for the migrations row's four-state outcome (B-28; MODIFIED added round-2) — current/pending/modified/unknown, distinct from the pass/fail-only `statusBadge`. */
 function migrationsBadge(state: MigrationsRowState): { label: string; tone: BadgeTone } {
   if (state.status === "running") return { label: "RUNNING", tone: "neutral" };
   if (state.status === "current") return { label: "CURRENT", tone: "success" };
   if (state.status === "pending") return { label: "PENDING", tone: "danger" };
+  // Round-2 (B-28): a migration edited AFTER it was applied — rendered with
+  // its OWN tone, distinct from both PENDING (danger — the server-side fix
+  // this mirrors exists precisely so these two never collapse into one
+  // state again) and UNKNOWN (warning — "we don't know," not "we know and
+  // it's this").
+  if (state.status === "modified") return { label: "MODIFIED", tone: "accent" };
   return { label: "UNKNOWN", tone: "warning" };
 }
 
 /**
- * The migrations row (B-28): green CURRENT when the connected DB has zero
- * pending migrations, red PENDING naming each pending tag when it doesn't,
- * and a distinct amber UNKNOWN when the server doesn't say (older server,
- * unreachable, or an unparseable response) — never conflated with CURRENT.
+ * The migrations row (B-28; MODIFIED added round-2): green CURRENT when the
+ * connected DB has zero pending/modified migrations, red PENDING naming
+ * each pending tag when a migration is genuinely un-applied, a distinct
+ * accent MODIFIED when an applied migration's file was edited afterward
+ * (never fixed by `db:migrate` — a different problem from PENDING, so it
+ * never renders as the same badge), and a distinct amber UNKNOWN when the
+ * server doesn't say (older server, unreachable, or an unparseable
+ * response) — never conflated with CURRENT.
  */
 function MigrationsRow({
   run,

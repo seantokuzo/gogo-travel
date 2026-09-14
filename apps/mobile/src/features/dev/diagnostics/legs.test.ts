@@ -519,6 +519,8 @@ describe("leg 7 — migration state (B-28)", () => {
           applied: 4,
           pending: [],
           pendingCount: 0,
+          modified: [],
+          modifiedCount: 0,
           checkedAt: CHECKED_AT,
         },
       }),
@@ -539,6 +541,8 @@ describe("leg 7 — migration state (B-28)", () => {
           applied: 2,
           pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
           pendingCount: 2,
+          modified: [],
+          modifiedCount: 0,
           checkedAt: CHECKED_AT,
         },
       }),
@@ -563,7 +567,15 @@ describe("leg 7 — migration state (B-28)", () => {
       fetchFn: fetchWithBody({
         ok: true,
         version: "0.0.1",
-        migrations: { onDisk: 4, applied: 2, pending: [], pendingCount: 2, checkedAt: CHECKED_AT },
+        migrations: {
+          onDisk: 4,
+          applied: 2,
+          pending: [],
+          pendingCount: 2,
+          modified: [],
+          modifiedCount: 0,
+          checkedAt: CHECKED_AT,
+        },
       }),
     });
     expect(result.status).toBe("pending");
@@ -571,6 +583,80 @@ describe("leg 7 — migration state (B-28)", () => {
     expect(result.summary).not.toMatch(/0002_lowly_venom|0003_outstanding_doctor_spectrum/);
     expect(result.evidence).toContain("pendingCount: 2");
     expect(result.evidence).toContain("redacted");
+  });
+
+  it("happy (round-2, B-28): pending empty but modified non-empty → MODIFIED, naming EVERY tag — DISTINCT status from PENDING", async () => {
+    // The client-side half of the round-2 fix: the server already tells
+    // pending and modified apart (`db/migration-state.ts`); this leg must
+    // not re-conflate them by keying off `pendingCount === 0` alone.
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: {
+          onDisk: 4,
+          applied: 4,
+          pending: [],
+          pendingCount: 0,
+          modified: ["0001_edited_after_apply"],
+          modifiedCount: 1,
+          checkedAt: CHECKED_AT,
+        },
+      }),
+    });
+    // Falsification: treating `modifiedCount > 0` the same as `pendingCount
+    // > 0` (or ignoring `modified` entirely, falling through to CURRENT)
+    // makes this assert "pending" or "current" instead.
+    expect(result.status).toBe("modified");
+    expect(result.summary).toContain("0001_edited_after_apply");
+    expect(result.evidence).toContain("- 0001_edited_after_apply");
+    expect(result.evidence).not.toContain("pending:");
+  });
+
+  it("happy (round-2, B-28): modified redacted (count-only) outside development/test → MODIFIED with a count, names withheld", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: {
+          onDisk: 4,
+          applied: 4,
+          pending: [],
+          pendingCount: 0,
+          modified: [],
+          modifiedCount: 1,
+          checkedAt: CHECKED_AT,
+        },
+      }),
+    });
+    expect(result.status).toBe("modified");
+    expect(result.summary).toContain("1 edited after apply");
+    expect(result.summary).not.toContain("0001_edited_after_apply");
+    expect(result.evidence).toContain("modifiedCount: 1");
+    expect(result.evidence).toContain("redacted");
+  });
+
+  it("boundary (round-2, B-28): BOTH pending and modified non-empty → PENDING wins (the more actionable problem)", async () => {
+    const result = await runMigrationsLeg({
+      baseUrl: () => "http://192.168.1.69:3000/api",
+      fetchFn: fetchWithBody({
+        ok: true,
+        version: "0.0.1",
+        migrations: {
+          onDisk: 4,
+          applied: 2,
+          pending: ["0003_outstanding_doctor_spectrum"],
+          pendingCount: 1,
+          modified: ["0001_edited_after_apply"],
+          modifiedCount: 1,
+          checkedAt: CHECKED_AT,
+        },
+      }),
+    });
+    expect(result.status).toBe("pending");
+    expect(result.summary).toContain("0003_outstanding_doctor_spectrum");
   });
 
   it("empty/absent: an older server's response (no `migrations` key) → UNKNOWN, distinct from CURRENT, summary names it a pre-B-28 server", async () => {
@@ -703,6 +789,8 @@ describe("leg 7 — migration state (B-28)", () => {
           applied: 3,
           pending: ["0003_outstanding_doctor_spectrum"],
           pendingCount: 1,
+          modified: [],
+          modifiedCount: 0,
           checkedAt: CHECKED_AT,
         },
       }),

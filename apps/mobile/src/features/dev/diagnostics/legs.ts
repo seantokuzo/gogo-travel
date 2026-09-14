@@ -472,14 +472,18 @@ export async function runLastErrorLeg(deps: LastErrorLegDeps): Promise<LegResult
 // ---------------------------------------------------------------------------
 
 /**
- * Tri-state outcome — deliberately NOT a `LegResult`: "the server didn't
- * report this" is a real, distinct third state (an older, pre-B-28 server),
- * not a failure of THIS leg. `summary`/`evidence` still match `LegResult`'s
- * shape so the presentational `LegRow` can render either.
+ * Four-state outcome — deliberately NOT a `LegResult`: "the server didn't
+ * report this" is a real, distinct state (an older, pre-B-28 server), not a
+ * failure of THIS leg, and (round-2, B-28) "edited after apply" is a real,
+ * distinct state from "genuinely pending" — the server-side fix for exactly
+ * that conflation (`db/migration-state.ts`'s `modified` field) is pointless
+ * if the client re-conflates them here. `summary`/`evidence` still match
+ * `LegResult`'s shape so the presentational `LegRow` can render any of them.
  */
 export type MigrationsLegResult =
   | { status: "current"; summary: string; evidence: string }
   | { status: "pending"; summary: string; evidence: string }
+  | { status: "modified"; summary: string; evidence: string }
   | { status: "unknown"; summary: string; evidence: string };
 
 export interface MigrationsLegDeps {
@@ -498,18 +502,26 @@ export interface MigrationsLegDeps {
 
 /**
  * GET `<base>/health` and read its optional `migrations` field.
- * CURRENT: field present, `pendingCount` zero. PENDING: field present,
- * `pendingCount` non-zero — names every tag when the server includes them
- * (`development`/`test`), a count only otherwise (the server redacts exact
- * schema-change slugs on this unauthenticated endpoint outside dev/test —
- * architecture review round-1 #3). UNKNOWN: base-URL resolution threw, the
- * round-trip failed or timed out, the body didn't parse as JSON, the body
- * didn't match `HealthResponseSchema`, OR the response matched the schema
- * but omitted `migrations` (an older server that predates B-28) — all of
- * these collapse to the same "we don't know" state because none of them is
- * evidence the DB is either current or behind (review round-1 C3 split the
- * SUMMARY between the last two so a captive portal / proxy doesn't read as
- * "stale server build").
+ * CURRENT: field present, `pendingCount` AND `modifiedCount` both zero.
+ * PENDING: `pendingCount` non-zero — names every tag when the server
+ * includes them (`development`/`test`), a count only otherwise (the server
+ * redacts exact schema-change slugs on this unauthenticated endpoint
+ * outside dev/test — architecture review round-1 #3). MODIFIED (round-2,
+ * B-28): `pendingCount` zero but `modifiedCount` non-zero — a migration was
+ * edited AFTER the server applied it. Deliberately a DIFFERENT status from
+ * PENDING (never re-conflated on the client after the server-side fix that
+ * separated them): `db:migrate` cannot fix an edited, already-applied file,
+ * so this is never as urgent as a genuinely pending one, but still needs a
+ * human to look — same dev/test-names-vs-redacted-count posture as pending.
+ * PENDING takes priority when BOTH are non-zero (a genuinely un-applied
+ * migration is the more actionable problem). UNKNOWN: base-URL resolution
+ * threw, the round-trip failed or timed out, the body didn't parse as JSON,
+ * the body didn't match `HealthResponseSchema`, OR the response matched the
+ * schema but omitted `migrations` (an older server that predates B-28) —
+ * all of these collapse to the same "we don't know" state because none of
+ * them is evidence the DB is either current or behind (review round-1 C3
+ * split the SUMMARY between the last two so a captive portal / proxy
+ * doesn't read as "stale server build").
  */
 export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<MigrationsLegResult> {
   let url: string;
@@ -589,37 +601,66 @@ export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<Migrati
     };
   }
 
-  const { onDisk, applied, pending, pendingCount } = parsed.data.migrations;
-  if (pendingCount === 0) {
+  const { onDisk, applied, pending, pendingCount, modified, modifiedCount } =
+    parsed.data.migrations;
+  if (pendingCount === 0 && modifiedCount === 0) {
     return {
       status: "current",
       summary: `current (${applied} applied)`,
       evidence: [`onDisk: ${onDisk}`, `applied: ${applied}`, "pending: (none)"].join("\n"),
     };
   }
-  if (pending.length > 0) {
-    // development/test: the server includes every tag.
+  if (pendingCount > 0) {
+    if (pending.length > 0) {
+      // development/test: the server includes every tag.
+      return {
+        status: "pending",
+        summary: `${pending.length} pending: ${pending.join(", ")}`,
+        evidence: [
+          `onDisk: ${onDisk}`,
+          `applied: ${applied}`,
+          "pending:",
+          ...pending.map((tag) => `  - ${tag}`),
+        ].join("\n"),
+      };
+    }
+    // Every other env: the server redacts exact tag names on this
+    // unauthenticated endpoint (architecture review round-1 #3) — count only.
     return {
       status: "pending",
-      summary: `${pending.length} pending: ${pending.join(", ")}`,
+      summary: `${pendingCount} pending (names hidden outside development/test)`,
       evidence: [
         `onDisk: ${onDisk}`,
         `applied: ${applied}`,
-        "pending:",
-        ...pending.map((tag) => `  - ${tag}`),
+        `pendingCount: ${pendingCount}`,
+        "pending tag names redacted by the server outside development/test",
       ].join("\n"),
     };
   }
-  // Every other env: the server redacts exact tag names on this
-  // unauthenticated endpoint (architecture review round-1 #3) — count only.
+  // pendingCount === 0 && modifiedCount > 0 (round-2, B-28): a distinct
+  // status from PENDING — `db:migrate` cannot fix an edited, already-applied
+  // file, so this deliberately never renders as the more urgent PENDING
+  // badge. Same dev/test-names-vs-redacted-count posture as pending.
+  if (modified.length > 0) {
+    return {
+      status: "modified",
+      summary: `${modified.length} edited after apply: ${modified.join(", ")}`,
+      evidence: [
+        `onDisk: ${onDisk}`,
+        `applied: ${applied}`,
+        "modified (edited after apply):",
+        ...modified.map((tag) => `  - ${tag}`),
+      ].join("\n"),
+    };
+  }
   return {
-    status: "pending",
-    summary: `${pendingCount} pending (names hidden outside development/test)`,
+    status: "modified",
+    summary: `${modifiedCount} edited after apply (names hidden outside development/test)`,
     evidence: [
       `onDisk: ${onDisk}`,
       `applied: ${applied}`,
-      `pendingCount: ${pendingCount}`,
-      "pending tag names redacted by the server outside development/test",
+      `modifiedCount: ${modifiedCount}`,
+      "modified tag names redacted by the server outside development/test",
     ].join("\n"),
   };
 }
