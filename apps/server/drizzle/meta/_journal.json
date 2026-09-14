@@ -43,6 +43,13 @@
       "when": 1789355501488,
       "tag": "0005_nullable_custom_coords",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789413601125,
+      "tag": "0006_destination_tier_name_fold_idx",
+      "breakpoints": true
     }
   ]
 }

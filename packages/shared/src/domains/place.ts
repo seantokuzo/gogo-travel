@@ -7,11 +7,7 @@
 import { z } from "zod";
 import type { EndpointDescriptor } from "../api/descriptor.js";
 import { CursorQuerySchema, NoContentSchema, paginatedSchema } from "../api/envelope.js";
-import {
-  COARSE_CATEGORY_RULES,
-  PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
-  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
-} from "../config/places.js";
+import { COARSE_CATEGORY_RULES, PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES } from "../config/places.js";
 import {
   CoarseCategorySchema,
   PlaceSourceSchema,
@@ -347,23 +343,21 @@ export const PlaceSearchQuerySchema = CursorQuerySchema.extend({
       message: "at least one of q, bbox, near is required",
     });
   }
-  // TEXT-ONLY floor (round-1 perf finding): a 2–3-char q against the trgm
-  // GIN alone is an O(10^5–10^6)-candidate scan at spine scale — see
+  // TEXT-ONLY floor (round-1 perf finding; B-7 follow-up, Sean's ruling
+  // 2026-09-14, R-places-28): a 2–3-char q against the trgm GIN alone is an
+  // O(10^5–10^6)-candidate scan at spine scale — see
   // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS for the math. With a geo bound the
   // lat/lng window bounds the candidates instead, so map typeahead keeps
-  // its 2-char floor.
-  if (
-    val.q !== undefined &&
-    val.q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS &&
-    val.bbox === undefined &&
-    val.near === undefined
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: `text-only search requires q of at least ${PLACES_SEARCH_TEXT_ONLY_MIN_CHARS} characters (add a geo bound for shorter typeahead)`,
-      path: ["q"],
-    });
-  }
+  // its 2-char floor. A sub-floor TEXT-ONLY query is NO LONGER rejected
+  // here — 54 seeded destination-tier rows (Fez, Van, Ufa, Qom, …) are
+  // shorter than the floor and were otherwise unreachable by their own
+  // name. The floor now selects the search ARM instead of gating
+  // validation: `apps/server/src/places/routes.ts` runs an exact,
+  // case-insensitive, accent-folded match against the bootstrap
+  // destination tier ONLY (never the trgm scan this floor still protects
+  // against for everything else) — see `places/search-query.ts`'s
+  // `placesExactTierMatchQuery`. `q` still can't be shorter than 2 chars
+  // (SearchTextSchema.min(2) above); that boundary is unaffected.
   if (val.radius_m !== undefined && val.near === undefined) {
     ctx.addIssue({
       code: "custom",
