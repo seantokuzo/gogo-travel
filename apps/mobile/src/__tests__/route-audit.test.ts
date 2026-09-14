@@ -31,6 +31,8 @@ const ALLOWLIST: Record<string, string> = {
     "dev-only DS gallery (DS-10) — __DEV__-gated, outside spec §2.1; covered by gallery-screen.test.tsx",
   "(auth)/diagnostics.tsx":
     "dev-only device-smoke diagnostics (T-S3.5) — __DEV__-gated, outside spec §2.1; covered by features/dev/diagnostics/* suites",
+  "(auth)/e2e-session.tsx":
+    "E2E session door entry (S-4 T4, .specs/testing/session-door.spec.md) — build-gated (EXPO_PUBLIC_E2E_DOOR_SECRET + local/private API base), deep-link-only (gogo://e2e-session), outside spec §2.1; covered by features/dev/e2e-door/* suites",
   "+native-intent.tsx":
     "NOT a route — expo-router's native URL hook (ignored by route generation); covered by deep-links.test.ts",
   "+not-found.tsx":
