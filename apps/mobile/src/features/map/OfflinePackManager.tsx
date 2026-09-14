@@ -29,9 +29,11 @@
  * UNUSABLE destination (the R-map-1 world degrade arm renders with NaN or
  * — B-7 part 3 — NULL coords, a coordinate-less custom destination): the
  * whole surface stands down like the pill — the controller pins state to
- * `none`, and the estimate/actions are gated on `isUsableDestination` (the
- * region grid THROWS on bad coords; round-1: the unguarded estimate memo
- * crashed this surface where the pill survived). When unusable, every
+ * `none`, and the estimate/actions are gated on `usableDestinationCoords`
+ * (the SAME narrowing companion `offline-pack-controller.ts` routes through,
+ * round-1 architecture fix — one usability rule, not three hand-rolled
+ * copies; the region grid THROWS on bad coords, round-1: the unguarded
+ * estimate memo crashed this surface where the pill survived). When unusable, every
  * download/refresh/retry control is REPLACED by a one-line explanation
  * naming the fix (trip settings), never merely `disabled` (mobile.md
  * vacuous-pin rule — the handler stays gated too, belt-and-braces).
@@ -52,9 +54,9 @@ import { mapStyleUrlForScheme } from "./map-style";
 import {
   estimatePackSizeBytes,
   formatPackSize,
-  isUsableDestination,
   isWifiState,
   packBoundsFor,
+  usableDestinationCoords,
   type OfflinePackState,
 } from "./offline-packs";
 import {
@@ -120,27 +122,30 @@ export function OfflinePackManager() {
 
   // Degrade-arm guard (module doc): the grid throws on unusable coords
   // (null — B-7 part 3 — or NaN/out-of-range), so the estimate is null and
-  // every download entry stands down with it.
-  const usable = isUsableDestination(trip.destination_lat, trip.destination_lng);
+  // every download entry stands down with it. Memoized on the primitive
+  // lat/lng so `coords`'s object identity stays stable across renders where
+  // neither changed — `target`/`estimate` below key off THAT identity, not a
+  // fresh object every render.
+  const coords = useMemo(
+    () => usableDestinationCoords(trip.destination_lat, trip.destination_lng),
+    [trip.destination_lat, trip.destination_lng],
+  );
+  const usable = coords !== null;
 
   const target: PackDownloadTarget | null = useMemo(() => {
-    const lat = trip.destination_lat;
-    const lng = trip.destination_lng;
-    if (lat === null || lng === null || !usable) return null;
+    if (coords === null) return null;
     return {
       tripId: trip.id,
-      destinationLat: lat,
-      destinationLng: lng,
+      destinationLat: coords.lat,
+      destinationLng: coords.lng,
       styleUrl: mapStyleUrlForScheme(scheme),
     };
-  }, [trip.id, trip.destination_lat, trip.destination_lng, usable, scheme]);
+  }, [trip.id, coords, scheme]);
 
   const estimate = useMemo(() => {
-    const lat = trip.destination_lat;
-    const lng = trip.destination_lng;
-    if (lat === null || lng === null || !usable) return null;
-    return formatPackSize(estimatePackSizeBytes(packBoundsFor(lat, lng)));
-  }, [trip.destination_lat, trip.destination_lng, usable]);
+    if (coords === null) return null;
+    return formatPackSize(estimatePackSizeBytes(packBoundsFor(coords.lat, coords.lng)));
+  }, [coords]);
 
   /**
    * Download/refresh/retry entry: resolve the network AT PRESS TIME (the

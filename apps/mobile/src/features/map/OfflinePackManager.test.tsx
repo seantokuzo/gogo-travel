@@ -141,6 +141,27 @@ it("NULL destination coords (coordinate-less custom place): no download/refresh/
   expect(screen.queryByTestId("offline-pack-button-delete")).toBeNull();
 });
 
+// Round-1 architecture fix: pins the SAME boundary input as
+// `offline-pack-controller.test.ts`'s "out-of-range (non-null) coords"
+// sibling test — both consumers now route through the ONE
+// `usableDestinationCoords` helper. Mutation: revert either consumer to a
+// bare `lat === null || lng === null` check (dropping the range bound) and
+// ONLY that consumer starts treating this pair as usable, so this test (or
+// its controller sibling) goes RED while the other stays green.
+it("out-of-range (non-null) coords: same degrade as NULL — no download affordance, no crash", async () => {
+  const outOfRange = {
+    ...makeActiveTrip(TEST_TRIP_ID),
+    destination_lat: 91,
+    destination_lng: 0,
+  };
+  await renderManager(outOfRange);
+  await settle();
+
+  expect(screen.getByTestId("offline-pack-status")).toHaveTextContent("Not downloaded");
+  expect(screen.getByTestId("offline-pack-notice-no-location")).toBeOnTheScreen();
+  expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
+});
+
 it("R-map-22 proactive degrade: the derived offline signal renders the notice with no press", async () => {
   // Seeded via cache.build + setState with gcTime: Infinity — under the
   // test client's default gcTime: 0 an unobserved query is GC'd one

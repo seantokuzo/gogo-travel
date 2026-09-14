@@ -464,6 +464,29 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
+  // Round-1 architecture fix: both the controller and `OfflinePackManager`
+  // now route usability through the ONE `usableDestinationCoords` helper
+  // instead of three hand-rolled null-checks — this pins the FULL rule
+  // (the out-of-range branch, not just null/NaN) at the controller, and
+  // `OfflinePackManager.test.tsx` pins the SAME boundary input to the SAME
+  // outcome. Mutation: revert either consumer to a bare
+  // `lat === null || lng === null` check (dropping the range bound) and
+  // that consumer alone starts treating this out-of-range pair as usable —
+  // this test (or its OfflinePackManager sibling) goes RED while the other
+  // stays green, exposing the disagreement.
+  it("out-of-range (non-null) coords stand the machine down too — not just null/NaN", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const outOfRange = { ...activeTrip(), destination_lat: 91, destination_lng: 0 };
+    const { result, unmount } = await renderHook(() => useOfflinePackController(outOfRange), {
+      wrapper,
+    });
+    expect(result.current).toEqual({ phase: "none" });
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+    await unmount();
+  });
+
   it("the deferred wifi listener is removed on unmount — no leak", async () => {
     const remove = jest.fn();
     network.getNetworkStateAsync.mockImplementation(async () => cellular);

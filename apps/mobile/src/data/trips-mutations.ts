@@ -32,7 +32,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
-import { apiClient } from "@/auth";
+import { apiClient, ApiRequestError } from "@/auth";
 
 import { invalidateTripLists, queryKeys } from "./query-client";
 
@@ -227,4 +227,29 @@ export function useCreateCustomDestination(
     },
     onError: (error) => options?.onMutationError?.(error),
   });
+}
+
+/**
+ * Map a `useCreateCustomDestination` failure onto a safe, actionable banner
+ * message (§3.5 envelope). Round-1 architecture fix (cross-lane advisory,
+ * B-7 review): this was byte-identical, screen-local code in `new.tsx` and
+ * `more/settings.tsx` — one mutation, one error contract, so it lives here
+ * next to the hook it maps errors for, not duplicated per caller. 409 isn't
+ * documented for `POST /places` today (places spec §3.3 lists only 400
+ * `VALIDATION_FAILED`) — kept for symmetry with every other create-mutation
+ * error mapper and as a defensive branch if that ever changes.
+ */
+export function createCustomDestinationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 400) {
+      return "That destination name isn't valid — try editing it.";
+    }
+    if (error.status === 409) {
+      return "That change conflicted with another update — try again.";
+    }
+    if (error.status === 0) {
+      return "No connection — check your network and retry.";
+    }
+  }
+  return "Couldn't create that destination. Retry?";
 }

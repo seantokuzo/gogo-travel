@@ -68,6 +68,7 @@ import {
 } from "@/components";
 import {
   buildTripPatch,
+  createCustomDestinationErrorMessage,
   evictTripSubtree,
   invalidateTripLists,
   isBaseCurrencyLocked,
@@ -103,26 +104,10 @@ const NO_LOCATION_NOTICE =
 /** Bounded typeahead render (CT-2 parity — server page ≤ 50, typeahead wants few). */
 const MAX_RESULTS = 8;
 
-/**
- * Same envelope mapping as `new.tsx`'s `createCustomDestinationErrorMessage`
- * (R-tripui-23 parity, ported for R-tripui-24) — kept as a screen-local copy
- * rather than a shared module: the two screens own disjoint file sets by
- * design (T-b file-ownership split) and the mapper is a few lines.
- */
-function createCustomDestinationErrorMessage(error: unknown): string {
-  if (error instanceof ApiRequestError) {
-    if (error.status === 400) {
-      return "That destination name isn't valid — try editing it.";
-    }
-    if (error.status === 409) {
-      return "That change conflicted with another update — try again.";
-    }
-    if (error.status === 0) {
-      return "No connection — check your network and retry.";
-    }
-  }
-  return "Couldn't create that destination. Retry?";
-}
+// createCustomDestinationErrorMessage (R-tripui-23 parity, ported for
+// R-tripui-24) is round-1-extracted to `@/data` (trips-mutations.ts) — one
+// mutation, one error contract, shared with `(trips)/new.tsx` (the disjoint
+// T-b file-ownership split covers SCREEN code, not this shared behavior).
 
 /**
  * Trip accent label from the tokens registry (R-ds-5: palette add = one

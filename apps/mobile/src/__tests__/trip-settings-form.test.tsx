@@ -627,6 +627,42 @@ describe("B-7 part 3 — coordinate-less destination remediation (R-tripui-24)",
     expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe("Nowhereville");
   });
 
+  it("round-1 A4/architecture: a 409 renders the SAME message as trip-new.tsx — one shared error mapper", async () => {
+    // Cross-screen consistency pin for the round-1 extraction
+    // (createCustomDestinationErrorMessage now lives ONCE in
+    // data/trips-mutations.ts): trip-new-screen.test.tsx's "a 409 surfaces
+    // inline, keeps the typed text, and retry re-creates" pins the SAME
+    // literal text for `new.tsx`. Mutation-verify: change either screen's
+    // call site back to a re-typed local copy with drifted 409 copy and
+    // ONE of the two suites goes RED while the other stays green.
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        return Promise.reject(new ApiRequestError(409, "CONFLICT", "boom"));
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Nowhereville",
+    );
+    const row = await screen.findByTestId("trip-settings-list-item-custom");
+    await fireEvent.press(row);
+    await drainNotify();
+
+    expect(await screen.findByTestId("trip-settings-error-create-destination")).toHaveTextContent(
+      /That change conflicted with another update — try again\./,
+    );
+    expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe("Nowhereville");
+  });
+
   it("no standing notice for a trip that already has destination coordinates (regression control)", async () => {
     const trip = makePlanningTrip(TEST_TRIP_ID); // real coords by default
     const client = seededClient(trip);
