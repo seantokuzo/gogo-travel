@@ -212,7 +212,17 @@ Partial<Record<NotificationCategory, boolean>> }` — an absent
   `z.discriminatedUnion('category', […8 shapes])` per schema spec §3.4.1;
   `BookingSchema` refines that `details.category` matches the row `category`.
   The same detail shapes are reused by `ai/capture-extract.ts` (§3.7), which
-  is WHY they stay flat.
+  is WHY they stay flat. `confirmation_code` normalizes at the wire:
+  `trim → min(1)/max(100) → toUpperCase` — uppercase runs AFTER the length
+  check (Unicode case-folding can EXPAND UTF-16 length, e.g. `ß`→`SS`; folding
+  first would let a stored under-cap code strand over-cap at its next edit).
+  Format stays free-form (1–100, no shape lock) — codes vary too much across
+  categories (6-alnum GDS PNRs vs longer hotel/OTA confirmations) to
+  constrain further v1. (Added 2026-09-07, B-20 — QA-wave spec sync, PR #51)
+  `ScheduleBookingInput` (itinerary-bookings spec §3.4) gains an optional
+  `status?: 'planned' | 'booked'` field (default `'planned'`, backward
+  compatible) — Sean QA feature batch 2026-09-06 feature ④; see
+  itinerary-bookings spec §3.4/R-ib-8.
 - **`money.ts`** — `ExpenseCreate` carries its shares inline
   (`shares: Array<{ user_id, share_cents }>`) — the atomic-write contract
   (schema spec R-db-2); a shares-sum-equals-amount `superRefine` runs in the
