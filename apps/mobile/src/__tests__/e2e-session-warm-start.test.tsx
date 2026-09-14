@@ -10,31 +10,29 @@
  * shape). Mounted through the REAL route tree — `AuthGate` wraps the door
  * route in the actual app.
  *
- * The reviewer's theorized mechanism (`resolveGate`'s `resume` branch,
- * `auth-gate.ts:55`, firing on a STALE pre-reset `authed` closure because
- * `AuthGate`'s redirect effect runs in the same commit as, but after, the
- * door route's own reset-triggering mount effect) is real React behavior in
- * general, and `AuthGate.tsx` now reads the session store FRESH
- * (`useSessionStore.getState()`) at decision time instead of the render-time
- * `authed`/`firstRun`/`resetting` closures, which is strictly more correct
- * regardless. BUT: this specific test does NOT falsify that fix. Instrumented
- * while drafting it (a temporary `console.log` on every `resolveGate` call,
- * removed before this landed): react-navigation's own dispatch for
- * `router.navigate` — and separately, `renderRouter`'s `initialUrl` cold-boot
- * path plus the pre-existing B-14 `routeReadSettled` latch — both already
+ * Review round 2 disposition: the reviewer's theorized mechanism
+ * (`resolveGate`'s `resume` branch, `auth-gate.ts:55`, firing on a STALE
+ * pre-reset `authed` closure because `AuthGate`'s redirect effect runs in
+ * the same commit as, but after, the door route's own reset-triggering
+ * mount effect) could NOT be made to fail in this harness on either
+ * reproduction shape tried (a bare cold `renderApp` mount on this route, and
+ * this warm `router.navigate` shape) — react-navigation's own dispatch for
+ * `router.navigate`, and separately `renderRouter`'s `initialUrl` cold-boot
+ * path plus the pre-existing B-14 `routeReadSettled` latch, both already
  * give the reset several render cycles' head start before `AuthGate`'s
- * redirect effect ever observes `inAuthGroup: true`; `authed` was ALREADY
- * `false` by the first commit where that mattered, with or without the live
- * read. Two reproduction shapes were tried (a bare cold `renderApp` mount on
- * this route, and this warm `router.navigate` shape) and neither could be
- * made to fail on the reverted fix. Recorded here rather than silently
- * dropped, per the testing standard's "a probe that finds nothing has not
- * proven absence" rule (`.claude/rules/testing.md` #3) — this is NOT a
- * verified mutation-red pin for the race; it IS new, real coverage of a
- * previously completely untested path (A5's actual complaint), which the
- * deferred-mint checkpoint below still exercises meaningfully: the door
- * screen must still be showing, mid-mint, at the paused checkpoint, and the
- * mint must actually reach the store once released.
+ * redirect effect ever observes `inAuthGroup: true`. Since the race was
+ * unfalsifiable, the round-1 `AuthGate.tsx` live-read change (reading
+ * `useSessionStore.getState()` at decision time instead of the render-time
+ * `authed`/`firstRun`/`resetting` closures) was REVERTED — see
+ * `.specs/testing/session-door.spec.md` T4 for the residual note: a
+ * warm-authed door open is not a supported lane path. This test is kept
+ * because it still passes against the reverted (origin/main) `AuthGate.tsx`
+ * and is new, real coverage of a previously completely untested path (the
+ * door's reset+mint sequence surviving a warm in-app navigation): the door
+ * screen must still be showing, mid-mint, at the paused checkpoint below,
+ * and the mint must actually reach the store once released. It does NOT
+ * pin the AuthGate mechanism itself — don't read it as evidence for or
+ * against that change.
  */
 import { act, screen, waitFor } from "expo-router/testing-library";
 import { router } from "expo-router";
