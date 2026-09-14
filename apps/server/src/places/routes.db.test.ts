@@ -931,16 +931,21 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     });
     expect(place.coarse_category).toBe("food");
 
+    // B-7 part 3 round-1 fix: lat/lng move as a PAIR on a PATCH now (the
+    // architecture blocking finding — a lone `lat` here used to silently
+    // relocate half the coordinate, 200, `lng` untouched); both fields ride
+    // together in every request from here on.
     const res = await patchPlace(place.id, user.accessToken, {
       name: "Final Spot",
       lat: 35.625,
+      lng: 139.625,
       category: null,
     });
     expect(res.status).toBe(200);
     const updated = PlaceSchema.parse(await res.json());
     expect(updated.name).toBe("Final Spot");
     expect(updated.lat).toBeCloseTo(35.625, 6);
-    expect(updated.lng).toBeCloseTo(139.62, 6);
+    expect(updated.lng).toBeCloseTo(139.625, 6);
     expect(updated.category).toBeNull();
     expect(updated.coarse_category).toBe("other");
 
@@ -979,6 +984,123 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
 
     const badBody = await patchPlace(place.id, creator.accessToken, { lat: 91 });
     expect(badBody.status).toBe(400);
+  });
+
+  // ===========================================================================
+  // PATCH pair rule (B-7 part 3 round-1 fix, architecture blocking finding):
+  // `PlaceUpdateSchema` had no `superRefine` at all — a lone `lat` in a PATCH
+  // reached the DB unpaired, where `places_coords_pair_ck` was the only
+  // backstop and its escape was an unhandled 500 on a coordinate-less
+  // custom place, or a SILENT RELOCATION (200, half the pair moved) on a
+  // located one.
+  // ===========================================================================
+
+  it("[B-7 part 3 R1] PATCH: a lone lat on a coordinate-less custom place → 400, never 500", async () => {
+    const user = await seedUserWithToken();
+    const place = await postPlace(user.accessToken, { name: "No Coords Yet" });
+    const created = PlaceSchema.parse(await place.json());
+    expect(created.lat).toBeNull();
+
+    const res = await patchPlace(created.id, user.accessToken, { lat: 35.61 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, created.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification (empirically layered — this row happens to have a DB
+    // backstop the LOCATED-place pin below does not): dropping ONLY
+    // `placeCoordsPairRule`'s `.superRefine` off `PlaceUpdateSchema`
+    // (place.ts) does NOT red this pin — `places/routes.ts`'s try/catch
+    // belt (db/coords-ck.ts) still maps the escaping `places_coords_pair_ck`
+    // 23514 onto the same 400. Drop BOTH the refine AND that belt (revert
+    // the PATCH handler's update call to an unguarded
+    // `const [updated] = await deps.db.update(...)`) and this reds with a
+    // raw 500 (`createErrorHandler`'s generic arm sees the driver error
+    // directly) — verified by reverting both together.
+  });
+
+  it("[B-7 part 3 R1] PATCH: a lone lat on a LOCATED place → 400 and the row is unchanged (the silent-relocation case)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Fixed Spot",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: 35.61 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Before the fix this was a 200 that silently moved lat to 35.61 while
+    // lng stayed 20 — no DB CHECK catches a valid-looking, wrong relocation.
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBe("10.000000");
+    expect(row?.lng).toBe("20.000000");
+    // Falsification: dropping ONLY `placeCoordsPairRule`'s `.superRefine`
+    // off `PlaceUpdateSchema` (place.ts) is enough here — unlike the
+    // coordinate-less pin above, both `lat` AND `lng` stay non-null
+    // throughout (only the VALUE is wrong), so `places_coords_pair_ck` never
+    // fires and the routes.ts belt has nothing to catch. This reds with a
+    // 200 that moved `lat` alone (row.lat becomes "35.610000" while
+    // row.lng stays "20.000000") — the exact silent relocation the
+    // architecture finding named, and the reason this pin, not the one
+    // above, is the one that actually isolates the Zod refine.
+  });
+
+  it("[B-7 part 3 R1] PATCH: both coords on a custom place → 200 (relocate)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Movable Spot",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: 35.61, lng: 139.61 });
+    expect(res.status).toBe(200);
+    const updated = PlaceSchema.parse(await res.json());
+    expect(updated.lat).toBeCloseTo(35.61, 6);
+    expect(updated.lng).toBeCloseTo(139.61, 6);
+  });
+
+  it("[B-7 part 3 R1] PATCH: both lat/lng null on a CUSTOM place → 200 with nulls (clears coordinates)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Regretted Pin",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: null, lng: null });
+    expect(res.status).toBe(200);
+    const updated = PlaceSchema.parse(await res.json());
+    expect(updated.lat).toBeNull();
+    expect(updated.lng).toBeNull();
+
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification: revert `places/routes.ts`'s `set.lat`/`set.lng` write
+    // to bare `String(body.lat)` — `String(null) === "null"` is not a legal
+    // numeric-column value; this reds with a 500.
+  });
+
+  it("[B-7 part 3 R1] PATCH: both lat/lng null on a SPINE place → 400, distinct from the blanket spine 403 (source-aware clearing)", async () => {
+    const user = await seedUserWithToken();
+
+    const res = await patchPlace(towerId, user.accessToken, { lat: null, lng: null });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // A non-coordinate edit to the SAME spine place still gets the general
+    // immutability 403 — the 400 above is source-aware-clearing-specific,
+    // not a relaxation of "spine places cannot be modified".
+    const nameOnly = await patchPlace(towerId, user.accessToken, { name: "Hacked Tower" });
+    expect(nameOnly.status).toBe(403);
+    expect(((await nameOnly.json()) as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+    // Falsification: delete the `access.kind === "spine"` branch's
+    // `body.lat === null && body.lng === null` check in places/routes.ts —
+    // this reds with a 403 (the generic spine-immutable arm) instead of 400.
   });
 
   it("PATCH F-038 harness: invisible custom ≡ nonexistent ≡ malformed id — byte-identical 404s", async () => {

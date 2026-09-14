@@ -41,6 +41,7 @@ import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
+import { rethrowCoordsCkMapped } from "../db/coords-ck.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import {
@@ -103,6 +104,13 @@ export interface TripsRouterDeps {
 // malformed cursors fall back to page 1 (the endpoint's documented errors
 // don't include a cursor 400 — §3.3 GET /trips).
 
+/** Any transaction scope — the `places/visibility.ts` `Tx` precedent. Named
+ * so the create/update transaction bodies below can be pulled out as their
+ * own `const`s (B-7 part 3 round-1 fix's `.catch(rethrowCoordsCkMapped)`
+ * belt) without Prettier re-chain-breaking (and reindenting) the whole
+ * multi-line callback every format pass. */
+type Tx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+
 export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
   const nowOf = () => (deps.now ? deps.now() : new Date());
@@ -123,7 +131,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const body = c.req.valid("json");
       const today = todayUtc(nowOf());
 
-      const trip = await deps.db.transaction(async (tx) => {
+      // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
+      // not the primary guard — `TripCreateSchema`'s pair refine already
+      // rejects every half-pair at the boundary. An escape here is a
+      // service/schema drift bug, but the client still gets a 400.
+      const insertTripTx = async (tx: Tx) => {
         // Caller liveness under lock — FIRST acquisition (global order:
         // users → trip_members → invites; the same door invite-accept
         // holds, T-6.2 round-2 advisory #2): a scrubbed account's
@@ -166,7 +178,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         await tx.insert(schema.tripMembers).values({ tripId: inserted.id, userId, role: "owner" });
 
         return inserted;
-      });
+      };
+      const trip = await deps.db.transaction(insertTripTx).catch(rethrowCoordsCkMapped);
 
       // R-places-1 primary trigger, POST-COMMIT: enqueue the destination's
       // region ingest. Fire-and-forget by contract — the trigger never
@@ -322,7 +335,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       let fieldsWritten = false;
       let storedStatusChanged = false;
 
-      const updated = await deps.db.transaction(async (tx) => {
+      // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
+      // not the primary guard — `TripUpdateSchema`'s pair refine already
+      // rejects every half-pair at the boundary. An escape here is a
+      // service/schema drift bug, but the client still gets a 400.
+      const updateTripTx = async (tx: Tx) => {
         // Key-presence touches are known from the body alone — computed
         // before the load so the base-currency arm can lock it.
         const touchesBaseCurrency = body.base_currency !== undefined;
@@ -494,7 +511,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             numOrNull(current.destinationLng) !== body.destination_lng);
 
         return row;
-      });
+      };
+      const updated = await deps.db.transaction(updateTripTx).catch(rethrowCoordsCkMapped);
 
       // POST-COMMIT ingest trigger for the moved destination — same
       // fire-and-forget contract as the create hook (R-places-1). B-7 part
