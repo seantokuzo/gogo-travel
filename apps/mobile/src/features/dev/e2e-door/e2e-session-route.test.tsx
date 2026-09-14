@@ -34,6 +34,17 @@ jest.mock("expo-secure-store", () => {
 
 jest.mock("expo-device", () => ({ __esModule: true, deviceName: "Test Device" }));
 
+// Mutable per-test (R-door-16 third gate) — a getter so `isDoorBundleId()`'s
+// default read picks up whatever the CURRENT test set, without a
+// `jest.resetModules()`/`jest.doMock()` dance per case.
+let mockBundleId: string | null = "app.gogotravel.e2edoor";
+jest.mock("expo-application", () => ({
+  __esModule: true,
+  get applicationId() {
+    return mockBundleId;
+  },
+}));
+
 let mockSearchParams: Record<string, string | undefined> = {};
 jest.mock("expo-router", () => ({
   useLocalSearchParams: () => mockSearchParams,
@@ -42,6 +53,8 @@ jest.mock("expo-router", () => ({
 const SECRET = "s".repeat(32);
 const LOCAL_API_URL = "http://localhost:3000";
 const PUBLIC_API_URL = "https://api.gogotravel.example";
+const DOOR_BUNDLE_ID = "app.gogotravel.e2edoor";
+const SHIPPING_BUNDLE_ID = "app.gogotravel";
 
 const originalFetch = globalThis.fetch;
 const originalSecretEnv = process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;
@@ -74,6 +87,7 @@ function jsonResponse(status: number, body: unknown) {
 
 beforeEach(() => {
   mockSearchParams = { user_key: "flow-1", first_run: "false" };
+  mockBundleId = DOOR_BUNDLE_ID;
   useSessionStore.setState({
     hydrated: true,
     user: null,
@@ -116,6 +130,22 @@ describe("render gate (R-door-7): both conditions must hold or the arm is inert"
     // -> this goes RED (a live fetch would fire against the public host).
     process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
     process.env.EXPO_PUBLIC_API_URL = PUBLIC_API_URL;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await renderWithTheme(<E2eSessionRoute />);
+
+    expect(screen.getByTestId("e2e-session-screen-inert")).toBeOnTheScreen();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("door build + LOCAL api base + SHIPPING bundle id -> inert marker, NO network call (R-door-16 third gate)", async () => {
+    // Falsification: drop the `isDoorBundleId` half of the route's gate ->
+    // this goes RED (a live fetch would fire from a binary that skipped
+    // prebuild and still wears the shipping identity — review round 1 B1).
+    process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
+    process.env.EXPO_PUBLIC_API_URL = LOCAL_API_URL;
+    mockBundleId = SHIPPING_BUNDLE_ID;
     const fetchMock = jest.fn();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 

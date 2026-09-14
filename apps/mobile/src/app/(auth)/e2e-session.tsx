@@ -4,17 +4,21 @@
  * black-box door the Maestro E2E lane uses to get behind sign-in in one
  * `openLink`. Follows the `(auth)/diagnostics.tsx` pattern exactly.
  *
- * RENDER GATE (R-door-7): a build renders the enabled arm only when BOTH (1)
- * the client secret was build-inlined at >=32 chars (G3 —
- * `isDoorSecretConfigured`) AND (2) the resolved API base's host is
+ * RENDER GATE (R-door-7, R-door-16): a build renders the enabled arm only
+ * when ALL of (1) the client secret was build-inlined at >=32 chars (G3 —
+ * `isDoorSecretConfigured`), (2) the resolved API base's host is
  * loopback/private (`isLocalOrPrivateHost` — the SAME predicate the rest of
- * the client already trusts, `auth/config.ts`). Both checks are synchronous
- * so the correct arm renders on the FIRST frame; failing either renders the
- * INERT marker below, issues NO network request, and never reads a real
- * secret value — a door-free build never had one to read in the first place
- * (Metro folds the unset `process.env.EXPO_PUBLIC_E2E_DOOR_SECRET` member
- * expression to the literal `undefined` at compile time; nothing at runtime
- * can un-fold that).
+ * the client already trusts, `auth/config.ts`), AND (3) the REAL installed
+ * bundle id carries the `.e2edoor` suffix (`isDoorBundleId` —
+ * review round 1 B1: a bare `expo run:ios` against an already-prebuilt
+ * `ios/` dir never re-consults `app.config.ts`, so (1)+(2) alone can pass in
+ * a mis-built binary still wearing the shipping `CFBundleIdentifier`). All
+ * three checks are synchronous so the correct arm renders on the FIRST
+ * frame; failing any renders the INERT marker below, issues NO network
+ * request, and never reads a real secret value — a door-free build never had
+ * one to read in the first place (Metro folds the unset
+ * `process.env.EXPO_PUBLIC_E2E_DOOR_SECRET` member expression to the
+ * literal `undefined` at compile time; nothing at runtime can un-fold that).
  *
  * 🔴 THE `flex: 1` ON THE INERT MARKER IS LOAD-BEARING — DO NOT DROP IT
  * (mirrors `(auth)/diagnostics.tsx`, S-4 PR #61, first real device run
@@ -47,6 +51,7 @@ import { View } from "react-native";
 import { apiClient, useSessionStore } from "@/auth";
 import { hostOf, isLocalOrPrivateHost, resolveApiBaseUrl } from "@/auth/config";
 import {
+  isDoorBundleId,
   isDoorSecretConfigured,
   openSessionDoor,
   parseFirstRun,
@@ -67,9 +72,10 @@ export default function E2eSessionRoute() {
   const [state, setState] = useState<DoorState>("pending");
 
   const apiBase = resolveApiBaseUrl();
-  // Synchronous double gate (R-door-7) — computed on every render so the
-  // correct arm is the FIRST thing that ever paints.
-  const doorReady = isDoorSecretConfigured() && isLocalOrPrivateHost(hostOf(apiBase));
+  // Synchronous triple gate (R-door-7, R-door-16) — computed on every render
+  // so the correct arm is the FIRST thing that ever paints.
+  const doorReady =
+    isDoorSecretConfigured() && isLocalOrPrivateHost(hostOf(apiBase)) && isDoorBundleId();
   const userKey = resolveUserKey(params.user_key);
   const firstRun = parseFirstRun(params.first_run);
 

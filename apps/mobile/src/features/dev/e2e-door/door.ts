@@ -9,17 +9,23 @@
  * success) is unit-testable without a router or a query client. The route
  * file (`app/(auth)/e2e-session.tsx`) does the wiring.
  *
- * Double gate (R-door-7), both checked here so the function is
+ * Triple gate (R-door-7, R-door-16), all checked here so the function is
  * self-contained and safe to call from anywhere: (1) the secret was
- * build-inlined at >=32 chars (G3 — see `isDoorSecretConfigured`), AND (2)
+ * build-inlined at >=32 chars (G3 — see `isDoorSecretConfigured`), (2)
  * the caller's resolved API base is loopback/private (`isLocalOrPrivateHost`,
  * the SAME predicate `apps/mobile/src/auth/config.ts` already exports and
- * the rest of the client already trusts). Failing EITHER means: no network
- * call, ever, and the presented secret is simply not read past the length
- * check — a door-free build never had a real value to read in the first
- * place (Metro folds the unset env member expression to the literal
- * `undefined` at compile time; nothing here can un-fold that at runtime).
+ * the rest of the client already trusts), AND (3) the REAL installed bundle
+ * id carries the `.e2edoor` suffix (`isDoorBundleId`, review round 1 B1 —
+ * `expo run:ios` on an already-prebuilt `ios/` dir never re-consults
+ * `app.config.ts`, so (1)+(2) alone can pass in a mis-built binary that
+ * still wears the SHIPPING `CFBundleIdentifier`). Failing ANY of the three
+ * means: no network call, ever, and the presented secret is simply not read
+ * past the length check — a door-free build never had a real value to read
+ * in the first place (Metro folds the unset env member expression to the
+ * literal `undefined` at compile time; nothing here can un-fold that at
+ * runtime).
  */
+import * as Application from "expo-application";
 import * as Device from "expo-device";
 import { type ApiClient, type SignInResponse } from "@gogo/shared";
 import { e2eEndpoints, E2eSessionRequestSchema } from "@gogo/shared/domains/e2e";
@@ -29,6 +35,30 @@ import { ApiRequestError } from "@/auth/api-client";
 
 /** G3 threshold — mirrors the server's `E2E_SESSION_DOOR_SECRET` >=32-char gate. */
 const MIN_SECRET_LENGTH = 32;
+
+/**
+ * R-door-16 third gate. Mirrors `app.config.ts`'s `DOOR_BUNDLE_ID_SUFFIX` —
+ * deliberately NOT shared code (that module runs as a plain Node script at
+ * prebuild time and has no import path into the RN bundle; see its own
+ * doc-comment), so the literal is duplicated here and must stay in lockstep
+ * by inspection. `expo-application`'s `applicationId` reads the REAL
+ * installed `CFBundleIdentifier` at native init — NOT
+ * `Constants.expoConfig?.ios?.bundleIdentifier`, which reflects the resolved
+ * app CONFIG, not what actually got prebuilt/archived, and would report the
+ * suffixed id even for a mis-built binary that skipped prebuild.
+ */
+const DOOR_BUNDLE_ID_SUFFIX = ".e2edoor";
+
+/**
+ * The client gate's third condition (R-door-16). Injectable so a unit test
+ * can drive both arms without a native module. Defaults to the real
+ * `expo-application` value.
+ */
+export function isDoorBundleId(
+  bundleId: string | null | undefined = Application.applicationId,
+): boolean {
+  return typeof bundleId === "string" && bundleId.endsWith(DOOR_BUNDLE_ID_SUFFIX);
+}
 
 /**
  * Client build gate (G3). Reads the Metro-inlined env var as a FUNCTION call
@@ -71,6 +101,10 @@ export interface OpenDoorDeps {
   /** The build-inlined secret; injected so a unit test can drive both arms
    *  without touching `process.env`. Defaults to the real Metro-inlined var. */
   secret?: string | undefined;
+  /** The REAL installed bundle id (R-door-16 third gate); injected so a unit
+   *  test can drive both arms without a native module. Defaults to the real
+   *  `expo-application` value. */
+  bundleId?: string | null | undefined;
 }
 
 export type OpenDoorResult =
@@ -99,7 +133,12 @@ export function resolveUserKey(raw: string | string[] | undefined): string {
  */
 export async function openSessionDoor(p: OpenDoorParams, d: OpenDoorDeps): Promise<OpenDoorResult> {
   const secret = d.secret ?? process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;
-  if (!isDoorSecretConfigured(secret) || !isLocalOrPrivateHost(hostOf(d.apiBase))) {
+  const bundleId = d.bundleId ?? Application.applicationId;
+  if (
+    !isDoorSecretConfigured(secret) ||
+    !isLocalOrPrivateHost(hostOf(d.apiBase)) ||
+    !isDoorBundleId(bundleId)
+  ) {
     return { ok: false, reason: "disabled" };
   }
 

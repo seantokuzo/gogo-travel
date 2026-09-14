@@ -238,6 +238,21 @@ ${APP_ID}` in the flow, `-e APP_ID=<value>`/`--env APP_ID=<value>` on the
   global, per above: no single hard-coded id, only lane defaults, every one
   overridable.)
 
+- **R-door-16 (third client gate: installed bundle id, review round 1 B1
+  hardening):** THE SYSTEM SHALL open the client door ONLY when, in addition
+  to R-door-7's two conditions, the REAL installed bundle id (read via
+  `expo-application`'s `applicationId` at runtime — NOT a value derived from
+  the app config, which reflects what was CONFIGURED rather than what was
+  actually prebuilt/archived) carries the `.e2edoor` suffix `app.config.ts`'s
+  `withDoorVariant` appends. This closes the process-failure path where a
+  build recipe skips `expo prebuild` (§5.2) and produces a binary that
+  carries the build-inlined secret and a local API base but still wears the
+  SHIPPING `CFBundleIdentifier` — R-door-7's two conditions alone cannot
+  detect that case, since neither depends on what was actually prebuilt.
+  Additionally, THE build recipe SHALL make a prebuild non-optional on every
+  door/door-free build (`apps/mobile/package.json`'s `ios:door` /
+  `ios:doorfree` scripts, §5.2) rather than relying on operator discipline.
+
 ### 2.1 Test obligations (review round 1, B2)
 
 No requirement above is satisfied by a reading of the code; each is
@@ -264,6 +279,7 @@ applies on top.
 | R-door-12   | Mutation-verify: swap `timingSafeEqual` for `===` in the door's compare and confirm a pin goes RED.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | R-door-14   | With `E2E_DOOR_MAX_FIXTURE_USERS` set low (e.g. 2) via test config, the 3rd distinct `user_key` is rejected with the uniform 401 while the first 2 keys still resolve; no existing row is touched; the rejection's wire response is byte-identical to every other 401 (folded into R-door-3) while its server log line carries `reason=fixture_cap`, distinguishable from a `reason=secret_mismatch` log line for the same request shape. Separately (T3, `scripts/e2e-cleanup.mjs`): running cleanup against a mixed set — `e2e:`-prefixed fixture users plus a real, non-`e2e:` user who owns a trip — removes only the `e2e:`-prefixed rows and their owned trips/memberships, leaves the real user and trip untouched, and afterward a find-or-create for a previously-capped key succeeds again (proves capacity was actually freed, not just rows renamed). (Review round 3, §5.4 ordering:) a trip with one `e2e:`-prefixed owner and one real, non-`e2e:` member survives cleanup byte-for-byte untouched and the fixture owner is logged skipped (not deleted, not retried) — the mixed-membership skip; a trip whose members are ALL `e2e:`-prefixed (the flows 6-10 shape, owner + at least one other fixture member) is deleted in step 1 and every fixture that was on it is freed — the multi-fixture-member trip case; and a fixture user whose step-3 `deleteAccount` call transiently loses a race with a step-1 trip delete still in flight succeeds on the retry pass with no operator action — the retry pass. The trip-delete core extraction (§5.4 step 1) SHALL leave `DELETE /trips/:tripId`'s existing test suite green with no behavior change, and the cleanup test SHALL exercise the extracted core directly (in-process, not via HTTP) rather than re-testing the route. |
 | R-door-15   | Lane-default matrix: the default invocation (no `--variant`, no `--tags dev`) resolves `app.gogotravel.e2edoor`; `--tags dev` with no explicit `--variant` resolves `app.gogotravel`; `--variant doorfree` resolves `app.gogotravel`; `GOGO_E2E_APP_ID` set explicitly overrides every lane's default, including `door` and `dev`. Mismatch: run any variant against a simulator with the wrong app id installed and assert `scripts/e2e.sh:168`'s check hard-fails with a named, non-generic `die()` message — the text names both the resolved app id and the active `--variant`, not a fixed string.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| R-door-16   | Unit-pin `isDoorBundleId` directly: a `.e2edoor`-suffixed id -> door build; the bare shipping id -> not; `null`/`undefined` (web, or the module unavailable) -> not; the real default reads `expo-application`, mocked both ways. Integration: `openSessionDoor` and the route's render gate each pinned with the OTHER two R-door-7 conditions satisfied and ONLY the bundle id wrong -> `disabled`/inert, zero network calls -- proves the third gate is independently effective, not redundant with the other two.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 **Test-design note, recorded not required (review round 1, A5/Finding 10):**
 under `app.request()` every in-process request shares the same unresolvable
@@ -698,9 +714,22 @@ The lane needs a door build; the security claim needs a door-free build.
 Both are Release configuration, Hermes, embedded bundle, `__DEV__ === false`
 — the only difference is the inlined secret:
 
+🔴 **A prebuild is MANDATORY on every variant switch (review round 1, B1).**
+`expo run:ios` alone only prebuilds when `apps/mobile/ios/` does not already
+exist (`ensureNativeProject.js`) — on any machine where that directory is
+already checked out or was left over from a previous build, `expo run:ios`
+reuses whatever `PRODUCT_BUNDLE_IDENTIFIER` the LAST prebuild wrote and never
+re-consults `app.config.ts` at all. That produces a Release `.app` carrying
+the door secret while `CFBundleIdentifier` is still the SHIPPING id — exactly
+the archival hole this guard exists to close — and it fails **silently**:
+nothing in the build output signals it. Use the `pnpm ios:door` /
+`pnpm ios:doorfree` scripts (`apps/mobile/package.json`), which always run
+`expo prebuild --platform ios` first; never invoke `expo run:ios` directly
+for a door/door-free build.
+
 ```bash
 # door-free (App-Store-shaped) - flows 1-4 + session-door-absent
-cd apps/mobile && LANG=en_US.UTF-8 npx expo run:ios --configuration Release
+cd apps/mobile && LANG=en_US.UTF-8 pnpm ios:doorfree
 
 # door build - flows 5-10. Secret sourced from the gitignored, mode-600
 # apps/server/.env.test (scripts/gen-test-env.mjs) -- NEVER typed inline: an
@@ -709,7 +738,7 @@ cd apps/mobile && LANG=en_US.UTF-8 npx expo run:ios --configuration Release
 # scenario C). T3 extends gen-test-env.mjs to also write
 # E2E_SESSION_DOOR_SECRET / EXPO_PUBLIC_E2E_DOOR_SECRET into that file.
 cd apps/mobile && set -a && . ../server/.env.test && set +a && \
-  LANG=en_US.UTF-8 npx expo run:ios --configuration Release
+  LANG=en_US.UTF-8 pnpm ios:door
 ```
 
 **Bundle-identity guard (review round 1, B5 scenario B).** A door build and
@@ -738,6 +767,25 @@ directly with and without the env var set and asserts the two resulting
 pin. The black-box `session-door-absent` Maestro flow (§3.4) separately
 proves the door-free build's runtime _behavior_; this proves the door
 build's _identity_ can never collide with the shippable one.
+
+**Third client gate: the installed bundle id itself (R-door-16, review round
+1 B1 hardening).** Because a build recipe failure (the missing-prebuild
+scenario above) is a PROCESS mistake, not something the app can see in its
+own config, R-door-7's two checks (secret + local/private API base) are
+insufficient on their own to keep the property FAIL-CLOSED — a mis-built
+binary can satisfy both while still wearing the shipping identity. T4 adds a
+third, synchronous condition to the client gate
+(`features/dev/e2e-door/door.ts`'s `isDoorBundleId`): the REAL installed
+bundle id, read via `expo-application`'s `applicationId` (NOT
+`Constants.expoConfig?.ios?.bundleIdentifier`, which reflects the resolved
+app CONFIG rather than what was actually prebuilt/archived, and would report
+the suffixed id even for a mis-built binary that skipped prebuild), must
+carry the `.e2edoor` suffix. All three conditions are checked in both
+`openSessionDoor` and the route's own synchronous render gate. This makes
+the identity and the capability inseparable regardless of how the binary was
+produced: a door build can open the door only while ALSO wearing the
+`.e2edoor` identity, and a binary wearing the shipping identity can never
+open the door no matter what secret got folded into it.
 
 **Runner/flow app-id collision, and the fix (review round 2).** The distinct
 bundle id above is deliberate — it is what makes a door build unable to ever

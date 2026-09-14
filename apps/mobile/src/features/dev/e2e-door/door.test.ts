@@ -15,6 +15,7 @@ import type { SignInResponse, User } from "@gogo/shared";
 import { ApiRequestError, createApiClient, type MobileApiClient } from "@/auth/api-client";
 
 import {
+  isDoorBundleId,
   isDoorSecretConfigured,
   openSessionDoor,
   parseFirstRun,
@@ -27,6 +28,8 @@ jest.mock("expo-device", () => ({ __esModule: true, deviceName: "Test Device" })
 const SECRET = "s".repeat(32);
 const LOCAL_BASE = "http://localhost:3000/api";
 const PUBLIC_BASE = "https://api.gogotravel.example/api";
+const DOOR_BUNDLE_ID = "app.gogotravel.e2edoor";
+const SHIPPING_BUNDLE_ID = "app.gogotravel";
 
 const USER: User = {
   id: "00000000-0000-4000-8000-000000000002",
@@ -82,6 +85,7 @@ function makeDeps(overrides: Partial<OpenDoorDeps> = {}): {
     resetLocalSession,
     applySignIn,
     secret: SECRET,
+    bundleId: DOOR_BUNDLE_ID,
     ...overrides,
   };
   return { deps, resetLocalSession, applySignIn };
@@ -111,6 +115,28 @@ describe("isDoorSecretConfigured (G3)", () => {
   });
 });
 
+describe("isDoorBundleId (R-door-16 third gate)", () => {
+  it("the installed bundle id carrying the .e2edoor suffix is a door build", () => {
+    expect(isDoorBundleId("app.gogotravel.e2edoor")).toBe(true);
+  });
+
+  it("the shipping bundle id (no suffix) is NOT a door build", () => {
+    expect(isDoorBundleId("app.gogotravel")).toBe(false);
+  });
+
+  it("null/undefined (web platform, or expo-application unavailable) is NOT a door build", () => {
+    expect(isDoorBundleId(null)).toBe(false);
+    expect(isDoorBundleId(undefined)).toBe(false);
+  });
+
+  it("defaults to reading the real expo-application applicationId when no arg is given", () => {
+    // Under jest (no explicit mock), expo-modules-core's auto-mock resolves
+    // `applicationId` to the literal string "mock" — never suffixed, so the
+    // default arm reads as NOT a door build without any module mock here.
+    expect(isDoorBundleId()).toBe(false);
+  });
+});
+
 describe("parseFirstRun (adversarial: first_run type confusion)", () => {
   it.each([
     ["true", true],
@@ -136,7 +162,7 @@ describe("resolveUserKey", () => {
   });
 });
 
-describe("openSessionDoor — disabled branch (R-door-7 double gate)", () => {
+describe("openSessionDoor — disabled branch (R-door-7 host/secret gate + R-door-16 bundle-id gate)", () => {
   it("secret not configured -> disabled, no reset, no network call", async () => {
     const fetchMock = jest.fn();
     const { deps, resetLocalSession } = makeDeps({
@@ -185,6 +211,35 @@ describe("openSessionDoor — disabled branch (R-door-7 double gate)", () => {
 
     expect(result).toEqual({ ok: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("R-door-16: installed bundle id is the SHIPPING id (no .e2edoor suffix) -> disabled, no network call, even with secret + local base BOTH satisfied", async () => {
+    // Falsification: drop the `isDoorBundleId` check from openSessionDoor's
+    // gate -> this goes RED (a live fetch would fire even though the
+    // installed binary is byte-indistinguishable from the shipping app —
+    // review round 1 B1's exact scenario: a mis-built binary that skipped
+    // `expo prebuild` and still wears `app.gogotravel`).
+    const fetchMock = jest.fn();
+    const { deps, resetLocalSession } = makeDeps({
+      api: makeRealApi(fetchMock),
+      bundleId: SHIPPING_BUNDLE_ID,
+    });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resetLocalSession).not.toHaveBeenCalled();
+  });
+
+  it("R-door-16: installed bundle id is null (web/unavailable) -> disabled, no network call", async () => {
+    const fetchMock = jest.fn();
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock), bundleId: null });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

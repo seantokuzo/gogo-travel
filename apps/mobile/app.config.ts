@@ -23,6 +23,21 @@
  * shared code (one runs at Node/build time, the other at Metro/bundle time,
  * and they read the var through entirely different mechanisms), but the
  * threshold and the var name must stay in lockstep by inspection.
+ *
+ * 🔴 SWITCHING VARIANTS REQUIRES A PREBUILD (review round 1 B1). This module
+ * is consulted ONLY by `expo prebuild` (and anything that runs it, like a
+ * fresh `expo run:ios`) — a bare `expo run:ios` against an ALREADY-PREBUILT
+ * `ios/` dir skips prebuild entirely and reuses whatever `PRODUCT_BUNDLE_
+ * IDENTIFIER` the last prebuild wrote, silently ignoring this file. Use the
+ * `pnpm ios:door` / `pnpm ios:doorfree` scripts (`package.json`), which
+ * always run `expo prebuild --platform ios` first — never call `expo
+ * run:ios` directly for a door/door-free build. Belt-and-suspenders: the
+ * client gate's third condition (R-door-16,
+ * `features/dev/e2e-door/door.ts`'s `isDoorBundleId`) additionally checks
+ * the REAL installed bundle id at runtime, so even a mis-built binary that
+ * skipped prebuild and still wears the shipping identity cannot open the
+ * door — the identity and the capability are inseparable regardless of how
+ * the binary was produced.
  */
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
