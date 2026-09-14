@@ -30,3 +30,4 @@ coverage/
 .claude/settings.local.json
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+.claude/agent-memory/
