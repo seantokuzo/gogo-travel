@@ -63,10 +63,34 @@ function withoutRequestId(body: UnauthEnvelope) {
   return rest;
 }
 
-/** R-door-3: every response in the list must be BYTE-IDENTICAL — same status, envelope (modulo requestId), content-type, and byte length. */
+/**
+ * Sorted header-NAME set, plus a name→value map with `x-request-id`
+ * excluded (that value legitimately differs — each response mints its own
+ * correlation id). Review round 1 security A4: the prior helper compared
+ * only status/envelope/content-type/byte-length, not the header SET R-door-3
+ * and spec §3.6 actually require — a future middleware adding a header
+ * (`Retry-After`, `Vary`, …) on only ONE branch would have gone undetected.
+ */
+function headerShape(headers: Headers): { names: string[]; values: Record<string, string> } {
+  const names: string[] = [];
+  const values: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    names.push(name);
+    if (name.toLowerCase() !== "x-request-id") values[name] = value;
+  });
+  names.sort();
+  return { names, values };
+}
+
+/** R-door-3: every response in the list must be BYTE-IDENTICAL — same status, envelope (modulo requestId), content-type, byte length, AND full header set/values (review round 1 A4). */
 async function expectIndistinguishable401s(responses: readonly Response[]): Promise<void> {
   expect(responses.length).toBeGreaterThanOrEqual(2);
-  let baseline: { body: unknown; contentType: string | null; byteLength: number } | null = null;
+  let baseline: {
+    body: unknown;
+    contentType: string | null;
+    byteLength: number;
+    headers: { names: string[]; values: Record<string, string> };
+  } | null = null;
 
   for (const response of responses) {
     expect(response.status).toBe(401);
@@ -80,13 +104,19 @@ async function expectIndistinguishable401s(responses: readonly Response[]): Prom
     const body = withoutRequestId(raw);
     const contentType = response.headers.get("content-type");
     const byteLength = Buffer.byteLength(text, "utf8");
+    const headers = headerShape(response.headers);
 
     if (baseline === null) {
-      baseline = { body, contentType, byteLength };
+      baseline = { body, contentType, byteLength, headers };
     } else {
       expect(body).toEqual(baseline.body);
       expect(contentType).toBe(baseline.contentType);
       expect(byteLength).toBe(baseline.byteLength);
+      // Falsification: add a header on only ONE of the compared branches
+      // (e.g. `c.header("x-debug", "1")` on one rejection path) and this
+      // goes RED — the prior four-property check would have stayed green.
+      expect(headers.names).toEqual(baseline.headers.names);
+      expect(headers.values).toEqual(baseline.headers.values);
     }
   }
 }
@@ -344,6 +374,72 @@ describe.skipIf(!dockerAvailable)("E2E session door (S-4/T3, integration)", () =
   });
 
   // ===========================================================================
+  // Review round 1 security A2: the peer gate is the router's FIRST
+  // middleware — a disallowed peer is rejected before the body-size cap or
+  // JSON parsing ever run, not just before the secret compare.
+  // ===========================================================================
+
+  it("review round 1 A2: a disallowed peer is rejected by the PEER GATE, not the body-size cap or the JSON parser", async () => {
+    const { app, warnings } = buildApp({ peerOf: () => PUBLIC_PEER });
+    // Oversized (past the door's OWN, now-smaller body cap) AND malformed —
+    // if the peer gate ran AFTER `doorBodyLimit`/`zValidator` (the
+    // regressed ordering this pin guards), the reason would instead be
+    // `oversized_body` or `malformed_body`.
+    const hostile = "{not valid json" + "x".repeat(64 * 1024);
+    const res = await app.request(DOOR_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(hostile, "utf8")),
+      },
+      body: hostile,
+    });
+    expect(res.status).toBe(401);
+    const rejectLine = warnings.find((w) => w.includes("e2e door rejected"));
+    // Falsification: move the `peerGate` middleware back inside the handler
+    // (after `doorBodyLimit`/`zValidator` in the route chain) and this goes
+    // RED — the reason becomes `oversized_body`.
+    expect(rejectLine).toContain("reason=peer_disallowed");
+    expect(rejectLine).not.toContain("reason=oversized_body");
+    expect(rejectLine).not.toContain("reason=malformed_body");
+    await expectIndistinguishable401s([res, await unknownPath(app)]);
+  });
+
+  // ===========================================================================
+  // §4.1: `first_run` decouples the response's `is_new_user` from whether
+  // the row was actually created — completely unpinned before round 1
+  // (review round 1 correctness finding 1, probe 7: swapping
+  // `is_new_user: body.first_run ?? false` for `is_new_user: mint.created`
+  // left all 22 existing door tests green).
+  // ===========================================================================
+
+  it("§4.1: a brand-new key with first_run omitted mints is_new_user: false (tracks the caller's hint, NOT mint.created)", async () => {
+    const { app } = buildApp();
+    const res = await mint(app, validBody(uniq())); // first_run omitted -> defaults false
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { is_new_user: boolean };
+    // Falsification: swap `is_new_user: body.first_run ?? false` for
+    // `is_new_user: mint.created` in e2e-door.ts and this goes RED — a
+    // brand-new key IS created (mint.created === true), but §4.1 requires
+    // is_new_user to track the CALLER's first_run hint, not the row's
+    // actual creation state (the exact "true on the first run after a DB
+    // reset" non-determinism the field exists to remove).
+    expect(body.is_new_user).toBe(false);
+  });
+
+  it("§4.1: an EXISTING key with first_run: true mints is_new_user: true (tracks the caller's hint, NOT mint.created)", async () => {
+    const { app } = buildApp();
+    const key = uniq();
+    await mint(app, validBody(key)); // creates the row — mint.created would be false on the NEXT call
+    const res = await mint(app, { ...validBody(key), first_run: true });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { is_new_user: boolean };
+    // Falsification: hard-code `is_new_user: false` (or leave the
+    // `mint.created` swap from above in place) and this goes RED.
+    expect(body.is_new_user).toBe(true);
+  });
+
+  // ===========================================================================
   // R-door-4: rides the exact issuance path — rotation + reuse-theft holds
   // ===========================================================================
 
@@ -480,6 +576,64 @@ describe.skipIf(!dockerAvailable)("E2E session door (S-4/T3, integration)", () =
     const app = buildDoorAbsentApp();
     await mint(app, validBody(uniq()));
     expect(timingSafeEqualSpy).toHaveBeenCalled();
+  });
+
+  it("review round 1 finding 3 (adv FALSE #3): EVERY rejection path invokes the constant-work floor exactly once — enumerated", async () => {
+    // 1. route not mounted
+    timingSafeEqualSpy.mockClear();
+    expect((await mint(buildDoorAbsentApp(), validBody(uniq()))).status).toBe(401);
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+
+    // 2. peer disallowed
+    timingSafeEqualSpy.mockClear();
+    const { app: publicPeerApp } = buildApp({ peerOf: () => PUBLIC_PEER });
+    expect((await mint(publicPeerApp, validBody(uniq()))).status).toBe(401);
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+
+    // 3. oversized body — the review round 1 finding 3 FIX itself: this
+    // path used to call NEITHER `safeEqual` nor
+    // `performDoorConstantWorkFloor` at all.
+    timingSafeEqualSpy.mockClear();
+    const { app: capApp } = buildApp();
+    const oversized = `{"secret":"${SECRET}","user_key":"a","device":{"platform":"ios"},"pad":"${"x".repeat(8 * 1024)}"}`;
+    const oversizedRes = await capApp.request(DOOR_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(Buffer.byteLength(oversized, "utf8")),
+      },
+      body: oversized,
+    });
+    expect(oversizedRes.status).toBe(401);
+    // Falsification: drop `performDoorConstantWorkFloor()` from
+    // `doorBodyLimit`'s `onError` and this assertion goes RED (0 calls).
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+
+    // 4. malformed body
+    timingSafeEqualSpy.mockClear();
+    const { app: malformedApp } = buildApp();
+    const malformedRes = await malformedApp.request(DOOR_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not valid json",
+    });
+    expect(malformedRes.status).toBe(401);
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+
+    // 5. rate limited — exhaust the bucket FIRST, then clear the spy so
+    // only the rate-limited call itself is counted.
+    const store = new InMemoryRateLimitStore();
+    const { app: rateLimitedApp } = buildApp({ rateLimit: { store, now: () => 4_000_000 } });
+    for (let i = 0; i < 20; i++) await mint(rateLimitedApp, validBody(uniq(), WRONG_SECRET));
+    timingSafeEqualSpy.mockClear();
+    expect((await mint(rateLimitedApp, validBody(uniq()))).status).toBe(401);
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
+
+    // 6. wrong secret
+    timingSafeEqualSpy.mockClear();
+    const { app: wrongSecretApp } = buildApp();
+    expect((await mint(wrongSecretApp, validBody(uniq(), WRONG_SECRET))).status).toBe(401);
+    expect(timingSafeEqualSpy).toHaveBeenCalledTimes(1);
   });
 
   // ===========================================================================

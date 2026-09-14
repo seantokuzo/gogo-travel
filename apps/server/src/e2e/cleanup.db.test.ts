@@ -13,6 +13,7 @@ import { afterEach, describe, expect, inject, it } from "vitest";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
+import { deleteAccount } from "../users/account-deletion.js";
 import { runE2eCleanup } from "./cleanup.js";
 
 const dockerAvailable = inject("dbAvailable");
@@ -99,7 +100,10 @@ describe.skipIf(!dockerAvailable)("runE2eCleanup (S-4/T3, integration)", () => {
 
       const report = await cleanup();
 
-      expect(report.usersDeleted).toBeGreaterThanOrEqual(1);
+      // Nit (review round 1 correctness 8): exactly one fixture user exists
+      // in this graph — `>=` can't catch an over-delete; assert the exact
+      // count.
+      expect(report.usersDeleted).toBe(1);
       // Real user + trip survive byte-for-byte.
       expect(await liveUserRow(real.id)).toMatchObject({ id: real.id, deletedAt: null });
       expect(await tripRow(realTrip.id)).toBeDefined();
@@ -211,22 +215,27 @@ describe.skipIf(!dockerAvailable)("runE2eCleanup (S-4/T3, integration)", () => {
       // skip for this exact owner, remove the real blocking member — a
       // deterministic stand-in for "a step-1 trip delete (elsewhere) lands
       // in the same window" that doesn't depend on real thread timing.
+      //
+      // Review round 1 correctness advisory 7: the prior version of this
+      // test fired that DELETE unawaited ("fire-and-forget"), justified by
+      // a claim that JS single-threadedness alone made it land before pass
+      // 2's queries — FALSE: `createSuiteDb` hands back a 5-connection pool,
+      // so pass 2's SELECT runs on a DIFFERENT pooled connection, genuinely
+      // concurrently with the still-uncommitted DELETE, and could win the
+      // race under CI contention (a timing pin that is really a sleep).
+      // `log` may now return a `Promise` that `runE2eCleanup` AWAITS
+      // between every logged line — this hook uses that to make the DELETE
+      // provably COMPLETE before cleanup proceeds, no timing assumption
+      // required.
       let resolved = false;
       const report = await runE2eCleanup({
         db,
         appleCredentialsKey: APPLE_CREDENTIALS_KEY,
         now: () => FROZEN_NOW,
-        log: (line) => {
+        log: async (line) => {
           if (!resolved && line.includes(owner.id) && line.includes("skip:")) {
             resolved = true;
-            // Fire-and-forget is fine: this resolves before the retry pass's
-            // OWN queries run, since JS is single-threaded and the promise
-            // is awaited by the caller's event loop turn before `cleanup()`
-            // proceeds to its next `await`.
-            void db
-              .delete(schema.tripMembers)
-              .where(eq(schema.tripMembers.userId, blocker.id))
-              .then();
+            await db.delete(schema.tripMembers).where(eq(schema.tripMembers.userId, blocker.id));
           }
         },
       });
@@ -257,5 +266,161 @@ describe.skipIf(!dockerAvailable)("runE2eCleanup (S-4/T3, integration)", () => {
     const report = await cleanup();
     expect(report.usersDeleted).toBe(3);
     expect(report.remainingFixtureCount).toBe(0);
+  });
+
+  it(
+    "review round 1 correctness finding 3: a step-1 trip-delete failure is isolated per trip — recorded, the run completes, and steps 2/3 still run",
+    { timeout: 30_000 },
+    async () => {
+      suiteDb = await createSuiteDb("e2e_cleanup_trip_failure");
+      db = suiteDb.db;
+
+      const owner = await fixtureUser(`tripfail-${uniq()}`);
+      const ownedTrip = await trip(owner.id, "Trip-failure trip");
+
+      const report = await runE2eCleanup({
+        db,
+        appleCredentialsKey: APPLE_CREDENTIALS_KEY,
+        now: () => FROZEN_NOW,
+        // DI seam (review round 1 correctness finding 3): always reject
+        // step 1's own trip delete for this trip — a stand-in for a 40P01 /
+        // pool blip `deleteTripCore` itself can throw.
+        deleteTripCoreFn: () =>
+          Promise.reject(new Error("simulated transient trip-delete failure")),
+      });
+
+      // Falsification: drop the per-trip try/catch in `deleteAllFixtureTrips`
+      // (let the throw propagate) and `runE2eCleanup` REJECTS instead of
+      // resolving — no report, no retry pass, no `deleteAccount` step ever
+      // runs for this owner.
+      expect(report.tripFailures).toHaveLength(1); // pass 1 only — see below
+      expect(report.tripFailures[0]?.tripId).toBe(ownedTrip.id);
+      // Steps 2/3 still ran despite step 1's failure: `deleteAccount`'s OWN
+      // internal sole-owner-trip cascade (independent of `deleteTripCore`,
+      // never touched by the injected failure) reclaims the owner — and,
+      // with it, the trip — in the SAME pass 1, since no other live member
+      // blocks it. That's WHY pass 2 never re-attempts the trip delete (the
+      // owner is already gone): proof the run proceeded past the isolated
+      // step-1 failure into steps 2/3, rather than aborting.
+      expect(report.remainingFixtureCount).toBe(0);
+      expect(await tripRow(ownedTrip.id)).toBeUndefined();
+    },
+  );
+
+  it(
+    "review round 1 security finding 1 / correctness advisory 4: a real member who joins a trip between the classification snapshot and the fenced delete is not deleted — the trip survives, reported as skipped",
+    { timeout: 30_000 },
+    async () => {
+      suiteDb = await createSuiteDb("e2e_cleanup_late_join");
+      db = suiteDb.db;
+
+      const owner = await fixtureUser(`latejoin-${uniq()}`);
+      const real = await realUser();
+      const mixedTrip = await trip(owner.id, "Late-join trip");
+
+      let joined = false;
+      const report = await runE2eCleanup({
+        db,
+        appleCredentialsKey: APPLE_CREDENTIALS_KEY,
+        now: () => FROZEN_NOW,
+        log: async (line) => {
+          // The trip is all-fixture (owner only) at classification time —
+          // this hook fires right after that snapshot, simulating a real
+          // user accepting a pending invite in the window before the
+          // fenced delete re-reads membership.
+          if (!joined && line.includes("classification snapshot taken")) {
+            joined = true;
+            await db.insert(schema.tripMembers).values({
+              tripId: mixedTrip.id,
+              userId: real.id,
+              role: "editor",
+            });
+          }
+        },
+      });
+
+      // Falsification: drop the `allowedMemberIds` fence in `deleteTripCore`
+      // (or stop passing `fixtureIds` as it from `deleteAllFixtureTrips`)
+      // and this goes RED — the trip gets deleted anyway, taking the real
+      // user's membership with it.
+      expect(joined).toBe(true);
+      expect(await tripRow(mixedTrip.id)).toBeDefined();
+      const members = await db
+        .select()
+        .from(schema.tripMembers)
+        .where(eq(schema.tripMembers.tripId, mixedTrip.id));
+      expect(members.map((m) => m.userId).sort()).toEqual([owner.id, real.id].sort());
+      expect(await liveUserRow(real.id)).toMatchObject({ id: real.id, deletedAt: null });
+      // The owner is left live too — it now (correctly) has a live
+      // non-fixture member, so step 2/3 skips it via the normal
+      // OwnerTransferRequiredError path on a later pass.
+      expect(report.remainingFixtureCount).toBe(1);
+    },
+  );
+
+  it(
+    "review round 1 correctness finding 7: a transient (non-OwnerTransferRequiredError) deleteAccount failure is isolated — recorded, the OTHER user still deletes, and the retry pass resolves it",
+    { timeout: 30_000 },
+    async () => {
+      suiteDb = await createSuiteDb("e2e_cleanup_transient_user");
+      db = suiteDb.db;
+
+      const flaky = await fixtureUser(`flaky-${uniq()}`);
+      const stable = await fixtureUser(`stable-${uniq()}`);
+
+      let failedOnce = false;
+      const report = await runE2eCleanup({
+        db,
+        appleCredentialsKey: APPLE_CREDENTIALS_KEY,
+        now: () => FROZEN_NOW,
+        // DI seam (review round 1 correctness finding 7): reject exactly
+        // ONE user's FIRST `deleteAccount` call with a non-
+        // `OwnerTransferRequiredError` — a stand-in for a transient DB
+        // error unrelated to trip ownership.
+        deleteAccountFn: async (deps, userId, now) => {
+          if (userId === flaky.id && !failedOnce) {
+            failedOnce = true;
+            throw new Error("simulated transient deleteAccount failure");
+          }
+          return deleteAccount(deps, userId, now);
+        },
+      });
+
+      // Falsification: drop the non-`OwnerTransferRequiredError` catch in
+      // `deleteRemainingFixtureUsers` (let it propagate) and this goes RED
+      // — the whole run rejects instead of isolating the one failure.
+      expect(failedOnce).toBe(true);
+      // The OTHER user was never touched by the injected failure and
+      // deleted normally in pass 1.
+      expect((await liveUserRow(stable.id))?.deletedAt).not.toBeNull();
+      // The retry pass gave the flaky user another swing (the injected
+      // failure only fires once) and it succeeded — no leftover, no entry
+      // in the FINAL (retry-authoritative) transientFailures list.
+      expect(report.transientFailures).toHaveLength(0);
+      expect((await liveUserRow(flaky.id))?.deletedAt).not.toBeNull();
+      expect(report.remainingFixtureCount).toBe(0);
+    },
+  );
+
+  it("idempotent: a second cleanup run against an already-clean fixture set changes nothing", async () => {
+    suiteDb = await createSuiteDb("e2e_cleanup_idempotent");
+    db = suiteDb.db;
+
+    const fixture = await fixtureUser(`idem-${uniq()}`);
+    const first = await cleanup();
+    expect(first.usersDeleted).toBe(1);
+    expect(first.remainingFixtureCount).toBe(0);
+
+    // Falsification: this would go RED if `runE2eCleanup` re-selected
+    // already soft-deleted rows (e.g. dropped the `isNull(deletedAt)`
+    // filter) or threw on an empty candidate set.
+    const second = await cleanup();
+    expect(second.tripsDeleted).toBe(0);
+    expect(second.usersDeleted).toBe(0);
+    expect(second.skippedOwners).toHaveLength(0);
+    expect(second.transientFailures).toHaveLength(0);
+    expect(second.tripFailures).toHaveLength(0);
+    expect(second.remainingFixtureCount).toBe(0);
+    expect((await liveUserRow(fixture.id))?.deletedAt).not.toBeNull();
   });
 });
