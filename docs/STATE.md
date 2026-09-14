@@ -25,6 +25,52 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
+### SESSION 2026-09-13 — B-7 ruled + building, B-28, S-4 wave 2 contract merged, spec-pass round 2, feature-batch spec
+
+Sean (director of product) ruled several parked spec questions in-session;
+PR #72 (S-4 wave 2 session-door contract) merged.
+
+**Rulings:** B-7 — bootstrap city/locality tier (Overture
+`divisions`/`locality`, release `2026-08-19.0`, cut `population ≥ 100k OR
+sovereign capital`, 6,927 rows, one-time snapshot posture like airports) +
+parquet URLs + custom places as a permanent first-class fallback;
+custom-destination UX = inline empty-results row in the picker (no map-drop
+this pass) — three-part build split on the QUEUE B-7 row (part 3, nullable
+coords, queued behind #75). Feature batch (2026-09-06): spec now (PR #71),
+build after sign-off. Spec-pass: one consolidated doc (PR #70, ~300 items,
+Sean still to rule). `.claude/agent-memory/`: gitignore + untrack (rides PR
+#70). S-4 session-door design: all four recs approved (door-free build only
+on door-touching PRs + phase close; client secret build-inlined, never in
+the URL; unique fixture `user_key` per run, no destructive reset;
+loopback/private socket-peer gate). PR #72 round 5 authorized; ultra review
+waived.
+
+**PR map:** #67 B-26 booking-form UX (r2) · #68/#69 B-27 safe-area +
+modal-pin fixes (MERGED pre-session, device confirm owed) · #70 spec-pass
+round-2 doc (open, Sean to rule) · #71 itinerary-evolution spec batch (open,
+pending sign-off) · #72 S-4 wave-2 session-door contract (**MERGED
+`178fc52`** — 5 rounds, security closed 5 blocking spec holes in r1) · #73
+B-7 part 2 mobile custom destination (r2) · #74 B-28 migration-state check
+(r1 fixes) · #75 B-7 part 1 server destination tier (r1 fixes). S-4 T4
+(mobile door, `S-4/session-door-mobile`) in-progress; T3 (server) queued
+behind #74; T5 (flows) queued behind T3+T4.
+
+**Failed approaches (don't re-walk):** (1) shared PG container `afterAll`
+teardown hit a 10s hook timeout under concurrent worktree `pnpm test` runs
+(load 100–300); a standalone run stayed clean — fix is raise the timeout or
+make the drop fire-and-forget, seen by four agents today. (2) A fresh
+worktree's first `pnpm install` reported `FULL TURBO` for
+lint/typecheck/build — a false cache hit; gate numbers must come from
+`--force` runs.
+
+**Infra:** Docker Desktop stuck in a `vmnetd` admin-password prompt loop —
+fixed by Sean at the host level.
+
+**Blockers updated below:** adds PR #70/#71 sign-offs, the sub-floor
+search-name question, B-27 device confirmation; removes
+`.claude/agent-memory/` and `chore/doctor-cleanup-review-loop` (merged PR
+#65, 2026-09-09).
+
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
 Sean ran device QA against `main` (`427bf08`) on his own phone, 2026-09-11
@@ -615,219 +661,6 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   `apps/mobile` package.json/app.json + `packages/tokens` + lockfile —
   disjoint by construction.
 
-### P-7 — Itinerary & bookings (CODE-COMPLETE 2026-08-10 — PHASE QA + F-043..F-054 FLIPS PENDING)
-
-- **The plan surface** (~6 PRs, 9 tasks T-7.1..T-7.9, PLANNING § P-7):
-  bookings by category (10 detail types, §3.2 status machine, single-source
-  calendar items via the §3.1 booking↔item contract), Ideas bucket, day list
-  w/ drag reorder + inline travel times (Mapbox/Transitous leg jobs),
-  calendar-grid gap view (the differentiator), add/edit flows for all types,
-  deeplink-out → return-prompt loop. Ledger **F-043..F-054**. Specs:
-  `.specs/api/itinerary-bookings.spec.md`, `.specs/client/itinerary.spec.md`.
-- **Scoped 2026-07-31 — NO migration owed** (0000 baseline has bookings /
-  itinerary_items / travel_legs, verified) and **NO blocking escalations**:
-  travel-leg adapters build fixture-driven behind ports (T-6.4 $0 precedent);
-  the **Mapbox account + token is a PARKED Sean item** (QUEUE Blocked row —
-  needed for live leg QA later and P-8 maps SDK anyway; Transitous is a
-  keyless community MOTIS instance). Deeplink-out is pure client URL
-  construction (§2.7, research-verified) — no partner APIs, no keys.
-- **Wave plan (build order):**
-  - **W1:** T-7.1 [IB-1] booking domain service + bookings router + §3.7
-    shared contract additions + §3.3 time-derivation helpers (shared — server
-    writes AND client optimistic updates use the same functions) + a
-    **dirty-day no-op seam** (T-6.3 dormant-emitter precedent: frozen
-    `markDaysDirty` contract now, T-7.3 fills the internals — zero cross-wave
-    file contention). **RIDER:** T-6.8 security defer — strip the raw invite
-    `token` from the invites-list envelope (separate commit, same PR; QUEUE
-    row said "next server touch").
-  - **W2 (parallel, worktrees):** T-7.2 [IB-2] itinerary router (item CRUD +
-    kind checks + booking-item protection, day-order PUT, composite read
-    `{items, legs}`) — calls the W1 seam from item mutations ∥ T-7.3 [IB-3]
-    travel-leg dirty-day queue + debounced worker + Mapbox/Transitous
-    adapters + staleness refresh + rate-limited `refresh-legs` — fills the
-    seam internals; files disjoint by construction.
-  - **W3:** T-7.4 [IT-1, IT-2] itinerary tab shell: plan-mode day list,
-    sections, day-jump strip, view-toggle + per-trip persistence, drag
-    reorder (new DnD dependency — exact-pin + provenance per T-6.4
-    precedent), TanStack hooks layer over the new descriptors.
-  - **W4 (parallel):** T-7.7 [IT-6] calendar grid + spanning-lodging lane ∥
-    T-7.6 [IT-5, IT-7] Ideas bucket + add/edit flows (10 types, place picker).
-  - **W5 (parallel):** T-7.5 [IT-3, IT-4] travel-time chips + conflict
-    surfacing ∥ T-7.8 [IT-8] deeplink-out builders + return-prompt loop
-    (built as a self-contained panel component + URL-builder module so W4/W6
-    surfaces consume it rather than collide with it).
-  - **W6:** T-7.9 [IT-9, IT-10] booking/item detail screens + offline
-    degrade of the tab.
-  - Client-wave composition firms up as server waves land (P-6 pattern).
-- **Contract notes:** §3.7 additions land at W1 — `BookingCreate`/`Update`/
-  `BookingWithItems`/`ScheduleBookingInput`, `ItineraryItemCreate`/`Update`,
-  `DayOrderInput`, `ItineraryRead`, `ISOTime` scalar, endpoint descriptors.
-  Viewer role is read-only here, server-enforced (R-ib-24) — reuse the F-038
-  byte-identity IDOR harness. LWW semantics (R-ib-18) are the offline-sync
-  spec's foundation — don't improvise beyond them.
-- **Status:** **P-7 SERVER SURFACE COMPLETE** — W1 **T-7.1 ✅ MERGED b67ba9c
-  (PR #11)** · W2 **T-7.2 ✅ MERGED f529373 (PR #12)** (bodyLimit rider) ∥
-  **T-7.3 ✅ MERGED c440396 (PR #13) 2026-08-01** [IB-3 travel-leg job +
-  refresh, 3 rounds, judge merge/high — the live dirty-day `travelLegs.marker`
-  is now wired into BOTH bookings AND itinerary deps, so item mutations reach
-  the live worker]. **T-7.1 bookings + T-7.2 itinerary + T-7.3 travel-legs all
-  merged.** W5 **T-7.8 ✅ MERGED 70569fe (PR #14) 2026-07-31** — deeplink-out
-  builders + return-prompt loop, 3 rounds, judge merge/high (full narrative:
-  QUEUE row). W3 **T-7.4 [IT-1/IT-2] ✅ MERGED (PR #15) 2026-08-01** — day
-  list + drag reorder; `react-native-reorderable-list` JS-only dep (NO
-  dev-client rebuild — datetimepicker landmine avoided). CLEAN round-1
-  all-5-lanes-ship (0 blocking, 8 advisory), judge merge/high; mobile 517→568.
-  **W3 DONE.** The T-7.4 itinerary hooks/screen live at
-  `apps/mobile/src/data/itinerary.ts`, `apps/mobile/src/app/[tripId]/itinerary/`,
-  and `apps/mobile/src/features/itinerary/` — successor tasks EXTEND these (T-7.5
-  adds a `leg` DayListRow variant at the marked seam; T-7.7 replaces
-  `itinerary-grid-placeholder`; T-7.6 mounts DeeplinkReturnHost + reuses the
-  bookings keys). Remaining P-7 **client** tasks: T-7.5 [IT-3,IT-4] (travel-time
-  chips + conflict — needs T-7.4's legs seam), T-7.6 [IT-5,IT-7] (Ideas bucket +
-  add/edit flows — needs T-7.4 shell + owns the `DeeplinkReturnHost` mount),
-  T-7.7 [IT-6] (calendar grid — replaces T-7.4's grid placeholder), T-7.9
-  [IT-9,IT-10] (booking/item detail + offline degrade). All consume T-7.1's frozen seams.
-  **Mapbox token still PARKED** (Blocked row) — travel legs return transit-only
-  (Transitous keyless) until Sean drops `MAPBOX_ACCESS_TOKEN`; NOT a blocker for
-  T-7.4/7.5 UI (absent legs = "no data" by design).
-- **W4 (dispatched 2026-08-01, parallel isolated worktrees off `202ed49` —
-  the zero-behavior GridSurface seam-prep commit): T-7.7 ✅ MERGED 7a48caf
-  (PR #16) 2026-08-02** [IT-6 calendar grid: hour axis, virtualized day
-  pager + pinned lockstep header, overlap split, all-day chips +
-  spanning-lodging lane, gap-tap prefill; +46 mobile tests, 86 suites/699
-  total; 1 round: 4 lanes ship + tests fix-then-ship (1 blocking — grid
-  pixel geometry unfalsifiable, mutation-proven — + 6 advisory, all fixed
-  or deferred same round), independent verifier re-ran all falsifications,
-  judge merge/high. Judge NOTE for Sean: size-escalation banner NOT
-  precedent-waived (diff 41% tests = majority source) — `/code-review
-ultra` remains available on the merged diff, user-triggered] ∥ **T-7.6
-  ✅ MERGED c587a6b (PR #17) 2026-08-02** [IT-5 Ideas bucket + IT-7 add/edit
-  flows (10 types, place picker, gap-tap day+time prefill consumed) +
-  `DeeplinkReturnHost` MOUNTED; **key-homing ruling EXECUTED** —
-  `bookingKeys` deleted, `queryKeys` is the one key home. Mobile 699→776
-  (92 suites). 2 rounds + 4 fix legs + 3 independent verifications; judge
-  merge/high (it re-ran the whole gate itself rather than grading reports).
-  27 interpretations → QUEUE spec-pass row]. **W4 DONE — W5 (T-7.5 travel
-  chips + conflict) and W6 (T-7.9 detail + offline) remain.** T-7.7's 15
-  interpretations (incl. MIN_BLOCK_HEIGHT floor + grid testIDs) also in the
-  QUEUE spec-pass row.
-- **W5 ✅ T-7.5 MERGED a84c9cf (PR #18) 2026-08-03** [IT-3 travel chips +
-  mode sheet + Google-Maps directions handoff + absent-leg states · IT-4
-  list overlap chips + sort-by-time + the R-itin-20 form conflict notice].
-  Mobile 776→**898 tests / 99 suites**; guard suite 49. 2 rounds + 4 fix
-  legs + 3 independent verifications + a targeted security pass; judge
-  merge/high (it independently probed the 4th fix leg, which no verifier
-  had covered, and read `legs-model.ts` in full). 35 interpretations →
-  spec-pass row. **P-7 is now ONE TASK from code-complete: T-7.9
-  [IT-9, IT-10] booking/item detail + offline degrade.** Run it serially
-  (it wants the screen file) unless a seam is frozen first, per the W4
-  precedent — the frozen-seam pattern produced ZERO conflicts across two
-  large concurrent PRs and is the reason W4 worked.
-- **W6 ✅ T-7.9 MERGED a572947 (PR #19) 2026-08-10 — P-7 CODE-COMPLETE**
-  (all 9 tasks, PRs #11–#19; full round narrative: QUEUE row). Booking/item
-  detail + offline degrade; the cancel flow pinned end-to-end into
-  `reconcileBookingRow`'s removal arm (survived 2 novel verifier probes).
-  Mobile 898→**1011 tests / 107 suites**. 1 round + 1 fix leg (9e15a28 prod +
-  e8c63f9 tests) + independent verification, judge merge/high. R1: 2 blocking
-  (BOTH detail screens' R-itin-29 offline arms UNPINNED — a 5-way gap mutation
-  stayed 66/66 green against the PR's explicit both-screens claim; snake_case
-  `-field-{key}` testIDs forking the §2.7 kebab inventory) + 9 advisory —
-  8 fixed, ONE defer (offline signal blind to mutation-cache transport
-  failures → QUEUE row; rides the interp-15 measured-connectivity escalation).
-  `refresh-legs` inherited deferral CLOSED WON'T-BUILD (§2.10 names day-of leg
-  refresh verbatim; R-ib-23 covers online; R-itin-6 forbids the affordance —
-  citations lane-verified). **NEW LANDMINES:** held-in-flight pins must
-  collect deferred resolvers in an ARRAY (single slot strands the 2nd fire and
-  WEDGES the file instead of going RED — now in mobile.md); the deeplink
-  return-record store is device-local MMKV shared ACROSS trips — any clear
-  path must be role/context-guarded (fixer's failed-open guard, verifier-
-  validated). Large-diff escalation banner fired (3348 adds) — PR #16
-  note-not-stop precedent; `/code-review ultra` stays available on the merged
-  diff, Sean-triggered. **NEXT: phase QA — batch P-6 checklist ①–⑦ + P-7
-  checklist in ONE dev-client rebuild + sim session → F-030..F-054 flips.**
-- **🔴 NUL-BYTE / INVISIBLE-DIFF INCIDENT (T-7.5, the most important thing
-  this phase learned).** Two raw `U+0000` bytes typed into
-  `legs-model.ts` made git classify it BINARY: `gh pr diff` rendered ZERO
-  lines and GitHub's API reported `additions=0, patch=false`, so a
-  6641-byte production module (incl. `pickDefaultMode`) passed a FIVE-LANE
-  review that structurally could not display it — and BSD `grep` exits 1
-  **silently** on such a file, so an agent searching concludes the symbol
-  doesn't exist. tsc/eslint/expo-lint all pass. Fixed + **guard-enforced
-  repo-wide** (`.github/scripts/check-nul-bytes.mjs`, wired into the Guard
-  job, 49 tests, exit contract pinned both directions). Rule now in
-  `.claude/rules/mobile.md`; it had lived ONLY in `server.md`, path-scoped
-  to `apps/server/**`, which is exactly why mobile re-stepped it —
-  **a universal landmine must not live in one workspace's rule file.**
-  Residual, NOT closed (QUEUE row): a `.gitattributes` `*.ts -diff`
-  reproduces the identical invisible diff with zero NUL bytes.
-- **Vacuous-pin taxonomy (7 found in T-7.5/T-7.6 — a green suite proves
-  nothing until mutated).** All in `.claude/rules/mobile.md`: (1) rejecting
-  an already-settled promise never observes in-flight state; (2) non-strict
-  zod STRIPS unknown keys so a misspelled field round-trips green; (3) RNTL
-  won't fire a handler on a `disabled` element, so "press it, assert
-  nothing happened" passes with the guard gone; (4) a fixture where two
-  behaviors yield the same value (23:00, where clip-at-midnight ==
-  start+60min); (5) a CONTROL arm that structurally can't reach the code it
-  controls for (a car rental can never hit a `lodging` clause); (6) a "no-op
-  mutation" that looks like a passing falsification (`undefined ?? null`);
-  (7) asserting a negative with no ungated control. **Rule: every negative
-  assertion needs a control arm proving it could have failed, and every
-  probe must be confirmed applied via `git diff --stat` before its result
-  is trusted.**
-- **T-7.6/T-7.7 landmines (NEW — 3 VACUOUS-PIN FLAVORS, all codified in
-  `.claude/rules/mobile.md`; a green suite proved nothing three times in one
-  PR):** (1) a pin that rejects an ALREADY-SETTLED promise never observes the
-  in-flight state — optimistic write + rollback flush in one notify batch;
-  (2) `BookingDetailsSchema` (and any non-strict zod object) STRIPS unknown
-  keys, so a misspelled detail key round-trips green — assert
-  `parsed.data == built.details`; (3) RNTL won't fire a handler on a
-  `disabled` element, so "press it, assert nothing happened" passes with the
-  guard removed. **Rule: every negative assertion needs an ungated control
-  arm proving it could have failed.** Also: the DS Sheet scrim is unqueryable
-  in RNTL (`opacity:0` Animated.View, entrance value never advances) — drive
-  the close button, or `includeHiddenElements: true`.
-- **DS Sheet gained `dismissDisabled`** (T-7.6, strictly additive, default
-  off): gates all four dismissal routes (close/scrim/swipe/Android-back)
-  behind one memoized `guardedDismiss` AND renders the close affordance
-  visibly disabled. Use it for any sheet wrapping an uninterruptible
-  operation — and pair it with a caller-side `isPending` early-return, since
-  the swipe route is wired but **not test-pinned** (documented gap: no
-  non-vacuous pin is constructible — PanResponder needs real touch history).
-- **Client cache invariant (T-7.6):** the cached default bookings list must
-  always satisfy the server's R-ib-10 predicate — `reconcileBookingRow`
-  inserts only non-cancelled rows and REMOVES rows that become cancelled.
-  T-7.9 wires R-itin-26 cancel; do not regress this to a map-replace.
-- **T-7.1 landmines (NEW — binding on all P-7+ surfaces):**
-  - **Caps must cover EVERY schema class, not just obvious strings** — zod
-    `iso.datetime()` accepts unbounded fractional seconds; a 2MB string is a
-    "valid datetime" (PR #11 R2 blocker, found IN the caps-fix diff). When
-    capping a wire surface, sweep the whole union: strings, arrays, array
-    ELEMENTS, and every formatted-scalar class.
-  - **Place visibility has ONE home:** `apps/server/src/places/visibility.ts`
-    — every surface that writes a client-supplied `place_id` (bookings now;
-    itinerary items T-7.2; anything later) MUST consume it with the
-    indistinguishable-404 posture. `bookings.place_id` (and soon
-    `itinerary_items.place_id`) is a VISIBILITY GRANT in places search —
-    writing it unchecked is a Law #3 bypass (PR #11 R1 blocker class).
-  - **Lock order extended:** users → trip_members → invites → bookings →
-    itinerary_items. Mutating a booking-kind item goes THROUGH the booking
-    service (parent booking FOR UPDATE first), never directly.
-  - **Dirty-day seam:** `bookings/dirty-days.ts` interface FROZEN
-    (`markDaysDirty`, post-commit-only, never-throws, duplicates OK);
-    T-7.3 owns the internals.
-  - Place-FK 23503 → canonical 404 mapping is constraint-precise
-    (`isPlaceFkViolation` handles both driver field shapes); copy that
-    pattern for any new FK-race mapping.
-- **T-7.8 landmine → RESOLVED at DS level (PR #16 rider, 2026-08-02):** the
-  Sheet exit-window tax (bit T-6.9, PR #14 R2+R3) is LIFTED —
-  `pointerEvents:"none"` while exiting + unmount-latch guard (re-armed in
-  the effect body, StrictMode-proof) landed in `components/Sheet.tsx`.
-  Existing consumer exit-drains are now harmless no-ops; new sheet
-  consumers need NO special posture. Residual (documented, pinned by the
-  reworked members test): same-frame multi-touch can still land two
-  presses before the closing commit — the hook-level v5 mutation seam is
-  what handles that overlap, so that seam rule still binds.
-
 ### Rotated phases — archived, pointers only (rotated 2026-09-13)
 
 Closed/code-complete phases live in `docs/history/`, not here (doc-homes rule:
@@ -835,6 +668,10 @@ STATE rotation is Claude's job). Their landmine digests, phase-QA checklists and
 port-source notes were appended to the archives on 2026-09-13 before this section
 was trimmed — nothing was dropped.
 
+- **P-7 — Itinerary & bookings** (code-complete 2026-08-10; ledger F-043..F-054
+  still `passes:false`, phase QA still un-run — batched with the P-6 checklist) →
+  [PHASE-007](history/PHASE-007-itinerary-bookings.md). Rotated 2026-09-13 (STATE
+  was over the ~1000-line advisory cap). Live tracking row: QUEUE "P-7 phase QA".
 - **P-6 — Trips, collaboration & places spine** (code-complete 2026-07-31; ledger
   F-030..F-042 still `passes:false`, phase QA still un-run) →
   [PHASE-006](history/PHASE-006-trips-collab-places.md). **Appendix A.1** is the
@@ -1001,14 +838,18 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 
 ## Blockers / Waiting on Sean
 
-- **`chore/doctor-cleanup-review-loop` is unpushed (2026-09-08).** Three
-  commits on the main checkout — retiring the verdict aggregator, retiring
-  the fixed 5-lane review pipeline skill, making `/review-loop` canonical —
-  exist only on this machine. Needs a push + PR, or it's one disk failure
-  from gone.
-- **`.claude/agent-memory/` is untracked and not gitignored (P3, Sean's
-  call — QUEUE Active row).** Already being written to; will appear as noise
-  in every `git status` until committed or ignored.
+- **PR #70** (spec-pass round-2 consolidated decision doc, ~300 items) —
+  awaiting Sean's rulings.
+- **PR #71** (itinerary-evolution spec batch) — awaiting Sean's sign-off;
+  both his questions already ruled (tz switcher = display-only; Month = true
+  month grid).
+- **Sub-floor destination-tier search names** (`Fez`/`Van`/`Ufa`/`Qom` etc. —
+  54 rows under the 4-char global text-search floor) — Sean to rule:
+  exact-match arm for sub-floor tier queries vs. lower the floor vs. accept.
+  QUEUE Active row.
+- **B-27 device confirmation still owed:** the doubled top safe-area inset
+  fix shipped via PR #68 (`098b3e5`) but has not been confirmed on Sean's
+  device.
 - **Device QA still owed:** the F-0xx ledger flips, and the P-9
   spec-pass batch (43+ interpretations) plus the other Sean-gated spec
   decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
