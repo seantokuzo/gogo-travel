@@ -35,33 +35,59 @@
  * selected by `apple_sub LIKE 'e2e:%'`, in `cleanup.ts`).
  */
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const serverDir = join(repoRoot, "apps", "server");
+function main() {
+  const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const serverDir = join(repoRoot, "apps", "server");
 
-if (!process.env.DATABASE_URL) {
-  console.error(
-    "e2e-cleanup: DATABASE_URL is not set — point it at the e2e lane's database " +
-      "(e.g. `set -a && . apps/server/.env.test && set +a`) before running this.",
-  );
-  process.exit(1);
+  if (!process.env.DATABASE_URL) {
+    console.error(
+      "e2e-cleanup: DATABASE_URL is not set — point it at the e2e lane's database " +
+        "(e.g. `set -a && . apps/server/.env.test && set +a`) before running this.",
+    );
+    process.exit(1);
+  }
+
+  const child = spawn(process.execPath, ["--import", "tsx", "src/e2e/cleanup-cli.ts"], {
+    cwd: serverDir,
+    // Forward the caller's env as-is (DATABASE_URL is the only var the CLI
+    // reads) — no secret ever passes through argv (Law #1: argv lands in
+    // shell history and is visible to every local process via `ps`).
+    env: process.env,
+    stdio: "inherit",
+  });
+
+  child.on("exit", (code, signal) => {
+    process.exit(signal ? 1 : (code ?? 1));
+  });
+  child.on("error", (err) => {
+    console.error(`e2e-cleanup: failed to launch — ${err.message}`);
+    process.exit(1);
+  });
 }
 
-const child = spawn(process.execPath, ["--import", "tsx", "src/e2e/cleanup-cli.ts"], {
-  cwd: serverDir,
-  // Forward the caller's env as-is (DATABASE_URL is the only var the CLI
-  // reads) — no secret ever passes through argv (Law #1: argv lands in
-  // shell history and is visible to every local process via `ps`).
-  env: process.env,
-  stdio: "inherit",
-});
+/**
+ * Main-guard (review round 1 adversarial finding 4) — see
+ * `apps/server/src/e2e/cleanup-cli.ts`'s identical guard for the full
+ * rationale (`process.argv[1]` can be a symlink that resolves to this file;
+ * `import.meta.url` always reports the resolved path, so a raw string
+ * compare would silently never match a symlinked invocation). Without this,
+ * importing the module for any reason (a future test, a bundler that
+ * statically analyzes it) unconditionally checks `DATABASE_URL` and calls
+ * `process.exit(1)` or spawns a child process at IMPORT time.
+ */
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return fileURLToPath(import.meta.url) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+}
 
-child.on("exit", (code, signal) => {
-  process.exit(signal ? 1 : (code ?? 1));
-});
-child.on("error", (err) => {
-  console.error(`e2e-cleanup: failed to launch — ${err.message}`);
-  process.exit(1);
-});
+if (isMainModule()) {
+  main();
+}

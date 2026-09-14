@@ -127,15 +127,29 @@ export interface DeleteTripCoreResult {
  * proves the caller owns the trip before this ever runs, so re-checking
  * membership here is a no-op on every HTTP-path test (byte-identical
  * behavior, S-4/T3 deliverable #1). For a caller with NO upstream gate (the
- * cleanup script), this is real defense-in-depth: a trip whose fenced
- * membership snapshot doesn't include the presented actor is left untouched
- * (`deleted: false`) instead of deleted on the strength of the caller's own
- * classification alone.
+ * cleanup script), this checks MEMBERSHIP, not ownership (review round 1
+ * correctness finding 6 — the prior wording here read as an authz boundary
+ * it is not): a trip whose fenced membership snapshot doesn't include the
+ * presented actor is left untouched (`deleted: false`). An ungated caller
+ * that needs OWNER semantics must check `role = 'owner'` itself, the way
+ * `scripts/e2e-cleanup.mjs`'s `ownedByFixture` query already does.
+ *
+ * `allowedMemberIds` (review round 1 security finding 1 / correctness
+ * advisory 4): an optional second fence, checked against the SAME `FOR
+ * UPDATE` snapshot as the actor check — every fenced member must also be in
+ * this set, or the trip is left untouched. `scripts/e2e-cleanup.mjs`
+ * classifies a trip as "all-fixture" from a snapshot taken OUTSIDE this
+ * transaction; a real (non-fixture) user can join between that snapshot and
+ * this delete. Passing the live fixture id set here makes the
+ * classification authoritative AT DELETE TIME — one extra `Set.has` per
+ * fenced member, no extra query — instead of trusting the caller's earlier
+ * read.
  */
 export async function deleteTripCore(
   db: DbClient,
   tripId: string,
   actorUserId: string,
+  allowedMemberIds?: ReadonlySet<string>,
 ): Promise<DeleteTripCoreResult> {
   let memberSnapshot: readonly string[] = [];
 
@@ -153,6 +167,12 @@ export async function deleteTripCore(
     // require the presented actor to be a fenced member — a no-op for the
     // route (already gate-proven), a real guard for an ungated caller.
     if (memberSnapshot.length > 0 && !memberSnapshot.includes(actorUserId)) {
+      return [];
+    }
+    // `allowedMemberIds` re-verifies EVERY fenced member, not just the
+    // actor — closes the snapshot-vs-fence window a caller like cleanup's
+    // all-fixture classification is otherwise exposed to.
+    if (allowedMemberIds && memberSnapshot.some((id) => !allowedMemberIds.has(id))) {
       return [];
     }
 

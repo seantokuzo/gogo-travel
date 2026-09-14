@@ -931,6 +931,39 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     expect(await dbTrip(trip.id)).toBeDefined();
   });
 
+  it("deleteTripCore: a fenced member outside allowedMemberIds leaves an EXISTING trip untouched (review round 1 security finding 1 — cleanup's all-fixture classification guard)", async () => {
+    // Falsification: drop the `allowedMemberIds` check in `deleteTripCore`
+    // (always attempt the delete once the actor check passes) and this goes
+    // RED — mirrors the actor-guard test above, but for cleanup's real
+    // caller shape: the OWNER passed as `actorUserId` is fine (it's a
+    // fenced member), but the EDITOR isn't in the allowed set — simulating
+    // a real, non-fixture user who joined the trip after cleanup's
+    // classification snapshot was taken and before this fenced delete runs.
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+
+    const result = await deleteTripCore(db, trip.id, owner.userId, new Set([owner.userId]));
+
+    expect(result.deleted).toBe(false);
+    expect(new Set(result.memberSnapshot)).toEqual(
+      new Set([owner.userId, editor.userId, viewer.userId]),
+    );
+    expect(await dbTrip(trip.id)).toBeDefined();
+  });
+
+  it("deleteTripCore: EVERY fenced member inside allowedMemberIds still deletes the trip", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+
+    const result = await deleteTripCore(
+      db,
+      trip.id,
+      owner.userId,
+      new Set([owner.userId, editor.userId, viewer.userId]),
+    );
+
+    expect(result.deleted).toBe(true);
+    expect(await dbTrip(trip.id)).toBeUndefined();
+  });
+
   // ===========================================================================
   // T-6.3 push invalidation (§3.5 rule 6, R-trips-18 / API-TRIPS-4)
   // ===========================================================================
