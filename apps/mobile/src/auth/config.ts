@@ -24,13 +24,33 @@ function withApiSuffix(url: string): string {
 /** Loopback hosts where cleartext http is always fine (simulator / same box). */
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
-/** True for loopback + RFC-1918 LAN + mDNS hosts — the Metro dev surfaces. */
-function isLocalOrPrivateHost(host: string): boolean {
+/**
+ * True for loopback + RFC-1918 LAN + mDNS hosts — the Metro dev surfaces.
+ *
+ * Exported (session-door spec R-door-7): the E2E session door's client gate
+ * imports this SAME predicate rather than duplicating the host list, so the
+ * door is inert whenever this build's resolved API base is not local/private
+ * — including a build that carries the inlined secret but was later pointed
+ * at a hosted base. `apps/server`'s peer-gate predicate (R-door-11,
+ * `isLoopbackOrPrivatePeer`) is a DELIBERATELY separate implementation: it
+ * checks a socket-peer IP literal server-side, not a client-chosen hostname,
+ * and the two apps have no import path between them anyway.
+ */
+export function isLocalOrPrivateHost(host: string): boolean {
   if (LOOPBACK_HOSTS.has(host)) return true;
   if (host.endsWith(".local")) return true; // mDNS / Bonjour dev host
   if (/^10\./.test(host)) return true; // 10.0.0.0/8
   if (/^192\.168\./.test(host)) return true; // 192.168.0.0/16
   return /^172\.(1[6-9]|2\d|3[01])\./.test(host); // 172.16.0.0/12
+}
+
+/**
+ * Bare hostname from a base URL (`http://host:port/path` → `host`) — the same
+ * extraction `assertSecureBaseUrl` uses, exported so the e2e-door module
+ * shares it rather than re-implementing the split (session-door spec R-door-7).
+ */
+export function hostOf(url: string): string {
+  return url.replace(/^https?:\/\//, "").split(/[:/]/)[0] ?? "";
 }
 
 /**
@@ -42,7 +62,7 @@ function isLocalOrPrivateHost(host: string): boolean {
  */
 export function assertSecureBaseUrl(url: string, dev: boolean = __DEV__): string {
   if (url.startsWith("https://")) return url;
-  const host = url.replace(/^https?:\/\//, "").split(/[:/]/)[0] ?? "";
+  const host = hostOf(url);
   if (dev || isLocalOrPrivateHost(host)) return url;
   throw new Error(
     "Insecure API base URL: a non-https endpoint is refused in release builds " +

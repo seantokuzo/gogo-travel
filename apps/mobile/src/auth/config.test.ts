@@ -15,7 +15,7 @@
 import Constants from "expo-constants";
 import { NativeModules } from "react-native";
 
-import { assertSecureBaseUrl, resolveApiBaseUrl } from "./config";
+import { assertSecureBaseUrl, hostOf, isLocalOrPrivateHost, resolveApiBaseUrl } from "./config";
 
 describe("assertSecureBaseUrl", () => {
   it("allows any https URL (prod transport)", () => {
@@ -198,5 +198,51 @@ describe("resolveApiBaseUrl", () => {
       setScriptUrl("http://192.168.1.69:8081/index.bundle?platform=ios&dev=true");
       expect(resolveApiBaseUrl()).toBe("http://192.168.1.69:3000/api");
     });
+  });
+});
+
+// Exported (session-door spec R-door-7): the e2e-door client gate imports
+// this SAME predicate rather than duplicating the host list — these pins
+// double as the door's own gate coverage.
+describe("isLocalOrPrivateHost (session-door spec R-door-7)", () => {
+  it.each([
+    ["localhost", true],
+    ["127.0.0.1", true],
+    ["::1", true],
+    ["0.0.0.0", true],
+    ["macbook.local", true],
+    ["10.0.0.5", true],
+    ["192.168.1.50", true],
+    ["172.16.5.5", true],
+    ["172.31.255.255", true],
+    // boundary: 172.15/172.32 are OUTSIDE the 172.16.0.0/12 RFC-1918 block.
+    ["172.15.0.1", false],
+    ["172.32.0.1", false],
+    ["api.gogotravel.example", false],
+    ["8.8.8.8", false],
+    ["evil.com", false],
+  ])("%s -> %s", (host, expected) => {
+    expect(isLocalOrPrivateHost(host)).toBe(expected);
+  });
+});
+
+describe("hostOf", () => {
+  it("extracts the bare host from a base URL, port and path stripped", () => {
+    expect(hostOf("http://localhost:3000/api")).toBe("localhost");
+    expect(hostOf("https://api.gogotravel.example/api")).toBe("api.gogotravel.example");
+    expect(hostOf("http://192.168.1.50:3000/api")).toBe("192.168.1.50");
+  });
+
+  it("extraction is IDENTICAL to assertSecureBaseUrl's own inline parse (no new behavior)", () => {
+    // `hostOf` is a pure extraction of the exact regex `assertSecureBaseUrl`
+    // already used inline — this pin is the refactor's safety net: any
+    // future edit to one MUST edit the other, since a future edit to only
+    // one would desync the transport guard from the e2e-door gate that now
+    // shares it (R-door-7). NOT `@`-userinfo-safe (that guard lives only in
+    // `resolveMetroHost`, a different function with a different input
+    // source) — a pre-existing characteristic this refactor does not change.
+    expect(hostOf("http://192.168.1.1@evil.example:8081/index.bundle")).toBe(
+      "192.168.1.1@evil.example",
+    );
   });
 });
