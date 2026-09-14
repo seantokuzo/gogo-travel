@@ -31,6 +31,7 @@ import type { PlaceSource } from "@gogo/shared/enums";
 import { PLACES_SEARCH_MISS_MAX_CELLS, RATE_LIMITS } from "../config.js";
 import { createApp } from "../app.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
+import { isCheckViolationOf } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
@@ -770,6 +771,150 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
       expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
     }
     expect((await postPlace(undefined, { name: "Ok", lat: 35, lng: 139 })).status).toBe(401);
+  });
+
+  // ===========================================================================
+  // B-7 part 3: nullable coordinates for custom places
+  // ===========================================================================
+
+  it("[B-7 part 3] POST: omitting BOTH lat/lng creates a coordinate-less custom place — 201 with null, never 0", async () => {
+    const user = await seedUserWithToken();
+    const res = await postPlace(user.accessToken, { name: "Grandma's cabin" });
+    expect(res.status).toBe(201);
+    const place = PlaceSchema.parse(await res.json());
+    expect(place.lat).toBeNull();
+    expect(place.lng).toBeNull();
+    expect(place.source).toBe("custom");
+
+    // The DB row itself is NULL, not the string "0" (S2 pin).
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification: restore `lat: String(body.lat)` unconditionally at
+    // places/routes.ts's insert — `String(undefined) === "undefined"`, a
+    // numeric-column write that throws at the driver, and this whole test
+    // reds with a 500 instead of a 201.
+  });
+
+  it("[B-7 part 3] POST: exactly one of lat/lng present → 400 (the pair moves together)", async () => {
+    const user = await seedUserWithToken();
+    expect((await postPlace(user.accessToken, { name: "Half a place", lat: 35.6 })).status).toBe(
+      400,
+    );
+    expect((await postPlace(user.accessToken, { name: "Half a place", lng: 139.7 })).status).toBe(
+      400,
+    );
+  });
+
+  it("[B-7 part 3] PATCH: a map-drop onto a coordinate-less custom place sets real coordinates (the P-8 follow-up seam stays open)", async () => {
+    const user = await seedUserWithToken();
+    const created = await postPlace(user.accessToken, { name: "Someday cabin" });
+    const place = PlaceSchema.parse(await created.json());
+    expect(place.lat).toBeNull();
+
+    const patched = await patchPlace(place.id, user.accessToken, { lat: 35.61, lng: 139.61 });
+    expect(patched.status).toBe(200);
+    const updated = PlaceSchema.parse(await patched.json());
+    expect(updated.lat).toBeCloseTo(35.61, 6);
+    expect(updated.lng).toBeCloseTo(139.61, 6);
+  });
+
+  it("[B-7 part 3] search: a coordinate-less custom place is found by TEXT-ONLY search, and invisible to bbox/near (R-places-27)", async () => {
+    const user = await seedUserWithToken();
+    const created = await postPlace(user.accessToken, {
+      name: `Nullisland Cabin ${uniq()}`,
+    });
+    const place = PlaceSchema.parse(await created.json());
+    expect(place.lat).toBeNull();
+
+    // Text-only: found, ranked by text similarity alone.
+    const textHit = await searchOk(user.accessToken, `q=${encodeURIComponent(place.name)}`);
+    expect(textHit.items.map((p) => p.id)).toContain(place.id);
+
+    // A bbox covering (0,0) — a coordinate-less row can never satisfy
+    // `lat/lng BETWEEN ...` (NULL BETWEEN is never true) — absent.
+    const bboxHit = await searchOk(
+      user.accessToken,
+      `q=${encodeURIComponent(place.name)}&bbox=-1,-1,1,1`,
+    );
+    expect(bboxHit.items.map((p) => p.id)).not.toContain(place.id);
+
+    // Law #3 pin: text-only visibility is STILL R-places-8-gated — a
+    // stranger never sees it, coordinate-less or not (only the geo BETWEEN
+    // exclusion is new; the visibility predicate is unchanged, R-places-6).
+    const stranger = await seedUserWithToken();
+    const strangerHit = await searchOk(stranger.accessToken, `q=${encodeURIComponent(place.name)}`);
+    expect(strangerHit.items.map((p) => p.id)).not.toContain(place.id);
+    // Falsification: drop the `createdBy = userId` arm from the visibility
+    // predicate (search-query.ts) — this reds ("Mom's house" reappears in a
+    // stranger's search).
+
+    // Same for `near`.
+    const nearHit = await searchOk(
+      user.accessToken,
+      `q=${encodeURIComponent(place.name)}&near=0,0&radius_m=50000`,
+    );
+    expect(nearHit.items.map((p) => p.id)).not.toContain(place.id);
+    // Falsification: change the bbox/near BETWEEN predicates in
+    // search-query.ts to `lat IS NULL OR lat BETWEEN ...` — the bbox/near
+    // assertions above go red (the row reappears where it must not).
+  });
+
+  it("[B-7 part 3] search: a text-only page containing a coordinate-less row still paginates (cursor round-trip, the coalesce belt)", async () => {
+    const user = await seedUserWithToken();
+    const stem = `Nullpage${uniq()}`;
+    const noCoordsName = `${stem} Alpha`;
+    const withCoordsName = `${stem} Beta`;
+    const noCoords = PlaceSchema.parse(
+      await (await postPlace(user.accessToken, { name: noCoordsName })).json(),
+    );
+    const withCoords = PlaceSchema.parse(
+      await (
+        await postPlace(user.accessToken, { name: withCoordsName, lat: 35.5, lng: 139.5 })
+      ).json(),
+    );
+
+    const page1 = await searchOk(user.accessToken, `q=${encodeURIComponent(stem)}&limit=1`);
+    expect(page1.items).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2Res = await search(
+      user.accessToken,
+      `q=${encodeURIComponent(stem)}&limit=1&cursor=${encodeURIComponent(page1.nextCursor!)}`,
+    );
+    expect(page2Res.status).toBe(200);
+    const page2 = PaginatedPlacesSchema.parse(await page2Res.json());
+    expect(page2.items).toHaveLength(1);
+
+    // No duplicate, no drop — both rows appear across the two pages exactly once.
+    const seen = [...page1.items, ...page2.items].map((p) => p.id).sort();
+    expect(seen).toEqual([noCoords.id, withCoords.id].sort());
+    // Falsification: remove the `coalesce(..., 0::bigint)` belt around
+    // `proxTerm` AND force an anchor (a `near`/`bbox` alongside `q`) — the
+    // documented reason the belt exists (round-1 review finding).
+  });
+
+  it("[B-7 part 3] DB CHECK: places_coords_pair_ck rejects half a coordinate; places_spine_coords_ck rejects a null-coord spine row (23514)", async () => {
+    await expect(
+      db.insert(schema.places).values({
+        source: "custom",
+        name: "Half pair direct insert",
+        lat: "35.6",
+        lng: null,
+      }),
+    ).rejects.toSatisfy((err: unknown) => isCheckViolationOf(err, "places_coords_pair_ck"));
+
+    await expect(
+      db.insert(schema.places).values({
+        source: "overture",
+        sourceId: `ovt-null-${uniq()}`,
+        name: "Spine row with no coordinates",
+        lat: null,
+        lng: null,
+      }),
+    ).rejects.toSatisfy((err: unknown) => isCheckViolationOf(err, "places_spine_coords_ck"));
+    // Falsification: drop either CHECK from the migration — the matching
+    // assertion above reds (the insert succeeds instead of throwing).
   });
 
   // ===========================================================================

@@ -144,9 +144,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             name: body.name,
             destinationName: body.destination_name,
             // numeric columns are string-mode (see db/schema/_shared.ts);
-            // range was validated by the shared Lat/Lng schemas.
-            destinationLat: String(body.destination_lat),
-            destinationLng: String(body.destination_lng),
+            // range was validated by the shared Lat/Lng schemas. NULL (B-7
+            // part 3: the picked place had no coordinates) passes through —
+            // never a placeholder.
+            destinationLat: body.destination_lat === null ? null : String(body.destination_lat),
+            destinationLng: body.destination_lng === null ? null : String(body.destination_lng),
             startDate: body.start_date,
             endDate: body.end_date,
             status: effectiveTripStatus(
@@ -170,7 +172,9 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       // region ingest. Fire-and-forget by contract — the trigger never
       // throws, and this belt-and-braces catch guarantees a broken seam
       // still can't fail the create (trip creation SHALL NOT block on, or
-      // fail because of, ingestion).
+      // fail because of, ingestion). Called unconditionally — B-7 part 3:
+      // a null destination (coordinate-less custom place) is the trigger's
+      // own no-op arm (ingest-queue.ts), not a route-level branch.
       try {
         deps.placesIngest?.enqueueDestination(body.destination_lat, body.destination_lng);
       } catch {
@@ -405,8 +409,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         const set: Partial<typeof schema.trips.$inferInsert> = { status: nextStatus };
         if (body.name !== undefined) set.name = body.name;
         if (body.destination_name !== undefined) set.destinationName = body.destination_name;
-        if (body.destination_lat !== undefined) set.destinationLat = String(body.destination_lat);
-        if (body.destination_lng !== undefined) set.destinationLng = String(body.destination_lng);
+        // NULL (B-7 part 3: the newly-picked place has no coordinates)
+        // passes through — never `String(null)` (a numeric-column write
+        // that would throw at the driver).
+        if (body.destination_lat !== undefined) {
+          set.destinationLat = body.destination_lat === null ? null : String(body.destination_lat);
+        }
+        if (body.destination_lng !== undefined) {
+          set.destinationLng = body.destination_lng === null ? null : String(body.destination_lng);
+        }
         if (body.start_date !== undefined) set.startDate = body.start_date;
         if (body.end_date !== undefined) set.endDate = body.end_date;
         if (body.theme !== undefined) set.theme = body.theme;
@@ -470,19 +481,32 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // Destination change (R-places-1: "…or its destination changes") —
         // VALUE-diff, not key-presence: resubmitting identical coords is not
         // a change (numeric columns are strings; compare numerically). The
-        // flag only escapes if this transaction commits.
+        // flag only escapes if this transaction commits. Null-safe (B-7
+        // part 3): `Number(null) === 0` would diff a null→null resubmit
+        // against a phantom Null Island, so nulls compare by identity, not
+        // by coercion.
+        const numOrNull = (value: string | null): number | null =>
+          value === null ? null : Number(value);
         destinationChanged =
           (body.destination_lat !== undefined &&
-            Number(current.destinationLat) !== body.destination_lat) ||
+            numOrNull(current.destinationLat) !== body.destination_lat) ||
           (body.destination_lng !== undefined &&
-            Number(current.destinationLng) !== body.destination_lng);
+            numOrNull(current.destinationLng) !== body.destination_lng);
 
         return row;
       });
 
       // POST-COMMIT ingest trigger for the moved destination — same
-      // fire-and-forget contract as the create hook (R-places-1).
-      if (destinationChanged) {
+      // fire-and-forget contract as the create hook (R-places-1). B-7 part
+      // 3: only when the NEW destination actually carries coordinates —
+      // `Number(updated.destinationLat)` on a null column would enqueue
+      // Null Island for a real→null change; a null→null resubmit never
+      // reaches here at all (destinationChanged is false for it).
+      if (
+        destinationChanged &&
+        updated.destinationLat !== null &&
+        updated.destinationLng !== null
+      ) {
         try {
           deps.placesIngest?.enqueueDestination(
             Number(updated.destinationLat),

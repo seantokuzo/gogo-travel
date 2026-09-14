@@ -133,8 +133,14 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
     params.q !== undefined
       ? sql`(round(similarity(${places.name}, ${params.q})::numeric * 1000000)::bigint * 10000000000::bigint)`
       : sql`0::bigint`;
+  // B-7 part 3 belt: a coordinate-less custom place (places.lat/lng NULL)
+  // can only reach here with an anchor if the geo BETWEEN predicates below
+  // somehow let it through (they don't — NULL BETWEEN is never true, so
+  // such a row never survives the WHERE). `coalesce` guards the ranking
+  // arithmetic anyway so a future predicate change degrades to "worst rank",
+  // never a silently-dropped NULL row (see routes.db.test.ts's cursor pin).
   const proxTerm = distanceM
-    ? sql`greatest(0::bigint, 1000000000::bigint - round(${distanceM} * 1000.0)::bigint)`
+    ? sql`coalesce(greatest(0::bigint, 1000000000::bigint - round(${distanceM} * 1000.0)::bigint), 0::bigint)`
     : sql`0::bigint`;
   const rankExpr = sql<string>`(${simTerm} + ${proxTerm})`;
 
@@ -164,7 +170,11 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
     predicates.push(sql`${places.name} % ${params.q}`);
   }
 
-  // Geo: bare-column BETWEEN probes (params cast, columns never).
+  // Geo: bare-column BETWEEN probes (params cast, columns never). B-7 part 3:
+  // no predicate change needed here — a coordinate-less custom place
+  // (lat/lng NULL) never satisfies `NULL BETWEEN ...`, so it is automatically
+  // excluded from bbox/near search and automatically included in text-only
+  // search. Pinned in routes.db.test.ts.
   if (params.bbox) {
     predicates.push(
       sql`${places.lat} between ${params.bbox.minLat}::numeric and ${params.bbox.maxLat}::numeric`,

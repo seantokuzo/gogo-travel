@@ -36,6 +36,7 @@ import {
 import type { TripMemberRole } from "@gogo/shared/enums";
 import { createApp } from "../app.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
+import { isCheckViolationOf } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
@@ -72,6 +73,8 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
   let authDeps: AuthRouterDeps;
   let signer: AccessTokenSigner;
   let pushEvents: RecordingTripEvents;
+  /** B-7 part 3: captures every `enqueueDestination` call, in order. */
+  const destinationEnqueues: Array<[number | null, number | null]> = [];
 
   let seq = 0;
   const uniq = () => `${Date.now().toString(36)}${(seq++).toString(36)}`;
@@ -100,7 +103,19 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
     pushEvents = createRecordingTripEvents(db);
     app = createApp({
       auth: authDeps,
-      trips: { db, now: () => FROZEN_NOW, tripEvents: pushEvents.tripEvents },
+      trips: {
+        db,
+        now: () => FROZEN_NOW,
+        tripEvents: pushEvents.tripEvents,
+        // B-7 part 3 (S6/S7): a manual spy, same style as places/routes.db.test.ts —
+        // captures exactly what the route passes, never touches the real grid.
+        placesIngest: {
+          enqueueDestination: (lat, lng) => {
+            destinationEnqueues.push([lat, lng]);
+          },
+          enqueueSearchMiss: () => undefined,
+        },
+      },
     });
   }, BOOT_TIMEOUT_MS);
 
@@ -816,6 +831,153 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       expect_updated_at: "2020-01-01T00:00:00.000Z",
     });
     expect(stale.status).toBe(409);
+  });
+
+  // ===========================================================================
+  // B-7 part 3: nullable destination coordinates
+  // ===========================================================================
+
+  it("[B-7 part 3] POST: both destination coordinates null creates a coordinate-less trip — 201 with null, never 0", async () => {
+    const owner = await seedUserWithToken();
+    const before = destinationEnqueues.length;
+    const res = await postTrip(owner.accessToken, {
+      ...VALID_CREATE,
+      destination_name: "Grandma's cabin",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    expect(res.status).toBe(201);
+    const trip = TripWithRoleSchema.parse(await res.json());
+    expect(trip.destination_lat).toBeNull();
+    expect(trip.destination_lng).toBeNull();
+
+    const row = await dbTrip(trip.id);
+    expect(row?.destinationLat).toBeNull();
+    expect(row?.destinationLng).toBeNull();
+    // S6: the route calls enqueueDestination UNCONDITIONALLY — the null skip
+    // is the trigger's own arm (ingest-queue.test.ts), not a route branch.
+    expect(destinationEnqueues.slice(before)).toEqual([[null, null]]);
+    // Falsification: restore `Number(row.destinationLat)` at trips/serialize.ts
+    // — `Number(null) === 0` re-mints Null Island and this reds.
+  });
+
+  it("[B-7 part 3] PATCH real→null: destinationChanged fires and the ingest spy is called with (null, null) — never Null Island", async () => {
+    const owner = await seedUserWithToken();
+    const trip = await createTripVia(owner.accessToken);
+    const before = destinationEnqueues.length;
+
+    const res = await patchTrip(trip.id, owner.accessToken, {
+      destination_name: "Somewhere unpicked",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    expect(res.status).toBe(200);
+    const updated = TripSchema.parse(await res.json());
+    expect(updated.destination_lat).toBeNull();
+    expect((await dbTrip(trip.id))?.destinationLat).toBeNull();
+    // S7 bug (fixed): the old `Number(updated.destinationLat)` coerced the
+    // new null to 0 here, enqueuing Null Island. The route now enqueues
+    // nothing at all for a real→null change (no area to ingest).
+    expect(destinationEnqueues.slice(before)).toEqual([]);
+  });
+
+  it("[B-7 part 3] PATCH null→null resubmit: NOT a change — destinationChanged stays false, no enqueue", async () => {
+    const owner = await seedUserWithToken();
+    const created = await postTrip(owner.accessToken, {
+      ...VALID_CREATE,
+      destination_lat: null,
+      destination_lng: null,
+    });
+    const trip = TripWithRoleSchema.parse(await created.json());
+    const before = destinationEnqueues.length;
+
+    const res = await patchTrip(trip.id, owner.accessToken, {
+      destination_lat: null,
+      destination_lng: null,
+    });
+    expect(res.status).toBe(200);
+    expect(destinationEnqueues.slice(before)).toEqual([]);
+    // NB this particular outcome is doubly-guarded (the enqueue call site
+    // also checks `updated.destinationLat !== null`) — see the next test for
+    // the scenario that isolates the `numOrNull` fix specifically.
+  });
+
+  it("[B-7 part 3] PATCH null→exactly (0,0): destinationChanged must fire — the phantom-0 diff bug, isolated", async () => {
+    // The scenario `numOrNull` exists for: `Number(null) === 0`, so comparing
+    // the CURRENT null coordinate against a NEW real value of exactly 0
+    // without the null-safe helper reads as "no change" (0 !== 0 is false)
+    // and silently skips the ingest enqueue for a legitimate real
+    // destination. The other guard (`updated.destinationLat !== null`) does
+    // NOT catch this — `updated` is genuinely non-null here.
+    const owner = await seedUserWithToken();
+    const created = await postTrip(owner.accessToken, {
+      ...VALID_CREATE,
+      destination_lat: null,
+      destination_lng: null,
+    });
+    const trip = TripWithRoleSchema.parse(await created.json());
+    const before = destinationEnqueues.length;
+
+    const res = await patchTrip(trip.id, owner.accessToken, {
+      destination_name: "Gulf of Guinea buoy",
+      destination_lat: 0,
+      destination_lng: 0,
+    });
+    expect(res.status).toBe(200);
+    const updated = TripSchema.parse(await res.json());
+    expect(updated.destination_lat).toBe(0);
+    expect(destinationEnqueues.slice(before)).toEqual([[0, 0]]);
+    // Falsification: replace `numOrNull(current.destinationLat)` with the
+    // bare `Number(current.destinationLat)` — `Number(null) === 0` equals
+    // the body's `0`, `destinationChanged` is (wrongly) false, and this
+    // reds (the enqueue array stays empty).
+  });
+
+  it("[B-7 part 3] PATCH null→real (the settings remediation path): heals the trip and enqueues the real destination", async () => {
+    const owner = await seedUserWithToken();
+    const created = await postTrip(owner.accessToken, {
+      ...VALID_CREATE,
+      destination_name: "Grandma's cabin",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    const trip = TripWithRoleSchema.parse(await created.json());
+    const before = destinationEnqueues.length;
+
+    const res = await patchTrip(trip.id, owner.accessToken, {
+      destination_name: "Tokyo, Japan",
+      destination_lat: 35.6812,
+      destination_lng: 139.7671,
+    });
+    expect(res.status).toBe(200);
+    const updated = TripSchema.parse(await res.json());
+    expect(updated.destination_lat).toBeCloseTo(35.6812, 6);
+    expect(destinationEnqueues.slice(before)).toEqual([[35.6812, 139.7671]]);
+  });
+
+  it("[B-7 part 3] PATCH: touching exactly one destination coordinate key → 400 (the pair moves together, R-trips-23 neighbourhood)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    expect((await patchTrip(trip.id, editor.accessToken, { destination_lat: 1 })).status).toBe(400);
+    expect((await patchTrip(trip.id, editor.accessToken, { destination_lat: null })).status).toBe(
+      400,
+    );
+  });
+
+  it("[B-7 part 3] DB CHECK: trips_destination_coords_pair_ck rejects half a destination coordinate (23514)", async () => {
+    const owner = await seedUserWithToken();
+    await expect(
+      db.insert(schema.trips).values({
+        name: "Half pair",
+        destinationName: "Nowhere",
+        destinationLat: "1",
+        destinationLng: null,
+        startDate: "2026-01-01",
+        endDate: "2026-01-02",
+        createdBy: owner.userId,
+      }),
+    ).rejects.toSatisfy((err: unknown) =>
+      isCheckViolationOf(err, "trips_destination_coords_pair_ck"),
+    );
   });
 
   // ===========================================================================

@@ -335,9 +335,10 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
           source: "custom",
           name: body.name,
           // numeric columns are string-mode (db/schema/_shared.ts); range
-          // was validated by the shared Lat/Lng schemas.
-          lat: String(body.lat),
-          lng: String(body.lng),
+          // was validated by the shared Lat/Lng schemas. Omitted (B-7 part
+          // 3) → NULL — the server never substitutes a placeholder value.
+          lat: body.lat === undefined ? null : String(body.lat),
+          lng: body.lng === undefined ? null : String(body.lng),
           category: body.category ?? null,
           createdBy: userId,
         })
