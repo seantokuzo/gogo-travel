@@ -31,7 +31,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { DestinationSeed } from "./generate-destination-tier.js";
+import type { DestinationSeed } from "../src/places/destination-tier-generator.js";
 
 const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "reference-data");
 const CHUNK = 500;

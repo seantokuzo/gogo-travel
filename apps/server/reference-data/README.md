@@ -35,10 +35,18 @@ same $0/no-runtime-network posture as the transport tables above.
 | ------------------- | ---- | --------------------------------------------------------------------------------------------------------------------------- |
 | `destinations.json` | 6927 | Overture GERS id, name (English common name preferred), country, lat/lng, population, is-country-capital flag, Wikidata QID |
 
-Snapshot taken **2026-09-13** by `scripts/generate-destination-tier.ts` (run
-it to refresh; it self-checks a name pin set — Athens/Tokyo/Reykjavik/Rome/
+Snapshot taken **2026-09-13** by `scripts/generate-destination-tier.ts`
+(`pnpm --filter @gogo/shared build` first — the generator imports
+`@gogo/shared`'s built `dist`, not its TS source — then
+`pnpm --filter @gogo/server exec tsx scripts/generate-destination-tier.ts`
+to refresh; it self-checks a name pin set — Athens/Tokyo/Reykjavik/Rome/
 Oslo — and a country-capital-count sanity floor, and refuses to write a
-snapshot that breaks either). **A refresh ships as a NEW migration**
+snapshot that breaks either). Row-shaping/pin logic lives in the pure
+`src/places/destination-tier-generator.ts` (no network/DuckDB/fs — unit
+tested directly in `destination-tier-generator.test.ts`); the script itself
+only queries Overture and writes the file when run directly, never on
+import (round-2 fix, B-7 PR #75 — importing it used to do both as a side
+effect of every `pnpm test` run). **A refresh ships as a NEW migration**
 (regenerate JSON → emit SQL → new `drizzle/000N_*.sql` that
 deletes+reinserts), never as an edit to 0004 and never as a runtime write
 (Law #6) — same one-time-snapshot posture as the airports/airlines refresh

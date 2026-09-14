@@ -6,14 +6,29 @@
  * search against an Overture city/locality subset", resolved Gate 2
  * 2026-07-09 — this script BUILDS that subset; it was never actually shipped).
  *
+ *   pnpm --filter @gogo/shared build   # this script imports @gogo/shared's
+ *                                       # built dist (DESTINATION_NAME_MAX_CHARS)
  *   pnpm --filter @gogo/server exec tsx scripts/generate-destination-tier.ts
  *
  * Writes `reference-data/destinations.json` (provenance + licence:
  * `reference-data/README.md`). NETWORK RUNS HERE, at generation time on a
- * dev machine, ONLY — the app never downloads anything at boot/runtime, and
- * tests only ever see the committed snapshot via the seed migration
- * (Law #5-compatible CI) — the exact posture `generate-reference-data.ts`
- * (B-9) already established for airports/airlines.
+ * dev machine, ONLY, and ONLY when this file is executed directly (the
+ * main-guard at the bottom) — the app never downloads anything at
+ * boot/runtime, and tests only ever see the committed snapshot via the seed
+ * migration (Law #5-compatible CI) — the exact posture
+ * `generate-reference-data.ts` (B-9) already established for airports/
+ * airlines.
+ *
+ * PURE SPLIT (round-2 regression fix, B-7 PR #75): every deterministic
+ * piece — row shaping, dedup, ordering, `NAME_MAX`, and the self-check pins
+ * — lives in `src/places/destination-tier-generator.ts`, a plain module
+ * with no network/DuckDB/fs. This file is CLI-only: the live DuckDB query
+ * and the disk write happen ONLY under `if (isMain)` below, so importing
+ * this module (or the pure module) — as `generate-destination-tier.test.ts`
+ * does — can never trigger a live S3 GeoParquet read or rewrite
+ * `reference-data/destinations.json`. Previously this script ran the query
+ * and the write at MODULE TOP LEVEL, so importing it for its exported types
+ * silently did both on every `pnpm test`, including in CI.
  *
  * Source: Overture Maps `divisions` theme, `division` type, `locality`
  * subtype (NOT the `places`/POI theme `region-ingest.ts` reads — a
@@ -29,11 +44,12 @@
  * exactly while the capital-of-country union catches most low/no-
  * population-data microstate capitals (Nauru's Yaren, Tuvalu's Funafuti,
  * San Marino, Liechtenstein's Vaduz, Monaco, Palau's Ngerulmud, Micronesia's
- * Palikir — all verified present and flagged, see `CAPITAL_PINS` below) a
- * pure population threshold would silently drop. Measured live against this
- * exact release: 6,927 rows (S-5 brief §2). `capital_of_divisions` also
- * flags county/region seats — filtering `subtype = 'country'` inside it is
- * load-bearing (an unfiltered "any admin capital" cut is 40,971 rows).
+ * Palikir — all verified present and flagged, see the pure module's
+ * `CAPITAL_PINS`) a pure population threshold would silently drop. Measured
+ * live against this exact release: 6,927 rows (S-5 brief §2).
+ * `capital_of_divisions` also flags county/region seats — filtering
+ * `subtype = 'country'` inside it is load-bearing (an unfiltered "any admin
+ * capital" cut is 40,971 rows).
  *
  * KNOWN GAPS (round-1 review, adversarial-verifier F9/A3 — do not re-claim
  * "every" capital is caught here): (1) Vatican City IS in this Overture
@@ -53,15 +69,18 @@
  *
  * Deterministic given a fixed release: the filter/projection is a total SQL
  * predicate, and output is sorted (name, source_id) for reviewable diffs
- * (`git diff` on a re-run shows only real upstream changes). The script
- * SELF-CHECKS a pin set of localities the B-7 fix's tests depend on and
- * refuses to write output that fails a pin.
+ * (`git diff` on a re-run shows only real upstream changes). The pins
+ * verified below refuse to write output that fails a pin.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { DuckDBInstance } from "@duckdb/node-api";
-import { DESTINATION_NAME_MAX_CHARS } from "@gogo/shared/domains/trip";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  buildDestinationTier,
+  toJsonLines,
+  verifyPins,
+  type DivisionRow,
+} from "../src/places/destination-tier-generator.js";
 
 /** Operator-facing generation report — the script's whole point is its output. */
 // eslint-disable-next-line no-console -- generator report for the operator
@@ -79,90 +98,15 @@ const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "reference-d
 const OVERTURE_RELEASE = "2026-08-19.0";
 const DIVISIONS_URL = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=divisions/type=division/*`;
 
-// `TripCreateSchema.destination_name`'s wire cap (packages/shared/src/domains/
-// trip.ts), NOT normalize.ts's 500-char `places.name` column cap — a name
-// past this can be seeded and searched but can never survive a real
-// `POST /trips` (B-7 round-1 blocking finding: the two caps had silently
-// diverged, 500 vs 200). `generate-destination-tier.test.ts` pins the
-// boundary directly against this constant so a future re-divergence fails
-// loud here, not on a traveler's device.
-export const NAME_MAX = DESTINATION_NAME_MAX_CHARS;
-const SOURCE_ID_MAX = 200; // mirrors normalize.ts's MAX_SOURCE_ID_CHARS
-const WIKI_REF_MAX = 200; // mirrors normalize.ts's MAX_WIKI_REF_CHARS
-const CONTROL_CHARS_RE = /\p{Cc}/u;
-
-export interface DestinationSeed {
-  /** Overture GERS id — `places.source_id` (source = 'overture'). */
-  sourceId: string;
-  name: string;
-  /** ISO 3166-1 alpha-2, informational only (not a `places` column — the
-   * table has none; kept here so duplicate-name rows stay distinguishable
-   * in review/tests without re-querying Overture). */
-  country: string | null;
-  lat: number;
-  lng: number;
-  /** Informational only — not persisted; documents WHY a row was included. */
-  population: number | null;
-  isCountryCapital: boolean;
-  /** Wikidata QID (`Q…`) when Overture carries one — `places.wiki_ref`. */
-  wikiRef: string | null;
-}
-
-/**
- * Self-check pins — the B-7 fix's tests depend on these exact localities
- * existing (`Athens`/`Tokyo`/`Reykjavik` are the named B-7 repro; Reykjavik
- * is included via the CAPITAL arm, not population, so it also proves that
- * disjunct is live — Iceland's capital is well under most population
- * thresholds). One micro-state capital pins the low/no-population-data arm
- * specifically (a pure population>=100k cut would drop it).
- */
-const NAME_PINS: ReadonlyArray<{ name: string; country: string }> = [
-  { name: "Athens", country: "GR" },
-  { name: "Tokyo", country: "JP" },
-  { name: "Reykjavik", country: "IS" },
-  { name: "Rome", country: "IT" },
-  { name: "Oslo", country: "NO" },
-];
-
-/**
- * Capital-arm self-check (round-1 review, adversarial-verifier F9/A3): pins
- * that the CAPITAL predicate — not just population — is what's including
- * these rows. Every name here is verified present with `isCountryCapital ===
- * true` against the pinned release (2026-08-19.0); all seven have no/low
- * population data, so a regression that silently drops the capital arm (or
- * narrows `capital_of_divisions`'s subtype filter) reds here instead of
- * shipping. Deliberately does NOT include Vatican City (not a `locality` in
- * this Overture release — see the KNOWN GAPS doc-comment above) or
- * Wellington/NZ (capital-flagged false upstream; present via population
- * only) — both are documented gaps, not pin candidates.
- */
-const CAPITAL_PINS: ReadonlyArray<{ name: string; country: string }> = [
-  { name: "Yaren", country: "NR" },
-  { name: "Funafuti", country: "TV" },
-  { name: "City of San Marino", country: "SM" },
-  { name: "Vaduz", country: "LI" },
-  { name: "Monaco", country: "MC" },
-  { name: "Ngerulmud", country: "PW" },
-  { name: "Palikir", country: "FM" },
-];
-
-const clean = (value: string | null | undefined): string | null => {
-  const trimmed = (value ?? "").trim().normalize("NFC");
-  return trimmed.length === 0 ? null : trimmed;
-};
-
-export interface DivisionRow {
-  id: unknown;
-  name: unknown;
-  country: unknown;
-  lat: unknown;
-  lng: unknown;
-  population: unknown;
-  is_country_capital: unknown;
-  wikidata: unknown;
-}
-
 async function queryDivisions(): Promise<DivisionRow[]> {
+  // Dynamic import, deliberately: this is the ONLY place `@duckdb/node-api`
+  // is ever loaded, and `queryDivisions` only ever runs inside `main()`,
+  // gated behind the main-guard at the bottom of this file. A test that
+  // imports this module (main-guard false under vitest) never evaluates
+  // this line, so `@duckdb/node-api` — and the live S3 query it performs —
+  // is provably never touched by importing the script (round-2 regression
+  // pin, `destination-tier-generator.test.ts`).
+  const { DuckDBInstance } = await import("@duckdb/node-api");
   report(`connecting to DuckDB (in-memory), release ${OVERTURE_RELEASE} …`);
   const instance = await DuckDBInstance.create(":memory:");
   const connection = await instance.connect();
@@ -209,103 +153,31 @@ async function queryDivisions(): Promise<DivisionRow[]> {
   }
 }
 
-export function toSeed(row: DivisionRow, skipped: string[]): DestinationSeed | null {
-  const sourceId = typeof row.id === "string" ? row.id.trim() : "";
-  if (sourceId.length === 0 || sourceId.length > SOURCE_ID_MAX || CONTROL_CHARS_RE.test(sourceId)) {
-    skipped.push(`(unknown id): unusable source id`);
-    return null;
-  }
-  const name = clean(typeof row.name === "string" ? row.name : null);
-  if (!name || name.length > NAME_MAX || CONTROL_CHARS_RE.test(name)) {
-    skipped.push(`${sourceId}: unusable name`);
-    return null;
-  }
-  const lat = typeof row.lat === "number" ? row.lat : Number(row.lat);
-  const lng = typeof row.lng === "number" ? row.lng : Number(row.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
-    skipped.push(`${sourceId} (${name}): unusable coordinates`);
-    return null;
-  }
-  const countryRaw = typeof row.country === "string" ? row.country.trim().toUpperCase() : "";
-  const country = /^[A-Z]{2}$/.test(countryRaw) ? countryRaw : null;
-  const population =
-    typeof row.population === "number"
-      ? row.population
-      : typeof row.population === "bigint"
-        ? Number(row.population)
-        : null;
-  const isCountryCapital = row.is_country_capital === true;
-  const wikidataRaw = clean(typeof row.wikidata === "string" ? row.wikidata : null);
-  const wikiRef =
-    wikidataRaw && wikidataRaw.length <= WIKI_REF_MAX && !CONTROL_CHARS_RE.test(wikidataRaw)
-      ? wikidataRaw
-      : null;
+async function main(): Promise<void> {
+  const rawRows = await queryDivisions();
+  const { seeds, skipped } = buildDestinationTier(rawRows);
 
-  return { sourceId, name, country, lat, lng, population, isCountryCapital, wikiRef };
-}
-
-/** One row per line — compact but diffable (airports.json/airlines.json convention). */
-function toJsonLines(rows: object[]): string {
-  return `[\n${rows.map((row) => `  ${JSON.stringify(row)}`).join(",\n")}\n]\n`;
-}
-
-const rawRows = await queryDivisions();
-
-const skipped: string[] = [];
-const seeds: DestinationSeed[] = [];
-const seenSourceIds = new Set<string>();
-for (const row of rawRows) {
-  const seed = toSeed(row, skipped);
-  if (!seed) continue;
-  if (seenSourceIds.has(seed.sourceId)) {
-    skipped.push(`${seed.sourceId}: duplicate source id — kept the first occurrence`);
-    continue;
-  }
-  seenSourceIds.add(seed.sourceId);
-  seeds.push(seed);
-}
-
-seeds.sort((a, b) =>
-  a.name === b.name ? (a.sourceId < b.sourceId ? -1 : 1) : a.name < b.name ? -1 : 1,
-);
-
-report(
-  `destinations: ${rawRows.length} raw rows -> ${seeds.length} seeds (${skipped.length} skipped/deduped)`,
-);
-for (const line of skipped.slice(0, 50)) report(`  - ${line}`);
-if (skipped.length > 50) report(`  … and ${skipped.length - 50} more`);
-
-for (const pin of NAME_PINS) {
-  const hit = seeds.find((s) => s.name === pin.name && s.country === pin.country);
-  if (!hit) {
-    throw new Error(
-      `name pin failed: ${pin.name} (${pin.country}) not found in the generated destination tier`,
-    );
-  }
-}
-
-for (const pin of CAPITAL_PINS) {
-  const hit = seeds.find((s) => s.name === pin.name && s.country === pin.country);
-  if (!hit) {
-    throw new Error(
-      `capital pin failed: ${pin.name} (${pin.country}) not found in the generated destination tier`,
-    );
-  }
-  if (!hit.isCountryCapital) {
-    throw new Error(
-      `capital pin failed: ${pin.name} (${pin.country}) found but isCountryCapital is false — the capital arm regressed`,
-    );
-  }
-}
-
-const capitalPinCount = seeds.filter((s) => s.isCountryCapital).length;
-if (capitalPinCount < 100) {
-  throw new Error(
-    `sanity pin failed: only ${capitalPinCount} country-capital rows — expected ~199 per the S-5 brief`,
+  report(
+    `destinations: ${rawRows.length} raw rows -> ${seeds.length} seeds (${skipped.length} skipped/deduped)`,
   );
+  for (const line of skipped.slice(0, 50)) report(`  - ${line}`);
+  if (skipped.length > 50) report(`  … and ${skipped.length - 50} more`);
+
+  verifyPins(seeds);
+
+  mkdirSync(OUT_DIR, { recursive: true });
+  writeFileSync(join(OUT_DIR, "destinations.json"), toJsonLines(seeds));
+  report(`wrote ${seeds.length} destinations to ${OUT_DIR}`);
+  report("(licence + provenance: reference-data/README.md — update its snapshot date)");
 }
 
-mkdirSync(OUT_DIR, { recursive: true });
-writeFileSync(join(OUT_DIR, "destinations.json"), toJsonLines(seeds));
-report(`wrote ${seeds.length} destinations to ${OUT_DIR}`);
-report("(licence + provenance: reference-data/README.md — update its snapshot date)");
+// Only run the live query + write when this file is executed directly
+// (`tsx scripts/generate-destination-tier.ts`), never on import — this is
+// the fix for the round-2 regression (see the PURE SPLIT doc-comment
+// above). `process.argv[1]` is undefined in some embedding contexts, hence
+// the guard before comparing.
+const isMain =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  await main();
+}
