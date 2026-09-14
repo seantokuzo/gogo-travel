@@ -85,6 +85,22 @@ Traps, all previously hit here:
   `xcrun simctl get_app_container <UDID> com.anonymous.gogo-travel` — "No such
   file or directory" is what you want.
 
+- **🔴 SAME TRAP, new cause: a door build AND the door-free build installed
+  side by side.** `app.json`'s `"scheme": "gogo"` is shared — `app.config.ts`'s
+  door variant only suffixes `bundleIdentifier`/`name`, never the scheme — so
+  `app.gogotravel.e2edoor` and `app.gogotravel` BOTH claim `gogo:` whenever
+  both are installed at once (e.g. building door then door-free back to back
+  to verify both lanes in one sitting, S-4 T5, 2026-09-14). `openLink` then
+  becomes nondeterministic about which one iOS hands the URL to — this
+  produced a real, reproducible `session-door-absent` false failure
+  (`e2e-session-screen`/`-error` where `-inert` was expected — the door
+  build answering a link meant for the door-free one), confirmed by
+  `xcrun simctl uninstall <UDID> app.gogotravel.e2edoor` making the SAME run
+  green immediately after, with no other change. `--variant doorfree`'s own
+  proof is therefore only trustworthy with the door build ABSENT from the
+  simulator — never test both variants' `openLink` flows on one simulator in
+  the same session without uninstalling the other first.
+
 - **`expo run:ios` has no `--derived-data` flag** and finds the built product by
   scraping the default `~/Library/Developer/Xcode/DerivedData` path out of the
   build log. Derived data is still isolated per checkout because the key is a
