@@ -290,6 +290,94 @@ describe("session store — sign-out calls /auth/logout (best-effort, spec §3.6
   });
 });
 
+describe("session store — resetLocalSession (session-door spec R-door-8): client-local ONLY, never a server call", () => {
+  it("clears identity + token and flags a reset, identically to signOut's local effects", async () => {
+    const { store, storage } = makeStore();
+    await store.getState().applySignIn({ user: USER, tokens: TOKENS, is_new_user: false });
+
+    await store.getState().resetLocalSession();
+
+    expect(store.getState()).toMatchObject({
+      user: null,
+      accessToken: null,
+      firstRun: false,
+      pendingDestination: null,
+      resetting: true,
+    });
+    expect(storage.clearRefreshToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEVER calls the server, even with a live access token present (unlike signOut)", async () => {
+    // Falsification: change `resetLocalSession` to call `signOut` (or to
+    // otherwise read `deps.api`) → this goes RED, since `api.request` would
+    // then be invoked for the best-effort /auth/logout the way it is for
+    // signOut (pinned above, "attempts /auth/logout ... when a token is
+    // present"). A door run's local reset must never depend on network
+    // reachability to the API.
+    const { store, api } = makeStore();
+    store.setState({ user: USER, accessToken: "access-live" });
+
+    await store.getState().resetLocalSession();
+
+    expect(api.request).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({ user: null, accessToken: null, resetting: true });
+  });
+
+  it("fires the onSignedOut seam AFTER clearing (same ordering signOut guarantees)", async () => {
+    const storage = {
+      getRefreshToken: jest.fn<Promise<string | null>, []>().mockResolvedValue(null),
+      setRefreshToken: jest.fn().mockResolvedValue(undefined),
+      clearRefreshToken: jest.fn().mockResolvedValue(undefined),
+    };
+    const api = { request: jest.fn() };
+    const onSignedOut = jest.fn();
+    const deps: SessionDeps = { storage, api, onSignedOut };
+    const store = createStore<SessionState>()(createSessionSlice(deps));
+    await store.getState().applySignIn({ user: USER, tokens: TOKENS, is_new_user: false });
+
+    await store.getState().resetLocalSession();
+
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(api.request).not.toHaveBeenCalled();
+    expect(onSignedOut.mock.invocationCallOrder[0]).toBeGreaterThan(
+      storage.clearRefreshToken.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("singleton wiring: resetLocalSession on the REAL useSessionStore clears the SAME R-nav-4 state signOut does, with no network call", async () => {
+    // Mirrors "singleton wiring — R-nav-4" below, but for resetLocalSession —
+    // the door's actual call site (never signOut).
+    rememberTab("trip-y", "map");
+    stampLastViewedTrip("trip-y");
+    rememberMoneySegment("trip-y", "balances");
+    expect(recallTab("trip-y")).toBe("map");
+    expect(readLastViewedTrip()?.tripId).toBe("trip-y");
+
+    // The REAL singleton's apiClient is wired to `globalThis.fetch`
+    // (session-store.ts `fetchImpl: (input, init) => fetch(input, init)`) —
+    // stubbing it here catches ANY network call the reset performs, not just
+    // a logout POST specifically. Assign-and-restore (not `jest.spyOn`,
+    // which requires the property to already be a function) — the same
+    // pattern `diagnostics-route.test.tsx` uses for this exact global.
+    const originalFetch = globalThis.fetch;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    useSessionStore.setState({ user: USER, accessToken: "access-live", hydrated: true });
+
+    try {
+      await useSessionStore.getState().resetLocalSession();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recallTab("trip-y")).toBeUndefined();
+      expect(readLastViewedTrip()).toBeNull();
+      expect(recallMoneySegment("trip-y")).toBeUndefined();
+      expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 describe("singleton wiring — R-nav-4 'reset the entire navigation state' (T-6.6 R1)", () => {
   it("sign-out on the REAL useSessionStore clears tab memory, the last-viewed stamp AND the deeplink-return slot", async () => {
     // Round-1 finding: the slice tests inject a jest.fn onSignedOut, so the
