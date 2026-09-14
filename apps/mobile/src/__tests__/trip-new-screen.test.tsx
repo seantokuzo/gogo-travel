@@ -553,6 +553,129 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     );
   });
 
+  it("R2 B1 (was PARTIAL): a same-named spine pick during an in-flight custom create must not be clobbered", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    let searchHasSpineHit = false;
+    // Default `makePlace()` coords (35.0116/135.7681) stand in for the
+    // explicit, real pick — same NAME as the in-flight custom create, so
+    // picking it changes zero visible text (the exact blind spot a
+    // name-equality guard cannot see).
+    const SPINE_SAME_NAME = makePlace({
+      id: "88888888-8888-4888-8888-888888888888",
+      name: "Nowhereville",
+    });
+    const request = mockApi({
+      "GET /places/search": () =>
+        Promise.resolve(
+          searchHasSpineHit
+            ? { items: [SPINE_SAME_NAME], nextCursor: null }
+            : { items: [], nextCursor: null },
+        ),
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    });
+    await renderScreen();
+
+    // Fire the custom create for "Nowhereville" and hold it open — zero
+    // spine hits at this point, hence the empty-results row.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    await fireEvent.press(row);
+    await screen.findByTestId("trip-new-list-item-custom-spinner");
+
+    // A later search for the SAME text now surfaces a real spine result
+    // sharing that name (an eventually-consistent search backend) —
+    // invalidate to force the still-mounted, still-enabled search
+    // observer to refetch, the way a real background settle would.
+    searchHasSpineHit = true;
+    await act(async () => {
+      await lastClient?.invalidateQueries({ queryKey: ["places", "search"] });
+    });
+    const spineRow = await screen.findByTestId(`trip-new-list-item-${SPINE_SAME_NAME.id}`);
+    await fireEvent.press(spineRow);
+
+    // Zero visible change — same name — yet this IS the user's later pick.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+
+    // NOW the superseded custom create resolves — it must still be a no-op.
+    await act(async () => {
+      resolveCreate(CUSTOM_PLACE);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    // The trip must POST the explicit spine pick's REAL coordinates — never
+    // the abandoned custom Null Island place, even though the names match
+    // and the input text never moved.
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: {
+          name: "Kyoto Spring",
+          destination_name: "Nowhereville",
+          destination_lat: SPINE_SAME_NAME.lat,
+          destination_lng: SPINE_SAME_NAME.lng,
+          start_date: "2027-05-01",
+          end_date: "2027-05-08",
+        },
+      }),
+    );
+  });
+
+  it("R2 B1: the busy row's label binds to the mutation's OWN variables, not a later live query", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    mockApi({
+      // Always empty, regardless of query text, so the busy row stays the
+      // rendered branch through the retype below.
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+
+    try {
+      await fireEvent.press(row);
+      await screen.findByTestId("trip-new-list-item-custom-spinner");
+      expect(screen.getByTestId("trip-new-list-item-custom")).toHaveTextContent(
+        'Creating "Nowhereville"…',
+      );
+
+      // Keep typing while the create for "Nowhereville" is still in
+      // flight — a brand-new query key means a fresh loading state (the
+      // Skeleton) for one hop before it resolves back to the empty-results
+      // branch, so poll rather than assert synchronously. The label must
+      // keep naming what is ACTUALLY being created, never a newer,
+      // unrelated query.
+      await fireEvent.changeText(
+        screen.getByTestId("trip-new-input-destination"),
+        "Nowhereville Bay",
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("trip-new-list-item-custom")).toHaveTextContent(
+          'Creating "Nowhereville"…',
+        ),
+      );
+    } finally {
+      await act(async () => {
+        for (const release of resolvers) release(CUSTOM_PLACE);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+  });
+
   it("R1 A2 (advisory): a failed create does not permanently hide the row for a later query", async () => {
     let shouldFail = true;
     mockApi({

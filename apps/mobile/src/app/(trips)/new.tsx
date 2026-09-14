@@ -27,10 +27,16 @@
  * surfaces inline and preserves the typed text; the row itself becomes a
  * non-interactive "Creating…" status while a create is in flight, so a
  * second tap has nothing to press (no double-submit).
- * `onMutationSuccess` ignores a SUPERSEDED create (R1 B1 review): if the
- * user picks or retypes a different destination while the POST is still in
- * flight, the eventual success must not clobber it — the busy row's own
- * label binds to the mutation's `variables`, never live state, for the same
+ * `onMutationSuccess` ignores a SUPERSEDED create (R1/R2 B1 review): if the
+ * user has SELECTED anything by the time success lands, that selection is
+ * necessarily later than the create (nothing can be selected while the
+ * empty-results row that fires a create is showing) and must not be
+ * clobbered — checked directly on `selectedPlace`, not on a name-equality
+ * proxy for it (a same-named spine pick showed the proxy blind, R2). A
+ * retype to a different UNMATCHED query with nothing yet selected is the
+ * one case that proxy still earns its keep for, so it stays as a second
+ * check. The busy row's own label binds to the mutation's `variables`,
+ * never live state, for the same "don't trust live state after the fact"
  * reason. The row/mutate argument itself is the SEARCHED text
  * (`deferredQuery`), never the live `destinationQuery` (R1 A3) — a fast
  * typist could otherwise create a place for text that was never actually
@@ -196,10 +202,20 @@ export default function TripNewScreen() {
   // selectedPlace + the canonical name, clear any stale destination error).
   const createCustomDestination = useCreateCustomDestination({
     onMutationSuccess: (place) => {
-      // R1 B1 (blocking): a slow create must never clobber a destination
-      // the user picked (or retyped) while the POST was in flight. Compare
-      // the LIVE query against what actually got created, not against the
-      // text the create was fired for — a superseded create is a no-op.
+      // R2 B1 (blocking, was PARTIAL): a name-equality check is not a
+      // "the user picked since" signal — a spine row can share the
+      // in-flight create's exact name, and selecting it never changes the
+      // visible text, so the old guard saw no difference and still
+      // clobbered the pick. A custom create can only ever FIRE while
+      // nothing is selected (the empty-results row only renders when
+      // `selectedPlace === null`), so ANY selection present when success
+      // lands — same name or not — is necessarily the user's LATER pick.
+      // Guard on that fact directly, not on a text proxy for it.
+      if (selectedPlace !== null) return;
+      // Retained (still earns its keep): the user can retype to a
+      // DIFFERENT unmatched query without ever selecting anything, which
+      // leaves `selectedPlace` null — live text is the only signal a
+      // stale create is being superseded in that case.
       if (destinationQuery.trim() !== place.name) return;
       setSelectedPlace(place);
       setDestinationQuery(place.name);
