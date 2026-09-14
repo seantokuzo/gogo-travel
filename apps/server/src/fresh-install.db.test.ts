@@ -55,6 +55,7 @@ import {
   TEST_GOOGLE_CLIENT_IDS,
 } from "./test/env-builder.js";
 import { UNCONFIGURED_OBJECT_STORAGE } from "./storage/object-storage.js";
+import { DESTINATION_TIER_ROW_COUNT } from "./test/destination-tier-fixture.js";
 import { createSuiteDb, type SuiteDb } from "./test/suite-db.js";
 
 // Docker probe, loud skip banner, and the CI hard-fail all live in ONE
@@ -82,8 +83,11 @@ const LISBON = { lat: 38.722252, lng: -9.139337 };
  * on every fresh install including this suite's migrated template. The
  * "zero fixtures" contract (R-test-3) still holds: nothing in this file
  * seeds it; it is already there when the template is cloned.
+ *
+ * `DESTINATION_TIER_ROW_COUNT` is the single named constant
+ * (`src/test/destination-tier-fixture.ts`, round-1 review advisory A3) — a
+ * dataset refresh bumps it in ONE place, not three.
  */
-const DESTINATION_TIER_ROW_COUNT = 6927;
 
 describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures)", () => {
   let suiteDb: SuiteDb;

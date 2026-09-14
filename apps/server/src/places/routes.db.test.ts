@@ -310,6 +310,10 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     expect(names[0]).toBe("Belém");
     expect(names).toContain("Belém Tower");
     expect(names).toContain("Pastéis de Belém");
+    // Round-1 review advisory A5: restores the ordering this test is NAMED
+    // for ("similarity ranking") — the shorter, more-similar fixture name
+    // ("Belém Tower") still outranks the longer one ("Pastéis de Belém").
+    expect(names.indexOf("Belém Tower")).toBeLessThan(names.indexOf("Pastéis de Belém"));
     expect(names).not.toContain("Time Out Market");
   });
 
@@ -500,12 +504,29 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const cellKey = regionCellAt(35.68, 139.76).key;
     expect(cellKey).toBe("r:71:279");
 
+    // Round-1 review advisory A4: this bbox now also contains the REAL
+    // Tokyo tier row (B-7 migration 0004, 35.676857,139.763885) — the
+    // "partial results still 200" assertion below used to be
+    // `length > 0`, which the tier row alone satisfies, silently making
+    // this suite's own precondition load-bearing on upstream Overture data
+    // instead of on a fixture it owns. Seed one and assert ON it.
+    const coverageMissFixture = await seedSpinePlace({
+      source: "overture",
+      sourceId: "ovt-coverage-miss-fixture",
+      name: "Coverage Miss Fixture",
+      lat: 35.685,
+      lng: 139.755,
+      category: null,
+    });
+
     // 1) Never-ingested area: results from whatever the spine holds + enqueue.
     await settleCoverage(); // drain strays from earlier geo searches
     let before = enqueued.length;
     const missed = await searchOk(user.accessToken, query);
     await settleCoverage();
-    expect(missed.items.length).toBeGreaterThan(0); // degrades, never errors
+    // Degrades, never errors — and owns its own precondition (the fixture
+    // above), not an incidental real-data row.
+    expect(missed.items.some((p) => p.id === coverageMissFixture.id)).toBe(true);
     expect(enqueued.length).toBe(before + 1);
     expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
 

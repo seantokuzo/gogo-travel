@@ -32,6 +32,7 @@ import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
 import type { ErrorEnvelope } from "../http/idor-404.test-util.js";
+import { DESTINATION_TIER_ROW_COUNT } from "../test/destination-tier-fixture.js";
 import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
 const dockerAvailable = inject("dbAvailable");
@@ -88,6 +89,19 @@ const RTL_NAME = {
 };
 /** China — CJK, exactly 4 chars (clears PLACES_SEARCH_TEXT_ONLY_MIN_CHARS). */
 const CJK_NAME = { sourceId: "8c239f23-c0e7-4ea0-8f11-f0f8317baf3e", name: "千泉街道" };
+/**
+ * Morocco — exactly 3 chars, a REAL seeded city (pop. 1,167,842), not a
+ * synthetic probe. Round-1 review advisory A2: the floor test previously
+ * used `q=Rio` (the city is actually "Rio de Janeiro", so the floor never
+ * actually blocked its own name) — Fez has no longer form to fall back on,
+ * so it demonstrates the floor's real cost. 54 seeded rows share this fate
+ * (QUEUE-row draft, PR body: "destination search floor makes short city
+ * names unreachable by their own exact name").
+ */
+const FEZ = {
+  sourceId: "934d4327-381f-4abb-a53b-aecad75be1a1",
+  name: "Fez",
+};
 
 describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed)", () => {
   let suiteDb: SuiteDb;
@@ -177,11 +191,11 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
   // Row count pin (migration 0004)
   // ===========================================================================
 
-  it("migration 0004 seeded exactly 6,927 overture/locality rows", async () => {
+  it("migration 0004 seeded exactly the pinned overture/locality row count", async () => {
     const [row] = await suiteDb.client<
       { n: string }[]
     >`select count(*) as n from places where source = 'overture' and category = 'locality'`;
-    expect(Number(row?.n)).toBe(6927);
+    expect(Number(row?.n)).toBe(DESTINATION_TIER_ROW_COUNT);
   });
 
   // ===========================================================================
@@ -253,11 +267,18 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     }
   });
 
-  it("3-char text-only query is rejected — the destination tier does not relax the existing floor", async () => {
+  it("3-char text-only query is rejected even for a real seeded city (Fez, MA, pop. 1.17M) — the floor is not a synthetic edge case here; 54 tier rows share this fate (QUEUE-row draft: 'destination search floor makes short city names unreachable by their own exact name')", async () => {
     const user = await seedUserWithToken();
-    const res = await search(user.accessToken, "q=Rio"); // 3 chars, no geo bound
+    expect(FEZ.name.length).toBe(3);
+    const res = await search(user.accessToken, `q=${FEZ.name}`); // 3 chars, no geo bound
     expect(res.status).toBe(400);
     expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Recovery: padding past the floor still finds Fez by trigram similarity
+    // — the mitigation is real, but it requires the user to type MORE than
+    // the city's own name, which "search Fez" alone never suggests.
+    const recovered = await searchOk(user.accessToken, "q=Fez Morocco");
+    expect(recovered.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
   });
 
   // ===========================================================================
@@ -307,22 +328,36 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
   // Duplicate names across countries (real data — no fixture needed)
   // ===========================================================================
 
-  it("duplicate names across countries are both present and distinguishable by id/coordinates", async () => {
-    const [gr] = await db
-      .select()
-      .from(schema.places)
-      .where(eq(schema.places.sourceId, ATHENS_GR.sourceId));
-    const [us] = await db
-      .select()
-      .from(schema.places)
-      .where(eq(schema.places.sourceId, ATHENS_US.sourceId));
+  it("duplicate names across countries are both present and distinguishable by id/coordinates — but NOT by anything the API surfaces (QUEUE-row draft: 'destination picker cannot disambiguate same-named localities')", async () => {
+    // Round-1 review advisory A1: this test used to assert distinguishability
+    // via two direct db.select() calls — a property the user can never see.
+    // Going through the real search endpoint documents what the picker
+    // ACTUALLY returns: `PlaceSchema` (packages/shared/src/domains/place.ts)
+    // has no region/country field, so "Cambridge" (452 tier rows share a
+    // name across 208 distinct names) reads identically for every homonym.
+    // Fixing that is a wire-contract change (Autonomy Contract trigger #1,
+    // user-visible spec ambiguity) — out of scope here; parked as a QUEUE
+    // row in the PR body, not silently improvised.
+    const user = await seedUserWithToken();
+    const athens = await searchOk(user.accessToken, "q=Athens");
+    const gr = athens.items.find((p) => p.source_id === ATHENS_GR.sourceId);
+    const us = athens.items.find((p) => p.source_id === ATHENS_US.sourceId);
+    expect(gr, "Athens GR not found via /places/search").toBeDefined();
+    expect(us, "Athens US not found via /places/search").toBeDefined();
     expect(gr?.name).toBe("Athens");
     expect(us?.name).toBe("Athens");
+    // Every field the wire shape actually carries is identical except id
+    // and coordinates — nothing the rendered list (`title=name`,
+    // `subtitle=category`, apps/mobile/src/app/(trips)/new.tsx:307-308)
+    // shows a user distinguishes them by.
+    expect(gr?.category).toBe(us?.category);
+    expect(gr?.coarse_category).toBe(us?.coarse_category);
     expect(gr?.id).not.toBe(us?.id);
-    expect(Number(gr?.lat)).toBeCloseTo(ATHENS_GR.lat, 3);
-    expect(Number(us?.lat)).toBeCloseTo(ATHENS_US.lat, 3);
-    // ~9,600 km apart — genuinely two different places, not a dedup bug.
-    expect(Math.abs(Number(gr?.lat) - Number(us?.lat))).toBeGreaterThan(3);
+    expect(gr?.lat).toBeCloseTo(ATHENS_GR.lat, 3);
+    expect(us?.lat).toBeCloseTo(ATHENS_US.lat, 3);
+    // 9,039.5 km apart (haversine, verified) — genuinely two different
+    // places, not a dedup bug.
+    expect(Math.abs((gr?.lat ?? 0) - (us?.lat ?? 0))).toBeGreaterThan(3);
   });
 
   // ===========================================================================
@@ -340,12 +375,19 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     }
   });
 
-  it("apostrophe and diacritic names are ALSO findable via the search endpoint (storage AND search both survive)", async () => {
+  it("apostrophe, diacritic, and CJK names are ALSO findable via the search endpoint (storage AND search both survive)", async () => {
     const user = await seedUserWithToken();
     const hertogenbosch = await searchOk(user.accessToken, "q=Hertogenbosch");
     expect(hertogenbosch.items.some((p) => p.source_id === APOSTROPHE_NAME.sourceId)).toBe(true);
 
     const belem = await searchOk(user.accessToken, `q=${encodeURIComponent("belém")}`);
     expect(belem.items.some((p) => p.source_id === DIACRITIC_NAME.sourceId)).toBe(true);
+
+    // Round-1 review advisory A6: CJK_NAME's own doc-comment says "clears
+    // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS" — a claim only search behavior
+    // makes relevant — but it was previously only ever read back via
+    // db.select(). Exercise it through the API too.
+    const cjk = await searchOk(user.accessToken, `q=${encodeURIComponent(CJK_NAME.name)}`);
+    expect(cjk.items.some((p) => p.source_id === CJK_NAME.sourceId)).toBe(true);
   });
 });

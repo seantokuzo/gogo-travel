@@ -41,6 +41,7 @@ import type { PlacesIngestTrigger } from "./ingest-queue.js";
 import type { RawSpineRecord, SpineRecord } from "./normalize.js";
 import { ingestRegionCell, type RegionIngestDeps } from "./region-ingest.js";
 import { crossSourceDuplicateQuery } from "./spine-upsert.js";
+import { DESTINATION_TIER_ROW_COUNT } from "../test/destination-tier-fixture.js";
 import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
 // Docker probe, loud skip banner, and the CI hard-fail all live in ONE
@@ -71,8 +72,11 @@ const T0 = new Date("2026-07-25T12:00:00.000Z");
  * `reference-data/README.md`) present on every migrated template BEFORE this
  * suite's own fixture rows land — `placesCount()` is table-wide, so every
  * absolute pin below is baseline + fixture rows, not fixture rows alone.
+ *
+ * `DESTINATION_TIER_ROW_COUNT` is the single named constant
+ * (`src/test/destination-tier-fixture.ts`, round-1 review advisory A3) — a
+ * dataset refresh bumps it in ONE place, not three.
  */
-const DESTINATION_TIER_ROW_COUNT = 6927;
 
 describe.skipIf(!dockerAvailable)("T-6.4 places ingest pipeline (integration)", () => {
   let suiteDb: SuiteDb;
