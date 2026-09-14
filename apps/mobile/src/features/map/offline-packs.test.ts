@@ -30,6 +30,7 @@ import {
   planCeilingPurge,
   shouldAutoDownloadPack,
   tripIdFromPackName,
+  usableDestinationCoords,
   type OfflinePackAnnotation,
 } from "./offline-packs";
 
@@ -123,6 +124,28 @@ describe("isUsableDestination — the degrade-arm guard", () => {
     expect(isUsableDestination(35, Number.NaN)).toBe(false);
     expect(isUsableDestination(91, 0)).toBe(false);
     expect(isUsableDestination(0, 181)).toBe(false);
+  });
+
+  // B-7 part 3: null — a coordinate-less custom destination — is unusable,
+  // same as NaN. Falsification: revert the widened signature's early
+  // `lat === null || lng === null` return and this throws at
+  // `Number.isFinite(null)` typechecking, or (if forced through with `as`)
+  // `Number.isFinite(null)` is actually `false` already so it degrades
+  // silently to a wrong answer only if a caller coerces null to 0 first —
+  // pin that class at the caller (offline-pack-controller.test.ts).
+  it("rejects null coordinates, and a half-null pair", () => {
+    expect(isUsableDestination(null, null)).toBe(false);
+    expect(isUsableDestination(null, KYOTO.lng)).toBe(false);
+    expect(isUsableDestination(KYOTO.lat, null)).toBe(false);
+  });
+});
+
+describe("usableDestinationCoords — the narrowing companion", () => {
+  it("returns the pair when usable, null otherwise (null in ⇒ null out)", () => {
+    expect(usableDestinationCoords(KYOTO.lat, KYOTO.lng)).toEqual(KYOTO);
+    expect(usableDestinationCoords(null, null)).toBeNull();
+    expect(usableDestinationCoords(null, KYOTO.lng)).toBeNull();
+    expect(usableDestinationCoords(Number.NaN, KYOTO.lng)).toBeNull();
   });
 });
 

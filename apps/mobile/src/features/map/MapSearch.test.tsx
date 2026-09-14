@@ -47,6 +47,7 @@ async function renderSearch(opts?: {
   results?: Place[];
   reject?: Error;
   seedTripOffline?: boolean;
+  destination?: { lat: number; lng: number } | null;
 }) {
   const request = spyRequest();
   if (opts?.reject !== undefined) {
@@ -76,7 +77,7 @@ async function renderSearch(opts?: {
   await renderWithProviders(
     <MapSearch
       tripId={TEST_TRIP_ID}
-      destination={DESTINATION}
+      destination={opts?.destination !== undefined ? opts.destination : DESTINATION}
       onSelectResult={onSelectResult}
       onResultsChange={onResultsChange}
     />,
@@ -175,6 +176,43 @@ describe("onResultsChange — the temp-pin feed (T-8.7 rider, E1)", () => {
     await screen.findByTestId("map-search-offline");
 
     expect(lastReported(onResultsChange)).toEqual([]);
+  });
+});
+
+describe("coordinate-less trip (B-7 part 3, R-map-26)", () => {
+  it("shows the persistent no-destination caption regardless of search state", async () => {
+    await renderSearch({ destination: null });
+    expect(screen.getByTestId("map-search-notice-no-destination")).toBeOnTheScreen();
+  });
+
+  it("raises the floor to 4 chars — a 2-3 char query fires NOTHING (would be a live server 400)", async () => {
+    const { request } = await renderSearch({ destination: null });
+
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyo");
+    expect(screen.getByText("Keep typing — search starts at 4 characters.")).toBeOnTheScreen();
+    expect(searchCalls(request)).toHaveLength(0);
+  });
+
+  it("at the 4-char floor: fires with NO bbox key at all (unbounded)", async () => {
+    const { request } = await renderSearch({ destination: null, results: [KYOTO] });
+
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyot");
+    await screen.findByTestId(`map-search-list-item-${KYOTO.id}`);
+
+    const calls = searchCalls(request);
+    expect(calls.length).toBeGreaterThan(0);
+    const [, input] = calls[0] as [unknown, { query: Record<string, unknown> }];
+    // Falsification: a `bbox` key riding along here — even one pinned to
+    // Null Island — is exactly the part-2 bug this closes.
+    expect("bbox" in input.query).toBe(false);
+  });
+
+  it("results still render and select normally — only the bound changed", async () => {
+    const { onSelectResult } = await renderSearch({ destination: null, results: [KYOTO] });
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyot");
+    const row = await screen.findByTestId(`map-search-list-item-${KYOTO.id}`);
+    await fireEvent.press(row);
+    expect(onSelectResult).toHaveBeenCalledWith(KYOTO);
   });
 });
 

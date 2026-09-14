@@ -35,8 +35,10 @@ export function toTripWire(row: TripRow): Trip {
     id: row.id,
     name: row.name,
     destination_name: row.destinationName,
-    destination_lat: Number(row.destinationLat),
-    destination_lng: Number(row.destinationLng),
+    // NULL when the picked place had no coordinates (B-7 part 3) —
+    // `Number(null) === 0` would silently re-mint Null Island on the wire.
+    destination_lat: row.destinationLat === null ? null : Number(row.destinationLat),
+    destination_lng: row.destinationLng === null ? null : Number(row.destinationLng),
     start_date: row.startDate,
     end_date: row.endDate,
     status: row.status,

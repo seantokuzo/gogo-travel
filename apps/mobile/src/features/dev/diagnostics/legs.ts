@@ -13,6 +13,8 @@
  * B-5 lesson: every fact here is measured ON the device runtime that renders
  * it, never assumed from the Mac side.
  */
+import { HealthResponseSchema } from "@gogo/shared/api/health";
+
 import type { ApiBaseUrlResolution } from "@/auth";
 
 import type { ConsoleTapSnapshot } from "./console-tap";
@@ -461,6 +463,204 @@ export async function runLastErrorLeg(deps: LastErrorLegDeps): Promise<LegResult
       `capturing since: ${since}`,
       `captured: ${snap.count}`,
       `last: ${snap.last.text}`,
+    ].join("\n"),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Leg 7 — server migration state (B-28)
+// ---------------------------------------------------------------------------
+
+/**
+ * Four-state outcome — deliberately NOT a `LegResult`: "the server didn't
+ * report this" is a real, distinct state (an older, pre-B-28 server), not a
+ * failure of THIS leg, and (round-2, B-28) "edited after apply" is a real,
+ * distinct state from "genuinely pending" — the server-side fix for exactly
+ * that conflation (`db/migration-state.ts`'s `modified` field) is pointless
+ * if the client re-conflates them here. `summary`/`evidence` still match
+ * `LegResult`'s shape so the presentational `LegRow` can render any of them.
+ */
+export type MigrationsLegResult =
+  | { status: "current"; summary: string; evidence: string }
+  | { status: "pending"; summary: string; evidence: string }
+  | { status: "modified"; summary: string; evidence: string }
+  | { status: "unknown"; summary: string; evidence: string };
+
+export interface MigrationsLegDeps {
+  /** `resolveApiBaseUrl` — the URL the app's real client would dial. */
+  baseUrl: () => string;
+  fetchFn: HealthLegDeps["fetchFn"];
+  timeoutMs?: number;
+  /**
+   * External cancellation (component unmount) — aborts the in-flight request
+   * early, same socket-leak guard as leg 2's internal 8s watchdog
+   * (`use-migrations-leg-runner.ts` wires this to its cleanup). Optional:
+   * tests that don't exercise unmount can omit it.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * GET `<base>/health` and read its optional `migrations` field.
+ * CURRENT: field present, `pendingCount` AND `modifiedCount` both zero.
+ * PENDING: `pendingCount` non-zero — names every tag when the server
+ * includes them (`development`/`test`), a count only otherwise (the server
+ * redacts exact schema-change slugs on this unauthenticated endpoint
+ * outside dev/test — architecture review round-1 #3). MODIFIED (round-2,
+ * B-28): `pendingCount` zero but `modifiedCount` non-zero — a migration was
+ * edited AFTER the server applied it. Deliberately a DIFFERENT status from
+ * PENDING (never re-conflated on the client after the server-side fix that
+ * separated them): `db:migrate` cannot fix an edited, already-applied file,
+ * so this is never as urgent as a genuinely pending one, but still needs a
+ * human to look — same dev/test-names-vs-redacted-count posture as pending.
+ * PENDING takes priority when BOTH are non-zero (a genuinely un-applied
+ * migration is the more actionable problem). UNKNOWN: base-URL resolution
+ * threw, the round-trip failed or timed out, the body didn't parse as JSON,
+ * the body didn't match `HealthResponseSchema`, OR the response matched the
+ * schema but omitted `migrations` (an older server that predates B-28) —
+ * all of these collapse to the same "we don't know" state because none of
+ * them is evidence the DB is either current or behind (review round-1 C3
+ * split the SUMMARY between the last two so a captive portal / proxy
+ * doesn't read as "stale server build").
+ */
+export async function runMigrationsLeg(deps: MigrationsLegDeps): Promise<MigrationsLegResult> {
+  let url: string;
+  try {
+    url = `${deps.baseUrl()}/health`;
+  } catch (err) {
+    return {
+      status: "unknown",
+      summary: "no base URL to probe (resolution threw)",
+      evidence: describeError(err),
+    };
+  }
+
+  // Same 8s watchdog as leg 2 (review round-1 C4) — a half-dead server that
+  // completes the TCP handshake but never answers must not leave this row
+  // RUNNING forever. Also observes `deps.signal` so the runner's unmount
+  // cleanup can cancel the in-flight request instead of merely discarding
+  // its eventual result (closing the socket-leak half of the same finding).
+  const timeoutMs = deps.timeoutMs ?? HEALTH_TIMEOUT_MS;
+  const abort = new AbortController();
+  const onExternalAbort = () => abort.abort();
+  deps.signal?.addEventListener("abort", onExternalAbort);
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+
+  let res: Awaited<ReturnType<MigrationsLegDeps["fetchFn"]>>;
+  try {
+    res = await deps.fetchFn(url, { signal: abort.signal });
+  } catch (err) {
+    const timedOut = abort.signal.aborted;
+    return {
+      status: "unknown",
+      summary: timedOut
+        ? `no response within ${timeoutMs}ms — request aborted`
+        : "health round-trip failed — exact cause below",
+      evidence: [
+        `GET ${url}`,
+        ...(timedOut ? [`timeout after ${timeoutMs}ms`] : []),
+        describeError(err),
+      ].join("\n"),
+    };
+  } finally {
+    clearTimeout(timer);
+    deps.signal?.removeEventListener("abort", onExternalAbort);
+  }
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    return {
+      status: "unknown",
+      summary: "health response was not parseable JSON",
+      evidence: [`GET ${url}`, `status: ${res.status}`, describeError(err)].join("\n"),
+    };
+  }
+
+  const parsed = HealthResponseSchema.safeParse(body);
+  if (!parsed.success || parsed.data.migrations === undefined) {
+    // C3: a schema-parse failure (captive portal, proxy, or any response
+    // that isn't shaped like this server at all) is a DIFFERENT problem
+    // than a genuinely absent `migrations` field (an older, pre-B-28
+    // server that otherwise parses fine) — one banner for both cost B-5/B-6
+    // two rounds each; don't repeat it here.
+    const summary = parsed.success
+      ? "server does not report migration state (older server, pre-B-28)"
+      : "unexpected response — captive portal or proxy?";
+    return {
+      status: "unknown",
+      summary,
+      evidence: [
+        `GET ${url}`,
+        `status: ${res.status}`,
+        parsed.success
+          ? "response parsed but has no `migrations` field"
+          : `response did not match HealthResponseSchema: ${parsed.error.message}`,
+      ].join("\n"),
+    };
+  }
+
+  const { onDisk, applied, pending, pendingCount, modified, modifiedCount } =
+    parsed.data.migrations;
+  if (pendingCount === 0 && modifiedCount === 0) {
+    return {
+      status: "current",
+      summary: `current (${applied} applied)`,
+      evidence: [`onDisk: ${onDisk}`, `applied: ${applied}`, "pending: (none)"].join("\n"),
+    };
+  }
+  if (pendingCount > 0) {
+    if (pending.length > 0) {
+      // development/test: the server includes every tag.
+      return {
+        status: "pending",
+        summary: `${pending.length} pending: ${pending.join(", ")}`,
+        evidence: [
+          `onDisk: ${onDisk}`,
+          `applied: ${applied}`,
+          "pending:",
+          ...pending.map((tag) => `  - ${tag}`),
+        ].join("\n"),
+      };
+    }
+    // Every other env: the server redacts exact tag names on this
+    // unauthenticated endpoint (architecture review round-1 #3) — count only.
+    return {
+      status: "pending",
+      summary: `${pendingCount} pending (names hidden outside development/test)`,
+      evidence: [
+        `onDisk: ${onDisk}`,
+        `applied: ${applied}`,
+        `pendingCount: ${pendingCount}`,
+        "pending tag names redacted by the server outside development/test",
+      ].join("\n"),
+    };
+  }
+  // pendingCount === 0 && modifiedCount > 0 (round-2, B-28): a distinct
+  // status from PENDING — `db:migrate` cannot fix an edited, already-applied
+  // file, so this deliberately never renders as the more urgent PENDING
+  // badge. Same dev/test-names-vs-redacted-count posture as pending.
+  if (modified.length > 0) {
+    return {
+      status: "modified",
+      summary: `${modified.length} edited after apply: ${modified.join(", ")}`,
+      evidence: [
+        `onDisk: ${onDisk}`,
+        `applied: ${applied}`,
+        "modified (edited after apply):",
+        ...modified.map((tag) => `  - ${tag}`),
+      ].join("\n"),
+    };
+  }
+  return {
+    status: "modified",
+    summary: `${modifiedCount} edited after apply (names hidden outside development/test)`,
+    evidence: [
+      `onDisk: ${onDisk}`,
+      `applied: ${applied}`,
+      `modifiedCount: ${modifiedCount}`,
+      "modified tag names redacted by the server outside development/test",
     ].join("\n"),
   };
 }

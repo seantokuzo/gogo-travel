@@ -1,8 +1,15 @@
 import { createRequire } from "node:module";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import type { MigrationState } from "@gogo/shared/api/health";
 import { authEndpoints } from "@gogo/shared/domains/auth";
+import { e2eEndpoints } from "@gogo/shared/domains/e2e";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import {
+  createE2eDoorRouter,
+  performDoorConstantWorkFloor,
+  type E2eDoorRouterDeps,
+} from "./auth/e2e-door.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
 import { createBudgetsRouter, type BudgetsRouterDeps } from "./budgets/routes.js";
 import { createExpensesRouter, type ExpensesRouterDeps } from "./expenses/routes.js";
@@ -141,6 +148,140 @@ export interface CreateAppOptions {
    * wiring bug like every other surface.
    */
   fx?: FxRouterDeps;
+  /**
+   * E2E session door deps (S-4/T3, session-door spec §4.3). Present ONLY on
+   * a non-production server holding a valid `E2E_SESSION_DOOR_SECRET`
+   * (`auth/e2e-door.ts`'s `buildE2eDoorDepsFromEnv` returns `null`
+   * otherwise) — every other server never constructs this router at all, so
+   * there is nothing for a request to reach. Same pairing rule as every
+   * other surface: door-without-auth is a wiring bug, rejected at
+   * construction (it mints via the SAME issuance path sign-in uses,
+   * R-door-4, so it cannot exist without `auth`).
+   */
+  e2eDoor?: E2eDoorRouterDeps;
+  /**
+   * Boot-time migration-state snapshot (B-28) — computed ONCE at startup
+   * (`src/index.ts`'s `checkMigrationState` + `decideBootMigrationAction`,
+   * the same computation that decides refuse-vs-warn) and echoed on
+   * `/api/health` as the INITIAL value. Absent on DB-less/health-only boots
+   * (most tests, dev without auth configured) OR when the boot-time check
+   * itself could not determine a state (DB unreachable / journal unreadable
+   * — `index.ts` warns and passes nothing rather than fail `/health`). The
+   * mobile diagnostics panel renders that absence as a distinct "unknown"
+   * state, never as an error (`@gogo/shared/api/health`'s `migrations` is
+   * optional for exactly this reason).
+   */
+  migrations?: MigrationState;
+  /**
+   * Lazy-refresh hook for the migrations snapshot (review round-1 C5,
+   * hardened round-2 — see `createMigrationsSnapshotCache`'s doc): once per
+   * `MIGRATIONS_SNAPSHOT_TTL_MS`, `/api/health` kicks off ONE bounded,
+   * single-flight background call to this instead of echoing `migrations`
+   * forever — a boot-time-only snapshot meant the panel's own "rerun" button
+   * could never observe a migration that finished AFTER boot. `/health`
+   * itself NEVER awaits this call — it always answers with whatever
+   * snapshot is currently cached (stale-while-revalidate), so `/api/health`
+   * stays cheap and bounded for LB/uptime probes (see `PUBLIC_ALLOWLIST`'s
+   * HEAD-probe note above) regardless of how the database is behaving.
+   * `index.ts` wires this to `() => checkMigrationState(getDb())`,
+   * wire-shaped by NODE_ENV the same way the initial `migrations` value
+   * was. A failed or timed-out recompute keeps serving the last good
+   * snapshot rather than failing `/health` (same "don't mask, don't fail"
+   * posture as the boot-time check). Omitted in tests that only care about
+   * the static initial value — `migrations` alone then never refreshes.
+   */
+  migrationsRefresh?: () => Promise<MigrationState>;
+}
+
+/** `/api/health` recomputes its migrations snapshot at most this often (review round-1 C5) — the boot-time value is otherwise frozen for the life of the process. */
+export const MIGRATIONS_SNAPSHOT_TTL_MS = 30_000;
+
+/**
+ * Bound on a single background migrations-snapshot refresh (review round-2
+ * regression C5-follow-up: the round-1 cache awaited `refresh()` DIRECTLY on
+ * whichever request crossed the TTL — an unbounded, un-deduplicated DB round
+ * trip: every concurrent caller in that window started its OWN refresh, and
+ * a wedged connection could hang `/health` itself forever). `checkMigrationState`
+ * takes a driver-agnostic `DbClient`, so there is no one query-timeout knob to
+ * reach for here — postgres-js (the pinned test driver, `postgres@3.4.9`) has
+ * no built-in per-query timeout at all; Context7 (`porsager/postgres`,
+ * "Query Timeout Implementation") documents `Promise.race` against a
+ * `setTimeout` rejection as the library's OWN recommended pattern for
+ * exactly this, which is what `rejectAfter`/`createMigrationsSnapshotCache`
+ * use below (plain `setTimeout`, not `AbortSignal.timeout`, so vitest's fake
+ * timers can drive the bound deterministically in tests).
+ */
+export const MIGRATIONS_REFRESH_TIMEOUT_MS = 2_000;
+
+/** Rejects after `ms` — see `MIGRATIONS_REFRESH_TIMEOUT_MS`'s doc for why this shape (not `AbortSignal.timeout`). `unref()`'d so a pending bound timer never keeps the process alive on its own. */
+function rejectAfter(ms: number): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`migrations snapshot refresh timed out after ${ms}ms`)),
+      ms,
+    );
+    timer.unref?.();
+  });
+}
+
+/**
+ * A tiny TTL cache in front of an optional refresh hook — STALE-WHILE-
+ * REVALIDATE (review round-2 regression fix). `/health` must NEVER await the
+ * database:
+ *  - Every call returns the CURRENTLY cached snapshot immediately/synchronously
+ *    — never the in-progress refresh's eventual result.
+ *  - Once the TTL has elapsed, a call kicks off a background refresh, bounded
+ *    by `MIGRATIONS_REFRESH_TIMEOUT_MS` (`Promise.race` against `rejectAfter`).
+ *  - SINGLE-FLIGHT: while a refresh is in flight, concurrent (and
+ *    subsequent, still-in-window) callers reuse it instead of each starting
+ *    their own — `inFlight` is the guard.
+ *  - A successful refresh replaces `snapshot` (its own `checkedAt` moves
+ *    forward with it) for the NEXT caller to observe. A failed or timed-out
+ *    refresh keeps serving the LAST good snapshot and logs once (single-
+ *    flight means at most one attempt is ever in progress at a time) —
+ *    never fails `/health`, same don't-mask posture as the boot-time check.
+ *    Either way the TTL clock still advances, so a down database is retried
+ *    once per TTL window, not once per request.
+ *
+ * Exported only for `app.test.ts`'s pins; every other caller goes through
+ * `CreateAppOptions.migrationsRefresh`.
+ */
+export function createMigrationsSnapshotCache(
+  initial: MigrationState,
+  refresh?: () => Promise<MigrationState>,
+  ttlMs: number = MIGRATIONS_SNAPSHOT_TTL_MS,
+  timeoutMs: number = MIGRATIONS_REFRESH_TIMEOUT_MS,
+): () => Promise<MigrationState> {
+  let snapshot = initial;
+  let lastCheckedMs = Date.now();
+  let inFlight: Promise<void> | undefined;
+
+  function triggerRefresh(): void {
+    if (!refresh || inFlight) return;
+    inFlight = Promise.race([refresh(), rejectAfter(timeoutMs)])
+      .then((result) => {
+        snapshot = result;
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          "[health] migrations snapshot refresh failed or timed out — serving the last known-good snapshot",
+          err,
+        );
+      })
+      .finally(() => {
+        lastCheckedMs = Date.now();
+        inFlight = undefined;
+      });
+  }
+
+  // Deliberately NOT `async` — this function never awaits anything (that's
+  // the whole point: `/health` must never await the DB), and an `async`
+  // arrow with no `await` inside trips `@typescript-eslint/require-await`.
+  return () => {
+    if (!refresh) return Promise.resolve(snapshot);
+    if (Date.now() - lastCheckedMs >= ttlMs) triggerRefresh();
+    return Promise.resolve(snapshot);
+  };
 }
 
 export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
@@ -177,6 +318,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   if (options.fx && !options.auth) {
     throw new Error("fx router requires auth deps — it must sit behind requireAuth");
   }
+  if (options.e2eDoor && !options.auth) {
+    throw new Error("e2eDoor router requires auth deps — it mints via the sign-in issuance path");
+  }
 
   const app = new Hono<RequestVars>();
   const logger = options.auth?.logger;
@@ -190,15 +334,50 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   if (options.devRequestLog) app.use("*", createDevRequestLog(logger ?? console));
   app.onError(createErrorHandler(logger ?? console));
 
+  // R-door-13 (SHOULD): a constant-work floor even when the door was NEVER
+  // mounted, so response latency alone can't reveal whether the gates
+  // passed on an otherwise-quiet host. Only added when the door is absent —
+  // when it IS mounted, the router's own handler already does this compare
+  // on every one of its failure paths.
+  if (!options.e2eDoor) {
+    const doorPath = `${API_BASE}${e2eEndpoints.mintSession.path}`;
+    app.use(doorPath, async (_c, next) => {
+      performDoorConstantWorkFloor();
+      await next();
+    });
+  }
+
+  // The e2e door's own path joins the allowlist ONLY when it's mounted
+  // (session-door spec §4.3) — `PUBLIC_ALLOWLIST` itself is never touched
+  // (`app.test.ts` pins its `size === 5`; prod's public surface genuinely
+  // stays at 5). Without this the door would 401 at `requireAuth` before its
+  // own handler ever runs — the same response as every other failure mode,
+  // so the failure is safe, but the door would never work.
+  const effectiveAllowlist: ReadonlySet<string> = options.e2eDoor
+    ? new Set([
+        ...PUBLIC_ALLOWLIST,
+        `${e2eEndpoints.mintSession.method} ${API_BASE}${e2eEndpoints.mintSession.path}`,
+      ])
+    : PUBLIC_ALLOWLIST;
+
   if (options.auth) {
     app.use(
       "*",
       createRequireAuth({
         verifier: options.auth.accessVerify,
-        allowlist: PUBLIC_ALLOWLIST,
+        allowlist: effectiveAllowlist,
         ...(logger ? { logger } : {}),
       }),
     );
+  }
+
+  // E2E session door (S-4/T3, session-door spec §3.6 body-size-ordering):
+  // mounted BEFORE the app-wide bodyLimit below so its OWN per-route guard
+  // (uniform 401, never 413) is what observes an oversized request on this
+  // now-allowlisted path — mounting it after would let the 256 KiB app-wide
+  // cap answer 413 first, which is itself a door-exists oracle (§3.6).
+  if (options.e2eDoor) {
+    app.route(API_BASE, createE2eDoorRouter(options.e2eDoor));
   }
 
   // App-wide body cap (PR #11 R1 security defer): ONE bodyLimit in front of
@@ -216,7 +395,15 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
     }),
   );
 
-  app.get("/api/health", (c) => c.json({ ok: true, version }));
+  const migrationsSnapshot = options.migrations
+    ? createMigrationsSnapshotCache(options.migrations, options.migrationsRefresh)
+    : undefined;
+
+  app.get("/api/health", async (c) => {
+    if (!migrationsSnapshot) return c.json({ ok: true, version });
+    const migrations = await migrationsSnapshot();
+    return c.json({ ok: true, version, migrations });
+  });
 
   if (options.auth) {
     // Descriptor paths (`/auth/apple`, …) mount under the same `/api` base

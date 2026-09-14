@@ -82,6 +82,11 @@ describe("parseDeepLink — not ours → passthrough", () => {
     ],
     ["/sign-in", "bare internal path"],
     ["/", "root path"],
+    [
+      `${APP_SCHEME}://e2e-session?user_key=flow-1&first_run=false`,
+      "E2E session door entry (S-4 T4) — single hyphenated segment, query intact",
+    ],
+    ["/e2e-session", "E2E session door, bare path"],
   ])("%s (%s)", (url) => {
     expect(parseDeepLink(url)).toEqual({ kind: "passthrough" });
   });

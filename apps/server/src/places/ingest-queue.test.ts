@@ -92,6 +92,41 @@ describe("createPlacesIngestQueue", () => {
     expect(deps.warn).toHaveBeenCalledTimes(1);
   });
 
+  it("[B-7 part 3] a null destination (coordinate-less custom place) skips the enqueue and logs debug — never a grid RangeError", async () => {
+    const deps = recordingDeps();
+    const debug = vi.fn<(message: string) => void>();
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn, debug },
+    });
+
+    expect(() => queue.enqueueDestination(null, null)).not.toThrow();
+    await queue.idle();
+
+    expect(deps.ingestCell).not.toHaveBeenCalled();
+    // Falsification: revert the null guard in `enqueueDestination` (restore
+    // `regionCellsForDestination(lat, lng)` unconditionally) — this reds
+    // because the grid throws and the message moves to `warn`, not `debug`.
+    expect(debug).toHaveBeenCalledTimes(1);
+    expect(debug.mock.calls[0]?.[0]).toContain("no coordinates");
+    expect(deps.warn).not.toHaveBeenCalled();
+  });
+
+  it("[B-7 part 3] a null destination still logs (via warn) when the deps carry no debug logger", async () => {
+    const deps = recordingDeps();
+    const queue = createPlacesIngestQueue({
+      ingestCell: deps.ingestCell,
+      logger: { warn: deps.warn }, // no `debug` — the fallback arm
+    });
+
+    queue.enqueueDestination(null, null);
+    await queue.idle();
+
+    expect(deps.ingestCell).not.toHaveBeenCalled();
+    expect(deps.warn).toHaveBeenCalledTimes(1);
+    expect(deps.warn.mock.calls[0]?.[0]).toContain("no coordinates");
+  });
+
   it("throttles search-miss enqueues to one per cell per hour (R-places-7, §3.1.3)", async () => {
     let nowMs = 1_000_000;
     const deps = recordingDeps();

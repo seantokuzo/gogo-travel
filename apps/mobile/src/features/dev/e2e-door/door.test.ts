@@ -1,0 +1,540 @@
+/**
+ * E2E session door — client half (S-4 T4; .specs/testing/session-door.spec.md
+ * §2.1 T4 rows). Every branch of `openSessionDoor` (disabled × 2 reasons,
+ * malformed input, success, 401, network failure) is unit-testable over
+ * injected deps, per the module's own doc comment.
+ *
+ * The happy/rejected/network cases use a REAL `createApiClient` (only
+ * `fetchImpl` mocked) rather than a fake `{ request: jest.fn() }` port, so
+ * the request body / headers / `ApiRequestError` status mapping this suite
+ * asserts on are the ACTUAL wire behavior, not a hand-rolled fiction of it
+ * (`.claude/rules/testing.md` #4 — a green mock proves nothing on its own).
+ */
+import type { SignInResponse, User } from "@gogo/shared";
+
+import { ApiRequestError, createApiClient, type MobileApiClient } from "@/auth/api-client";
+
+import {
+  isDoorBundleId,
+  isDoorSecretConfigured,
+  openSessionDoor,
+  parseFirstRun,
+  resolveUserKey,
+  type OpenDoorDeps,
+} from "./door";
+
+jest.mock("expo-device", () => ({ __esModule: true, deviceName: "Test Device" }));
+
+const SECRET = "s".repeat(32);
+const LOCAL_BASE = "http://localhost:3000/api";
+const PUBLIC_BASE = "https://api.gogotravel.example/api";
+const DOOR_BUNDLE_ID = "app.gogotravel.e2edoor";
+const SHIPPING_BUNDLE_ID = "app.gogotravel";
+
+const USER: User = {
+  id: "00000000-0000-4000-8000-000000000002",
+  email: "e2e+flow-1@gogotravel.invalid",
+  display_name: "E2E flow-1",
+  avatar_key: null,
+  prefs: {},
+  venmo_username: null,
+  cashtag: null,
+  paypalme_username: null,
+  zelle_handle: null,
+  zelle_display_name: null,
+  forward_email_slug: null,
+  created_at: "2026-09-13T00:00:00.000Z",
+};
+
+const SIGN_IN_RESPONSE: SignInResponse = {
+  user: USER,
+  tokens: { access_token: "door-access", refresh_token: "door-refresh", expires_in: 900 },
+  is_new_user: false,
+};
+
+/** A real `ApiClient` adapter with only the transport (`fetchImpl`) faked. */
+function makeRealApi(fetchImpl: jest.Mock): MobileApiClient {
+  return createApiClient({
+    baseUrl: LOCAL_BASE,
+    fetchImpl: fetchImpl as unknown as typeof fetch,
+    getAccessToken: () => null,
+    getRefreshToken: async () => null,
+    onTokensRefreshed: async () => undefined,
+    onAuthLost: async () => undefined,
+  });
+}
+
+function jsonResponse(status: number, body: unknown) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: async () => JSON.stringify(body),
+  };
+}
+
+function makeDeps(overrides: Partial<OpenDoorDeps> = {}): {
+  deps: OpenDoorDeps;
+  resetLocalSession: jest.Mock;
+  applySignIn: jest.Mock;
+} {
+  const resetLocalSession = jest.fn().mockResolvedValue(undefined);
+  const applySignIn = jest.fn().mockResolvedValue(undefined);
+  const deps: OpenDoorDeps = {
+    api: makeRealApi(jest.fn()),
+    apiBase: LOCAL_BASE,
+    resetLocalSession,
+    applySignIn,
+    secret: SECRET,
+    bundleId: DOOR_BUNDLE_ID,
+    ...overrides,
+  };
+  return { deps, resetLocalSession, applySignIn };
+}
+
+describe("isDoorSecretConfigured (G3)", () => {
+  it("boundary: exactly 32 chars is configured; 31 is not", () => {
+    expect(isDoorSecretConfigured("a".repeat(32))).toBe(true);
+    expect(isDoorSecretConfigured("a".repeat(31))).toBe(false);
+  });
+
+  it("undefined (a door-free build's folded-to-undefined member expression) is not configured", () => {
+    expect(isDoorSecretConfigured(undefined)).toBe(false);
+  });
+
+  it("defaults to reading process.env.EXPO_PUBLIC_E2E_DOOR_SECRET when no arg is given", () => {
+    const prev = process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;
+    try {
+      delete process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;
+      expect(isDoorSecretConfigured()).toBe(false);
+      process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
+      expect(isDoorSecretConfigured()).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;
+      else process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = prev;
+    }
+  });
+});
+
+describe("isDoorBundleId (R-door-16 third gate)", () => {
+  it("the installed bundle id carrying the .e2edoor suffix is a door build", () => {
+    expect(isDoorBundleId("app.gogotravel.e2edoor")).toBe(true);
+  });
+
+  it("the shipping bundle id (no suffix) is NOT a door build", () => {
+    expect(isDoorBundleId("app.gogotravel")).toBe(false);
+  });
+
+  it("null/undefined (web platform, or expo-application unavailable) is NOT a door build", () => {
+    expect(isDoorBundleId(null)).toBe(false);
+    expect(isDoorBundleId(undefined)).toBe(false);
+  });
+
+  it("defaults to reading the real expo-application applicationId when no arg is given", () => {
+    // Under jest (no explicit mock), expo-modules-core's auto-mock resolves
+    // `applicationId` to the literal string "mock" — never suffixed, so the
+    // default arm reads as NOT a door build without any module mock here.
+    expect(isDoorBundleId()).toBe(false);
+  });
+});
+
+describe("parseFirstRun (adversarial: first_run type confusion)", () => {
+  it.each([
+    ["true", true],
+    [undefined, false],
+    ["1", false],
+    ["TRUE", false],
+    ["True", false],
+    [["true", "false"], false], // repeated query key → array, never truthy
+    ["", false],
+  ])("%p -> %p", (raw, expected) => {
+    expect(parseFirstRun(raw as string | string[] | undefined)).toBe(expected);
+  });
+});
+
+describe("resolveUserKey", () => {
+  it.each([
+    ["flow-1", "flow-1"],
+    [undefined, "default"],
+    ["", "default"],
+    [["a", "b"], "default"], // repeated query key never becomes the identity
+  ])("%p -> %p", (raw, expected) => {
+    expect(resolveUserKey(raw as string | string[] | undefined)).toBe(expected);
+  });
+});
+
+describe("openSessionDoor — disabled branch (R-door-7 host/secret gate + R-door-16 bundle-id gate)", () => {
+  it("secret not configured -> disabled, no reset, no network call", async () => {
+    const fetchMock = jest.fn();
+    const { deps, resetLocalSession } = makeDeps({
+      api: makeRealApi(fetchMock),
+      secret: undefined,
+    });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resetLocalSession).not.toHaveBeenCalled();
+  });
+
+  it("secret too short (31 chars) -> disabled, no network call", async () => {
+    const fetchMock = jest.fn();
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock), secret: "s".repeat(31) });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("resolved API base is a public host -> disabled, no network call (secret WAS configured)", async () => {
+    // Falsification: drop the `isLocalOrPrivateHost` check from openSessionDoor
+    // → this goes RED (a live fetch would fire against PUBLIC_BASE).
+    const fetchMock = jest.fn();
+    const { deps, resetLocalSession } = makeDeps({
+      api: makeRealApi(fetchMock),
+      apiBase: PUBLIC_BASE,
+    });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resetLocalSession).not.toHaveBeenCalled();
+  });
+
+  it("a local/private base WITH the secret configured proceeds (control arm — proves the gate can pass)", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock) });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("R-door-16: installed bundle id is the SHIPPING id (no .e2edoor suffix) -> disabled, no network call, even with secret + local base BOTH satisfied", async () => {
+    // Falsification: drop the `isDoorBundleId` check from openSessionDoor's
+    // gate -> this goes RED (a live fetch would fire even though the
+    // installed binary is byte-indistinguishable from the shipping app —
+    // review round 1 B1's exact scenario: a mis-built binary that skipped
+    // `expo prebuild` and still wears `app.gogotravel`).
+    const fetchMock = jest.fn();
+    const { deps, resetLocalSession } = makeDeps({
+      api: makeRealApi(fetchMock),
+      bundleId: SHIPPING_BUNDLE_ID,
+    });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resetLocalSession).not.toHaveBeenCalled();
+  });
+
+  it("R-door-16: installed bundle id is null (web/unavailable) -> disabled, no network call", async () => {
+    const fetchMock = jest.fn();
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock), bundleId: null });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("openSessionDoor — malformed user_key (adversarial, no request)", () => {
+  it("a user_key violating the shared regex is rejected client-side, no network call, no reset", async () => {
+    const fetchMock = jest.fn();
+    const { deps, resetLocalSession } = makeDeps({ api: makeRealApi(fetchMock) });
+
+    const result = await openSessionDoor(
+      { userKey: "UPPER CASE not allowed!!", firstRun: false },
+      deps,
+    );
+
+    expect(result).toEqual({ ok: false, reason: "rejected" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(resetLocalSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("openSessionDoor — happy path: ordering, request shape, session apply", () => {
+  it("the mint does not fire while resetLocalSession's promise is genuinely still pending — the AWAIT is load-bearing, not just call-order", async () => {
+    // T-7.9 pattern: a deferred promise held open, released in `finally` (a
+    // stuck assertion must not wedge this file). The prior version of this
+    // pin only compared `invocationCallOrder`, which stays green even if
+    // `await d.resetLocalSession()` is weakened to `void
+    // d.resetLocalSession()` — both still call reset "before" the fetch call
+    // is *issued* on the synchronous call stack, but the void form does not
+    // wait for it to actually finish. Falsification: change that `await` to
+    // `void` in openSessionDoor -> the mint fires below before `releaseReset`
+    // runs, and the "no fetch yet" assertion goes RED.
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    let releaseReset: () => void = () => undefined;
+    const resetLocalSession = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseReset = resolve;
+        }),
+    );
+    const applySignIn = jest.fn().mockResolvedValue(undefined);
+    const deps: OpenDoorDeps = {
+      api: makeRealApi(fetchMock),
+      apiBase: LOCAL_BASE,
+      resetLocalSession,
+      applySignIn,
+      secret: SECRET,
+      bundleId: DOOR_BUNDLE_ID,
+    };
+
+    const pending = openSessionDoor({ userKey: "flow-1", firstRun: true }, deps);
+    // Flush the synchronous prefix (gate checks + schema parse) so execution
+    // has genuinely reached `await d.resetLocalSession()` and is suspended
+    // there — resetLocalSession's own promise constructor already ran
+    // synchronously, so `releaseReset` is already assigned.
+    await Promise.resolve();
+
+    try {
+      expect(resetLocalSession).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(applySignIn).not.toHaveBeenCalled();
+    } finally {
+      releaseReset();
+    }
+
+    const result = await pending;
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(applySignIn).toHaveBeenCalledTimes(1);
+    // applySignIn happens AFTER the mint resolves.
+    expect(applySignIn.mock.invocationCallOrder[0]).toBeGreaterThan(
+      fetchMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("resets local session BEFORE the mint POST, then applies the response, Authorization-free", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    const { deps, resetLocalSession, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: true }, deps);
+
+    expect(result).toEqual({ ok: true });
+    expect(resetLocalSession).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(resetLocalSession.mock.invocationCallOrder[0]).toBeLessThan(
+      fetchMock.mock.invocationCallOrder[0],
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${LOCAL_BASE}/auth/e2e/session`);
+    expect(init.method).toBe("POST");
+    // No Authorization header — the door is unauthenticated by construction
+    // and the access token was just cleared by resetLocalSession anyway.
+    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(JSON.parse(init.body as string)).toEqual({
+      secret: SECRET,
+      user_key: "flow-1",
+      device: { platform: "ios", device_name: "Test Device" },
+      first_run: true,
+    });
+
+    expect(applySignIn).toHaveBeenCalledTimes(1);
+    expect(applySignIn).toHaveBeenCalledWith(SIGN_IN_RESPONSE);
+    // applySignIn happens AFTER the mint resolves.
+    expect(applySignIn.mock.invocationCallOrder[0]).toBeGreaterThan(
+      fetchMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("secret in the URL is ignored — the request always carries the injected/build secret, never a param value", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock) });
+    // OpenDoorParams has no `secret` field at all — this simulates a caller
+    // that tried to smuggle one through anyway (a crafted deep link with a
+    // `?secret=` query param the route never reads into OpenDoorParams).
+    const paramsWithSmuggledSecret = {
+      userKey: "flow-1",
+      firstRun: false,
+      secret: "attacker-supplied-value-xxxxxxxx",
+    };
+
+    await openSessionDoor(paramsWithSmuggledSecret, deps);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { secret: string };
+    expect(body.secret).toBe(SECRET);
+    expect(body.secret).not.toBe("attacker-supplied-value-xxxxxxxx");
+  });
+});
+
+/** Spies every console surface a stray log/warn could use, restores on exit. */
+function spyOnConsole() {
+  return {
+    log: jest.spyOn(console, "log").mockImplementation(() => undefined),
+    warn: jest.spyOn(console, "warn").mockImplementation(() => undefined),
+    error: jest.spyOn(console, "error").mockImplementation(() => undefined),
+  };
+}
+
+/** Asserts `needle` appears in NO call, to ANY of the spied console methods. */
+function expectNeverLogged(spies: Record<string, jest.SpyInstance>, needle: string): void {
+  for (const spy of Object.values(spies)) {
+    for (const call of spy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(needle);
+    }
+  }
+}
+
+describe("openSessionDoor — superseded run (S-4 review round 2 A4 residual): a reset that resolves late performs no further side effects", () => {
+  it("does not fire the mint POST, and does not touch the winner's applied session, when marked superseded while its reset is still in flight", async () => {
+    // Falsification: drop the `isSuperseded` check between `resetLocalSession`
+    // and the mint POST -> RED (the loser's `firstFetch` WOULD fire after
+    // release below).
+    let releaseFirstReset: () => void = () => undefined;
+    const firstResetPromise = new Promise<void>((resolve) => {
+      releaseFirstReset = resolve;
+    });
+    const firstResetLocalSession = jest.fn(() => firstResetPromise);
+    const firstApplySignIn = jest.fn().mockResolvedValue(undefined);
+    const firstFetch = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    let firstCancelled = false;
+    const firstDeps: OpenDoorDeps = {
+      api: makeRealApi(firstFetch),
+      apiBase: LOCAL_BASE,
+      resetLocalSession: firstResetLocalSession,
+      applySignIn: firstApplySignIn,
+      secret: SECRET,
+      bundleId: DOOR_BUNDLE_ID,
+      isSuperseded: () => firstCancelled,
+    };
+
+    const firstPending = openSessionDoor({ userKey: "flow-1", firstRun: false }, firstDeps);
+    // Flush to the `await d.resetLocalSession()` suspension point, same
+    // pattern as the "AWAIT is load-bearing" pin above.
+    await Promise.resolve();
+    expect(firstResetLocalSession).toHaveBeenCalledTimes(1);
+
+    // The LATEST invocation starts and runs to completion while the first's
+    // reset is still held open.
+    const SECOND_USER: User = { ...USER, id: "00000000-0000-4000-8000-00000000f002" };
+    const secondFetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { ...SIGN_IN_RESPONSE, user: SECOND_USER }));
+    const secondApplySignIn = jest.fn().mockResolvedValue(undefined);
+    const { deps: secondDeps } = makeDeps({
+      api: makeRealApi(secondFetch),
+      applySignIn: secondApplySignIn,
+    });
+
+    const secondResult = await openSessionDoor({ userKey: "flow-2", firstRun: false }, secondDeps);
+
+    expect(secondResult).toEqual({ ok: true });
+    expect(secondApplySignIn).toHaveBeenCalledTimes(1);
+    expect(secondApplySignIn).toHaveBeenCalledWith(expect.objectContaining({ user: SECOND_USER }));
+
+    // NOW mark the first invocation superseded (the route would have flipped
+    // `cancelled` the moment flow-2's effect started) and release its reset.
+    firstCancelled = true;
+    releaseFirstReset();
+    const firstResult = await firstPending;
+
+    expect(firstResult).toEqual({ ok: false, reason: "superseded" });
+    expect(firstFetch).not.toHaveBeenCalled();
+    expect(firstApplySignIn).not.toHaveBeenCalled();
+    // The winner's session is undisturbed by the loser's late-resolving reset.
+    expect(secondApplySignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults isSuperseded to false — a caller that never wires it behaves exactly as before", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock) });
+    expect(deps.isSuperseded).toBeUndefined();
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("openSessionDoor — server 401 (R-door-3 uniform rejection)", () => {
+  it("maps a 401 to reason 'rejected', never applies a session, secret absent from the result AND every console call", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(401, { error: { code: "UNAUTHENTICATED", message: "Not authenticated." } }),
+      );
+    const { deps, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
+    const consoleSpies = spyOnConsole();
+
+    try {
+      const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+      expect(result).toEqual({ ok: false, reason: "rejected" });
+      expect(applySignIn).not.toHaveBeenCalled();
+      // The returned result is a closed union with no string field, so this
+      // can never contain the secret by construction — retained as a shape
+      // pin, not the leak proof. Falsification for the leak claim itself
+      // lives in the console-spy check below, which CAN observe a real log
+      // call (see the network-failure test, where one genuinely fires).
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expectNeverLogged(consoleSpies, SECRET);
+    } finally {
+      Object.values(consoleSpies).forEach((s) => s.mockRestore());
+    }
+  });
+});
+
+describe("openSessionDoor — network failure", () => {
+  it("a transport throw maps to reason 'network', never applies a session, secret absent from the diagnostic console.warn", async () => {
+    const fetchMock = jest.fn().mockRejectedValue(new Error("connection refused"));
+    const { deps, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
+    const consoleSpies = spyOnConsole();
+
+    try {
+      const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+      expect(result).toEqual({ ok: false, reason: "network" });
+      expect(applySignIn).not.toHaveBeenCalled();
+      // api-client.ts's __DEV__ transport-failure diagnostic (api-client.ts:208)
+      // DOES fire on this exact path (confirmed: this test observes a real
+      // console.warn call, so the spy is proven live, not vacuous) — assert
+      // the secret never rides along in it.
+      expect(consoleSpies.warn).toHaveBeenCalled();
+      expectNeverLogged(consoleSpies, SECRET);
+    } finally {
+      Object.values(consoleSpies).forEach((s) => s.mockRestore());
+    }
+  });
+
+  it("maps a 401 ApiRequestError (from a fake api port) to reason 'rejected', and any non-401 error to 'network'", async () => {
+    // Direct pin on the mapping rule ITSELF, driven THROUGH openSessionDoor
+    // (not a bare constructor tautology) — falsification: invert the
+    // `err.status === 401` check in openSessionDoor -> RED on both arms.
+    const rejectedApi = {
+      request: jest.fn().mockRejectedValue(new ApiRequestError(401, "UNAUTHENTICATED", "no")),
+    };
+    const { deps: rejectedDeps, applySignIn: rejectedApply } = makeDeps({ api: rejectedApi });
+    const rejectedResult = await openSessionDoor(
+      { userKey: "flow-1", firstRun: false },
+      rejectedDeps,
+    );
+    expect(rejectedResult).toEqual({ ok: false, reason: "rejected" });
+    expect(rejectedApply).not.toHaveBeenCalled();
+
+    const networkApi = {
+      request: jest
+        .fn()
+        .mockRejectedValue(new ApiRequestError(0, "NETWORK", "network request failed")),
+    };
+    const { deps: networkDeps, applySignIn: networkApply } = makeDeps({ api: networkApi });
+    const networkResult = await openSessionDoor(
+      { userKey: "flow-1", firstRun: false },
+      networkDeps,
+    );
+    expect(networkResult).toEqual({ ok: false, reason: "network" });
+    expect(networkApply).not.toHaveBeenCalled();
+  });
+});

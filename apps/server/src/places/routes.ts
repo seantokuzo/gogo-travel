@@ -38,6 +38,7 @@ import {
   PLACES_SEARCH_RADIUS_M_DEFAULT,
   RATE_LIMITS,
 } from "../config.js";
+import { rethrowCoordsCkMapped } from "../db/coords-ck.js";
 import type { DbClient } from "../db/create-user.js";
 import { isFkViolationCode } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
@@ -329,19 +330,29 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
       const { userId } = authContextOf(c);
       const body = c.req.valid("json");
 
-      const [inserted] = await deps.db
-        .insert(schema.places)
-        .values({
-          source: "custom",
-          name: body.name,
-          // numeric columns are string-mode (db/schema/_shared.ts); range
-          // was validated by the shared Lat/Lng schemas.
-          lat: String(body.lat),
-          lng: String(body.lng),
-          category: body.category ?? null,
-          createdBy: userId,
-        })
-        .returning();
+      let inserted: PlaceRow | undefined;
+      try {
+        [inserted] = await deps.db
+          .insert(schema.places)
+          .values({
+            source: "custom",
+            name: body.name,
+            // numeric columns are string-mode (db/schema/_shared.ts); range
+            // was validated by the shared Lat/Lng schemas. Omitted (B-7 part
+            // 3) → NULL — the server never substitutes a placeholder value.
+            lat: body.lat === undefined ? null : String(body.lat),
+            lng: body.lng === undefined ? null : String(body.lng),
+            category: body.category ?? null,
+            createdBy: userId,
+          })
+          .returning();
+      } catch (err) {
+        // Belt, not the primary guard: PlaceCreateSchema's pair refine
+        // already rejects every half-pair at the boundary (B-7 part 3
+        // round-1 fix, db/coords-ck.ts) — an escape here is a service/schema
+        // drift bug, but the client still gets a 400, never a raw 500.
+        rethrowCoordsCkMapped(err);
+      }
       if (!inserted) throw new HttpError("INTERNAL", "place insert returned no row");
 
       return c.json(toPlaceWire(inserted) satisfies Place, 201);
@@ -365,6 +376,20 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
       const access = await customPlaceAccess(c.req.param("placeId"), userId);
       if (access.kind === "not_found") return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
       if (access.kind === "spine") {
+        // B-7 part 3 round-1 fix — source-aware clearing (`PlaceUpdateSchema`
+        // can't see a row's `source`, so the route enforces this half): a
+        // spine/tier place's coordinates are a structural fact of its
+        // source, never a caller-cleared field (`places_spine_coords_ck`) —
+        // that is a 400 (the request is invalid for this resource TYPE,
+        // regardless of who's asking), distinct from the blanket
+        // ownership/immutability 403 every other spine edit still gets.
+        if (body.lat === null && body.lng === null) {
+          return apiError(
+            c,
+            "VALIDATION_FAILED",
+            "coordinates cannot be cleared for this place's source",
+          );
+        }
         return apiError(c, "FORBIDDEN", "spine places cannot be modified");
       }
       if (access.kind === "forbidden") {
@@ -373,8 +398,13 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
 
       const set: Partial<typeof schema.places.$inferInsert> = {};
       if (body.name !== undefined) set.name = body.name;
-      if (body.lat !== undefined) set.lat = String(body.lat);
-      if (body.lng !== undefined) set.lng = String(body.lng);
+      // B-7 part 3 round-1 fix: `PlaceUpdateSchema`'s pair refine guarantees
+      // lat/lng arrive together (both a number, or both `null` — a clear,
+      // legal only for `source='custom'`, which `access.kind === "owned"`
+      // already establishes). Never `String(null)` — that would write the
+      // literal string "null" into a numeric column.
+      if (body.lat !== undefined) set.lat = body.lat === null ? null : String(body.lat);
+      if (body.lng !== undefined) set.lng = body.lng === null ? null : String(body.lng);
       if (body.category !== undefined) set.category = body.category;
 
       // Empty patch: nothing to write — answer the current row without
@@ -383,11 +413,20 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
         return c.json(toPlaceWire(access.row) satisfies Place);
       }
 
-      const [updated] = await deps.db
-        .update(schema.places)
-        .set(set)
-        .where(eq(schema.places.id, access.row.id))
-        .returning();
+      let updated: PlaceRow | undefined;
+      try {
+        [updated] = await deps.db
+          .update(schema.places)
+          .set(set)
+          .where(eq(schema.places.id, access.row.id))
+          .returning();
+      } catch (err) {
+        // Belt, not the primary guard (db/coords-ck.ts): the pair refine
+        // above + the source-aware check above it already reject every
+        // shape that could trip `places_coords_pair_ck` — an escape here is
+        // a service/schema drift bug, but the client still gets a 400.
+        rethrowCoordsCkMapped(err);
+      }
       // Raced a concurrent delete — converge on the indistinguishable 404.
       if (!updated) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 

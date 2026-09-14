@@ -31,6 +31,7 @@ import type { PlaceSource } from "@gogo/shared/enums";
 import { PLACES_SEARCH_MISS_MAX_CELLS, RATE_LIMITS } from "../config.js";
 import { createApp } from "../app.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
+import { isCheckViolationOf } from "../db/pg-errors.js";
 import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
@@ -171,7 +172,14 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
   const PASTEIS = { lat: 38.6975, lng: -9.2033 };
   const TIMEOUT_MKT = { lat: 38.7067, lng: -9.1459 };
   // Tokyo pagination cluster — distinct distances from its near point.
-  const TOKYO = { lat: 35.68, lng: 139.76 };
+  // Moved off the real Tokyo/23-wards coordinates (B-7's destination-tier
+  // migration seeded Tokyo AND several wards as real global spine rows —
+  // the original 35.68,139.76 anchor sat ~500m from the real Tokyo row and
+  // every candidate nearby anchor sat within 1-2km of some other ward);
+  // this point (Ibaraki prefecture, ~16km from the nearest real tier row,
+  // Tsuchiura) keeps the "somewhere in the Tokyo area" flavor with a safe
+  // margin for the 1km-radius queries below.
+  const TOKYO = { lat: 36.2, lng: 140.3 };
 
   let towerId = "";
   let pasteisId = "";
@@ -294,10 +302,19 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const { items } = await searchOk(user.accessToken, "q=bel%C3%A9m");
 
     const names = items.map((p) => p.name);
-    // Both Belém names match through the real GIN'd `%` operator; the
-    // shorter (more similar) name ranks first; Time Out Market is absent.
-    expect(names[0]).toBe("Belém Tower");
+    // B-7 destination tier (migration 0004) seeded the REAL city of Belém,
+    // Brazil into the global spine — an exact (case-aside) match for
+    // "belém" outranks the "Belém Tower"/"Pastéis de Belém" substring
+    // matches, so it is now the top hit; both test fixtures still match
+    // through the real GIN'd `%` operator, and the unrelated fixture is
+    // still absent.
+    expect(names[0]).toBe("Belém");
+    expect(names).toContain("Belém Tower");
     expect(names).toContain("Pastéis de Belém");
+    // Round-1 review advisory A5: restores the ordering this test is NAMED
+    // for ("similarity ranking") — the shorter, more-similar fixture name
+    // ("Belém Tower") still outranks the longer one ("Pastéis de Belém").
+    expect(names.indexOf("Belém Tower")).toBeLessThan(names.indexOf("Pastéis de Belém"));
     expect(names).not.toContain("Time Out Market");
   });
 
@@ -488,12 +505,29 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const cellKey = regionCellAt(35.68, 139.76).key;
     expect(cellKey).toBe("r:71:279");
 
+    // Round-1 review advisory A4: this bbox now also contains the REAL
+    // Tokyo tier row (B-7 migration 0004, 35.676857,139.763885) — the
+    // "partial results still 200" assertion below used to be
+    // `length > 0`, which the tier row alone satisfies, silently making
+    // this suite's own precondition load-bearing on upstream Overture data
+    // instead of on a fixture it owns. Seed one and assert ON it.
+    const coverageMissFixture = await seedSpinePlace({
+      source: "overture",
+      sourceId: "ovt-coverage-miss-fixture",
+      name: "Coverage Miss Fixture",
+      lat: 35.685,
+      lng: 139.755,
+      category: null,
+    });
+
     // 1) Never-ingested area: results from whatever the spine holds + enqueue.
     await settleCoverage(); // drain strays from earlier geo searches
     let before = enqueued.length;
     const missed = await searchOk(user.accessToken, query);
     await settleCoverage();
-    expect(missed.items.length).toBeGreaterThan(0); // degrades, never errors
+    // Degrades, never errors — and owns its own precondition (the fixture
+    // above), not an incidental real-data row.
+    expect(missed.items.some((p) => p.id === coverageMissFixture.id)).toBe(true);
     expect(enqueued.length).toBe(before + 1);
     expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
 
@@ -740,6 +774,162 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
   });
 
   // ===========================================================================
+  // B-7 part 3: nullable coordinates for custom places
+  // ===========================================================================
+
+  it("[B-7 part 3] POST: omitting BOTH lat/lng creates a coordinate-less custom place — 201 with null, never 0", async () => {
+    const user = await seedUserWithToken();
+    const res = await postPlace(user.accessToken, { name: "Grandma's cabin" });
+    expect(res.status).toBe(201);
+    const place = PlaceSchema.parse(await res.json());
+    expect(place.lat).toBeNull();
+    expect(place.lng).toBeNull();
+    expect(place.source).toBe("custom");
+
+    // The DB row itself is NULL, not the string "0" (S2 pin).
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification: restore `lat: String(body.lat)` unconditionally at
+    // places/routes.ts's insert — `String(undefined) === "undefined"`, a
+    // numeric-column write that throws at the driver, and this whole test
+    // reds with a 500 instead of a 201.
+  });
+
+  it("[B-7 part 3] POST: exactly one of lat/lng present → 400 (the pair moves together)", async () => {
+    const user = await seedUserWithToken();
+    expect((await postPlace(user.accessToken, { name: "Half a place", lat: 35.6 })).status).toBe(
+      400,
+    );
+    expect((await postPlace(user.accessToken, { name: "Half a place", lng: 139.7 })).status).toBe(
+      400,
+    );
+  });
+
+  it("[B-7 part 3] PATCH: a map-drop onto a coordinate-less custom place sets real coordinates (the P-8 follow-up seam stays open)", async () => {
+    const user = await seedUserWithToken();
+    const created = await postPlace(user.accessToken, { name: "Someday cabin" });
+    const place = PlaceSchema.parse(await created.json());
+    expect(place.lat).toBeNull();
+
+    const patched = await patchPlace(place.id, user.accessToken, { lat: 35.61, lng: 139.61 });
+    expect(patched.status).toBe(200);
+    const updated = PlaceSchema.parse(await patched.json());
+    expect(updated.lat).toBeCloseTo(35.61, 6);
+    expect(updated.lng).toBeCloseTo(139.61, 6);
+  });
+
+  it("[B-7 part 3] search: a coordinate-less custom place is found by TEXT-ONLY search, and invisible to bbox/near (R-places-27)", async () => {
+    const user = await seedUserWithToken();
+    const created = await postPlace(user.accessToken, {
+      name: `Nullisland Cabin ${uniq()}`,
+    });
+    const place = PlaceSchema.parse(await created.json());
+    expect(place.lat).toBeNull();
+
+    // Text-only: found, ranked by text similarity alone.
+    const textHit = await searchOk(user.accessToken, `q=${encodeURIComponent(place.name)}`);
+    expect(textHit.items.map((p) => p.id)).toContain(place.id);
+
+    // A bbox covering (0,0) — a coordinate-less row can never satisfy
+    // `lat/lng BETWEEN ...` (NULL BETWEEN is never true) — absent.
+    const bboxHit = await searchOk(
+      user.accessToken,
+      `q=${encodeURIComponent(place.name)}&bbox=-1,-1,1,1`,
+    );
+    expect(bboxHit.items.map((p) => p.id)).not.toContain(place.id);
+
+    // Law #3 pin: text-only visibility is STILL R-places-8-gated — a
+    // stranger never sees it, coordinate-less or not (only the geo BETWEEN
+    // exclusion is new; the visibility predicate is unchanged, R-places-6).
+    const stranger = await seedUserWithToken();
+    const strangerHit = await searchOk(stranger.accessToken, `q=${encodeURIComponent(place.name)}`);
+    expect(strangerHit.items.map((p) => p.id)).not.toContain(place.id);
+    // Falsification: drop the `createdBy = userId` arm from the visibility
+    // predicate (search-query.ts) — this reds ("Mom's house" reappears in a
+    // stranger's search).
+
+    // Same for `near`.
+    const nearHit = await searchOk(
+      user.accessToken,
+      `q=${encodeURIComponent(place.name)}&near=0,0&radius_m=50000`,
+    );
+    expect(nearHit.items.map((p) => p.id)).not.toContain(place.id);
+    // Falsification: change the bbox/near BETWEEN predicates in
+    // search-query.ts to `lat IS NULL OR lat BETWEEN ...` — the bbox/near
+    // assertions above go red (the row reappears where it must not).
+  });
+
+  it("[B-7 part 3] search: a text-only page containing a coordinate-less row still paginates (cursor round-trip)", async () => {
+    const user = await seedUserWithToken();
+    const stem = `Nullpage${uniq()}`;
+    const noCoordsName = `${stem} Alpha`;
+    const withCoordsName = `${stem} Beta`;
+    const noCoords = PlaceSchema.parse(
+      await (await postPlace(user.accessToken, { name: noCoordsName })).json(),
+    );
+    const withCoords = PlaceSchema.parse(
+      await (
+        await postPlace(user.accessToken, { name: withCoordsName, lat: 35.5, lng: 139.5 })
+      ).json(),
+    );
+
+    const page1 = await searchOk(user.accessToken, `q=${encodeURIComponent(stem)}&limit=1`);
+    expect(page1.items).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2Res = await search(
+      user.accessToken,
+      `q=${encodeURIComponent(stem)}&limit=1&cursor=${encodeURIComponent(page1.nextCursor!)}`,
+    );
+    expect(page2Res.status).toBe(200);
+    const page2 = PaginatedPlacesSchema.parse(await page2Res.json());
+    expect(page2.items).toHaveLength(1);
+
+    // No duplicate, no drop — both rows appear across the two pages exactly once.
+    const seen = [...page1.items, ...page2.items].map((p) => p.id).sort();
+    expect(seen).toEqual([noCoords.id, withCoords.id].sort());
+    // Falsification note (round-1 fix — the original claim here was
+    // INERT, on two counts): this test's query is `q`-only, no `near`/
+    // `bbox` — `anchor` is null, so `proxTerm` takes the `: sql\`0::bigint\``
+    // fallback and never touches `distanceM`/`greatest` at all; separately,
+    // the `coalesce(greatest(...), 0::bigint)` this test used to reference
+    // was PROVEN dead code regardless (`greatest`'s first argument is
+    // always the literal `0::bigint`, and Postgres's GREATEST/LEAST return
+    // NULL only when EVERY argument is NULL — so it can never return NULL
+    // to coalesce) and has been removed (search-query.ts). This pin's real,
+    // still-valid job: prove a coordinate-less row coexists correctly with
+    // a located one across a keyset-paginated text search — no duplicate,
+    // no drop. Falsification: change the cursor predicate's `<` to `<=`
+    // (search-query.ts) — the boundary row reappears on page 2, and `seen`
+    // above gains a duplicate id while `page2.items` still has length 1,
+    // failing the `toEqual` sorted-array comparison.
+  });
+
+  it("[B-7 part 3] DB CHECK: places_coords_pair_ck rejects half a coordinate; places_spine_coords_ck rejects a null-coord spine row (23514)", async () => {
+    await expect(
+      db.insert(schema.places).values({
+        source: "custom",
+        name: "Half pair direct insert",
+        lat: "35.6",
+        lng: null,
+      }),
+    ).rejects.toSatisfy((err: unknown) => isCheckViolationOf(err, "places_coords_pair_ck"));
+
+    await expect(
+      db.insert(schema.places).values({
+        source: "overture",
+        sourceId: `ovt-null-${uniq()}`,
+        name: "Spine row with no coordinates",
+        lat: null,
+        lng: null,
+      }),
+    ).rejects.toSatisfy((err: unknown) => isCheckViolationOf(err, "places_spine_coords_ck"));
+    // Falsification: drop either CHECK from the migration — the matching
+    // assertion above reds (the insert succeeds instead of throwing).
+  });
+
+  // ===========================================================================
   // PATCH /places/:placeId (R-places-10)
   // ===========================================================================
 
@@ -753,16 +943,21 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     });
     expect(place.coarse_category).toBe("food");
 
+    // B-7 part 3 round-1 fix: lat/lng move as a PAIR on a PATCH now (the
+    // architecture blocking finding — a lone `lat` here used to silently
+    // relocate half the coordinate, 200, `lng` untouched); both fields ride
+    // together in every request from here on.
     const res = await patchPlace(place.id, user.accessToken, {
       name: "Final Spot",
       lat: 35.625,
+      lng: 139.625,
       category: null,
     });
     expect(res.status).toBe(200);
     const updated = PlaceSchema.parse(await res.json());
     expect(updated.name).toBe("Final Spot");
     expect(updated.lat).toBeCloseTo(35.625, 6);
-    expect(updated.lng).toBeCloseTo(139.62, 6);
+    expect(updated.lng).toBeCloseTo(139.625, 6);
     expect(updated.category).toBeNull();
     expect(updated.coarse_category).toBe("other");
 
@@ -801,6 +996,123 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
 
     const badBody = await patchPlace(place.id, creator.accessToken, { lat: 91 });
     expect(badBody.status).toBe(400);
+  });
+
+  // ===========================================================================
+  // PATCH pair rule (B-7 part 3 round-1 fix, architecture blocking finding):
+  // `PlaceUpdateSchema` had no `superRefine` at all — a lone `lat` in a PATCH
+  // reached the DB unpaired, where `places_coords_pair_ck` was the only
+  // backstop and its escape was an unhandled 500 on a coordinate-less
+  // custom place, or a SILENT RELOCATION (200, half the pair moved) on a
+  // located one.
+  // ===========================================================================
+
+  it("[B-7 part 3 R1] PATCH: a lone lat on a coordinate-less custom place → 400, never 500", async () => {
+    const user = await seedUserWithToken();
+    const place = await postPlace(user.accessToken, { name: "No Coords Yet" });
+    const created = PlaceSchema.parse(await place.json());
+    expect(created.lat).toBeNull();
+
+    const res = await patchPlace(created.id, user.accessToken, { lat: 35.61 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, created.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification (empirically layered — this row happens to have a DB
+    // backstop the LOCATED-place pin below does not): dropping ONLY
+    // `placeCoordsPairRule`'s `.superRefine` off `PlaceUpdateSchema`
+    // (place.ts) does NOT red this pin — `places/routes.ts`'s try/catch
+    // belt (db/coords-ck.ts) still maps the escaping `places_coords_pair_ck`
+    // 23514 onto the same 400. Drop BOTH the refine AND that belt (revert
+    // the PATCH handler's update call to an unguarded
+    // `const [updated] = await deps.db.update(...)`) and this reds with a
+    // raw 500 (`createErrorHandler`'s generic arm sees the driver error
+    // directly) — verified by reverting both together.
+  });
+
+  it("[B-7 part 3 R1] PATCH: a lone lat on a LOCATED place → 400 and the row is unchanged (the silent-relocation case)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Fixed Spot",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: 35.61 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // Before the fix this was a 200 that silently moved lat to 35.61 while
+    // lng stayed 20 — no DB CHECK catches a valid-looking, wrong relocation.
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBe("10.000000");
+    expect(row?.lng).toBe("20.000000");
+    // Falsification: dropping ONLY `placeCoordsPairRule`'s `.superRefine`
+    // off `PlaceUpdateSchema` (place.ts) is enough here — unlike the
+    // coordinate-less pin above, both `lat` AND `lng` stay non-null
+    // throughout (only the VALUE is wrong), so `places_coords_pair_ck` never
+    // fires and the routes.ts belt has nothing to catch. This reds with a
+    // 200 that moved `lat` alone (row.lat becomes "35.610000" while
+    // row.lng stays "20.000000") — the exact silent relocation the
+    // architecture finding named, and the reason this pin, not the one
+    // above, is the one that actually isolates the Zod refine.
+  });
+
+  it("[B-7 part 3 R1] PATCH: both coords on a custom place → 200 (relocate)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Movable Spot",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: 35.61, lng: 139.61 });
+    expect(res.status).toBe(200);
+    const updated = PlaceSchema.parse(await res.json());
+    expect(updated.lat).toBeCloseTo(35.61, 6);
+    expect(updated.lng).toBeCloseTo(139.61, 6);
+  });
+
+  it("[B-7 part 3 R1] PATCH: both lat/lng null on a CUSTOM place → 200 with nulls (clears coordinates)", async () => {
+    const user = await seedUserWithToken();
+    const place = await createPlaceVia(user.accessToken, {
+      name: "Regretted Pin",
+      lat: 10,
+      lng: 20,
+    });
+
+    const res = await patchPlace(place.id, user.accessToken, { lat: null, lng: null });
+    expect(res.status).toBe(200);
+    const updated = PlaceSchema.parse(await res.json());
+    expect(updated.lat).toBeNull();
+    expect(updated.lng).toBeNull();
+
+    const [row] = await db.select().from(schema.places).where(eq(schema.places.id, place.id));
+    expect(row?.lat).toBeNull();
+    expect(row?.lng).toBeNull();
+    // Falsification: revert `places/routes.ts`'s `set.lat`/`set.lng` write
+    // to bare `String(body.lat)` — `String(null) === "null"` is not a legal
+    // numeric-column value; this reds with a 500.
+  });
+
+  it("[B-7 part 3 R1] PATCH: both lat/lng null on a SPINE place → 400, distinct from the blanket spine 403 (source-aware clearing)", async () => {
+    const user = await seedUserWithToken();
+
+    const res = await patchPlace(towerId, user.accessToken, { lat: null, lng: null });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+
+    // A non-coordinate edit to the SAME spine place still gets the general
+    // immutability 403 — the 400 above is source-aware-clearing-specific,
+    // not a relaxation of "spine places cannot be modified".
+    const nameOnly = await patchPlace(towerId, user.accessToken, { name: "Hacked Tower" });
+    expect(nameOnly.status).toBe(403);
+    expect(((await nameOnly.json()) as ErrorEnvelope).error.code).toBe("FORBIDDEN");
+    // Falsification: delete the `access.kind === "spine"` branch's
+    // `body.lat === null && body.lng === null` check in places/routes.ts —
+    // this reds with a 403 (the generic spine-immutable arm) instead of 400.
   });
 
   it("PATCH F-038 harness: invisible custom ≡ nonexistent ≡ malformed id — byte-identical 404s", async () => {
@@ -988,14 +1300,23 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
   });
 
   it("SQL coarse mapping ≡ shared JS mapping over every seeded category (parity pin)", async () => {
+    // `selectDistinct` (not `select`), post-B-7: `places` now also carries
+    // the 6,927-row destination tier, all `category='locality'` — parity is
+    // purely a function of `(source, category)`, so 6,927 identical checks
+    // add zero coverage while risking the test timeout (T-6.4/T-6.5 round-1
+    // precedent: this suite's tests are fast on purpose). DISTINCT keeps
+    // exactly the same assertion strength (every UNIQUE category this suite
+    // + the tier ever produces is still checked) at O(distinct) cost instead
+    // of O(rows) — 'locality' itself is still covered, once.
     const rows = await db
-      .select({
+      .selectDistinct({
         source: schema.places.source,
         category: schema.places.category,
         sqlCoarse: coarseCategorySqlExpr(schema.places.category),
       })
       .from(schema.places);
     expect(rows.length).toBeGreaterThan(8);
+    expect(rows.some((r) => r.category === "locality")).toBe(true);
     for (const row of rows) {
       expect(row.sqlCoarse).toBe(coarseCategory(row.source, row.category));
     }

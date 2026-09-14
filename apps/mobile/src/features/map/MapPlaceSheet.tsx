@@ -229,8 +229,13 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
   };
 
   const handleNavigate = (target: Place): void => {
+    // B-7 part 3: a coordinate-less custom place has no handoff URL — the
+    // button itself is hidden below (never `disabled`, mobile.md), so this
+    // is a belt, not the primary guard.
+    const url = navHandoffUrlFor(target);
+    if (url === null) return;
     setOpenFailed(false);
-    Linking.openURL(navHandoffUrlFor(target)).catch(() => {
+    Linking.openURL(url).catch(() => {
       // The hop never happened (no handler / OS refusal) — say so inline;
       // the button stays live for a retry (DeeplinkPanel posture).
       setOpenFailed(true);
@@ -324,15 +329,19 @@ export function MapPlaceSheet({ tripId, place, itineraryItemId, onDismiss }: Map
                 />
               </View>
             ) : null}
-            <View style={s.action}>
-              <Button
-                title="Navigate"
-                variant="secondary"
-                icon="navigate-outline"
-                onPress={() => handleNavigate(place)}
-                testID="map-sheet-place-button-navigate"
-              />
-            </View>
+            {/* B-7 part 3 (R-map-8 amendment): no handoff URL, no control —
+                a coordinate-less custom place has nowhere to navigate to. */}
+            {navHandoffUrlFor(place) !== null ? (
+              <View style={s.action}>
+                <Button
+                  title="Navigate"
+                  variant="secondary"
+                  icon="navigate-outline"
+                  onPress={() => handleNavigate(place)}
+                  testID="map-sheet-place-button-navigate"
+                />
+              </View>
+            ) : null}
             {linkedItem !== undefined ? (
               <View style={s.action}>
                 <Button

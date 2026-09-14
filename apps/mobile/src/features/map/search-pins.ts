@@ -52,14 +52,21 @@ export interface SearchPinFeatureCollection {
   features: SearchPinFeature[];
 }
 
-/** Result rows → temp-pin features. Empty input ⇒ empty collection (clear). */
+/**
+ * Result rows → temp-pin features. Empty input ⇒ empty collection (clear).
+ * B-7 part 3: a coordinate-less custom place in the result set (text-only
+ * search on a coordinate-less trip returns the user's own custom places —
+ * map-search.ts doc / 4.6) is filtered OUT here — it still renders in the
+ * result LIST, just never as a malformed `[null, null]` pin.
+ */
 export function searchPinFeatures(
   places: readonly Place[],
   colors: MapColors,
 ): SearchPinFeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: places.map((place) => ({
+  const features: SearchPinFeature[] = [];
+  for (const place of places) {
+    if (place.lat === null || place.lng === null) continue;
+    features.push({
       type: "Feature",
       id: place.id,
       geometry: { type: "Point", coordinates: [place.lng, place.lat] },
@@ -69,8 +76,9 @@ export function searchPinFeatures(
         placeId: place.id,
         color: colors.pinSelectedRing,
       },
-    })),
-  };
+    });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 /**

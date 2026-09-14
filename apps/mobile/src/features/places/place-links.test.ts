@@ -157,3 +157,10 @@ it("builds the Maps URLs API coordinate handoff — encoded, origin omitted (def
   const url = placeNavigateUrl(makePlace({ lat: 35.0116, lng: 135.7681 }));
   expect(url).toBe("https://www.google.com/maps/dir/?api=1&destination=35.0116%2C135.7681");
 });
+
+// B-7 part 3 (R-map-8 amendment): a coordinate-less custom place — null,
+// never a URL pointing at "null,null". Falsification: drop either null
+// check and this returns a string containing the literal text "null".
+it("null for a coordinate-less place — never a 'null,null' URL", () => {
+  expect(placeNavigateUrl(makePlace({ lat: null, lng: null }))).toBeNull();
+});

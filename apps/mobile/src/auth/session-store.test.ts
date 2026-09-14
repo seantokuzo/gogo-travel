@@ -13,6 +13,7 @@ import {
 } from "@gogo/shared";
 import { createStore, type StoreApi } from "zustand/vanilla";
 
+import { queryClient } from "@/data/query-client";
 import { readDeeplinkOutRecord, recordDeeplinkOut } from "@/features/deeplinks/return-prompt-store";
 import { defaultZoneFor, rememberTripZone } from "@/features/itinerary/add-edit/last-zone-store";
 import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
@@ -25,6 +26,7 @@ import { readLastViewedTrip, stampLastViewedTrip } from "@/navigation/last-viewe
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 
 import { ApiRequestError } from "./api-client";
+import { secureTokenStorage } from "./secure-storage";
 import {
   createSessionSlice,
   useSessionStore,
@@ -287,6 +289,199 @@ describe("session store — sign-out calls /auth/logout (best-effort, spec §3.6
     await store.getState().signOut();
 
     expect(api.request).not.toHaveBeenCalled();
+  });
+});
+
+describe("session store — resetLocalSession (session-door spec R-door-8): client-local ONLY, never a server call", () => {
+  it("clears identity + token and flags a reset, identically to signOut's local effects", async () => {
+    const { store, storage } = makeStore();
+    await store.getState().applySignIn({ user: USER, tokens: TOKENS, is_new_user: false });
+
+    await store.getState().resetLocalSession();
+
+    expect(store.getState()).toMatchObject({
+      user: null,
+      accessToken: null,
+      firstRun: false,
+      pendingDestination: null,
+      resetting: true,
+    });
+    expect(storage.clearRefreshToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("NEVER calls the server, even with a live access token present (unlike signOut)", async () => {
+    // Falsification: change `resetLocalSession` to call `signOut` (or to
+    // otherwise read `deps.api`) → this goes RED, since `api.request` would
+    // then be invoked for the best-effort /auth/logout the way it is for
+    // signOut (pinned above, "attempts /auth/logout ... when a token is
+    // present"). A door run's local reset must never depend on network
+    // reachability to the API.
+    const { store, api } = makeStore();
+    store.setState({ user: USER, accessToken: "access-live" });
+
+    await store.getState().resetLocalSession();
+
+    expect(api.request).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({ user: null, accessToken: null, resetting: true });
+  });
+
+  it("fires the onSignedOut seam AFTER clearing (same ordering signOut guarantees)", async () => {
+    const storage = {
+      getRefreshToken: jest.fn<Promise<string | null>, []>().mockResolvedValue(null),
+      setRefreshToken: jest.fn().mockResolvedValue(undefined),
+      clearRefreshToken: jest.fn().mockResolvedValue(undefined),
+    };
+    const api = { request: jest.fn() };
+    const onSignedOut = jest.fn();
+    const deps: SessionDeps = { storage, api, onSignedOut };
+    const store = createStore<SessionState>()(createSessionSlice(deps));
+    await store.getState().applySignIn({ user: USER, tokens: TOKENS, is_new_user: false });
+
+    await store.getState().resetLocalSession();
+
+    expect(onSignedOut).toHaveBeenCalledTimes(1);
+    expect(api.request).not.toHaveBeenCalled();
+    expect(onSignedOut.mock.invocationCallOrder[0]).toBeGreaterThan(
+      storage.clearRefreshToken.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("singleton wiring: resetLocalSession on the REAL useSessionStore clears the SAME R-nav-4 state signOut does, with no network call", async () => {
+    // Mirrors "singleton wiring — R-nav-4" below, but for resetLocalSession —
+    // the door's actual call site (never signOut).
+    rememberTab("trip-y", "map");
+    stampLastViewedTrip("trip-y");
+    rememberMoneySegment("trip-y", "balances");
+    expect(recallTab("trip-y")).toBe("map");
+    expect(readLastViewedTrip()?.tripId).toBe("trip-y");
+
+    // The REAL singleton's apiClient is wired to `globalThis.fetch`
+    // (session-store.ts `fetchImpl: (input, init) => fetch(input, init)`) —
+    // stubbing it here catches ANY network call the reset performs, not just
+    // a logout POST specifically. Assign-and-restore (not `jest.spyOn`,
+    // which requires the property to already be a function) — the same
+    // pattern `diagnostics-route.test.tsx` uses for this exact global.
+    const originalFetch = globalThis.fetch;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    useSessionStore.setState({ user: USER, accessToken: "access-live", hydrated: true });
+
+    try {
+      await useSessionStore.getState().resetLocalSession();
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(recallTab("trip-y")).toBeUndefined();
+      expect(readLastViewedTrip()).toBeNull();
+      expect(recallMoneySegment("trip-y")).toBeUndefined();
+      expect(useSessionStore.getState()).toMatchObject({ user: null, resetting: true });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  /**
+   * R-door-8 "clean slate" acceptance (session-door.spec.md §2.1 test
+   * obligation, review round 1 A3/adversarial Finding C): the EXHAUSTIVE
+   * nine-item list — session store, secure-store refresh token, query
+   * cache, tab memory, last-viewed trip, money-segment memory,
+   * deeplink-return AND settle-return records, last-zone map — driven
+   * TWICE for the SAME user_key, so a second door run cannot inherit the
+   * first run's local state. Only 3 of 9 were pinned before this (tab
+   * memory, last-viewed trip, money-segment memory); this covers the
+   * remaining 6 (identity/token, secure-store refresh token, query cache,
+   * deeplink-return record, settle-return record, last-zone map).
+   */
+  it("R-door-8 two-run replay: ALL NINE persisted items are back at cold-boot empty before EACH run's session applies — same user_key both times", async () => {
+    // Falsification: drop any ONE call from the singleton's `onSignedOut`
+    // closure (session-store.ts) -> the corresponding assertion below goes
+    // RED, on run 1 or run 2.
+    const originalFetch = globalThis.fetch;
+    const fetchMock = jest.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    // The file's top-level `expo-secure-store` mock is a dumb stub
+    // (`getItemAsync` always resolves `null`, never round-trips a write) —
+    // spy on the adapter's OWN `clearRefreshToken` instead of trying to read
+    // a value back through it, matching how the rest of this file verifies
+    // secure-storage calls.
+    const clearRefreshTokenSpy = jest.spyOn(secureTokenStorage, "clearRefreshToken");
+
+    async function populateAllNine(runTag: string): Promise<void> {
+      // 1: session store identity + in-memory access token.
+      await useSessionStore.getState().applySignIn({
+        user: USER,
+        tokens: {
+          access_token: `access-${runTag}`,
+          refresh_token: `refresh-${runTag}`,
+          expires_in: 900,
+        },
+        is_new_user: false,
+      });
+      // 2: secure-store refresh token — written via applySignIn above;
+      // cleared-call assertion lives at each reset site below.
+      // 3: query cache.
+      queryClient.setQueryData(["probe", runTag], { seeded: true });
+      // 4: tab memory.
+      rememberTab("trip-r8", "map");
+      // 5: last-viewed trip.
+      stampLastViewedTrip("trip-r8");
+      // 6: money-segment memory.
+      rememberMoneySegment("trip-r8", "balances");
+      // 7: deeplink-return record.
+      recordDeeplinkOut({
+        partner: "airbnb",
+        category: "lodging",
+        tripId: "trip-r8",
+        timestamp: Date.now(),
+      });
+      // 8: settle-return record.
+      recordSettleDeeplinkOut({
+        tripId: "trip-r8",
+        counterpartyId: "member-r8",
+        method: "venmo",
+        amountCents: 1234,
+      });
+      // 9: last-zone map (per-trip).
+      rememberTripZone("trip-r8", "Asia/Tokyo");
+    }
+
+    function assertAllNineColdBootEmpty(): void {
+      expect(useSessionStore.getState().user).toBeNull(); // 1
+      expect(useSessionStore.getState().accessToken).toBeNull(); // 1
+      expect(recallTab("trip-r8")).toBeUndefined(); // 4
+      expect(readLastViewedTrip()).toBeNull(); // 5
+      expect(recallMoneySegment("trip-r8")).toBeUndefined(); // 6
+      expect(readDeeplinkOutRecord()).toBeNull(); // 7
+      expect(consumePendingSettleReturn()).toBeNull(); // 8
+      expect(defaultZoneFor("trip-r8")).toBe(deviceTimeZone()); // 9
+    }
+
+    try {
+      // --- Run 1 ---
+      await populateAllNine("run1");
+      expect(queryClient.getQueryData(["probe", "run1"])).toEqual({ seeded: true }); // 3, seeded
+
+      await useSessionStore.getState().resetLocalSession();
+
+      assertAllNineColdBootEmpty();
+      expect(clearRefreshTokenSpy).toHaveBeenCalledTimes(1); // 2
+      expect(queryClient.getQueryData(["probe", "run1"])).toBeUndefined(); // 3 (queryClient.clear())
+
+      // --- Run 2, SAME user_key/trip, proving run 2 does not inherit run 1 ---
+      await populateAllNine("run2");
+      expect(queryClient.getQueryData(["probe", "run2"])).toEqual({ seeded: true }); // 3, seeded again
+
+      await useSessionStore.getState().resetLocalSession();
+
+      assertAllNineColdBootEmpty();
+      expect(clearRefreshTokenSpy).toHaveBeenCalledTimes(2); // 2, again
+      expect(queryClient.getQueryData(["probe", "run1"])).toBeUndefined();
+      expect(queryClient.getQueryData(["probe", "run2"])).toBeUndefined(); // 3
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearRefreshTokenSpy.mockRestore();
+    }
   });
 });
 

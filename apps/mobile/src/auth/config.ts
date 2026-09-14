@@ -24,13 +24,48 @@ function withApiSuffix(url: string): string {
 /** Loopback hosts where cleartext http is always fine (simulator / same box). */
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
-/** True for loopback + RFC-1918 LAN + mDNS hosts — the Metro dev surfaces. */
-function isLocalOrPrivateHost(host: string): boolean {
+/**
+ * True for loopback + RFC-1918 LAN + mDNS hosts — the Metro dev surfaces.
+ *
+ * Exported (session-door spec R-door-7): the E2E session door's client gate
+ * imports this SAME predicate rather than duplicating the host list, so the
+ * door is inert whenever this build's resolved API base is not local/private
+ * — including a build that carries the inlined secret but was later pointed
+ * at a hosted base. `apps/server`'s peer-gate predicate (R-door-11,
+ * `isLoopbackOrPrivatePeer`) is a DELIBERATELY separate implementation: it
+ * checks a socket-peer IP literal server-side, not a client-chosen hostname,
+ * and the two apps have no import path between them anyway.
+ */
+export function isLocalOrPrivateHost(host: string): boolean {
   if (LOOPBACK_HOSTS.has(host)) return true;
   if (host.endsWith(".local")) return true; // mDNS / Bonjour dev host
-  if (/^10\./.test(host)) return true; // 10.0.0.0/8
-  if (/^192\.168\./.test(host)) return true; // 192.168.0.0/16
-  return /^172\.(1[6-9]|2\d|3[01])\./.test(host); // 172.16.0.0/12
+  // Anchored IP-LITERAL forms only (review round 1 security A1). A bare
+  // PREFIX match (`/^10\./`) let a DNS label merely starting with "10."
+  // (`10.metrics.example`) satisfy the gate — this now requires the WHOLE
+  // host to be a complete dotted-quad in the range, so a label can never
+  // impersonate one.
+  if (/^10(\.\d{1,3}){3}$/.test(host)) return true; // 10.0.0.0/8
+  if (/^192\.168(\.\d{1,3}){2}$/.test(host)) return true; // 192.168.0.0/16
+  return /^172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}$/.test(host); // 172.16.0.0/12
+}
+
+/**
+ * Bare hostname from a base URL (`http://host:port/path` → `host`) — the same
+ * extraction `assertSecureBaseUrl` uses, exported so the e2e-door module
+ * shares it rather than re-implementing the split (session-door spec R-door-7).
+ *
+ * Rejects userinfo (review round 1 security A1): a `user:pass@host` or
+ * deliberately misleading `10.0.0.5@collector.example` authority resolves to
+ * `""` (never a local/private host) rather than the pre-`@` text — every
+ * real URL parser, `fetch` included, treats whatever comes AFTER the `@` as
+ * the actual host, so trusting the pre-`@` segment here would let a gate
+ * open while the request itself goes to a completely different host.
+ * Mirrors `resolveMetroHost`'s `[^:/@]+` capture below.
+ */
+export function hostOf(url: string): string {
+  const authority = url.replace(/^https?:\/\//, "").split(/[/?#]/)[0] ?? "";
+  if (authority.includes("@")) return "";
+  return authority.split(":")[0] ?? "";
 }
 
 /**
@@ -42,7 +77,7 @@ function isLocalOrPrivateHost(host: string): boolean {
  */
 export function assertSecureBaseUrl(url: string, dev: boolean = __DEV__): string {
   if (url.startsWith("https://")) return url;
-  const host = url.replace(/^https?:\/\//, "").split(/[:/]/)[0] ?? "";
+  const host = hostOf(url);
   if (dev || isLocalOrPrivateHost(host)) return url;
   throw new Error(
     "Insecure API base URL: a non-https endpoint is refused in release builds " +

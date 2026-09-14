@@ -8,10 +8,12 @@ import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 
-import { apiClient } from "@/auth";
+import { apiClient, ApiRequestError } from "@/auth";
 import {
+  isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
   queryKeys,
+  useCreateCustomDestination,
   useCreateTrip,
   usePlaceSearch,
   useTripList,
@@ -228,5 +230,152 @@ describe("usePlaceSearch (CT-2 — destination search)", () => {
       { signal: expect.any(AbortSignal) },
     );
     await unmount();
+  });
+});
+
+describe("isNonBlankDestinationQuery (B-7 — the empty-results row's own gate)", () => {
+  it("rejects empty and whitespace-only, accepts anything else after trim", () => {
+    expect(isNonBlankDestinationQuery("")).toBe(false);
+    expect(isNonBlankDestinationQuery("   ")).toBe(false);
+    expect(isNonBlankDestinationQuery("\t\n")).toBe(false);
+    expect(isNonBlankDestinationQuery("a")).toBe(true);
+    expect(isNonBlankDestinationQuery("  Nowhereville  ")).toBe(true);
+  });
+});
+
+describe("useCreateCustomDestination (B-7 — empty-results fallback, R-tripui-23)", () => {
+  const CUSTOM = makePlace({
+    id: "77777777-7777-4777-8777-777777777777",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    category: null,
+    created_by: "11111111-1111-4111-8111-111111111111",
+  });
+
+  it("POSTs exactly {name} trimmed, no lat/lng at all (B-7 part 3) — Law #3: the wire shape has no visibility field to widen", async () => {
+    const request = spyRequest();
+    request.mockResolvedValue(CUSTOM);
+    const { result, unmount } = await renderHook(() => useCreateCustomDestination(), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    let returned: unknown;
+    await act(async () => {
+      returned = await result.current.mutateAsync("  Nowhereville  ");
+    });
+
+    expect(request).toHaveBeenCalledWith(placeEndpoints.createPlace, {
+      body: { name: "Nowhereville" },
+    });
+    // Key-set pin (B-7 part 3): falsifies if a future edit re-adds a fixed
+    // lat/lng placeholder OR rides `category`/`trip_id`/a visibility field
+    // along — the key set must stay EXACTLY `["name"]`. Mutation-verify:
+    // restoring `lat: 0, lng: 0` on the body turns this red.
+    const body = (request.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(Object.keys(body).sort()).toEqual(["name"]);
+    expect(body["lat"]).toBeUndefined();
+    expect(body["lng"]).toBeUndefined();
+    expect(returned).toEqual(CUSTOM);
+    await unmount();
+  });
+
+  it("fires the hook-level onMutationSuccess seam with the created place", async () => {
+    const request = spyRequest();
+    request.mockResolvedValue(CUSTOM);
+    const onMutationSuccess = jest.fn();
+    const { result, unmount } = await renderHook(
+      () => useCreateCustomDestination({ onMutationSuccess }),
+      { wrapper: makeWrapper(makeTestQueryClient()) },
+    );
+
+    await act(async () => {
+      await result.current.mutateAsync("Nowhereville");
+    });
+
+    expect(onMutationSuccess).toHaveBeenCalledWith(CUSTOM);
+    await unmount();
+  });
+
+  it("surfaces a create failure untouched (the REAL ApiRequestError, not a stub) and fires onMutationError", async () => {
+    const request = spyRequest();
+    const failure = new ApiRequestError(409, "CONFLICT", "boom");
+    request.mockRejectedValue(failure);
+    const onMutationError = jest.fn();
+    const { result, unmount } = await renderHook(
+      () => useCreateCustomDestination({ onMutationError }),
+      { wrapper: makeWrapper(makeTestQueryClient()) },
+    );
+
+    await act(async () => {
+      await expect(result.current.mutateAsync("Nowhereville")).rejects.toBe(failure);
+    });
+
+    expect(onMutationError).toHaveBeenCalledWith(failure);
+    await unmount();
+  });
+});
+
+describe("useCreateCustomDestination cache invalidation (B-7 review R1 B2, blocking)", () => {
+  const NOWHEREVILLE = makePlace({
+    id: "88888888-8888-4888-8888-888888888888",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    // B-7 part 3: a real created custom place carries NO coordinates — the
+    // old (0, 0) placeholder fixture would silently re-mint the exact bug
+    // this task closes.
+    lat: null,
+    lng: null,
+    category: null,
+    created_by: "11111111-1111-4111-8111-111111111111",
+  });
+
+  it("invalidates the place-search family so a just-created place is not re-offered under PROD staleTime", async () => {
+    let searchCalls = 0;
+    const request = spyRequest();
+    request.mockImplementation((descriptor: unknown) => {
+      if (descriptor === placeEndpoints.searchPlaces) {
+        searchCalls += 1;
+        // Call 1 (pre-create): genuinely empty. Call 2 (post-invalidation
+        // refetch): the place now exists — this is what an un-invalidated
+        // 5-min-fresh cache would NEVER re-fetch to discover.
+        return Promise.resolve(
+          searchCalls === 1
+            ? { items: [], nextCursor: null }
+            : { items: [NOWHEREVILLE], nextCursor: null },
+        );
+      }
+      if (descriptor === placeEndpoints.createPlace) {
+        return Promise.resolve(NOWHEREVILLE);
+      }
+      return Promise.reject(new Error("unexpected request"));
+    });
+
+    const client = makeTestQueryClient();
+    // A1 advisory: the harness's global staleTime:0 makes this whole defect
+    // class invisible — apply PROD staleTime to exactly the places/search
+    // family so the pin actually exercises the "stale empty page" bug.
+    client.setQueryDefaults(queryKeys.placeSearchRoot, { staleTime: 1000 * 60 * 5 });
+    const wrapper = makeWrapper(client);
+
+    const search = await renderHook(() => usePlaceSearch("Nowhereville"), { wrapper });
+    await waitFor(() => expect(search.result.current.isSuccess).toBe(true));
+    expect(search.result.current.data?.items).toEqual([]);
+
+    const create = await renderHook(() => useCreateCustomDestination(), { wrapper });
+    await act(async () => {
+      await create.result.current.mutateAsync("Nowhereville");
+    });
+
+    // Falsification: comment out the `invalidateQueries` call in the hook's
+    // onSuccess and this waitFor times out — the mounted search observer
+    // keeps serving the pre-create empty page for the rest of prod's 5-min
+    // staleTime window, and `searchCalls` never advances past 1.
+    await waitFor(() => expect(search.result.current.data?.items).toEqual([NOWHEREVILLE]));
+    expect(searchCalls).toBe(2);
+
+    await search.unmount();
+    await create.unmount();
   });
 });

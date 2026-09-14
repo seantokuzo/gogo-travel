@@ -254,8 +254,14 @@ export default function MapScreen() {
     [trip.start_date, trip.end_date, dayColors],
   );
 
+  // B-7 part 3 (R-map-26): undefined when either coordinate is null — the
+  // exact "no destination" shape `camera.ts`'s ladder already falls to its
+  // (previously dormant, now live) world arm for; camera.ts is NOT touched.
   const destination = useMemo(
-    () => ({ lat: trip.destination_lat, lng: trip.destination_lng }),
+    () =>
+      trip.destination_lat !== null && trip.destination_lng !== null
+        ? { lat: trip.destination_lat, lng: trip.destination_lng }
+        : undefined,
     [trip.destination_lat, trip.destination_lng],
   );
 
@@ -515,8 +521,12 @@ export default function MapScreen() {
     if (bookingsQuery.isError) void bookingsQuery.refetch();
   }, [savedQuery, itineraryQuery, bookingsQuery]);
 
-  // §2.1 world arm — structurally dormant while destination coords are
-  // schema-guaranteed; kept total so a malformed row degrades, never crashes.
+  // §2.1 world arm — B-7 part 3 (R-map-26) makes this LIVE: a coordinate-less
+  // trip (`destination === undefined`) with no pins hits it for real, not
+  // just as a malformed-row defensive fallback. `destination !== undefined`
+  // with zero pins never reaches "world" (camera.ts falls to the
+  // destination-center arm instead), so this condition already IS "no
+  // destination coordinates" in practice — the copy below keys on it.
   const showEmpty = settled && cameraTargetFor(allPinCoordinates, destination).kind === "world";
 
   // Layer styles are memoized on their actual inputs (R1 review, perf A6):
@@ -647,11 +657,20 @@ export default function MapScreen() {
 
       {showEmpty ? (
         <View style={s.emptyOverlay}>
-          <EmptyState
-            icon="map-outline"
-            title="Add places to see them here"
-            testID="map-empty-state"
-          />
+          {destination === undefined ? (
+            <EmptyState
+              icon="map-outline"
+              title="No map area for this trip yet"
+              body="Set a destination with a location in trip settings."
+              testID="map-empty-state"
+            />
+          ) : (
+            <EmptyState
+              icon="map-outline"
+              title="Add places to see them here"
+              testID="map-empty-state"
+            />
+          )}
         </View>
       ) : null}
 

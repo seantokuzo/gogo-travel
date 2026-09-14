@@ -1,8 +1,9 @@
 /**
  * T-6.7 data module (CT-1/CT-2) — the trip-list infinite query, the
- * create-trip mutation, and the destination place search. Lives in its own
- * file (not `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the
- * data layer in their own modules, so parallel lanes only ever touch
+ * create-trip mutation, the destination place search, and (B-7) the
+ * custom-destination create fallback. Lives in its own file (not
+ * `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the data layer
+ * in their own modules, so parallel lanes only ever touch
  * `query-client.ts`/`index.ts` additively.
  *
  * Conventions carried from T-5.8/T-6.6 (`hooks.ts`):
@@ -31,7 +32,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 
-import { apiClient } from "@/auth";
+import { apiClient, ApiRequestError } from "@/auth";
 
 import { invalidateTripLists, queryKeys } from "./query-client";
 
@@ -137,4 +138,118 @@ export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place
       apiClient.request(placeEndpoints.searchPlaces, { query: { q } }, { signal }),
     enabled: isSearchableDestinationQuery(rawQuery),
   });
+}
+
+/**
+ * Non-blank after trim — a pure function, used as `handleCreateCustomDestination`'s
+ * defense-in-depth guard against `deferredQuery` (B-7 review R1 A3): the
+ * render gate no longer duplicates this check — `searchActive` already
+ * requires `isSearchableDestinationQuery(deferredQuery)` (≥4 chars) before
+ * the row can render at all, which is strictly stronger than non-blank, so
+ * a SEPARATE JSX call site against the LIVE `destinationQuery` was both
+ * redundant AND wrong: a `useDeferredValue` lag window could leave
+ * `searchActive` reading true against a STALE deferred query for one tick
+ * after the user cleared the input, while the row/mutate argument (also
+ * fixed by R1 A3 to read `deferredQuery`, never `destinationQuery`) would
+ * then create a custom place for text the user never searched. That lag
+ * never materializes under jest's synchronous renderer, so this guard's
+ * call site isn't independently mutation-verifiable there either — this
+ * pure export is (trips-mutations.test.tsx).
+ */
+export function isNonBlankDestinationQuery(raw: string): boolean {
+  return raw.trim() !== "";
+}
+
+/** Hook-level seam (places.ts precedent) — see `useCreateCustomDestination` doc. */
+export interface CreateCustomDestinationOptions {
+  onMutationSuccess?(place: Place): void;
+  onMutationError?(error: unknown): void;
+}
+
+/**
+ * `POST /places` — the destination-search empty-results fallback (B-7, Sean
+ * ruling 2026-09-13, trips spec R-tripui-23): when structured search settles
+ * with zero hits, the picker offers to create the typed text as a permanent
+ * `source='custom'` place (`PlaceCreateSchema`: `name`, `lat?`, `lng?`,
+ * `category?` — no visibility field exists on the wire shape at all, so
+ * there is nothing here to accidentally widen past the schema default;
+ * creator-scoping is entirely the server's, per `search-query.ts`) and
+ * select it. B-7 PART 3 (2026-09-13 ruling, `B-7/nullable-custom-coords`):
+ * the body carries `name` ONLY — no `lat`/`lng` at all. `PlaceCreateSchema`
+ * now treats the pair as fully optional (omit both ⇒ a coordinate-less
+ * custom place; an explicit `null` is a 400 — one way to say "no
+ * coordinates"), so the old `(0, 0)` "Null Island" placeholder this hook
+ * used to send is GONE — every mobile consumer of a place/trip coordinate
+ * now takes a real null arm instead of silently treating `(0, 0)` as a real
+ * position (`features/map/**`, `map.spec.md` R-map-26). A trip created from
+ * a coordinate-less custom place carries `destination_lat/lng: null`; the
+ * settings remediation path (`more/settings.tsx`) is how the user gives it
+ * real coordinates later. `category` is omitted (schema optional; server
+ * default `null` → coarse category `'other'`, same as the
+ * `scripts/seed-qa-places.mjs` precedent).
+ *
+ * Success/error ride the HOOK's OWN `useMutation` options, not a per-call
+ * `.mutate()` callback (the `places.ts` module-doc landmine: TanStack v5
+ * drops per-call callbacks for a superseded call — this hook is called at
+ * most once in flight by construction, but the seam stays consistent with
+ * every other mutation in this data layer).
+ */
+export function useCreateCustomDestination(
+  options?: CreateCustomDestinationOptions,
+): UseMutationResult<Place, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    // Trim at the hook boundary (the `usePlaceSearch`/`normalizeSearchText`
+    // precedent above: one normalization owner, not "the caller remembered
+    // to trim"). The request body carries EXACTLY `name` (B-7 part 3 — no
+    // `lat`/`lng`, no `category`, `trip_id`, or visibility field rides along
+    // — Law #3: the wire shape has no visibility knob to widen in the first
+    // place). Omitting BOTH coordinate keys is what makes the created place
+    // coordinate-less (`PlaceCreateSchema`'s pair rule) — sending an explicit
+    // `null` for either is a 400, so the key must be absent, not nulled.
+    mutationFn: (rawName: string) =>
+      apiClient.request(placeEndpoints.createPlace, {
+        body: { name: rawName.trim() },
+      }),
+    onSuccess: (place) => {
+      // B-7 review R1 B2 (blocking): with no invalidation, the EMPTY
+      // `placeSearch(q)` page fetched before this create stays fresh under
+      // prod's 5-min staleTime — the row gets re-offered for a place that
+      // now exists, and `places` has no uniqueness constraint for custom
+      // rows (`source_id IS NULL`), so a second tap mints a duplicate. This
+      // can't target one exact key (the create doesn't know every `q` that
+      // would now match), so it invalidates the WHOLE `placeSearch` family —
+      // default `refetchType: "active"` refetches any mounted search
+      // observer immediately, which is exactly the screen that just created
+      // this place.
+      void qc.invalidateQueries({ queryKey: queryKeys.placeSearchRoot });
+      options?.onMutationSuccess?.(place);
+    },
+    onError: (error) => options?.onMutationError?.(error),
+  });
+}
+
+/**
+ * Map a `useCreateCustomDestination` failure onto a safe, actionable banner
+ * message (§3.5 envelope). Round-1 architecture fix (cross-lane advisory,
+ * B-7 review): this was byte-identical, screen-local code in `new.tsx` and
+ * `more/settings.tsx` — one mutation, one error contract, so it lives here
+ * next to the hook it maps errors for, not duplicated per caller. 409 isn't
+ * documented for `POST /places` today (places spec §3.3 lists only 400
+ * `VALIDATION_FAILED`) — kept for symmetry with every other create-mutation
+ * error mapper and as a defensive branch if that ever changes.
+ */
+export function createCustomDestinationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 400) {
+      return "That destination name isn't valid — try editing it.";
+    }
+    if (error.status === 409) {
+      return "That change conflicted with another update — try again.";
+    }
+    if (error.status === 0) {
+      return "No connection — check your network and retry.";
+    }
+  }
+  return "Couldn't create that destination. Retry?";
 }

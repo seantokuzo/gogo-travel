@@ -1,11 +1,11 @@
 /**
  * Device-smoke diagnostics panel (T-S3.5, R-test-2; ADR-006 layer 2).
  *
- * Six legs, each self-running on mount and individually re-runnable, each
- * rendering PASS/FAIL + copyable evidence (long-press the mono block — text
- * is `selectable`; no clipboard dependency). Charter: readable in ONE glance
- * during device QA, starting with "what base URL did we resolve, via which
- * tier?" (B-5).
+ * Seven legs (B-28 added the seventh, migration state), each self-running
+ * on mount and individually re-runnable, each rendering a badge + copyable
+ * evidence (long-press the mono block — text is `selectable`; no clipboard
+ * dependency). Charter: readable in ONE glance during device QA, starting
+ * with "what base URL did we resolve, via which tier?" (B-5).
  *
  * UNAUTHED-REACHABLE by construction: lives in the `(auth)` group (the gate
  * renders unauthed (auth) routes), touches no session state, and every dep
@@ -18,8 +18,8 @@
  * `isGoogleConfigured()`; unconfigured builds render its fail row without
  * ever calling the hook.
  *
- * ScrollView is intentional: a static, bounded set of six rows, not a data
- * list (the FlatList landmine targets data-driven lists — gallery precedent).
+ * ScrollView is intentional: a static, bounded set of rows, not a data list
+ * (the FlatList landmine targets data-driven lists — gallery precedent).
  */
 import { createStyles } from "@gogo/tokens/react";
 import * as Device from "expo-device";
@@ -29,6 +29,7 @@ import { ScrollView, StyleSheet, View } from "react-native";
 
 import { explainApiBaseUrl, isGoogleConfigured, resolveApiBaseUrl, useGoogleSignIn } from "@/auth";
 import { AppText, Badge, Button, Card, PageHeader } from "@/components";
+import type { BadgeTone } from "@/components";
 
 import { installConsoleTap, readConsoleTap } from "./console-tap";
 import {
@@ -38,11 +39,13 @@ import {
   runEnvLeg,
   runHealthLeg,
   runLastErrorLeg,
+  runMigrationsLeg,
   runSecureStoreLeg,
   type GoogleRequestView,
   type LegResult,
   type SecureStoreLike,
 } from "./legs";
+import { useMigrationsLegRunner, type MigrationsRowState } from "./use-migrations-leg-runner";
 import { useLegRunner, type LegState } from "./use-leg-runner";
 
 /** How long the Google leg waits for the auth request to load. */
@@ -88,26 +91,38 @@ const useStyles = createStyles((t) =>
   }),
 );
 
-function statusBadge(state: LegState) {
-  if (state.status === "running") return { label: "RUNNING", tone: "neutral" as const };
-  if (state.status === "pass") return { label: "PASS", tone: "success" as const };
-  return { label: "FAIL", tone: "danger" as const };
+function statusBadge(state: LegState): { label: string; tone: BadgeTone } {
+  if (state.status === "running") return { label: "RUNNING", tone: "neutral" };
+  if (state.status === "pass") return { label: "PASS", tone: "success" };
+  return { label: "FAIL", tone: "danger" };
 }
+
+/**
+ * Shared render shape for `LegRow` — loosened from `LegState` so a row with
+ * MORE than two settled outcomes (the migrations row's current/pending/
+ * unknown tri-state, B-28) can reuse this presentational shell. `status` is
+ * opaque here: only the running/settled dispatch below reads it: the badge
+ * is computed by each CALLER (`RunnerLegRow`, `GoogleLegRow`,
+ * `MigrationsRow`), never derived internally, so this component doesn't
+ * need to know how many outcomes a given leg has.
+ */
+type LegRowState = { status: "running" } | { status: string; summary: string; evidence: string };
 
 /** One leg row: badge + title + rerun, summary line, selectable evidence. */
 function LegRow({
   legKey,
   title,
   state,
+  badge,
   onRerun,
 }: {
   legKey: string;
   title: string;
-  state: LegState;
+  state: LegRowState;
+  badge: { label: string; tone: BadgeTone };
   onRerun: () => void;
 }) {
   const s = useStyles();
-  const badge = statusBadge(state);
   return (
     <Card variant="flat" testID={`diagnostics-list-item-${legKey}`}>
       <View style={s.rowTop}>
@@ -128,7 +143,12 @@ function LegRow({
           testID={`diagnostics-button-rerun-${legKey}`}
         />
       </View>
-      {state.status !== "running" ? (
+      {/* `"summary" in state` (not `status !== "running"`) narrows reliably:
+          the running variant is `status: "running"` with no other fields,
+          but the settled variant's `status` is a bare `string` (LegRowState
+          accepts more than two outcomes — B-28's tri-state row), so TS can't
+          prove exclusivity from the literal alone. */}
+      {"summary" in state ? (
         <View style={s.body}>
           <AppText role="caption" color="secondary">
             {state.summary}
@@ -160,7 +180,15 @@ function RunnerLegRow({
   run: () => Promise<LegResult>;
 }) {
   const { state, rerun } = useLegRunner(run);
-  return <LegRow legKey={legKey} title={title} state={state} onRerun={rerun} />;
+  return (
+    <LegRow
+      legKey={legKey}
+      title={title}
+      state={state}
+      badge={statusBadge(state)}
+      onRerun={rerun}
+    />
+  );
 }
 
 /**
@@ -212,12 +240,14 @@ function GoogleLegRow() {
   );
 
   if (!configured) {
+    // Unconfigured is a definite outcome, never null.
+    const settled = unconfiguredResult ?? { status: "running" as const };
     return (
       <LegRow
         legKey="google-request"
         title="Google auth request (B-4)"
-        // Unconfigured is a definite outcome, never null.
-        state={unconfiguredResult ?? { status: "running" }}
+        state={settled}
+        badge={statusBadge(settled)}
         onRerun={() => undefined}
       />
     );
@@ -229,9 +259,51 @@ function GoogleLegRow() {
         legKey="google-request"
         title="Google auth request (B-4)"
         state={state}
+        badge={statusBadge(state)}
         onRerun={rerun}
       />
     </>
+  );
+}
+
+/** Badge derivation for the migrations row's four-state outcome (B-28; MODIFIED added round-2) — current/pending/modified/unknown, distinct from the pass/fail-only `statusBadge`. */
+function migrationsBadge(state: MigrationsRowState): { label: string; tone: BadgeTone } {
+  if (state.status === "running") return { label: "RUNNING", tone: "neutral" };
+  if (state.status === "current") return { label: "CURRENT", tone: "success" };
+  if (state.status === "pending") return { label: "PENDING", tone: "danger" };
+  // Round-2 (B-28): a migration edited AFTER it was applied — rendered with
+  // its OWN tone, distinct from both PENDING (danger — the server-side fix
+  // this mirrors exists precisely so these two never collapse into one
+  // state again) and UNKNOWN (warning — "we don't know," not "we know and
+  // it's this").
+  if (state.status === "modified") return { label: "MODIFIED", tone: "accent" };
+  return { label: "UNKNOWN", tone: "warning" };
+}
+
+/**
+ * The migrations row (B-28; MODIFIED added round-2): green CURRENT when the
+ * connected DB has zero pending/modified migrations, red PENDING naming
+ * each pending tag when a migration is genuinely un-applied, a distinct
+ * accent MODIFIED when an applied migration's file was edited afterward
+ * (never fixed by `db:migrate` — a different problem from PENDING, so it
+ * never renders as the same badge), and a distinct amber UNKNOWN when the
+ * server doesn't say (older server, unreachable, or an unparseable
+ * response) — never conflated with CURRENT.
+ */
+function MigrationsRow({
+  run,
+}: {
+  run: (signal: AbortSignal) => ReturnType<typeof runMigrationsLeg>;
+}) {
+  const { state, rerun } = useMigrationsLegRunner(run);
+  return (
+    <LegRow
+      legKey="migrations"
+      title="Server migration state (B-28)"
+      state={state}
+      badge={migrationsBadge(state)}
+      onRerun={rerun}
+    />
   );
 }
 
@@ -262,6 +334,11 @@ export function DiagnosticsScreen({ deps }: { deps?: DiagnosticsDeps }) {
     installConsoleTap();
     return runLastErrorLeg({ readTap: readConsoleTap });
   }, []);
+  const migrationsRun = useCallback(
+    (signal: AbortSignal) =>
+      runMigrationsLeg({ baseUrl: resolveApiBaseUrl, fetchFn: wired.fetchFn, signal }),
+    [wired],
+  );
 
   return (
     <View style={s.screen} testID="diagnostics-screen">
@@ -278,6 +355,7 @@ export function DiagnosticsScreen({ deps }: { deps?: DiagnosticsDeps }) {
         <GoogleLegRow />
         <RunnerLegRow legKey="secure-store" title="Secure-store round-trip" run={secureStoreRun} />
         <RunnerLegRow legKey="last-error" title="Last dev error (B-6)" run={lastErrorRun} />
+        <MigrationsRow run={migrationsRun} />
       </ScrollView>
     </View>
   );

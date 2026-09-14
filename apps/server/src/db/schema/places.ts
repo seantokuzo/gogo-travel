@@ -34,8 +34,11 @@ export const places = pgTable(
     /** Upstream id (Overture GERS id / FSQ id); NULL iff `source = 'custom'`. */
     sourceId: text("source_id"),
     name: text("name").notNull(),
-    lat: numeric("lat", { precision: 9, scale: 6 }).notNull(),
-    lng: numeric("lng", { precision: 9, scale: 6 }).notNull(),
+    // NULL only for source='custom' (B-7 part 3) — enforced by
+    // places_spine_coords_ck below; the pair moves together
+    // (places_coords_pair_ck).
+    lat: numeric("lat", { precision: 9, scale: 6 }),
+    lng: numeric("lng", { precision: 9, scale: 6 }),
     category: text("category"),
     /** Wikidata QID preferred (`Q…`); Wikipedia title accepted. */
     wikiRef: text("wiki_ref"),
@@ -60,6 +63,11 @@ export const places = pgTable(
       "places_custom_created_by_ck",
       sql`${t.source} <> 'custom' OR ${t.createdBy} IS NOT NULL`,
     ),
+    // B-7 part 3: coordinates move as a pair, and only a custom place may
+    // omit them entirely — the spine's geo search relies on every non-custom
+    // row carrying real coordinates.
+    check("places_coords_pair_ck", sql`(${t.lat} IS NULL) = (${t.lng} IS NULL)`),
+    check("places_spine_coords_ck", sql`${t.source} = 'custom' OR ${t.lat} IS NOT NULL`),
   ],
 );
 
