@@ -21,8 +21,11 @@ export const TripSchema = z.object({
   id: UuidSchema,
   name: z.string(),
   destination_name: z.string(),
-  destination_lat: LatSchema,
-  destination_lng: LngSchema,
+  /** NULL when the destination was picked from a coordinate-less custom
+   *  place (B-7 part 3) — coordinates only ever come from a picked place, so
+   *  the pair is NULL together, never independently (`trips_destination_coords_pair_ck`). */
+  destination_lat: LatSchema.nullable(),
+  destination_lng: LngSchema.nullable(),
   start_date: ISODateSchema,
   end_date: ISODateSchema,
   /** Effective status; date-derived unless overridden (R-db-19). */
@@ -75,22 +78,63 @@ const dateOrderRule = (
 };
 
 /**
- * `POST /trips` (trips spec §3.3). Dates are required at creation and the
- * destination is structured (Overture-backed search) — lat/lng always
- * present (Gate 2). `base_currency` defaults server-side to 'USD'.
+ * B-7 part 3: coordinates move as a PAIR, at every layer. `destination_lat`/
+ * `destination_lng` are typed identically (required-nullable on Create,
+ * optional-nullable on Update) so one function serves both call sites —
+ * mirrors `trips_destination_coords_pair_ck`.
+ *  - Create: the keys are always present (required); this only guards
+ *    against `{lat: 1, lng: null}` — half a coordinate.
+ *  - Update: a patch touching one key without the other is rejected outright
+ *    (the pair is a single logical field on the wire); when both are
+ *    present, null moves together too.
+ */
+const destinationCoordsPairRule = (
+  val: {
+    destination_lat?: number | null | undefined;
+    destination_lng?: number | null | undefined;
+  },
+  ctx: z.core.$RefinementCtx,
+): void => {
+  if ((val.destination_lat === undefined) !== (val.destination_lng === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "destination_lat and destination_lng must be sent together",
+      path: ["destination_lng"],
+    });
+    return;
+  }
+  if (val.destination_lat === undefined) return; // neither present — Update only
+  if ((val.destination_lat === null) !== (val.destination_lng === null)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "destination_lat and destination_lng must both be null or both be non-null",
+      path: ["destination_lng"],
+    });
+  }
+};
+
+/**
+ * `POST /trips` (trips spec §3.3). Dates are required at creation; the
+ * destination coordinate KEYS are always required too, but their VALUES are
+ * nullable — omitting the keys is rejected (400), while `null` is the
+ * explicit "the picked place has no coordinates" answer (B-7 part 3;
+ * `apps/server/src/fresh-install.db.test.ts`'s two coordinate-less-create
+ * escape pins depend on the keys staying required — see B-7 part 3 spec §2).
+ * `base_currency` defaults server-side to 'USD'.
  */
 export const TripCreateSchema = z
   .object({
     name: TripNameSchema,
     destination_name: DestinationNameSchema,
-    destination_lat: LatSchema,
-    destination_lng: LngSchema,
+    destination_lat: LatSchema.nullable(),
+    destination_lng: LngSchema.nullable(),
     start_date: ISODateSchema,
     end_date: ISODateSchema,
     base_currency: CurrencyCodeSchema.optional(),
     theme: ThemeKeySchema.optional(),
   })
-  .superRefine(dateOrderRule);
+  .superRefine(dateOrderRule)
+  .superRefine(destinationCoordsPairRule);
 export type TripCreate = z.infer<typeof TripCreateSchema>;
 
 /**
@@ -98,14 +142,16 @@ export type TripCreate = z.infer<typeof TripCreateSchema>;
  * (§3.2 matrix). `status` is the owner-only manual override (`null` clears
  * it — derivation resumes). `expect_updated_at` is the optional optimistic-
  * concurrency precondition (§3.5 rule 2). Date-order across a partial update
- * is re-validated server-side against stored values.
+ * is re-validated server-side against stored values. Destination coordinates
+ * are nullable (B-7 part 3) — patching to `null` records "no coordinates";
+ * the settings remediation flow patches a real pair back in.
  */
 export const TripUpdateSchema = z
   .object({
     name: TripNameSchema.optional(),
     destination_name: DestinationNameSchema.optional(),
-    destination_lat: LatSchema.optional(),
-    destination_lng: LngSchema.optional(),
+    destination_lat: LatSchema.nullable().optional(),
+    destination_lng: LngSchema.nullable().optional(),
     start_date: ISODateSchema.optional(),
     end_date: ISODateSchema.optional(),
     theme: ThemeKeySchema.nullable().optional(),
@@ -113,7 +159,8 @@ export const TripUpdateSchema = z
     status: TripStatusSchema.nullable().optional(),
     expect_updated_at: ISODateTimeSchema.optional(),
   })
-  .superRefine(dateOrderRule);
+  .superRefine(dateOrderRule)
+  .superRefine(destinationCoordsPairRule);
 export type TripUpdate = z.infer<typeof TripUpdateSchema>;
 
 /**

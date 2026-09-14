@@ -390,6 +390,18 @@ it("R-map-8: Navigate opens the coordinate handoff URL — and carries no offlin
   );
 });
 
+// B-7 part 3 (R-map-8 amendment): a coordinate-less custom place has no
+// handoff URL — the Navigate control itself must be ABSENT (never merely
+// `disabled` — mobile.md's vacuous-pin rule: RNTL can't fire a handler on a
+// disabled element, so "assert nothing happened" would hold either way).
+// Spy the handler's own effect instead — Linking.openURL is never invoked.
+it("R-map-8 amendment: a coordinate-less place has NO Navigate control — Linking.openURL never called", async () => {
+  await renderSheet({ place: { source: "custom", source_id: null, lat: null, lng: null } });
+
+  expect(screen.queryByTestId("map-sheet-place-button-navigate")).toBeNull();
+  expect(mockOpenUrl).not.toHaveBeenCalled();
+});
+
 it("a failed open surfaces the inline error and stays retryable", async () => {
   // Deferred rejection, resolvers collected + released in finally
   // (mobile.md deferred-promise rules).

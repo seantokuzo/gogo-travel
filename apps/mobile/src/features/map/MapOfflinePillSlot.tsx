@@ -64,10 +64,17 @@ export function MapOfflinePillSlot({ tripId }: MapOfflinePillSlotProps) {
     // Handler-gated (mobile.md: never rely on `disabled` for a guard) — the
     // pill is a live retry control ONLY in the failed state.
     if (model.kind !== "retry") return;
+    // Defensive (B-7 part 3): the controller already pins state to `none`
+    // for an unusable destination (offline-pack-controller.ts doc), so
+    // `retry` is structurally unreachable with a null coordinate — this is
+    // a belt, not the primary guard, so TS never sees a null reach
+    // `startPackDownload`.
+    const { destination_lat: lat, destination_lng: lng } = trip;
+    if (lat === null || lng === null) return;
     startPackDownload({
       tripId: trip.id,
-      destinationLat: trip.destination_lat,
-      destinationLng: trip.destination_lng,
+      destinationLat: lat,
+      destinationLng: lng,
       styleUrl: mapStyleUrlForScheme(scheme),
     });
   };

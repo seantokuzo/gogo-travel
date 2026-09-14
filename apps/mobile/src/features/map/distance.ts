@@ -42,11 +42,15 @@ export function formatDistance(meters: number): string {
   return `${Math.round(km)} km`;
 }
 
-/** The sheet's label: null while no position is known (label simply absent). */
+/**
+ * The sheet's label: null while no position is known (label simply absent),
+ * and null when the place has no coordinates at all (B-7 part 3 — a
+ * coordinate-less custom place). Both are "nothing to show", not an error.
+ */
 export function distanceLabelFor(
   position: MapLocationCoordinate | null,
-  place: { lat: number; lng: number },
+  place: { lat: number | null; lng: number | null },
 ): string | null {
-  if (position === null) return null;
+  if (position === null || place.lat === null || place.lng === null) return null;
   return `${formatDistance(haversineMeters(position, { lat: place.lat, lng: place.lng }))} away`;
 }

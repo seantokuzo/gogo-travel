@@ -41,6 +41,7 @@ import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
+import { rethrowCoordsCkMapped } from "../db/coords-ck.js";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import {
@@ -103,6 +104,13 @@ export interface TripsRouterDeps {
 // malformed cursors fall back to page 1 (the endpoint's documented errors
 // don't include a cursor 400 — §3.3 GET /trips).
 
+/** Any transaction scope — the `places/visibility.ts` `Tx` precedent. Named
+ * so the create/update transaction bodies below can be pulled out as their
+ * own `const`s (B-7 part 3 round-1 fix's `.catch(rethrowCoordsCkMapped)`
+ * belt) without Prettier re-chain-breaking (and reindenting) the whole
+ * multi-line callback every format pass. */
+type Tx = Parameters<Parameters<DbClient["transaction"]>[0]>[0];
+
 export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
   const router = new Hono<RequestVars>();
   const nowOf = () => (deps.now ? deps.now() : new Date());
@@ -123,7 +131,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const body = c.req.valid("json");
       const today = todayUtc(nowOf());
 
-      const trip = await deps.db.transaction(async (tx) => {
+      // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
+      // not the primary guard — `TripCreateSchema`'s pair refine already
+      // rejects every half-pair at the boundary. An escape here is a
+      // service/schema drift bug, but the client still gets a 400.
+      const insertTripTx = async (tx: Tx) => {
         // Caller liveness under lock — FIRST acquisition (global order:
         // users → trip_members → invites; the same door invite-accept
         // holds, T-6.2 round-2 advisory #2): a scrubbed account's
@@ -144,9 +156,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             name: body.name,
             destinationName: body.destination_name,
             // numeric columns are string-mode (see db/schema/_shared.ts);
-            // range was validated by the shared Lat/Lng schemas.
-            destinationLat: String(body.destination_lat),
-            destinationLng: String(body.destination_lng),
+            // range was validated by the shared Lat/Lng schemas. NULL (B-7
+            // part 3: the picked place had no coordinates) passes through —
+            // never a placeholder.
+            destinationLat: body.destination_lat === null ? null : String(body.destination_lat),
+            destinationLng: body.destination_lng === null ? null : String(body.destination_lng),
             startDate: body.start_date,
             endDate: body.end_date,
             status: effectiveTripStatus(
@@ -164,13 +178,16 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         await tx.insert(schema.tripMembers).values({ tripId: inserted.id, userId, role: "owner" });
 
         return inserted;
-      });
+      };
+      const trip = await deps.db.transaction(insertTripTx).catch(rethrowCoordsCkMapped);
 
       // R-places-1 primary trigger, POST-COMMIT: enqueue the destination's
       // region ingest. Fire-and-forget by contract — the trigger never
       // throws, and this belt-and-braces catch guarantees a broken seam
       // still can't fail the create (trip creation SHALL NOT block on, or
-      // fail because of, ingestion).
+      // fail because of, ingestion). Called unconditionally — B-7 part 3:
+      // a null destination (coordinate-less custom place) is the trigger's
+      // own no-op arm (ingest-queue.ts), not a route-level branch.
       try {
         deps.placesIngest?.enqueueDestination(body.destination_lat, body.destination_lng);
       } catch {
@@ -318,7 +335,11 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       let fieldsWritten = false;
       let storedStatusChanged = false;
 
-      const updated = await deps.db.transaction(async (tx) => {
+      // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
+      // not the primary guard — `TripUpdateSchema`'s pair refine already
+      // rejects every half-pair at the boundary. An escape here is a
+      // service/schema drift bug, but the client still gets a 400.
+      const updateTripTx = async (tx: Tx) => {
         // Key-presence touches are known from the body alone — computed
         // before the load so the base-currency arm can lock it.
         const touchesBaseCurrency = body.base_currency !== undefined;
@@ -405,8 +426,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         const set: Partial<typeof schema.trips.$inferInsert> = { status: nextStatus };
         if (body.name !== undefined) set.name = body.name;
         if (body.destination_name !== undefined) set.destinationName = body.destination_name;
-        if (body.destination_lat !== undefined) set.destinationLat = String(body.destination_lat);
-        if (body.destination_lng !== undefined) set.destinationLng = String(body.destination_lng);
+        // NULL (B-7 part 3: the newly-picked place has no coordinates)
+        // passes through — never `String(null)` (a numeric-column write
+        // that would throw at the driver).
+        if (body.destination_lat !== undefined) {
+          set.destinationLat = body.destination_lat === null ? null : String(body.destination_lat);
+        }
+        if (body.destination_lng !== undefined) {
+          set.destinationLng = body.destination_lng === null ? null : String(body.destination_lng);
+        }
         if (body.start_date !== undefined) set.startDate = body.start_date;
         if (body.end_date !== undefined) set.endDate = body.end_date;
         if (body.theme !== undefined) set.theme = body.theme;
@@ -470,19 +498,33 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // Destination change (R-places-1: "…or its destination changes") —
         // VALUE-diff, not key-presence: resubmitting identical coords is not
         // a change (numeric columns are strings; compare numerically). The
-        // flag only escapes if this transaction commits.
+        // flag only escapes if this transaction commits. Null-safe (B-7
+        // part 3): `Number(null) === 0` would diff a null→null resubmit
+        // against a phantom Null Island, so nulls compare by identity, not
+        // by coercion.
+        const numOrNull = (value: string | null): number | null =>
+          value === null ? null : Number(value);
         destinationChanged =
           (body.destination_lat !== undefined &&
-            Number(current.destinationLat) !== body.destination_lat) ||
+            numOrNull(current.destinationLat) !== body.destination_lat) ||
           (body.destination_lng !== undefined &&
-            Number(current.destinationLng) !== body.destination_lng);
+            numOrNull(current.destinationLng) !== body.destination_lng);
 
         return row;
-      });
+      };
+      const updated = await deps.db.transaction(updateTripTx).catch(rethrowCoordsCkMapped);
 
       // POST-COMMIT ingest trigger for the moved destination — same
-      // fire-and-forget contract as the create hook (R-places-1).
-      if (destinationChanged) {
+      // fire-and-forget contract as the create hook (R-places-1). B-7 part
+      // 3: only when the NEW destination actually carries coordinates —
+      // `Number(updated.destinationLat)` on a null column would enqueue
+      // Null Island for a real→null change; a null→null resubmit never
+      // reaches here at all (destinationChanged is false for it).
+      if (
+        destinationChanged &&
+        updated.destinationLat !== null &&
+        updated.destinationLng !== null
+      ) {
         try {
           deps.placesIngest?.enqueueDestination(
             Number(updated.destinationLat),

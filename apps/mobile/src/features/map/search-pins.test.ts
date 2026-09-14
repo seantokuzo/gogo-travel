@@ -35,6 +35,25 @@ describe("searchPinFeatures", () => {
   it("empty results ⇒ empty collection (clear removes temp pins)", () => {
     expect(searchPinFeatures([], colors).features).toHaveLength(0);
   });
+
+  // B-7 part 3 (4.6): text-only search on a coordinate-less trip can return
+  // the user's OWN coordinate-less custom places — filtered out of the pin
+  // source here (they still render in the result LIST, M2/MapSearch.tsx).
+  // Falsification: remove the filter and the malformed [null, null]
+  // coordinate reaches the native ShapeSource.
+  it("filters out a coordinate-less custom result — no malformed [null, null] pin", () => {
+    const located = makePlace({ id: PLACE_ID, lat: 35.1, lng: 135.9 });
+    const coordless = makePlace({
+      id: "77777777-7777-4777-8777-777777777771",
+      source: "custom",
+      name: "Nowhereville",
+      lat: null,
+      lng: null,
+    });
+    const collection = searchPinFeatures([located, coordless], colors);
+    expect(collection.features).toHaveLength(1);
+    expect(collection.features[0]?.id).toBe(PLACE_ID);
+  });
 });
 
 describe("classifySearchPinPress", () => {

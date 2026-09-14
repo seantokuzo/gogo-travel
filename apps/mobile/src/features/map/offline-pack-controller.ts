@@ -35,7 +35,6 @@ import {
   annotatedPackState,
   downloadProgressPercent,
   isDownloadComplete,
-  isUsableDestination,
   isWifiState,
   OFFLINE_PACK_MAX_ZOOM,
   OFFLINE_PACK_MIN_ZOOM,
@@ -45,6 +44,7 @@ import {
   planCeilingPurge,
   shouldAutoDownloadPack,
   tripIdFromPackName,
+  usableDestinationCoords,
   type CeilingPurgeCandidate,
   type OfflinePackState,
 } from "./offline-packs";
@@ -266,6 +266,9 @@ export async function runOrphanPackSweep(): Promise<void> {
 
 export interface PackDownloadTarget {
   tripId: string;
+  // Unchanged (B-7 part 3 spec 3.3) — deliberately non-null: callers must
+  // resolve `isUsableDestination`/`usableDestinationCoords` FIRST and never
+  // construct one for a null-coordinate trip.
   destinationLat: number;
   destinationLng: number;
   styleUrl: string;
@@ -362,12 +365,15 @@ export async function deleteTripPack(tripId: string): Promise<void> {
 // Controller hook (pill + settings surfaces)
 // ---------------------------------------------------------------------------
 
-/** The trip fields the controller needs (structural — `TripWithRole` fits). */
+/** The trip fields the controller needs (structural — `TripWithRole` fits).
+ *  B-7 part 3: nullable — a custom-place destination may carry no
+ *  coordinates; `usableDestinationCoords` (offline-packs.ts) already treats
+ *  null as unusable, standing the whole machine down (module doc). */
 export interface OfflinePackTrip {
   id: string;
   status: TripStatus;
-  destination_lat: number;
-  destination_lng: number;
+  destination_lat: number | null;
+  destination_lng: number | null;
 }
 
 /**
@@ -392,14 +398,22 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
   const { scheme } = useTheme();
   const styleUrl = mapStyleUrlForScheme(scheme);
   const { id: tripId, status, destination_lat: lat, destination_lng: lng } = trip;
-  // The map screen's degrade arm renders with UNUSABLE coords (R-map-1 world
-  // fallback) — the region grid throws on them, so the whole machine stands
-  // down: no fingerprint, no effects, state pinned to `none`.
-  const usable = isUsableDestination(lat, lng);
-  const regionKey = usable ? packRegionKeyFor(lat, lng) : "";
+  // The map screen's degrade arm renders with UNUSABLE coords — null
+  // (B-7 part 3: a coordinate-less custom destination) or NaN/out-of-range
+  // (R-map-1 world fallback) — the region grid throws on either, so the
+  // whole machine stands down: no fingerprint, no effects, state pinned to
+  // `none`. Routed through the SAME `usableDestinationCoords` narrowing
+  // companion `OfflinePackManager.tsx` uses (round-1 architecture fix) — one
+  // usability rule, not three hand-rolled copies. Memoized on the primitive
+  // lat/lng (not recomputed every render) so the effect below can depend on
+  // `coords` directly and satisfy exhaustive-deps without re-running on
+  // every unrelated re-render.
+  const coords = useMemo(() => usableDestinationCoords(lat, lng), [lat, lng]);
+  const usable = coords !== null;
+  const regionKey = coords !== null ? packRegionKeyFor(coords.lat, coords.lng) : "";
 
   useEffect(() => {
-    if (!usable) return;
+    if (coords === null) return;
     const current: PackFingerprint = { styleUrl, regionKey };
     syncPackStateFromAnnotation(tripId, current);
     void runOrphanPackSweep();
@@ -410,8 +424,8 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
     }
     const target: PackDownloadTarget = {
       tripId,
-      destinationLat: lat,
-      destinationLng: lng,
+      destinationLat: coords.lat,
+      destinationLng: coords.lng,
       styleUrl,
     };
     let cancelled = false;
@@ -437,7 +451,7 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
       cancelled = true;
       subscription?.remove();
     };
-  }, [tripId, status, styleUrl, regionKey, lat, lng, usable]);
+  }, [tripId, status, styleUrl, regionKey, coords]);
 
   const stored = useOfflinePackStore((state) => state.packs[tripId]);
   // First-frame value before the effect seeds the store: sync MMKV read

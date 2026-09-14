@@ -321,8 +321,8 @@ tables have `updated_at` — immutable ledger tables `settlements`,
 | `id`               | `uuid`         | no   | `gen_random_uuid()` | PK                                                                                                                                                                                                                                                                                                  |
 | `name`             | `text`         | no   | —                   |                                                                                                                                                                                                                                                                                                     |
 | `destination_name` | `text`         | no   | —                   | Display string ("Tokyo, Japan")                                                                                                                                                                                                                                                                     |
-| `destination_lat`  | `numeric(9,6)` | no   | —                   | Map centering, weather, AI grounding — guaranteed present (structured destination input, note below)                                                                                                                                                                                                |
-| `destination_lng`  | `numeric(9,6)` | no   | —                   |                                                                                                                                                                                                                                                                                                     |
+| `destination_lat`  | `numeric(9,6)` | yes  | —                   | Map centering, weather, AI grounding. NULL when picked from a coordinate-less custom place (B-7 part 3, note below) — the pair moves together, never independently                                                                                                                                  |
+| `destination_lng`  | `numeric(9,6)` | yes  | —                   |                                                                                                                                                                                                                                                                                                     |
 | `start_date`       | `date`         | no   | —                   | Required at creation (note below)                                                                                                                                                                                                                                                                   |
 | `end_date`         | `date`         | no   | —                   |                                                                                                                                                                                                                                                                                                     |
 | `status`           | `trip_status`  | no   | `'planning'`        | Effective status; date-derived unless overridden (R-db-19)                                                                                                                                                                                                                                          |
@@ -332,16 +332,28 @@ tables have `updated_at` — immutable ledger tables `settlements`,
 | `theme`            | `text`         | yes  | —                   | Trip accent key into `packages/tokens` — colors small trip-scoped accents only, never a whole-app re-skin (tokens spec Gate-2 theme-scope resolution); null = app default                                                                                                                           |
 | `created_by`       | `uuid`         | no   | —                   | FK → `users.id` ON DELETE RESTRICT. Immutable creator; _ownership_ lives in `trip_members.role`                                                                                                                                                                                                     |
 
-- **Checks:** `start_date <= end_date`; `base_currency = upper(base_currency)`; `budget_cap_cents >= 0`
+- **Checks:** `start_date <= end_date`; `base_currency = upper(base_currency)`; `budget_cap_cents >= 0`; `trips_destination_coords_pair_ck` — `(destination_lat IS NULL) = (destination_lng IS NULL)` (B-7 part 3)
 - **Indexes:** FK index on `created_by`. Trip lists are queried through `trip_members(user_id)` — no extra index here.
 - Trip dates are **required at creation** — unlocks season/AI/tile triggers
   unconditionally; date-less trips are deferred (a future nullability
   relaxation is additive). (Resolved 2026-07-09, Gate 2)
 - Destination input is **structured**: picked via search against an
-  Overture city/locality subset (free, no new dependency), so
-  `destination_lat`/`destination_lng` are always present and weather/AI
-  grounding is guaranteed for every trip. Free-text destinations do not
-  exist in v1. (Resolved 2026-07-09, Gate 2)
+  Overture city/locality subset (free, no new dependency) OR a
+  user-created custom place. **Amended B-7 part 3 (2026-09-13):**
+  `destination_lat`/`destination_lng` are no longer guaranteed present —
+  they are NULL exactly when the picked place is a coordinate-less custom
+  place (`places.lat`/`places.lng` NULL, §3.3.7). Weather/AI grounding
+  degrades to its existing "no coordinates" arm for such trips (dormant in
+  v1 — no feature reads `destination_lat` yet). Free-text destinations
+  still do not exist in v1 — a coordinate-less trip's destination is still
+  a real `places` row, just one with no coordinates of its own. The
+  one-time backfill (migration `0005`) converted every trip that was
+  created from a coordinate-less custom place during the part-2 window —
+  identified as `destination_lat = 0 AND destination_lng = 0`, since a
+  trip's destination coordinates only ever come from a picked place, and
+  the only pickable place at exactly `(0, 0)` was a part-2 placeholder —
+  from `(0, 0)` to NULL. (Resolved 2026-07-09, Gate 2; amended 2026-09-13,
+  B-7 part 3)
 - `status` transitions: date-derived (planning → active on `start_date`,
   active → past after `end_date`) with manual override allowed — override
   wins until cleared (R-db-19; mechanism above).
@@ -399,16 +411,25 @@ photos) are **fetch-fresh from the Foursquare hosted API and never cached**
 | `source`     | `place_source` | no   | —                   | `overture` / `fsq_os` / `custom`                                                                                                                  |
 | `source_id`  | `text`         | yes  | —                   | Upstream id (Overture GERS id / FSQ id); NULL iff `source = 'custom'`                                                                             |
 | `name`       | `text`         | no   | —                   |                                                                                                                                                   |
-| `lat`        | `numeric(9,6)` | no   | —                   |                                                                                                                                                   |
-| `lng`        | `numeric(9,6)` | no   | —                   |                                                                                                                                                   |
+| `lat`        | `numeric(9,6)` | yes  | —                   | NULL only for `source = 'custom'` (B-7 part 3) — a user-created place with no coordinates; every spine (`overture`/`fsq_os`) row always has one   |
+| `lng`        | `numeric(9,6)` | yes  | —                   | Same nullability rule as `lat` — the pair moves together, never independently                                                                     |
 | `category`   | `text`         | yes  | —                   | Source taxonomy string, normalized where cheap (Overture and FSQ taxonomies differ; normalization mapping is a places-domain concern, not schema) |
 | `wiki_ref`   | `text`         | yes  | —                   | Wikidata QID preferred (`Q…`); Wikipedia title accepted. Grounds the tour guide (Wikipedia/Wikivoyage enrichment)                                 |
 | `created_by` | `uuid`         | yes  | —                   | FK → `users.id` ON DELETE RESTRICT; set iff `source = 'custom'` (authz for edits to user-created places)                                          |
 
 - **Unique (partial):** `(source, source_id) WHERE source_id IS NOT NULL` — import upsert key (R-db-6)
-- **Checks:** `(source = 'custom') = (source_id IS NULL)`; `source <> 'custom' OR created_by IS NOT NULL`
+- **Checks:** `(source = 'custom') = (source_id IS NULL)`; `source <> 'custom' OR created_by IS NOT NULL`; `places_coords_pair_ck` — `(lat IS NULL) = (lng IS NULL)`, every source (B-7 part 3); `places_spine_coords_ck` — `source = 'custom' OR lat IS NOT NULL` (B-7 part 3 — an ingested spine row can never lack coordinates, which is what keeps the `(lat, lng)` geo index's invariants intact)
 - **Indexes:** `(lat, lng)` composite — bbox queries for map viewport; GIN `gin_trgm_ops` on `name` (extension `pg_trgm`, enabled in the initial migration) — type-ahead place search against our spine before any paid autocomplete.
 - Bulk Overture/FSQ import tooling is **out of scope** for this spec (places-domain task); the upsert key above is its contract.
+- **B-7 part 3 (2026-09-13):** `lat`/`lng` became nullable so a custom place
+  can exist with no coordinates at all (`POST /places` — places spec
+  R-places-9/26). A NULL coordinate never satisfies a `BETWEEN` predicate,
+  so such a row is automatically excluded from bbox/near search and
+  automatically included in text-only search (places spec R-places-27) —
+  no query-shape change. Migration `0005_nullable_custom_coords.sql`
+  backfills the part-2 window's `(0, 0)` custom-placeholder rows to NULL
+  (scoped to `source = 'custom' AND lat = 0 AND lng = 0`) before adding the
+  two new CHECKs.
 
 #### 3.3.8 `saved_places`
 

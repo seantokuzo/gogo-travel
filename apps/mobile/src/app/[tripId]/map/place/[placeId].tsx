@@ -359,18 +359,26 @@ export default function PlaceDetailScreen() {
                 testID="place-detail-button-add-to-day"
               />
             ) : null}
-            <Button
-              title="Navigate"
-              variant="secondary"
-              icon="navigate-outline"
-              // R-map-8: URL-scheme handoff, never in-app turn-by-turn.
-              // ENABLED offline (T-8.7 reconciliation of interp 15 + A7,
-              // superseding the original disable): Google Maps' own offline
-              // navigation exists, and offline-inside-a-downloaded-pack is
-              // the headline use case — both R-map-8 surfaces now agree.
-              onPress={() => void Linking.openURL(placeNavigateUrl(place))}
-              testID="place-detail-button-navigate"
-            />
+            {/* B-7 part 3 (R-map-8 amendment): no handoff URL, no control —
+                a coordinate-less custom place has nowhere to navigate to. */}
+            {placeNavigateUrl(place) !== null ? (
+              <Button
+                title="Navigate"
+                variant="secondary"
+                icon="navigate-outline"
+                // R-map-8: URL-scheme handoff, never in-app turn-by-turn.
+                // ENABLED offline (T-8.7 reconciliation of interp 15 + A7,
+                // superseding the original disable): Google Maps' own
+                // offline navigation exists, and offline-inside-a-
+                // downloaded-pack is the headline use case — both R-map-8
+                // surfaces now agree.
+                onPress={() => {
+                  const url = placeNavigateUrl(place);
+                  if (url !== null) void Linking.openURL(url);
+                }}
+                testID="place-detail-button-navigate"
+              />
+            ) : null}
           </View>
         </View>
 
