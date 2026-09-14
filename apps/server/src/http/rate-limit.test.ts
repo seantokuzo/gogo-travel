@@ -9,7 +9,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { requestIdMiddleware } from "./app-middleware.js";
 import type { RequestVars } from "./errors.js";
-import { InMemoryRateLimitStore, rateLimit, type RateLimitRule } from "./rate-limit.js";
+import {
+  InMemoryRateLimitStore,
+  isLoopbackOrPrivatePeer,
+  rateLimit,
+  type RateLimitRule,
+} from "./rate-limit.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -50,6 +55,56 @@ describe("InMemoryRateLimitStore", () => {
     const blocked = store.hit("k", 1, 500, t + 499);
     expect(blocked.allowed).toBe(false);
     expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("isLoopbackOrPrivatePeer (S-4/T3, R-door-11)", () => {
+  // The spec's own pinned vector table, verbatim — every allowed and
+  // disallowed address it names.
+  it.each([
+    "127.0.0.1",
+    "::1",
+    "10.0.0.1",
+    "172.16.0.1",
+    "192.168.0.1",
+    "fc00::1",
+    "::ffff:10.0.0.5",
+    "[::1]",
+  ])("%s → true", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(true);
+  });
+
+  it.each(["8.8.8.8", "0.0.0.0", "169.254.0.1", "fe80::1", "unknown", ""])("%s → false", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(false);
+  });
+
+  it("null → false", () => {
+    expect(isLoopbackOrPrivatePeer(null)).toBe(false);
+  });
+
+  it("undefined → false", () => {
+    expect(isLoopbackOrPrivatePeer(undefined)).toBe(false);
+  });
+
+  // Boundary of the 172.16.0.0/12 range — 172.15.x and 172.32.x are PUBLIC,
+  // only 172.16.x through 172.31.x are private.
+  it("172.16.0.0/12 boundary: 172.15.255.255 and 172.32.0.0 are public; 172.31.255.255 is private", () => {
+    expect(isLoopbackOrPrivatePeer("172.15.255.255")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("172.31.255.255")).toBe(true);
+    expect(isLoopbackOrPrivatePeer("172.32.0.0")).toBe(false);
+  });
+
+  it("a hostname (including .local) is NEVER accepted — IP-literal-only predicate", () => {
+    // Falsification: swap the ipv4-regex/fc-fd checks for a substring/DNS-ish
+    // match and this goes RED.
+    expect(isLoopbackOrPrivatePeer("localhost")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("my-mac.local")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("evil.com")).toBe(false);
+  });
+
+  it("a spoofed Host-style value embedded in the string is not enough — must be the literal address", () => {
+    expect(isLoopbackOrPrivatePeer("127.0.0.1.evil.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("evil.com/127.0.0.1")).toBe(false);
   });
 });
 
