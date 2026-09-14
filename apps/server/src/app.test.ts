@@ -2,7 +2,13 @@ import { createRequire } from "node:module";
 import { createLocalJWKSet, generateKeyPair } from "jose";
 import { describe, expect, it, vi } from "vitest";
 import { HealthResponseSchema, type MigrationState } from "@gogo/shared/api/health";
-import { app, createApp, PUBLIC_ALLOWLIST } from "./app.js";
+import {
+  app,
+  createApp,
+  createMigrationsSnapshotCache,
+  MIGRATIONS_REFRESH_TIMEOUT_MS,
+  PUBLIC_ALLOWLIST,
+} from "./app.js";
 import type { AuthRouterDeps } from "./auth/routes.js";
 import type { BookingsRouterDeps } from "./bookings/routes.js";
 import type { BudgetsRouterDeps } from "./budgets/routes.js";
@@ -36,6 +42,8 @@ describe("GET /api/health — migrations wiring (review round-1 F1: was entirely
     applied: 3,
     pending: ["0003_outstanding_doctor_spectrum"],
     pendingCount: 1,
+    modified: [],
+    modifiedCount: 0,
     checkedAt: "2026-01-01T00:00:00.000Z",
   };
 
@@ -57,12 +65,14 @@ describe("GET /api/health — migrations wiring (review round-1 F1: was entirely
   });
 });
 
-describe("GET /api/health — lazy migrations refresh with a TTL (review round-1 C5: was a boot-time-only snapshot, frozen forever)", () => {
+describe("GET /api/health — lazy migrations refresh with a TTL, STALE-WHILE-REVALIDATE (review round-1 C5; hardened round-2: the round-1 version awaited `refresh()` directly on the request that crossed the TTL — an unbounded, un-deduplicated DB round trip)", () => {
   const PENDING: MigrationState = {
     onDisk: 4,
     applied: 3,
     pending: ["0003_x"],
     pendingCount: 1,
+    modified: [],
+    modifiedCount: 0,
     checkedAt: "2026-01-01T00:00:00.000Z",
   };
   const CURRENT: MigrationState = {
@@ -70,10 +80,17 @@ describe("GET /api/health — lazy migrations refresh with a TTL (review round-1
     applied: 4,
     pending: [],
     pendingCount: 0,
+    modified: [],
+    modifiedCount: 0,
     checkedAt: "2026-01-01T00:00:31.000Z",
   };
 
-  it("recomputes at most once per 30s: two /health calls 31s apart differ; a third call inside the new TTL is cached", async () => {
+  /** Real-microtask flush (fake timers never fake Promise microtasks — only `setTimeout`/etc.) so a `.then`/`.catch`/`.finally` chain attached to an already-settled promise has landed before the next assertion. */
+  async function flushMicrotasks(times = 5): Promise<void> {
+    for (let i = 0; i < times; i++) await Promise.resolve();
+  }
+
+  it("/health NEVER awaits the DB: the FIRST call past the TTL still gets the STALE snapshot immediately; a LATER call sees the refreshed one", async () => {
     vi.useFakeTimers();
     try {
       const refresh = vi.fn(() => Promise.resolve(CURRENT));
@@ -85,18 +102,26 @@ describe("GET /api/health — lazy migrations refresh with a TTL (review round-1
       expect(firstBody.migrations).toEqual(PENDING);
       expect(refresh).not.toHaveBeenCalled();
 
-      // Falsification: dropping the TTL check (always calling `refresh`, or
-      // never calling it) makes this next assertion red either way.
       vi.advanceTimersByTime(31_000);
+      // Falsification (the round-2 regression): if `/health` awaited
+      // `refresh()` directly, this response would already carry CURRENT.
+      // Stale-while-revalidate serves the OLD snapshot on the very call
+      // that triggers the refresh — the DB round trip happens in the
+      // background, never on the request path.
       const second = await testApp.request("/api/health");
       const secondBody = (await second.json()) as { migrations: MigrationState };
-      expect(secondBody.migrations).toEqual(CURRENT);
+      expect(secondBody.migrations).toEqual(PENDING);
       expect(refresh).toHaveBeenCalledTimes(1);
 
-      // t=31s+ε (within the new TTL window): still cached — no second call.
+      // Let the (already-resolved) background refresh's microtask chain land.
+      await flushMicrotasks();
+
+      // A LATER call now observes the refreshed snapshot.
       const third = await testApp.request("/api/health");
       const thirdBody = (await third.json()) as { migrations: MigrationState };
       expect(thirdBody.migrations).toEqual(CURRENT);
+      // And still exactly ONE refresh call — the third request is inside
+      // the NEW TTL window, so it must not trigger a second one.
       expect(refresh).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -113,7 +138,126 @@ describe("GET /api/health — lazy migrations refresh with a TTL (review round-1
       expect(res.status).toBe(200);
       const body = (await res.json()) as { migrations: MigrationState };
       expect(body.migrations).toEqual(PENDING);
+      await flushMicrotasks();
       expect(refresh).toHaveBeenCalledTimes(1);
+      // checkedAt reflects the last SUCCESSFUL refresh — a rejected one
+      // must never advance it, even though the attempt happened.
+      const afterFailure = await testApp.request("/api/health");
+      const afterFailureBody = (await afterFailure.json()) as { migrations: MigrationState };
+      expect(afterFailureBody.migrations.checkedAt).toBe(PENDING.checkedAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("createMigrationsSnapshotCache — single-flight + bounded background refresh (review round-2 regression)", () => {
+  const PENDING: MigrationState = {
+    onDisk: 4,
+    applied: 3,
+    pending: ["0003_x"],
+    pendingCount: 1,
+    modified: [],
+    modifiedCount: 0,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const CURRENT: MigrationState = {
+    onDisk: 4,
+    applied: 4,
+    pending: [],
+    pendingCount: 0,
+    modified: [],
+    modifiedCount: 0,
+    checkedAt: "2026-01-01T00:00:31.000Z",
+  };
+  const TTL_MS = 30_000;
+
+  async function flushMicrotasks(times = 5): Promise<void> {
+    for (let i = 0; i < times; i++) await Promise.resolve();
+  }
+
+  it("5 CONCURRENT callers past the TTL trigger exactly ONE `refresh` call — mutation: dropping the `inFlight` guard makes this 5", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn(() => Promise.resolve(CURRENT));
+      const getSnapshot = createMigrationsSnapshotCache(PENDING, refresh, TTL_MS);
+      vi.advanceTimersByTime(TTL_MS + 1);
+
+      const results = await Promise.all([
+        getSnapshot(),
+        getSnapshot(),
+        getSnapshot(),
+        getSnapshot(),
+        getSnapshot(),
+      ]);
+      expect(refresh).toHaveBeenCalledTimes(1);
+      // Every one of the 5 concurrent callers gets the STALE snapshot — none
+      // of them awaits the refresh they collectively triggered once.
+      for (const result of results) expect(result).toEqual(PENDING);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a refresh that never settles does not block the caller — bounded by `MIGRATIONS_REFRESH_TIMEOUT_MS`, mutation: removing the bound hangs this test", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn(() => new Promise<MigrationState>(() => {})); // never settles
+      const getSnapshot = createMigrationsSnapshotCache(PENDING, refresh, TTL_MS);
+      vi.advanceTimersByTime(TTL_MS + 1);
+      // The cache itself never awaits `refresh()` — this resolves
+      // immediately regardless of the bound; the bound's job is to release
+      // `inFlight` (proven by the next test), not to make THIS call fast.
+      const result = await getSnapshot();
+      expect(result).toEqual(PENDING);
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a never-settling refresh's single-flight lock releases after the bound, so the NEXT TTL window can retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi
+        .fn<() => Promise<MigrationState>>()
+        .mockImplementationOnce(() => new Promise<MigrationState>(() => {}))
+        .mockImplementation(() => Promise.resolve(CURRENT));
+      const getSnapshot = createMigrationsSnapshotCache(PENDING, refresh, TTL_MS);
+
+      vi.advanceTimersByTime(TTL_MS + 1); // refresh #1 kicks off (hangs)
+      expect(await getSnapshot()).toEqual(PENDING);
+      expect(refresh).toHaveBeenCalledTimes(1);
+
+      // Advance past the refresh's own bound so the internal race rejects
+      // and `inFlight` releases.
+      await vi.advanceTimersByTimeAsync(MIGRATIONS_REFRESH_TIMEOUT_MS + 1);
+
+      // Falsification: no bound (or one that never fires) leaves `inFlight`
+      // set forever — crossing another full TTL window could never start
+      // refresh #2, and `refresh` would stay called exactly once forever.
+      vi.advanceTimersByTime(TTL_MS + 1);
+      expect(await getSnapshot()).toEqual(PENDING); // still stale — #2 just started
+      expect(refresh).toHaveBeenCalledTimes(2);
+
+      await flushMicrotasks();
+      expect(await getSnapshot()).toEqual(CURRENT);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("checkedAt only advances on a SUCCESSFUL refresh — a failed one keeps the previous snapshot's checkedAt", async () => {
+    vi.useFakeTimers();
+    try {
+      const refresh = vi.fn(() => Promise.reject(new Error("db unreachable")));
+      const getSnapshot = createMigrationsSnapshotCache(PENDING, refresh, TTL_MS);
+      vi.advanceTimersByTime(TTL_MS + 1);
+      await getSnapshot();
+      await flushMicrotasks();
+      const result = await getSnapshot();
+      expect(result.checkedAt).toBe(PENDING.checkedAt);
+      expect(result).toEqual(PENDING);
     } finally {
       vi.useRealTimers();
     }

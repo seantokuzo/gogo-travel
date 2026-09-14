@@ -156,22 +156,22 @@ export interface CreateAppOptions {
    */
   migrations?: MigrationState;
   /**
-   * Lazy-refresh hook for the migrations snapshot (review round-1 C5):
-   * `/api/health` recomputes at most once per `MIGRATIONS_SNAPSHOT_TTL_MS`
-   * by calling this instead of echoing `migrations` forever — a boot-time-
-   * only snapshot meant the panel's own "rerun" button could never observe
-   * a migration that finished AFTER boot (staleness was real, not just
-   * theoretical: the doc comment said "restart to refresh," which nothing
-   * surfaced to a caller). `index.ts` wires this to
-   * `() => checkMigrationState(getDb())`, wire-shaped by NODE_ENV the same
-   * way the initial `migrations` value was. Deliberately still NOT a
-   * per-request DB round trip on every hit — only after the TTL elapses,
-   * so `/api/health` stays cheap for LB/uptime probes (see
-   * `PUBLIC_ALLOWLIST`'s HEAD-probe note above) between refreshes. A
-   * recompute failure keeps serving the last good snapshot rather than
-   * failing `/health` (same "don't mask, don't fail" posture as the
-   * boot-time check). Omitted in tests that only care about the static
-   * initial value — `migrations` alone then never refreshes.
+   * Lazy-refresh hook for the migrations snapshot (review round-1 C5,
+   * hardened round-2 — see `createMigrationsSnapshotCache`'s doc): once per
+   * `MIGRATIONS_SNAPSHOT_TTL_MS`, `/api/health` kicks off ONE bounded,
+   * single-flight background call to this instead of echoing `migrations`
+   * forever — a boot-time-only snapshot meant the panel's own "rerun" button
+   * could never observe a migration that finished AFTER boot. `/health`
+   * itself NEVER awaits this call — it always answers with whatever
+   * snapshot is currently cached (stale-while-revalidate), so `/api/health`
+   * stays cheap and bounded for LB/uptime probes (see `PUBLIC_ALLOWLIST`'s
+   * HEAD-probe note above) regardless of how the database is behaving.
+   * `index.ts` wires this to `() => checkMigrationState(getDb())`,
+   * wire-shaped by NODE_ENV the same way the initial `migrations` value
+   * was. A failed or timed-out recompute keeps serving the last good
+   * snapshot rather than failing `/health` (same "don't mask, don't fail"
+   * posture as the boot-time check). Omitted in tests that only care about
+   * the static initial value — `migrations` alone then never refreshes.
    */
   migrationsRefresh?: () => Promise<MigrationState>;
 }
@@ -180,29 +180,90 @@ export interface CreateAppOptions {
 export const MIGRATIONS_SNAPSHOT_TTL_MS = 30_000;
 
 /**
- * A tiny TTL cache in front of an optional refresh hook. Exported only for
- * `app.test.ts`'s fake-timer pin; every other caller goes through
+ * Bound on a single background migrations-snapshot refresh (review round-2
+ * regression C5-follow-up: the round-1 cache awaited `refresh()` DIRECTLY on
+ * whichever request crossed the TTL — an unbounded, un-deduplicated DB round
+ * trip: every concurrent caller in that window started its OWN refresh, and
+ * a wedged connection could hang `/health` itself forever). `checkMigrationState`
+ * takes a driver-agnostic `DbClient`, so there is no one query-timeout knob to
+ * reach for here — postgres-js (the pinned test driver, `postgres@3.4.9`) has
+ * no built-in per-query timeout at all; Context7 (`porsager/postgres`,
+ * "Query Timeout Implementation") documents `Promise.race` against a
+ * `setTimeout` rejection as the library's OWN recommended pattern for
+ * exactly this, which is what `rejectAfter`/`createMigrationsSnapshotCache`
+ * use below (plain `setTimeout`, not `AbortSignal.timeout`, so vitest's fake
+ * timers can drive the bound deterministically in tests).
+ */
+export const MIGRATIONS_REFRESH_TIMEOUT_MS = 2_000;
+
+/** Rejects after `ms` — see `MIGRATIONS_REFRESH_TIMEOUT_MS`'s doc for why this shape (not `AbortSignal.timeout`). `unref()`'d so a pending bound timer never keeps the process alive on its own. */
+function rejectAfter(ms: number): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`migrations snapshot refresh timed out after ${ms}ms`)),
+      ms,
+    );
+    timer.unref?.();
+  });
+}
+
+/**
+ * A tiny TTL cache in front of an optional refresh hook — STALE-WHILE-
+ * REVALIDATE (review round-2 regression fix). `/health` must NEVER await the
+ * database:
+ *  - Every call returns the CURRENTLY cached snapshot immediately/synchronously
+ *    — never the in-progress refresh's eventual result.
+ *  - Once the TTL has elapsed, a call kicks off a background refresh, bounded
+ *    by `MIGRATIONS_REFRESH_TIMEOUT_MS` (`Promise.race` against `rejectAfter`).
+ *  - SINGLE-FLIGHT: while a refresh is in flight, concurrent (and
+ *    subsequent, still-in-window) callers reuse it instead of each starting
+ *    their own — `inFlight` is the guard.
+ *  - A successful refresh replaces `snapshot` (its own `checkedAt` moves
+ *    forward with it) for the NEXT caller to observe. A failed or timed-out
+ *    refresh keeps serving the LAST good snapshot and logs once (single-
+ *    flight means at most one attempt is ever in progress at a time) —
+ *    never fails `/health`, same don't-mask posture as the boot-time check.
+ *    Either way the TTL clock still advances, so a down database is retried
+ *    once per TTL window, not once per request.
+ *
+ * Exported only for `app.test.ts`'s pins; every other caller goes through
  * `CreateAppOptions.migrationsRefresh`.
  */
 export function createMigrationsSnapshotCache(
   initial: MigrationState,
   refresh?: () => Promise<MigrationState>,
   ttlMs: number = MIGRATIONS_SNAPSHOT_TTL_MS,
+  timeoutMs: number = MIGRATIONS_REFRESH_TIMEOUT_MS,
 ): () => Promise<MigrationState> {
   let snapshot = initial;
   let lastCheckedMs = Date.now();
-  return async () => {
-    if (!refresh) return snapshot;
-    if (Date.now() - lastCheckedMs < ttlMs) return snapshot;
-    try {
-      snapshot = await refresh();
-    } catch {
-      // Keep serving the last good snapshot — a transient recheck failure
-      // must not fail /health or erase the last known-good state (same
-      // don't-mask posture as index.ts's boot-time catch).
-    }
-    lastCheckedMs = Date.now();
-    return snapshot;
+  let inFlight: Promise<void> | undefined;
+
+  function triggerRefresh(): void {
+    if (!refresh || inFlight) return;
+    inFlight = Promise.race([refresh(), rejectAfter(timeoutMs)])
+      .then((result) => {
+        snapshot = result;
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          "[health] migrations snapshot refresh failed or timed out — serving the last known-good snapshot",
+          err,
+        );
+      })
+      .finally(() => {
+        lastCheckedMs = Date.now();
+        inFlight = undefined;
+      });
+  }
+
+  // Deliberately NOT `async` — this function never awaits anything (that's
+  // the whole point: `/health` must never await the DB), and an `async`
+  // arrow with no `await` inside trips `@typescript-eslint/require-await`.
+  return () => {
+    if (!refresh) return Promise.resolve(snapshot);
+    if (Date.now() - lastCheckedMs >= ttlMs) triggerRefresh();
+    return Promise.resolve(snapshot);
   };
 }
 
