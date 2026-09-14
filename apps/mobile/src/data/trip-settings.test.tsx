@@ -107,7 +107,7 @@ describe("buildTripPatch (diffField semantics on the trip row)", () => {
     expect(patch?.status).toBeNull();
   });
 
-  it("destination fields diff independently — an unchanged name still ships changed coordinates", () => {
+  it("destination coordinates ship as a pair — an unchanged name still ships both changed coordinates", () => {
     const patch = buildTripPatch(current, {
       destination_name: current.destination_name, // unchanged → omitted
       destination_lat: 34.6937,
@@ -119,6 +119,62 @@ describe("buildTripPatch (diffField semantics on the trip row)", () => {
       "destination_lng",
       "expect_updated_at",
     ]);
+  });
+
+  describe("round-1 A1: destination_lat/destination_lng diff as ONE PAIR, never independently", () => {
+    // Reviewer's exact repro: two seeded destination-tier rows for
+    // "Guéckédou" (apps/server/drizzle/0004_destination_tier_seed.sql)
+    // share a latitude to full precision and differ only in longitude.
+    const sameLat = 8.56164836883545;
+    const rowA: Trip = {
+      ...current,
+      destination_lat: sameLat,
+      destination_lng: -10.132828712463379,
+    };
+    const rowBLng = -10.132821083068848;
+
+    it("a pick sharing the current latitude to full precision still ships BOTH keys, never a lone longitude", () => {
+      const patch = buildTripPatch(rowA, {
+        // destination_name omitted — unchanged, isolates the coordinate pair.
+        destination_lat: sameLat, // identical to current — the independent-diff bug omitted this key
+        destination_lng: rowBLng, // the only axis that actually changed
+      });
+      expect(patch).not.toBeNull();
+      // Mutation-verify: revert `buildTripPatch` to diff `destination_lat`/
+      // `destination_lng` independently (two separate `!==` guards) and this
+      // assertion goes RED — the independent diff drops `destination_lat`
+      // from the keys entirely, reproducing the half-pair 400
+      // (`destinationCoordsPairRule`, packages/shared/src/domains/trip.ts).
+      expect(Object.keys(patch ?? {}).sort()).toEqual([
+        "destination_lat",
+        "destination_lng",
+        "expect_updated_at",
+      ]);
+      expect(patch?.destination_lat).toBe(sameLat);
+      expect(patch?.destination_lng).toBe(rowBLng);
+    });
+
+    it("tri-state: both undefined = unchanged (no keys), both null = clear (both keys), both numbers = set (both keys)", () => {
+      // undefined/undefined — the edits object never mentions the pair.
+      expect(buildTripPatch(current, { name: "x" })?.destination_lat).toBeUndefined();
+      expect(buildTripPatch(current, { name: "x" })?.destination_lng).toBeUndefined();
+
+      // null/null against a non-null current — clears, both keys present.
+      const clearPatch = buildTripPatch(current, {
+        destination_lat: null,
+        destination_lng: null,
+      });
+      expect(clearPatch?.destination_lat).toBeNull();
+      expect(clearPatch?.destination_lng).toBeNull();
+
+      // number/number against a different current — sets, both keys present.
+      const setPatch = buildTripPatch(current, {
+        destination_lat: 1.5,
+        destination_lng: 2.5,
+      });
+      expect(setPatch?.destination_lat).toBe(1.5);
+      expect(setPatch?.destination_lng).toBe(2.5);
+    });
   });
 
   it("B-7 part 3: a NULL destination heals to real coordinates — the null-vs-number diff fires", () => {
