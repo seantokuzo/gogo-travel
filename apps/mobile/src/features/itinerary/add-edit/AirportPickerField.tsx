@@ -51,6 +51,8 @@ export interface AirportPickerFieldProps {
   /** Wall date the zone labels are described at (offsets are seasonal). */
   referenceDate?: string;
   error?: string;
+  /** B-26: schema-derived required marker (passthrough to `Input`). */
+  required?: boolean;
   /** Required (R-ds-20). */
   testID: string;
 }
@@ -88,6 +90,7 @@ export function AirportPickerField({
   onPickAirport,
   referenceDate,
   error,
+  required,
   testID,
 }: AirportPickerFieldProps) {
   const s = useStyles();
@@ -142,6 +145,7 @@ export function AirportPickerField({
         autoCorrect={false}
         maxLength={200}
         error={error}
+        required={required}
         trailing={
           query !== "" ? (
             <Pressable

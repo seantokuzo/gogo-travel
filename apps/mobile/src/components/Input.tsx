@@ -4,6 +4,14 @@
  * AT via accessibilityLiveRegion. `testID` lands on the TextInput itself —
  * that's what E2E types into (R-ds-20); the border wrapper derives
  * `{testID}-field` (non-interactive — border-state assertions).
+ *
+ * `required` (B-26, device QA 2026-09-11 — "there's no indicator of what
+ * fields are required"): a marker beside the label, `{testID}-required`, and
+ * the word in the a11y name. Callers DERIVE the flag from their schema — the
+ * marker is a renderer, never a policy (see
+ * `features/itinerary/add-edit/required-fields.ts`). No spec pinned an
+ * indicator glyph; the asterisk + "(required)" a11y suffix is recorded in the
+ * B-26 PR body for Sean's spec pass.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import type { ReactNode } from "react";
@@ -21,6 +29,8 @@ export interface InputProps {
   helper?: string;
   /** Error state — replaces `helper` in the slot, danger border (R-ds-17 kin). */
   error?: string;
+  /** Marks the field required up front (B-26) — marker + a11y name suffix. */
+  required?: boolean;
   /** Icons, currency prefix. */
   leading?: ReactNode;
   /** Icons, clear button. */
@@ -51,6 +61,8 @@ export interface InputProps {
 const useStyles = createStyles((t) =>
   StyleSheet.create({
     container: { gap: t.space[1] },
+    labelRow: { flexDirection: "row", alignItems: "center", gap: t.space[1] },
+    requiredMark: { color: t.color.status.danger.fg },
     field: {
       flexDirection: "row",
       alignItems: "center",
@@ -86,6 +98,7 @@ export function Input({
   placeholder,
   helper,
   error,
+  required = false,
   leading,
   trailing,
   secureTextEntry,
@@ -107,9 +120,25 @@ export function Input({
 
   return (
     <View style={s.container}>
-      <AppText role="caption" color="secondary">
-        {label}
-      </AppText>
+      <View style={s.labelRow}>
+        <AppText role="caption" color="secondary">
+          {label}
+        </AppText>
+        {required ? (
+          // Named, not hidden. Hiding it from AT (`accessibilityElementsHidden`)
+          // also hides it from RNTL — the DS Sheet scrim lesson in
+          // `.claude/rules/mobile.md` — so the marker would be unassertable.
+          // The label keeps VoiceOver from reading a bare "star".
+          <AppText
+            role="caption"
+            style={s.requiredMark}
+            accessibilityLabel="required"
+            testID={`${testID}-required`}
+          >
+            *
+          </AppText>
+        ) : null}
+      </View>
       <View
         testID={`${testID}-field`}
         style={[
@@ -138,7 +167,7 @@ export function Input({
           editable={editable}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          accessibilityLabel={label}
+          accessibilityLabel={required ? `${label}, required` : label}
           maxFontSizeMultiplier={theme.type.body.maxFontSizeMultiplier}
           style={[s.input, multiline && s.inputMultiline]}
         />
