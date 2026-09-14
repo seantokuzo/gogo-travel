@@ -296,9 +296,9 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   link is rider #3 — the "qa-owned" reason dissolved d4f7637; the guard
   stays to keep T-S3.5's file set disjoint), `_layout.tsx`, any Stream-A
   component.
-- **Acceptance:** all six §3.2 legs render PASS/FAIL + copyable evidence;
+- **Acceptance:** all seven §3.2 legs render PASS/FAIL + copyable evidence;
   route content is `__DEV__`-only (release renders nothing); legs 1/2/3/5
-  meaningful on simulator, all six on device; leg 1 demonstrably surfaces
+  meaningful on simulator, all seven on device; leg 1 demonstrably surfaces
   the tier decision (evidence: run on sim showing localhost tier vs
   explicit-override tier); testIDs per §2.7 grammar; panel works unauthed.
 - **Depends on:** —.
