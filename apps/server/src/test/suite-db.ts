@@ -23,13 +23,19 @@
  * worktrees' gates running at once, Docker Desktop VM pegged) ending the
  * pool or dropping the clone can itself stall past a sane wait. Each step
  * below is raced against its own timeout; a step that doesn't finish in time
- * (or rejects) logs ONE warning and the drop still resolves — it never
- * throws and never hangs `afterAll` past vitest's `hookTimeout`
- * (`vitest.config.ts`). This is safe because the clone lives on a throwaway
+ * logs ONE warning and the drop still resolves — it never hangs `afterAll`
+ * past vitest's `hookTimeout` (`vitest.config.ts`). A step that REJECTS is
+ * tolerated the same way ONLY when the rejection is a load-induced
+ * timeout/cancel/connection-loss (SQLSTATE 57014 query_canceled,
+ * postgres-js's `CONNECTION_*` family, `ECONNREFUSED`/`ECONNRESET`) —
+ * anything else (SQLSTATE 55006 object_in_use included) rethrows, so a
+ * structural failure (a suite leaking a reconnecting listener, say) still
+ * reds that suite by name instead of vanishing into a log line (round-1
+ * review finding). This is safe because the clone lives on a throwaway
  * testcontainers Postgres that global teardown (`global-setup.ts`) stops
- * outright at end of run: a clone that outlives one suite's drop is disk
- * noise on a box about to disappear, never a resource leak that persists.
- * Suite ISOLATION (separate databases per suite, proven by
+ * outright at end of run: a clone that outlives one suite's TOLERATED drop
+ * is disk noise on a box about to disappear, never a resource leak that
+ * persists. Suite ISOLATION (separate databases per suite, proven by
  * `suite-db-isolation-{a,b}.db.test.ts`) is unaffected — isolation is
  * established at `CREATE DATABASE` time in `createSuiteDb`, not at drop
  * time; a slow/failed drop never lets two suites share a database.
@@ -39,6 +45,11 @@
  * `suite-db-teardown.test.ts`'s hung-`end()` pin goes RED — it stops
  * resolving within the test's own timeout instead of settling within the
  * configured bound.
+ *
+ * Falsification (round-1 discrimination finding): make `isToleratedTeardownError`
+ * return `true` unconditionally (the pre-fix behavior) and
+ * `suite-db-teardown.test.ts`'s "rethrows SQLSTATE 55006" pin goes RED — the
+ * rejection resolves tolerantly instead of propagating out of `drop()`.
  */
 import { randomBytes } from "node:crypto";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -70,9 +81,51 @@ const CREATE_RETRY_DELAY_MS = 250;
 // and, on expiry, destroys sockets rather than leaving them dangling — but
 // we additionally race every step ourselves so a step that never calls back
 // at all (the failure mode under extreme load) can't out-wait its budget.
-const POOL_END_TIMEOUT_MS = 5_000;
-const DROP_STATEMENT_TIMEOUT_MS = 5_000;
-const ADMIN_POOL_END_TIMEOUT_MS = 5_000;
+//
+// Exported (not just module-local) so `suite-db-drop.db.test.ts` can pin the
+// REAL `client.end()`/`dropAdmin.end()` wiring against these exact numbers
+// instead of a copy-pasted literal that could silently drift out of sync.
+export const POOL_END_TIMEOUT_MS = 5_000;
+// 12s, not the 5s this replaced — round-1 review evidence: the PR's OWN root
+// gate (ordinary load, no synthetic load) hit the statement_timeout cancel
+// path twice, cancelling a DROP that would have finished, slowly, inside the
+// OLD 10s hook budget this PR replaces. 5s converted "slow but fine" drops
+// into leaks. Budget arithmetic against the 30s `hookTimeout`
+// (`vitest.config.ts`), worst case, all three steps tolerantly timing out in
+// sequence: pool close (POOL_END_TIMEOUT_MS = 5s) + DROP race
+// (DROP_STATEMENT_TIMEOUT_MS + 2s headroom = 14s) + admin pool close
+// (ADMIN_POOL_END_TIMEOUT_MS = 5s) = 24s, still under 30s.
+export const DROP_STATEMENT_TIMEOUT_MS = 12_000;
+export const ADMIN_POOL_END_TIMEOUT_MS = 5_000;
+
+/**
+ * SQLSTATE / postgres-js / Node error classes `boundedTolerantTeardown`
+ * tolerates — the load-induced timeout/cancel/connection-loss family the
+ * QUEUE row is about. Anything else (SQLSTATE 55006 object_in_use included)
+ * is NOT in this set and rethrows: see `isToleratedTeardownError`.
+ */
+const TOLERATED_TEARDOWN_ERROR_CODES = new Set([
+  "57014", // query_canceled — our own DROP_STATEMENT_TIMEOUT_MS backstop firing
+  "ECONNREFUSED", // container died mid-drop
+  "ECONNRESET", // socket reset mid-drop
+]);
+
+/**
+ * Discriminates a `step()` rejection: tolerate only the load-induced
+ * timeout/cancel/connection-loss family; rethrow everything else so a
+ * structural failure (e.g. SQLSTATE 55006 object_in_use from a suite that
+ * leaked a reconnecting listener) still reds the suite that caused it,
+ * instead of a masked warning letting the leak accumulate against the
+ * container's `max_connections` until an unrelated LATER suite fails.
+ */
+function isToleratedTeardownError(error: unknown): boolean {
+  const code = (error as { code?: unknown }).code;
+  if (typeof code !== "string") return false;
+  // postgres-js's connection-lifecycle family: CONNECTION_DESTROYED (our own
+  // `end({ timeout })` backstop firing), CONNECTION_CLOSED, CONNECTION_ENDED.
+  if (code.startsWith("CONNECTION_")) return true;
+  return TOLERATED_TEARDOWN_ERROR_CODES.has(code);
+}
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -81,16 +134,24 @@ function describeError(error: unknown): string {
 }
 
 /**
- * Race `step` against `timeoutMs`. Never throws and never hangs past the
- * bound: a step that times out or rejects logs exactly ONE warning
- * (`console.warn` — test-infra diagnostics, not the app-code ban in
- * `.claude/rules/server.md`) and `drop()` moves on. Exported so
- * `suite-db-teardown.test.ts` can pin the bound directly against a
- * never-settling promise without needing Docker.
+ * Race `step` against `timeoutMs`. Never hangs past the bound: a step that
+ * times out, or rejects with a tolerated load-induced error (see
+ * `isToleratedTeardownError`), logs exactly ONE warning (`console.warn` —
+ * test-infra diagnostics, not the app-code ban in `.claude/rules/server.md`)
+ * and `drop()` moves on. A step that rejects with anything else RETHROWS —
+ * this is not universally tolerant, deliberately (round-1 review finding:
+ * an indiscriminate catch let a structural leak, e.g. SQLSTATE 55006
+ * object_in_use, vanish into a log line instead of failing the suite that
+ * caused it). Exported so `suite-db-teardown.test.ts` can pin the bound and
+ * the discrimination directly against fake steps without needing Docker.
  *
- * Falsification: replace the body with a bare `await step()` (no race) and
- * the teardown test's hung-`end()` pin goes RED — it stops resolving within
- * its own test timeout.
+ * Falsification (bound): replace the body with a bare `await step()` (no
+ * race) and the teardown test's hung-`end()` pin goes RED — it stops
+ * resolving within its own test timeout.
+ *
+ * Falsification (discrimination): make `isToleratedTeardownError` return
+ * `true` unconditionally and the teardown test's "rethrows SQLSTATE 55006"
+ * pin goes RED — the rejection resolves tolerantly instead of propagating.
  */
 export async function boundedTolerantTeardown(
   label: string,
@@ -114,6 +175,13 @@ export async function boundedTolerantTeardown(
       );
     }
   } catch (error) {
+    if (!isToleratedTeardownError(error)) {
+      // Not a load-induced timeout/cancel/connection-loss — e.g. SQLSTATE
+      // 55006 object_in_use from a suite's own leaked, reconnecting
+      // listener. Swallowing this would mask the leak and let it red a
+      // LATER, unrelated suite once the container runs out of connections.
+      throw error;
+    }
     console.warn(
       `createSuiteDb: ${label} failed — continuing. ` +
         `The clone lives on a throwaway testcontainers Postgres that global ` +

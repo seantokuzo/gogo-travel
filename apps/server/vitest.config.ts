@@ -18,10 +18,14 @@ export default defineConfig({
     // `afterAll` (confirmed against vitest docs: `teardownTimeout` is a
     // separate worker/process force-exit budget, NOT applied to `afterAll`).
     // 30s comfortably covers `suite-db.ts#drop()`'s own internal bound
-    // (~17s worst case across pool-close + DROP DATABASE + admin pool-close)
-    // plus scheduling slop under load — belt-and-suspenders with `drop()`
-    // itself now being bounded and tolerant rather than relying on this
-    // alone to paper over a hang.
+    // (~24s worst case: 5s pool-close + 14s DROP DATABASE race
+    // (DROP_STATEMENT_TIMEOUT_MS=12s + 2s headroom) + 5s admin pool-close —
+    // round-1 review raised DROP_STATEMENT_TIMEOUT_MS from 5s to 12s after
+    // the PR's own root-gate evidence showed 5s cancelling DROPs that would
+    // have finished, slowly, inside the OLD 10s hook budget) plus scheduling
+    // slop under load — belt-and-suspenders with `drop()` itself now being
+    // bounded and tolerant rather than relying on this alone to paper over a
+    // hang.
     hookTimeout: 30_000,
   },
 });
