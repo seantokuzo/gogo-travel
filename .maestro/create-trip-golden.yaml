@@ -1,0 +1,117 @@
+# Flow 6 — create-trip-golden: the trip-creation golden path (trip-new.tsx,
+# T-6.7/CT-2), including the REAL destination picker (structured
+# search-as-you-type against the places spine) and the platform date picker
+# (`@react-native-community/datetimepicker`, iOS `display="inline"` — a real
+# calendar grid).
+#
+# DESTINATION — "Kyoto", not "Athens" (a finding, not a substitution of
+# convenience — see the PR body for the full writeup): the seeded
+# destination-tier data (`0004_destination_tier_seed.sql`) carries TWO
+# `places` rows literally named "Athens" (Athens, GA, US — Wikidata Q203263 —
+# and Athens, GR — Q1524), and the `Place` wire schema
+# (packages/shared/src/domains/place.ts:23-46) carries NO city/region/country
+# field at all — only name/lat/lng/category/wiki_ref — so the picker's result
+# row (`apps/mobile/src/app/(trips)/new.tsx:449-459`, title=name,
+# subtitle=category only) cannot show anything that disambiguates them, and
+# never could without a wire-schema change. Worse, the two rows tie exactly
+# on the search ranking's `simMillionths` term for the query "Athens"
+# (identical string ⇒ identical trigram similarity) and the ranking's
+# documented tie-break, `id DESC`
+# (apps/server/src/places/search-query.ts:1-27), resolves on each row's
+# `gen_random_uuid()` DEFAULT — assigned fresh on every migration run, since
+# the migration's INSERT never supplies an `id` — so which Athens sorts
+# first is NOT deterministic across environments (confirmed empirically:
+# `select id, name from places where name = 'Athens'` returns two DIFFERENT
+# UUID pairs on two `drizzle-kit migrate` runs against a throwaway DB in this
+# same session). No UI-observable, run-stable way exists to pick "Athens,
+# Greece" specifically. "Kyoto" is verified unique in this seed
+# (`select name, count(*) from places where name = 'Kyoto'` → 1) and is the
+# same city Sean's real B-8 bug flight departed from
+# (`packages/shared/src/testing/hostile.ts`'s `DATE_LINE_EASTBOUND` doc
+# comment: "Sean's real 'Spring in Kyoto' flight, device QA 2026-08-29") —
+# a deliberate, not arbitrary, substitution.
+#
+# The result row is selected via a REGEX `id:` match
+# (`trip-new-list-item-.+`), not the literal per-pick UUID testID — see
+# `subflows/create-minimal-trip.yaml`'s header for why that ID can never be
+# hard-coded, and why an exact-one-result query makes the regex unambiguous
+# regardless.
+#
+# DATES: unlike the minimal-trip subflow (today-for-both, zero calendar
+# navigation), this flow drives the inline calendar to a REAL, non-default
+# month/day — the "datetimepicker path" this flow exists to exercise.
+appId: ${APP_ID}
+name: create-trip-golden
+tags:
+  - release
+  - door
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "create-trip-golden-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- tapOn:
+    id: "trip-list-fab-create"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "trip-new-input-name"
+- inputText: "E2E Golden Trip ${RUN_ID}"
+- tapOn:
+    id: "trip-new-input-destination"
+- inputText: "Kyoto"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-list-item-.+"
+    timeout: 15000
+- tapOn:
+    id: "trip-new-list-item-.+"
+# ── start date: navigate the inline calendar forward one month and pick a
+# day, proving the picker can be driven to a NON-default value (not merely
+# committed on its unmodified seed, as the minimal-trip subflow does) ───────
+- tapOn:
+    id: "trip-new-input-dates-start"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-input-dates-start-sheet"
+    timeout: 10000
+- tapOn:
+    id: "Next Month"
+- tapOn:
+    text: "^15$"
+- extendedWaitUntil:
+    notVisible:
+      id: "trip-new-input-dates-start-sheet"
+    timeout: 10000
+# ── end date: context-seeds from the just-picked start date (B-10b) — Done
+# on the unmodified seed commits it (same one-tap-commit shape the minimal
+# subflow relies on throughout) ─────────────────────────────────────────────
+- tapOn:
+    id: "trip-new-input-dates-end"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-input-dates-end-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "trip-new-input-dates-end-sheet-done"
+- tapOn:
+    id: "trip-new-button-create"
+- extendedWaitUntil:
+    notVisible:
+      id: "trip-new-screen"
+    timeout: 15000
+# A same-day-start/end trip would land ACTIVE (today ∈ [start,end]) and
+# default to the Today tab (R-nav-7/8); this flow's start/end are next
+# month, so the trip is PLANNING and lands on Itinerary instead — assert
+# that landing directly, which is itself a live check that the picked date
+# actually took (a picker that silently kept today's seed would land here
+# on Today, not Itinerary, and this assertion would catch it).
+- assertVisible:
+    id: "itinerary-screen"

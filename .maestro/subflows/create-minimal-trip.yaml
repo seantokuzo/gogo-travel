@@ -1,0 +1,80 @@
+# Reusable subflow — a MINIMAL, always-valid trip for flows that need SOME
+# trip to exist but are not themselves testing trip creation
+# (`create-trip-golden.yaml` owns that surface in full, including the
+# destination picker's search-and-pick UX). Called from a signed-in
+# trip-list-screen (post session-door.yaml).
+#
+# DATES: TODAY for BOTH start and end (schema-valid — TripCreateSchema's
+# date-order rule is "start_date must be on or before end_date", never
+# "strictly before" — packages/shared/src/domains/trip.ts:71). This is
+# deliberate, not a shortcut: a brand-new start-date picker has no context
+# yet and seeds on `new Date()` (today); the end-date picker's context
+# becomes the just-committed start date — i.e. also today. Both pickers
+# therefore commit via their PickerCard's Done button on their UNMODIFIED
+# seed, with ZERO calendar-grid navigation — no dependence on the native
+# inline UIDatePicker's month-grid accessibility layout, which this suite
+# has no verified way to drive to an arbitrary month (see
+# `add-flight-dateline.yaml` for where that IS unavoidable and is handled
+# separately). A same-day trip is a real, valid trip (a 1-day trip), not a
+# degenerate case.
+#
+# DESTINATION: the caller supplies a query (env DESTINATION_QUERY) verified
+# ahead of time to return EXACTLY ONE spine result for this seed
+# (`0004_destination_tier_seed.sql`) — e.g. "Kyoto". Long enough to clear the
+# 4-char search floor (`isSearchableDestinationQuery`), so this is a REAL
+# network search against the places spine, not the bare-3-letter-code path.
+# The result is selected via `id: "trip-new-list-item-.+"` (a REGEX id
+# match, Maestro's `id:` selector is regex-native) rather than by the
+# result's own testID verbatim: `place.id` is a DB-generated UUID
+# (`gen_random_uuid()` DEFAULT — the migration's INSERT never supplies one),
+# so it is NOT deterministic across a fresh migration run and cannot be
+# hard-coded. Because DESTINATION_QUERY is verified unique, exactly one
+# `trip-new-list-item-*` element exists whenever this runs (the "custom
+# destination" fallback row only renders in the zero-results branch, mutually
+# exclusive with the real-results branch this subflow always takes) — so the
+# regex is unambiguous by construction, not by luck.
+#
+# env: TRIP_NAME, DESTINATION_QUERY (a verified-unique real spine city name,
+# e.g. "Kyoto" — see the header note above).
+appId: ${APP_ID}
+---
+- tapOn:
+    id: "trip-list-fab-create"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "trip-new-input-name"
+- inputText: "${TRIP_NAME}"
+- tapOn:
+    id: "trip-new-input-destination"
+- inputText: "${DESTINATION_QUERY}"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-list-item-.+"
+    timeout: 15000
+- tapOn:
+    id: "trip-new-list-item-.+"
+- tapOn:
+    id: "trip-new-input-dates-start"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-input-dates-start-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "trip-new-input-dates-start-sheet-done"
+- tapOn:
+    id: "trip-new-input-dates-end"
+- extendedWaitUntil:
+    visible:
+      id: "trip-new-input-dates-end-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "trip-new-input-dates-end-sheet-done"
+- tapOn:
+    id: "trip-new-button-create"
+- extendedWaitUntil:
+    notVisible:
+      id: "trip-new-screen"
+    timeout: 15000

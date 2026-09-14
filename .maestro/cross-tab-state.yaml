@@ -1,0 +1,58 @@
+# Flow 10 — cross-tab-state: cycles every trip tab via TAB-BAR PRESSES ONLY
+# (`.claude/rules/mobile.md`'s vendored-navigator landmine: expo-router 57's
+# vendored tab fork silently no-ops an imperative `router.push()`/`navigate()`
+# to a route in ANOTHER tab, sim-confirmed live — `.maestro/README.md`
+# "Cross-tab moves go through the tab bar"). Asserts each tab's real screen
+# root renders after its press, both forward through the full set and back —
+# a regression that reintroduces a push-based cross-tab jump would strand
+# this flow on whichever tab it fired from, and the NEXT tab's assertion
+# goes red rather than the press silently no-op'ing unnoticed.
+#
+# Lands on `today-screen` immediately after trip creation: the minimal-trip
+# subflow's same-day start/end (see its header) makes the new trip ACTIVE
+# (`today ∈ [start_date, end_date]`), which the nav default-tab rule
+# (R-nav-7/8, `.specs/client/navigation.spec.md` §2.5) lands on Today —
+# itself a live assertion that a same-day trip really did land where the
+# rule says, not an assumption.
+appId: ${APP_ID}
+name: cross-tab-state
+tags:
+  - release
+  - door
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "cross-tab-state-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- runFlow:
+    file: subflows/create-minimal-trip.yaml
+    env:
+      TRIP_NAME: "Cross Tab ${RUN_ID}"
+      DESTINATION_QUERY: "Kyoto"
+- assertVisible:
+    id: "today-screen"
+- tapOn:
+    id: "tab-bar-itinerary"
+- assertVisible:
+    id: "itinerary-screen"
+- tapOn:
+    id: "tab-bar-map"
+- assertVisible:
+    id: "map-screen"
+- tapOn:
+    id: "tab-bar-money"
+- assertVisible:
+    id: "money-screen"
+- tapOn:
+    id: "tab-bar-more"
+- assertVisible:
+    id: "more-screen"
+- tapOn:
+    id: "tab-bar-today"
+- assertVisible:
+    id: "today-screen"

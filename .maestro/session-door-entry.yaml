@@ -1,0 +1,34 @@
+# Flow 5 — session-door-entry: proves the E2E session door (S-4 T2/T3/T4)
+# gets a black-box Maestro flow behind sign-in in ONE `openLink`, on a REAL
+# Release door build (`app.gogotravel.e2edoor`). This is the barrier every
+# other authenticated flow (6-10) depends on via
+# `runFlow: file: subflows/session-door.yaml` — if THIS flow is red, every
+# flow after it in the same run is a DOOR problem, not an app-feature
+# problem, and should be triaged here first.
+#
+# Positive assertion, not just "didn't crash": lands on `trip-list-screen`'s
+# EMPTY state (`trip-list-empty`) — a fresh `e2e:`-prefixed fixture user
+# (R-door-5 find-or-create, first mint for this `user_key`) has zero trips,
+# so this can only be satisfied by a REAL, freshly-authenticated session,
+# never a stale/cached one. `assertNotVisible: sign-in-screen` is the
+# negative control alongside it (same pairing rule ADR-007 documents for
+# `smoke-diagnostics-cold.yaml`).
+appId: ${APP_ID}
+name: session-door-entry
+tags:
+  - release
+  - door
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "session-door-entry-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- assertNotVisible:
+    id: "sign-in-screen"
+- assertVisible:
+    id: "trip-list-empty"

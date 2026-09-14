@@ -16,10 +16,22 @@ flows:
 # inherit it. `continueOnFailure: true` is deliberate: this is a smoke/release
 # suite meant to report every flow's result in one run (the merge gate wants a
 # single JUnit with all four release flows' outcomes, not an early stop).
+#
+# S-4 wave 2 (T5): the authenticated flows (5-10) are listed session-door-entry
+# FIRST — it is the barrier every later flow's `runFlow: subflows/session-door.yaml`
+# depends on, so a red run triages there first — then in the order the
+# session-door spec's §5.1 flow list gives them. `sign-in-cancel-surface`
+# stays LAST regardless, for the reason above.
 executionOrder:
   continueOnFailure: true
   flowsOrder:
     - sign-in-renders
     - smoke-diagnostics-cold
     - deeplink-matrix
+    - session-door-entry
+    - create-trip-golden
+    - add-flight-dateline
+    - ideas-to-schedule
+    - cancel-visibility
+    - cross-tab-state
     - sign-in-cancel-surface
