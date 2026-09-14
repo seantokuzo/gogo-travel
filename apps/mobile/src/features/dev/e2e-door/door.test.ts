@@ -369,40 +369,100 @@ describe("openSessionDoor — happy path: ordering, request shape, session apply
   });
 });
 
+/** Spies every console surface a stray log/warn could use, restores on exit. */
+function spyOnConsole() {
+  return {
+    log: jest.spyOn(console, "log").mockImplementation(() => undefined),
+    warn: jest.spyOn(console, "warn").mockImplementation(() => undefined),
+    error: jest.spyOn(console, "error").mockImplementation(() => undefined),
+  };
+}
+
+/** Asserts `needle` appears in NO call, to ANY of the spied console methods. */
+function expectNeverLogged(spies: Record<string, jest.SpyInstance>, needle: string): void {
+  for (const spy of Object.values(spies)) {
+    for (const call of spy.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(needle);
+    }
+  }
+}
+
 describe("openSessionDoor — server 401 (R-door-3 uniform rejection)", () => {
-  it("maps a 401 to reason 'rejected', never applies a session, never leaks the secret in the result", async () => {
+  it("maps a 401 to reason 'rejected', never applies a session, secret absent from the result AND every console call", async () => {
     const fetchMock = jest
       .fn()
       .mockResolvedValue(
         jsonResponse(401, { error: { code: "UNAUTHENTICATED", message: "Not authenticated." } }),
       );
     const { deps, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
+    const consoleSpies = spyOnConsole();
 
-    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+    try {
+      const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
 
-    expect(result).toEqual({ ok: false, reason: "rejected" });
-    expect(applySignIn).not.toHaveBeenCalled();
-    expect(JSON.stringify(result)).not.toContain(SECRET);
+      expect(result).toEqual({ ok: false, reason: "rejected" });
+      expect(applySignIn).not.toHaveBeenCalled();
+      // The returned result is a closed union with no string field, so this
+      // can never contain the secret by construction — retained as a shape
+      // pin, not the leak proof. Falsification for the leak claim itself
+      // lives in the console-spy check below, which CAN observe a real log
+      // call (see the network-failure test, where one genuinely fires).
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expectNeverLogged(consoleSpies, SECRET);
+    } finally {
+      Object.values(consoleSpies).forEach((s) => s.mockRestore());
+    }
   });
 });
 
 describe("openSessionDoor — network failure", () => {
-  it("a transport throw maps to reason 'network', never applies a session", async () => {
+  it("a transport throw maps to reason 'network', never applies a session, secret absent from the diagnostic console.warn", async () => {
     const fetchMock = jest.fn().mockRejectedValue(new Error("connection refused"));
     const { deps, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
+    const consoleSpies = spyOnConsole();
 
-    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+    try {
+      const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
 
-    expect(result).toEqual({ ok: false, reason: "network" });
-    expect(applySignIn).not.toHaveBeenCalled();
+      expect(result).toEqual({ ok: false, reason: "network" });
+      expect(applySignIn).not.toHaveBeenCalled();
+      // api-client.ts's __DEV__ transport-failure diagnostic (api-client.ts:208)
+      // DOES fire on this exact path (confirmed: this test observes a real
+      // console.warn call, so the spy is proven live, not vacuous) — assert
+      // the secret never rides along in it.
+      expect(consoleSpies.warn).toHaveBeenCalled();
+      expectNeverLogged(consoleSpies, SECRET);
+    } finally {
+      Object.values(consoleSpies).forEach((s) => s.mockRestore());
+    }
   });
 
-  it("distinguishes network (status 0) from rejected (401) via ApiRequestError.status", () => {
-    // Direct pin on the mapping rule itself, no fetch involved — falsification:
-    // invert the `err.status === 401` check in openSessionDoor -> RED.
-    const rejected = new ApiRequestError(401, "UNAUTHENTICATED", "no");
-    const network = new ApiRequestError(0, "NETWORK", "network request failed");
-    expect(rejected.status).toBe(401);
-    expect(network.status).toBe(0);
+  it("maps a 401 ApiRequestError (from a fake api port) to reason 'rejected', and any non-401 error to 'network'", async () => {
+    // Direct pin on the mapping rule ITSELF, driven THROUGH openSessionDoor
+    // (not a bare constructor tautology) — falsification: invert the
+    // `err.status === 401` check in openSessionDoor -> RED on both arms.
+    const rejectedApi = {
+      request: jest.fn().mockRejectedValue(new ApiRequestError(401, "UNAUTHENTICATED", "no")),
+    };
+    const { deps: rejectedDeps, applySignIn: rejectedApply } = makeDeps({ api: rejectedApi });
+    const rejectedResult = await openSessionDoor(
+      { userKey: "flow-1", firstRun: false },
+      rejectedDeps,
+    );
+    expect(rejectedResult).toEqual({ ok: false, reason: "rejected" });
+    expect(rejectedApply).not.toHaveBeenCalled();
+
+    const networkApi = {
+      request: jest
+        .fn()
+        .mockRejectedValue(new ApiRequestError(0, "NETWORK", "network request failed")),
+    };
+    const { deps: networkDeps, applySignIn: networkApply } = makeDeps({ api: networkApi });
+    const networkResult = await openSessionDoor(
+      { userKey: "flow-1", firstRun: false },
+      networkDeps,
+    );
+    expect(networkResult).toEqual({ ok: false, reason: "network" });
+    expect(networkApply).not.toHaveBeenCalled();
   });
 });

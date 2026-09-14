@@ -262,6 +262,34 @@ describe("server rejection (R-door-3): a 401 never applies a session", () => {
   });
 });
 
+describe("route wiring (review round 1 A6): resetLocalSession is the reset call site, never signOut", () => {
+  it("calls the store's resetLocalSession, and NEVER signOut, even with a live access token present", async () => {
+    // Falsification: rewire the route's `resetLocalSession:` dep to call
+    // `useSessionStore.getState().signOut()` instead -> RED (signOutSpy
+    // would be called; a real device would then fire the best-effort
+    // /auth/logout POST into the door's critical path, exactly what
+    // resetLocalSession exists to avoid).
+    process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
+    process.env.EXPO_PUBLIC_API_URL = LOCAL_API_URL;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(200, signInJson())) as unknown as typeof fetch;
+    useSessionStore.setState({
+      hydrated: true,
+      user: { id: "prior-user" } as never,
+      accessToken: "prior-access-token",
+    });
+    const resetSpy = jest.spyOn(useSessionStore.getState(), "resetLocalSession");
+    const signOutSpy = jest.spyOn(useSessionStore.getState(), "signOut");
+
+    await renderWithTheme(<E2eSessionRoute />);
+    await waitFor(() => expect(screen.getByTestId("e2e-session-ready")).toBeOnTheScreen());
+
+    expect(resetSpy).toHaveBeenCalledTimes(1);
+    expect(signOutSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("overlapping opens (review round 1 A4): only the LATEST invocation may apply a session", () => {
   it("two openLinks with different user_keys, the FIRST resolving LAST, still leave the store on the SECOND (latest) user", async () => {
     // Falsification: remove the `cancelled` guard around `applySignIn` in
