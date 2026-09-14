@@ -72,21 +72,18 @@
   pick does; there is no map-drop screen in this pass. WHEN creation fails
   THE SYSTEM SHALL surface the error inline and preserve the typed text;
   WHILE a create is in flight THE SYSTEM SHALL NOT allow a second create
-  for the same tap (the row itself becomes non-interactive). Until B-7
-  part 3 (QUEUE row, `queued` — branch `B-7/nullable-custom-coords`,
-  blocked on PR #75's server-tier merge) ships nullable coordinates for
-  custom places, a `source='custom'` destination's `lat`/`lng` ride as a
-  fixed `(0, 0)` placeholder (`PlaceCreateSchema` requires coordinates
-  today, so there is no other wire-legal value) — meanwhile, for the life
-  of any trip created from it: the map tab's destination-bound search
-  returns zero results (its bbox is pinned to the Null Island cell), the
-  initial camera opens on open ocean at street zoom, the offline-pack pill
-  offers/downloads that ocean region, the trip-settings destination editor
-  has no way to correct it in-app (same no-custom-fallback dead end this
-  create flow exists to solve — `more/settings.tsx`), and the server's
-  destination-tier place ingest pays nine wasted (self-limiting,
-  per-refresh-window) remote parquet scans for the ocean cells
-  (`ingest-queue.ts`).
+  for the same tap (the row itself becomes non-interactive).
+  **SHIPPED (B-7 part 3, `B-7/nullable-custom-coords`, Sean ruling
+  2026-09-13 — supersedes the placeholder-coordinate gap this requirement
+  originally disclosed):** `PlaceCreateSchema` no longer requires
+  coordinates — `POST /places` for the fallback row carries `name` ONLY, so
+  the created place carries NO coordinates at all (never a `(0, 0)`
+  placeholder), and the trip created from it carries
+  `destination_lat/lng: null`. Every consumer of a place or trip
+  coordinate takes a real null arm instead of silently treating `(0, 0)`
+  as a position — see the client map spec R-map-26 for the map tab's
+  degrade (world view + honest empty state, unbounded search, no offline
+  pack) and R-tripui-24 below for the in-app remediation path.
 
 ### Join via invite (`invite-join`, deep-link target)
 
@@ -154,6 +151,29 @@
   removes the trip for ALL members); WHEN the owner invokes leave THE
   SYSTEM SHALL explain transfer-first and deep-link to the members screen
   (transfer-first confirmed — §2.2, resolved Gate 2).
+- **R-tripui-24 (destination change + coordinate-less remediation), NEW —
+  B-7 part 3 (`B-7/nullable-custom-coords`, Sean ruling 2026-09-13):** WHEN
+  the trip-settings destination search (§2.3's structured search, ported)
+  settles with zero results for a non-blank trimmed query THE SYSTEM SHALL
+  offer the same inline custom-destination row as trip create
+  (`trip-settings-list-item-custom`, R-tripui-23 parity — creates + selects
+  a `source='custom'` place with no coordinates, surfaces create failure
+  inline, preserves typed text, no double-submit while in flight); WHILE
+  the trip's EFFECTIVE destination (the pending pick, or else the saved
+  row) has no coordinates THE SYSTEM SHALL render a standing explanation on
+  the destination field (`trip-settings-notice-no-location`) naming the
+  consequence (no map area) and the fix (pick a searchable place); WHEN a
+  place WITH coordinates is picked and Save is pressed THE SYSTEM SHALL
+  write the new name and coordinates in one PATCH (`buildTripPatch`,
+  unchanged mechanics — null-vs-number is already a diffable change), which
+  restores the map tab (client map spec R-map-26), the offline-pack offer,
+  and the destination region ingest (API spec). Picking or creating
+  ANOTHER coordinate-less custom place is equally legal and leaves the
+  trip coordinate-less — a legitimate end state, not a failure; the notice
+  stays up. **Not built here:** healing a trip whose custom place LATER
+  gains coordinates via a map-drop — there is no `trips.destination_
+place_id` link (part-2 review finding, parked); see the P-8 follow-up
+  QUEUE-row draft in this task's PR body.
 
 ### Collab behavior (all screens in this spec)
 
@@ -202,12 +222,18 @@ All resolved at Gate 2 (2026-07-09):
 - Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
   2026-07-09): destination input is **structured** — search against the
   Overture city/locality subset; `destination_lat/lng` always present.
-  **Exception (B-7, R-tripui-23, added 2026-09-13):** "always present" is
-  not "always accurate" — a `source='custom'` destination's coordinates are
-  a fixed `(0, 0)` placeholder until B-7 part 3 ships nullable coordinates.
-  Any future feature reading `destination_lat/lng` unconditionally (e.g.
-  weather-on-trip-header, AI budget grounding) must special-case
-  `source==='custom'` rather than trusting this bullet at face value.
+  **AMENDED (B-7 part 3, `B-7/nullable-custom-coords`, Sean ruling
+  2026-09-13 — supersedes the 2026-09-13 "always present, not always
+  accurate" exception this bullet used to carry):** the KEYS are always
+  present in the request/response; the VALUES are `number | null` —
+  `destination_lat/lng` are `null` exactly when the picked place is a
+  `source='custom'` place with no coordinates (created via the R-tripui-23
+  empty-results fallback and never healed — R-tripui-24). There is no more
+  `(0, 0)` placeholder anywhere on this path. Any feature reading
+  `destination_lat/lng` must take the null arm, not special-case
+  `source==='custom'` — a healed custom-place trip has real coordinates,
+  and the null/non-null split is the only reliable signal (client map spec
+  R-map-26 is the reference implementation of that null arm).
 - Resolved at `.specs/database/schema.spec.md`:§3.3.5 `trip_members`
   (Gate 2, 2026-07-09): owner may transfer ownership; leaving a trip with
   other members requires transfer first.
@@ -322,38 +348,41 @@ keys derive from endpoint descriptors (contracts §3.6).
 Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 `members-screen`, `trip-settings-screen`.
 
-| Screen        | testID                                | Element                                                                         |
-| ------------- | ------------------------------------- | ------------------------------------------------------------------------------- |
-| trip-list     | `trip-list-fab-create`                | create FAB                                                                      |
-|               | `trip-list-list-item-{tripId}`        | trip row                                                                        |
-|               | `trip-list-button-profile`            | header avatar (profile surface confirmed — resolved Gate 2)                     |
-|               | `trip-list-button-join`               | join entry (EmptyState/overflow)                                                |
-|               | `trip-list-retry`                     | error retry                                                                     |
-| trip-new      | `trip-new-input-name`                 | name input                                                                      |
-|               | `trip-new-input-destination`          | destination search input                                                        |
-|               | `trip-new-list-item-{placeId}`        | destination result row                                                          |
-|               | `trip-new-input-dates`                | date-range control                                                              |
-|               | `trip-new-button-create`              | submit                                                                          |
-|               | `trip-new-button-cancel`              | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
-| invite-join   | `invite-join-button-accept`           | accept                                                                          |
-|               | `invite-join-button-decline`          | decline                                                                         |
-|               | `invite-join-button-open-trip`        | already-member open                                                             |
-|               | `invite-join-button-back`             | error-state back to trips                                                       |
-| members       | `members-list-item-{userId}`          | member row                                                                      |
-|               | `members-button-invite`               | invite CTA                                                                      |
-|               | `members-button-role-{userId}`        | role-change action                                                              |
-|               | `members-button-remove-{userId}`      | remove action (Confirm derives `-confirm`/`-cancel`)                            |
-|               | `members-button-transfer-{userId}`    | make-owner action                                                               |
-|               | `members-list-item-invite-{inviteId}` | active invite row                                                               |
-|               | `members-button-revoke-{inviteId}`    | revoke invite                                                                   |
-| trip-settings | `trip-settings-list-item-details`     | details row                                                                     |
-|               | `trip-settings-list-item-theme`       | theme row                                                                       |
-|               | `trip-settings-list-item-currency`    | base currency row                                                               |
-|               | `trip-settings-list-item-offline`     | offline pack row                                                                |
-|               | `trip-settings-list-item-members`     | members shortcut                                                                |
-|               | `trip-settings-button-leave`          | leave trip                                                                      |
-|               | `trip-settings-button-delete`         | delete trip                                                                     |
-|               | `trip-settings-button-save`           | details form save                                                               |
+| Screen        | testID                                   | Element                                                                         |
+| ------------- | ---------------------------------------- | ------------------------------------------------------------------------------- |
+| trip-list     | `trip-list-fab-create`                   | create FAB                                                                      |
+|               | `trip-list-list-item-{tripId}`           | trip row                                                                        |
+|               | `trip-list-button-profile`               | header avatar (profile surface confirmed — resolved Gate 2)                     |
+|               | `trip-list-button-join`                  | join entry (EmptyState/overflow)                                                |
+|               | `trip-list-retry`                        | error retry                                                                     |
+| trip-new      | `trip-new-input-name`                    | name input                                                                      |
+|               | `trip-new-input-destination`             | destination search input                                                        |
+|               | `trip-new-list-item-{placeId}`           | destination result row                                                          |
+|               | `trip-new-input-dates`                   | date-range control                                                              |
+|               | `trip-new-button-create`                 | submit                                                                          |
+|               | `trip-new-button-cancel`                 | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
+| invite-join   | `invite-join-button-accept`              | accept                                                                          |
+|               | `invite-join-button-decline`             | decline                                                                         |
+|               | `invite-join-button-open-trip`           | already-member open                                                             |
+|               | `invite-join-button-back`                | error-state back to trips                                                       |
+| members       | `members-list-item-{userId}`             | member row                                                                      |
+|               | `members-button-invite`                  | invite CTA                                                                      |
+|               | `members-button-role-{userId}`           | role-change action                                                              |
+|               | `members-button-remove-{userId}`         | remove action (Confirm derives `-confirm`/`-cancel`)                            |
+|               | `members-button-transfer-{userId}`       | make-owner action                                                               |
+|               | `members-list-item-invite-{inviteId}`    | active invite row                                                               |
+|               | `members-button-revoke-{inviteId}`       | revoke invite                                                                   |
+| trip-settings | `trip-settings-list-item-details`        | details row                                                                     |
+|               | `trip-settings-list-item-theme`          | theme row                                                                       |
+|               | `trip-settings-list-item-currency`       | base currency row                                                               |
+|               | `trip-settings-list-item-offline`        | offline pack row                                                                |
+|               | `trip-settings-list-item-members`        | members shortcut                                                                |
+|               | `trip-settings-button-leave`             | leave trip                                                                      |
+|               | `trip-settings-button-delete`            | delete trip                                                                     |
+|               | `trip-settings-button-save`              | details form save                                                               |
+|               | `trip-settings-list-item-custom`         | R-tripui-24: empty-results custom-destination row (R-tripui-23 parity)          |
+|               | `trip-settings-notice-no-location`       | R-tripui-24: standing coordinate-less-destination explanation                   |
+|               | `trip-settings-error-create-destination` | R-tripui-24: custom-create failure banner                                       |
 
 Dynamic qualifiers are stable entity ids, never render indexes (nav §2.7
 rule; ConfirmDialog children derive `-confirm`/`-cancel` per rule 4).
@@ -401,6 +430,7 @@ API-TRIPS-1..4.
 - [ ] Remove member Confirm flow; optimistic role change rolls back on error (CT-4)
 - [ ] Invite create opens share sheet with returned URL; revoke gated owner-any/editor-own (CT-4)
 - [ ] Settings: role-gated row visibility matrix; 409 save → refetch + notice, no silent overwrite (CT-5)
+- [x] Settings: empty-results custom-destination row (R-tripui-23 parity), standing coordinate-less notice, and the spine-pick heal PATCHing real coordinates (CT-5, R-tripui-24 — B-7 part 3, shipped)
 - [ ] Leave (non-owner) and delete (owner) Confirm flows land on trip list (CT-5)
 - [ ] Push events invalidate mapped keys; `trip.deleted`/self-`member.removed` force-exits with notice (CT-6)
 - [ ] Every §2.7 testID present on the rendered screen (CT-1..5)
