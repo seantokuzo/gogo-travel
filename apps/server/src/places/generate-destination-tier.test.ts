@@ -14,9 +14,26 @@
  * No Docker, no network, no DuckDB — `toSeed` is a pure function over an
  * already-fetched row.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DESTINATION_NAME_MAX_CHARS } from "@gogo/shared/domains/trip";
-import { NAME_MAX, toSeed, type DivisionRow } from "../../scripts/generate-destination-tier.js";
+import {
+  NAME_MAX,
+  toSeed,
+  type DestinationSeed,
+  type DivisionRow,
+} from "../../scripts/generate-destination-tier.js";
+
+const DESTINATIONS_JSON = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "reference-data",
+  "destinations.json",
+);
+const destinations = JSON.parse(readFileSync(DESTINATIONS_JSON, "utf8")) as DestinationSeed[];
 
 function row(overrides: Partial<DivisionRow> = {}): DivisionRow {
   return {
@@ -67,5 +84,59 @@ describe("generate-destination-tier: NAME_MAX tracks the shared wire cap", () =>
     const seed = toSeed(row({ name: name300 }), skipped);
     expect(seed).toBeNull();
     expect(skipped).toEqual(["test-id-1: unusable name"]);
+  });
+});
+
+/**
+ * Committed dataset pins (round-1 review, adversarial-verifier F9/A3): the
+ * capital arm's small-sovereign-state coverage, and the two documented
+ * gaps, checked directly against the shipped `destinations.json` rather
+ * than a live Overture re-query (no network needed for this suite).
+ */
+describe("destinations.json: capital-arm coverage and documented gaps", () => {
+  it("no seeded name exceeds the wire cap (mirrors the generator's own NAME_MAX refusal)", () => {
+    const longest = destinations.reduce((max, d) => Math.max(max, d.name.length), 0);
+    for (const d of destinations) {
+      expect(d.name.length, `${d.sourceId} (${d.name}) exceeds NAME_MAX`).toBeLessThanOrEqual(
+        NAME_MAX,
+      );
+    }
+    // Documents reality, not a magic number: currently well under the cap.
+    expect(longest).toBeLessThanOrEqual(NAME_MAX);
+  });
+
+  const CAPITAL_PINS: ReadonlyArray<{ name: string; country: string }> = [
+    { name: "Yaren", country: "NR" },
+    { name: "Funafuti", country: "TV" },
+    { name: "City of San Marino", country: "SM" },
+    { name: "Vaduz", country: "LI" },
+    { name: "Monaco", country: "MC" },
+    { name: "Ngerulmud", country: "PW" },
+    { name: "Palikir", country: "FM" },
+  ];
+
+  it.each(CAPITAL_PINS)(
+    "$name ($country) is seeded and flagged isCountryCapital (low/no-population microstate capital)",
+    ({ name, country }) => {
+      const hit = destinations.find((d) => d.name === name && d.country === country);
+      expect(hit, `${name} (${country}) not found in destinations.json`).toBeDefined();
+      expect(hit?.isCountryCapital).toBe(true);
+      // Every pin here is chosen BECAUSE population alone would not have
+      // included it — proves the capital arm, not the population arm, did
+      // the including.
+      expect((hit?.population ?? 0) < 100_000).toBe(true);
+    },
+  );
+
+  it("Vatican City is absent — a documented gap, not a regression (Overture tags it subtype='macrohood', never 'locality', in this release)", () => {
+    const hit = destinations.find((d) => d.name === "Vatican City");
+    expect(hit).toBeUndefined();
+  });
+
+  it("Wellington, NZ is present via the population arm but isCountryCapital is false — a documented upstream data gap (capital_of_divisions is null for NZ, both directions)", () => {
+    const hit = destinations.find((d) => d.name === "Wellington" && d.country === "NZ");
+    expect(hit, "Wellington (NZ) not found in destinations.json").toBeDefined();
+    expect(hit?.isCountryCapital).toBe(false);
+    expect((hit?.population ?? 0) >= 100_000).toBe(true); // included via population, not the capital arm
   });
 });

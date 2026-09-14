@@ -26,12 +26,30 @@
  *
  * Cut (Sean's ruling, 2026-09-13): `population >= 100,000 OR is-a-
  * sovereign-country-capital` — matches the population>=100k cut almost
- * exactly while the capital-of-country union catches every low/no-
- * population-data microstate capital (Nauru, Tuvalu, Vatican, San Marino…)
- * a pure population threshold would silently drop. Measured live against
- * this exact release: 6,927 rows (S-5 brief §2). `capital_of_divisions`
- * also flags county/region seats — filtering `subtype = 'country'` inside it
- * is load-bearing (an unfiltered "any admin capital" cut is 40,971 rows).
+ * exactly while the capital-of-country union catches most low/no-
+ * population-data microstate capitals (Nauru's Yaren, Tuvalu's Funafuti,
+ * San Marino, Liechtenstein's Vaduz, Monaco, Palau's Ngerulmud, Micronesia's
+ * Palikir — all verified present and flagged, see `CAPITAL_PINS` below) a
+ * pure population threshold would silently drop. Measured live against this
+ * exact release: 6,927 rows (S-5 brief §2). `capital_of_divisions` also
+ * flags county/region seats — filtering `subtype = 'country'` inside it is
+ * load-bearing (an unfiltered "any admin capital" cut is 40,971 rows).
+ *
+ * KNOWN GAPS (round-1 review, adversarial-verifier F9/A3 — do not re-claim
+ * "every" capital is caught here): (1) Vatican City IS in this Overture
+ * release but tagged `subtype='macrohood'`, never `'locality'` — the
+ * country has no locality-subtype row at all, so it is absent from this
+ * tier regardless of the capital predicate (verified live; a second data
+ * source or a broader subtype cut would be needed — Sean's call, not made
+ * here). (2) Overture's `capital_of_divisions` back-reference itself has
+ * upstream gaps: New Zealand's capital, Wellington, carries no
+ * `capital_of_divisions` entry, and NZ's own `country`-subtype row's
+ * `capital_division_ids` forward-reference is ALSO null (verified live) —
+ * nothing recoverable from this dataset either direction. Wellington is
+ * still seeded (population 215,152 clears the population arm), so this is
+ * a mis-flagged `isCountryCapital` (informational only, not a `places`
+ * column), not a missing row. The predicate below reads the correct field;
+ * there is nothing in this dataset to fix it with.
  *
  * Deterministic given a fixed release: the filter/projection is a total SQL
  * predicate, and output is sorted (name, source_id) for reviewable diffs
@@ -104,6 +122,28 @@ const NAME_PINS: ReadonlyArray<{ name: string; country: string }> = [
   { name: "Reykjavik", country: "IS" },
   { name: "Rome", country: "IT" },
   { name: "Oslo", country: "NO" },
+];
+
+/**
+ * Capital-arm self-check (round-1 review, adversarial-verifier F9/A3): pins
+ * that the CAPITAL predicate — not just population — is what's including
+ * these rows. Every name here is verified present with `isCountryCapital ===
+ * true` against the pinned release (2026-08-19.0); all seven have no/low
+ * population data, so a regression that silently drops the capital arm (or
+ * narrows `capital_of_divisions`'s subtype filter) reds here instead of
+ * shipping. Deliberately does NOT include Vatican City (not a `locality` in
+ * this Overture release — see the KNOWN GAPS doc-comment above) or
+ * Wellington/NZ (capital-flagged false upstream; present via population
+ * only) — both are documented gaps, not pin candidates.
+ */
+const CAPITAL_PINS: ReadonlyArray<{ name: string; country: string }> = [
+  { name: "Yaren", country: "NR" },
+  { name: "Funafuti", country: "TV" },
+  { name: "City of San Marino", country: "SM" },
+  { name: "Vaduz", country: "LI" },
+  { name: "Monaco", country: "MC" },
+  { name: "Ngerulmud", country: "PW" },
+  { name: "Palikir", country: "FM" },
 ];
 
 const clean = (value: string | null | undefined): string | null => {
@@ -240,6 +280,20 @@ for (const pin of NAME_PINS) {
   if (!hit) {
     throw new Error(
       `name pin failed: ${pin.name} (${pin.country}) not found in the generated destination tier`,
+    );
+  }
+}
+
+for (const pin of CAPITAL_PINS) {
+  const hit = seeds.find((s) => s.name === pin.name && s.country === pin.country);
+  if (!hit) {
+    throw new Error(
+      `capital pin failed: ${pin.name} (${pin.country}) not found in the generated destination tier`,
+    );
+  }
+  if (!hit.isCountryCapital) {
+    throw new Error(
+      `capital pin failed: ${pin.name} (${pin.country}) found but isCountryCapital is false — the capital arm regressed`,
     );
   }
 }

@@ -51,7 +51,17 @@ airline schedules).
   `division` type, `subtype='locality'` — **NOT** the `places`/POI theme the
   on-demand ingest pipeline (`region-ingest.ts`) reads; a different Overture
   table entirely, so a bootstrap row and a later real POI-grid ingest of the
-  same city never collide (different GERS id namespaces).
+  same city never collide **on the exact `(source, source_id)` upsert key**
+  (different GERS id namespaces — verified: `upsertSpineBatch`'s `ON
+CONFLICT` can never touch a tier row). Architecture review (round 1,
+  advisory): the FUZZY cross-source dedup path
+  (`spine-upsert.ts`'s `crossSourceDuplicateQuery`, ≤50m + ≥0.6 name
+  similarity) is category-blind and treats the 6,927 tier rows as ordinary
+  higher-priority `overture` rows — a real `fsq_os` POI within 50m of a
+  tier row's point, with a short/similar-enough name, can be silently
+  skipped as a "duplicate" of the city itself. Narrow, not corrupting
+  (self-limited to one missing POI, no error), but "never collide" does not
+  cover this path — QUEUE-row draft in the PR body.
 - **Release pinned: `2026-08-19.0`** (`s3://overturemaps-us-west-2/release/
 2026-08-19.0/theme=divisions/type=division/*`, anonymous/unsigned S3 read
   via DuckDB httpfs, verified reachable). Overture ships monthly releases
@@ -63,12 +73,28 @@ airline schedules).
 - **Cut (Sean's ruling, 2026-09-13):** `population >= 100,000 OR
 is-a-sovereign-country-capital` — 6,927 rows, measured live against this
   exact release. Matches the population≥100k cut almost exactly (6,894
-  alone) while the capital-of-country union catches every low/no-
-  population-data microstate capital (Nauru, Tuvalu, Vatican, San Marino…) a
-  pure population threshold would silently drop. The capital check is
-  filtered to `capital_of_divisions[].subtype = 'country'` specifically — an
-  unfiltered "any admin capital" cut (county/region seats included) is
-  40,971 rows, not what was chosen.
+  alone) while the capital-of-country union catches most low/no-
+  population-data microstate capitals (Nauru's Yaren, Tuvalu's Funafuti,
+  San Marino, Liechtenstein's Vaduz, Monaco, Palau's Ngerulmud, Micronesia's
+  Palikir — all verified present and flagged) a pure population threshold
+  would silently drop. The capital check is filtered to
+  `capital_of_divisions[].subtype = 'country'` specifically — an unfiltered
+  "any admin capital" cut (county/region seats included) is 40,971 rows,
+  not what was chosen.
+  - **Known gaps (round-1 review, do not re-claim "every" capital is
+    caught):** Vatican City IS present in this Overture release but tagged
+    `subtype='macrohood'`, never `'locality'` — the country has no
+    locality-subtype row at all, so it is absent from this tier regardless
+    of the capital predicate (verified live; a second data source or a
+    broader subtype cut would be needed — Sean's call, not made here).
+    Separately, Overture's `capital_of_divisions` back-reference itself has
+    upstream gaps: New Zealand's capital, Wellington, carries no
+    `capital_of_divisions` entry, and NZ's own `country`-subtype row's
+    `capital_division_ids` forward-reference is ALSO null (verified live) —
+    nothing recoverable from this dataset either direction. Wellington is
+    still seeded (population 215,152 clears the population arm), so this is
+    a mis-flagged `isCountryCapital` (informational only), not a missing
+    row.
 - **Name column:** Overture's `names.primary` is the LOCAL-SCRIPT name
   (e.g. Athens → "Αθήνα", Tokyo → "東京") — unsearchable by an
   English-typing user via the pg_trgm text search this tier exists to serve.
