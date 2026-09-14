@@ -28,8 +28,10 @@ export const trips = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     destinationName: text("destination_name").notNull(),
-    destinationLat: numeric("destination_lat", { precision: 9, scale: 6 }).notNull(),
-    destinationLng: numeric("destination_lng", { precision: 9, scale: 6 }).notNull(),
+    // NULL when the destination was picked from a coordinate-less custom
+    // place (B-7 part 3) — the pair moves together (trips_destination_coords_pair_ck).
+    destinationLat: numeric("destination_lat", { precision: 9, scale: 6 }),
+    destinationLng: numeric("destination_lng", { precision: 9, scale: 6 }),
     startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     status: tripStatus("status").notNull().default("planning"),
@@ -49,6 +51,12 @@ export const trips = pgTable(
     check("trips_dates_ck", sql`${t.startDate} <= ${t.endDate}`),
     check("trips_base_currency_upper_ck", sql`${t.baseCurrency} = upper(${t.baseCurrency})`),
     check("trips_budget_cap_nonnegative_ck", sql`${t.budgetCapCents} >= 0`),
+    // B-7 part 3: coordinates only ever come from a picked place — NULL
+    // means the picked place had none (a custom place with no coordinates).
+    check(
+      "trips_destination_coords_pair_ck",
+      sql`(${t.destinationLat} IS NULL) = (${t.destinationLng} IS NULL)`,
+    ),
   ],
 );
 
