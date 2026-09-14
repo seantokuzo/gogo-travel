@@ -44,6 +44,7 @@ import {
   NONEXISTENT_UUID,
   type ErrorEnvelope,
 } from "../http/idor-404.test-util.js";
+import { deleteTripCore } from "./routes.js";
 import { createTripEventEmitter } from "./push-invalidation.js";
 import {
   createRecordingTripEvents,
@@ -892,6 +893,42 @@ describe.skipIf(!dockerAvailable)("T-6.1 trip CRUD routes (integration)", () => 
       await deleteTrip(trip.id, owner.accessToken),
       await deleteTrip(NONEXISTENT_UUID, owner.accessToken),
     ]);
+  });
+
+  // ===========================================================================
+  // deleteTripCore (extracted S-4/T3, session-door spec §5.4 step 1) —
+  // exercised DIRECTLY (in-process, no HTTP, no session) the same way
+  // scripts/e2e-cleanup.mjs calls it.
+  // ===========================================================================
+
+  it("deleteTripCore: called directly by an owner deletes the trip and returns the pre-delete member snapshot", async () => {
+    const { owner, editor, viewer, trip } = await seedCollabTrip();
+
+    const result = await deleteTripCore(db, trip.id, owner.userId);
+
+    expect(result.deleted).toBe(true);
+    expect(new Set(result.memberSnapshot)).toEqual(
+      new Set([owner.userId, editor.userId, viewer.userId]),
+    );
+    expect(await dbTrip(trip.id)).toBeUndefined();
+  });
+
+  it("deleteTripCore: a nonexistent trip id returns deleted:false and an empty snapshot (no throw)", async () => {
+    const result = await deleteTripCore(db, NONEXISTENT_UUID, NONEXISTENT_UUID);
+    expect(result).toEqual({ deleted: false, memberSnapshot: [] });
+  });
+
+  it("deleteTripCore: an actor who isn't a fenced member of an EXISTING trip leaves it untouched (defense-in-depth for ungated callers)", async () => {
+    // Falsification: drop the `!memberSnapshot.includes(actorUserId)` guard
+    // in `deleteTripCore` (always attempt the delete) and this goes RED —
+    // the stranger's call would delete a trip it has zero membership in.
+    const { trip } = await seedCollabTrip();
+    const stranger = await seedUserWithToken();
+
+    const result = await deleteTripCore(db, trip.id, stranger.userId);
+
+    expect(result.deleted).toBe(false);
+    expect(await dbTrip(trip.id)).toBeDefined();
   });
 
   // ===========================================================================
