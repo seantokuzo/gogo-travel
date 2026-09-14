@@ -61,6 +61,32 @@
 - **R-tripui-8 (dirty dismissal):** WHEN the modal is dismissed with
   entered data THE SYSTEM SHALL intercept with a discard Confirm (nav §2.6
   form-modal rule).
+- **R-tripui-23 (custom-destination fallback — B-7, Sean ruling
+  2026-09-13):** WHEN structured destination search settles with zero
+  results for a non-blank trimmed query THE SYSTEM SHALL render an inline
+  row offering to create the typed text as a custom destination (copy:
+  Use "the typed text" as a custom destination); WHEN tapped THE SYSTEM
+  SHALL create a permanent `source='custom'` place (`POST /places`, places
+  spec §3.3 R-places-9 — a permanent first-class destination fallback, not
+  a QA workaround) and select it, unblocking submit exactly as a spine
+  pick does; there is no map-drop screen in this pass. WHEN creation fails
+  THE SYSTEM SHALL surface the error inline and preserve the typed text;
+  WHILE a create is in flight THE SYSTEM SHALL NOT allow a second create
+  for the same tap (the row itself becomes non-interactive). Until B-7
+  part 3 (QUEUE row, `queued` — branch `B-7/nullable-custom-coords`,
+  blocked on PR #75's server-tier merge) ships nullable coordinates for
+  custom places, a `source='custom'` destination's `lat`/`lng` ride as a
+  fixed `(0, 0)` placeholder (`PlaceCreateSchema` requires coordinates
+  today, so there is no other wire-legal value) — meanwhile, for the life
+  of any trip created from it: the map tab's destination-bound search
+  returns zero results (its bbox is pinned to the Null Island cell), the
+  initial camera opens on open ocean at street zoom, the offline-pack pill
+  offers/downloads that ocean region, the trip-settings destination editor
+  has no way to correct it in-app (same no-custom-fallback dead end this
+  create flow exists to solve — `more/settings.tsx`), and the server's
+  destination-tier place ingest pays nine wasted (self-limiting,
+  per-refresh-window) remote parquet scans for the ocean cells
+  (`ingest-queue.ts`).
 
 ### Join via invite (`invite-join`, deep-link target)
 
@@ -176,6 +202,12 @@ All resolved at Gate 2 (2026-07-09):
 - Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
   2026-07-09): destination input is **structured** — search against the
   Overture city/locality subset; `destination_lat/lng` always present.
+  **Exception (B-7, R-tripui-23, added 2026-09-13):** "always present" is
+  not "always accurate" — a `source='custom'` destination's coordinates are
+  a fixed `(0, 0)` placeholder until B-7 part 3 ships nullable coordinates.
+  Any future feature reading `destination_lat/lng` unconditionally (e.g.
+  weather-on-trip-header, AI budget grounding) must special-case
+  `source==='custom'` rather than trusting this bullet at face value.
 - Resolved at `.specs/database/schema.spec.md`:§3.3.5 `trip_members`
   (Gate 2, 2026-07-09): owner may transfer ownership; leaving a trip with
   other members requires transfer first.
@@ -348,20 +380,21 @@ Each sized to one agent session; become `T-N.M` rows at build time.
 Depends on: NAV-1..5 (routes, guards, deep links), DS-7..9 (components),
 API-TRIPS-1..4.
 
-| ID   | Task                                                                                                                                                         | Covers                      |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------- |
-| CT-1 | Trip list: sections, rows, empty/loading/error states, FAB + join entries, refetch-on-focus wiring.                                                          | R-tripui-1..3, 5, 22        |
-| CT-2 | Create-trip modal: form, destination structured search (Overture city subset — resolved Gate 2), required dates, submit/land, dirty-dismiss guard.           | R-tripui-6..8, 22           |
-| CT-3 | Invite-join screen: preview, accept/decline, all dead-token states, already-member path (cold/warm via nav registry).                                        | R-tripui-9..12, 22          |
-| CT-4 | Members screen: list + role badges, role-gated actions (role change, remove, transfer), invite create + share sheet, active-invite list + revoke.            | R-tripui-13..17, 21, 22     |
-| CT-5 | Trip settings screen: role-gated rows, details form with `expect_updated_at` conflict UX, leave/delete flows.                                                | R-tripui-14, 18..20, 21, 22 |
-| CT-6 | Collab client layer: push-event → query-key invalidation map, optimistic mutation helpers with rollback, forced-exit handling (trip deleted / self removed). | R-tripui-3, 4, 21           |
+| ID   | Task                                                                                                                                                                                                | Covers                      |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| CT-1 | Trip list: sections, rows, empty/loading/error states, FAB + join entries, refetch-on-focus wiring.                                                                                                 | R-tripui-1..3, 5, 22        |
+| CT-2 | Create-trip modal: form, destination structured search (Overture city subset — resolved Gate 2), required dates, submit/land, dirty-dismiss guard, custom-destination empty-results fallback (B-7). | R-tripui-6..8, 22, 23       |
+| CT-3 | Invite-join screen: preview, accept/decline, all dead-token states, already-member path (cold/warm via nav registry).                                                                               | R-tripui-9..12, 22          |
+| CT-4 | Members screen: list + role badges, role-gated actions (role change, remove, transfer), invite create + share sheet, active-invite list + revoke.                                                   | R-tripui-13..17, 21, 22     |
+| CT-5 | Trip settings screen: role-gated rows, details form with `expect_updated_at` conflict UX, leave/delete flows.                                                                                       | R-tripui-14, 18..20, 21, 22 |
+| CT-6 | Collab client layer: push-event → query-key invalidation map, optimistic mutation helpers with rollback, forced-exit handling (trip deleted / self removed).                                        | R-tripui-3, 4, 21           |
 
 **Tests required (minimum):**
 
 - [ ] Sections group/sort by status correctly (CT-1)
 - [ ] Empty state renders with both CTAs; error state has retry (CT-1)
 - [ ] Create: validation (required name/destination/dates), pending-disable, success lands itinerary tab, failure preserves input, dirty dismiss confirms (CT-2)
+- [ ] Create: empty-results custom-destination row creates + selects, keeps text on failure, no double-submit while in flight (CT-2, R-tripui-23)
 - [ ] Join: each of active/expired/revoked/maxed/unknown/already-member renders its distinct state; accept navigates with default-tab rules (CT-3)
 - [ ] Join cold start + warm start + unauthenticated stash/resume (with nav NAV-5 harness) (CT-3)
 - [ ] Members: viewer sees no manage affordances; editor sees invite only; owner sees all; server 403 renders ErrorBanner (CT-4)

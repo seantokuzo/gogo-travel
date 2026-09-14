@@ -92,6 +92,16 @@ export const queryKeys = {
   /** `GET /places/search` — destination structured search (T-6.7 / CT-2). */
   placeSearch: (q: string) => ["places", "search", q] as const,
   /**
+   * INVALIDATION root over every `placeSearch(q)` entry (B-7 review R1 B2,
+   * the `tripBookingsRoot`/`tripExpensesRoot` convention: a distinct root
+   * accessor even though today it's just the shared prefix). `POST /places`
+   * for a custom destination has no way to know every `q` that would now
+   * match it, so `useCreateCustomDestination` invalidates this WHOLE family
+   * rather than one exact key — the empty page fetched before the create
+   * must not keep being served under prod's 5-min staleTime.
+   */
+  placeSearchRoot: ["places", "search"] as const,
+  /**
    * `GET /places/:placeId` — the place-detail spine read (T-8.4 / MAP-3).
    * DELIBERATELY OUTSIDE the `["trips", tripId]` detail subtree (KEY-CACHE
    * LAW note): spine places are globally readable behind auth alone — the
