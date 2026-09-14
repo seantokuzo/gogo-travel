@@ -378,6 +378,12 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
     expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
 
+    // Settle B2's post-success placeSearch invalidation before driving more
+    // interaction — its refetch notify can otherwise land during a later,
+    // non-act-wrapped waitFor/findBy poll under contention (R2 determinism
+    // finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
     // Save gate: the rest of the form + submit now succeeds with the
     // custom place's placeholder coordinates riding the trip body.
     await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Somewhere Trip");
@@ -438,6 +444,9 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
       expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville"),
     );
     expect(posts).toBe(1);
+    // Settle B2's post-success placeSearch invalidation before the test
+    // ends (R2 determinism finding) — see the file-level note above.
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
   });
 
   it("a 409 surfaces inline, keeps the typed text, and retry re-creates", async () => {
@@ -541,6 +550,13 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
       ([d]) => (d as { path: string }).path === "/places",
     );
     expect(createDestinationCalls).toHaveLength(1); // the POST genuinely fired — this IS the race
+
+    // Settle B2's post-success placeSearch invalidation (the mutation
+    // invalidates on EVERY success, even one this screen's own guard
+    // discards) before driving more interaction — its refetch can
+    // otherwise notify during a later, non-act-wrapped waitFor poll under
+    // contention (R2 determinism finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
 
     await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
     await pickDate("trip-new-input-dates-start", 2027, 5, 1);
@@ -734,6 +750,12 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     await pressSettled("trip-new-list-item-custom");
     expect(screen.getByTestId("trip-new-input-destination").props.value).toBe(name200);
     expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull();
+
+    // Settle the first (successful) create's B2 placeSearch invalidation
+    // before the second attempt — its refetch notify can otherwise land
+    // during a later, non-act-wrapped poll under contention (R2
+    // determinism finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
 
     // 201 chars exceeds the visual cap but is still reachable through
     // `fireEvent.changeText` (it calls the handler directly, bypassing
