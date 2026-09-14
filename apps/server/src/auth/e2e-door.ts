@@ -27,7 +27,7 @@ import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { createMiddleware } from "hono/factory";
+import { HTTPException } from "hono/http-exception";
 import { e2eEndpoints, E2eSessionRequestSchema } from "@gogo/shared/domains/e2e";
 import type { SignInResponse } from "@gogo/shared/domains/auth";
 import { BODY_LIMIT_MAX_BYTES, E2E_DOOR_MAX_FIXTURE_USERS, RATE_LIMITS } from "../config.js";
@@ -216,19 +216,26 @@ export function createE2eDoorRouter(deps: E2eDoorRouterDeps): Hono<RequestVars> 
     return apiError(c, "UNAUTHENTICATED", UNAUTHENTICATED_MESSAGE);
   };
 
-  // §3.6 / R-door-3 error boundary: ANYTHING that throws past this point
+  // §3.6 / R-door-3 error boundary: ANYTHING that throws on this router
   // (malformed JSON's `HTTPException` from Hono's body parser, ahead of
-  // Zod; any unexpected handler error) becomes the SAME uniform 401 —
-  // never the app-wide `onError`'s 400/500, which would prove the route
-  // exists (a distinguishable status is exactly the oracle §3.6 forbids).
-  const boundary = createMiddleware<RequestVars>(async (c, next) => {
-    try {
-      await next();
-    } catch {
-      performDoorConstantWorkFloor();
-      return reject(c, "malformed_body");
-    }
-    return undefined;
+  // Zod; any unexpected handler error) becomes the SAME uniform 401 — never
+  // the app-wide `onError`'s 400/500, which would prove the route exists (a
+  // distinguishable status is exactly the oracle §3.6 forbids).
+  //
+  // A plain try/catch middleware does NOT work here (verified empirically):
+  // `@hono/zod-validator`'s "json" target throws its `HTTPException` from
+  // INSIDE the low-level `validator()` middleware Hono's body parser calls
+  // before Zod ever runs, and that throw propagates straight past any
+  // try/catch middleware registered on this sub-router, landing on the
+  // PARENT app's `onError` instead. Hono DOES special-case a sub-app's own
+  // `onError` (`router.onError`, not a route-level try/catch) — that is the
+  // one mechanism the app-middleware.ts docblock's "a sub-router that adds
+  // its own onError would shadow this one" warning is about, and shadowing
+  // the shared envelope is exactly what this ONE router needs to do.
+  router.onError((err, c) => {
+    performDoorConstantWorkFloor();
+    const reason = err instanceof HTTPException ? "malformed_body" : "internal_error";
+    return reject(c, reason, err instanceof Error ? `name=${err.name}` : undefined);
   });
 
   // §3.6 body-size-ordering note: this per-route limit must be evaluated
@@ -243,7 +250,6 @@ export function createE2eDoorRouter(deps: E2eDoorRouterDeps): Hono<RequestVars> 
 
   router.post(
     e2eEndpoints.mintSession.path,
-    boundary,
     doorBodyLimit,
     zValidator("json", E2eSessionRequestSchema, (result, c) => {
       if (result.success) return undefined;
