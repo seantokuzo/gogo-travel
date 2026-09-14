@@ -221,6 +221,15 @@ describe("isLocalOrPrivateHost (session-door spec R-door-7)", () => {
     ["api.gogotravel.example", false],
     ["8.8.8.8", false],
     ["evil.com", false],
+    // Review round 1 security A1: a DNS label merely STARTING WITH a
+    // private-range prefix must never impersonate a real IP literal — only
+    // a bare, complete dotted-quad in the range matches. Falsification:
+    // revert the anchored regexes to bare `/^10\./`-style prefix matches ->
+    // these go RED (true instead of false).
+    ["10.metrics.example", false],
+    ["192.168.evil.example", false],
+    ["172.16.evil.example", false],
+    ["10.0.0.5.evil.example", false],
   ])("%s -> %s", (host, expected) => {
     expect(isLocalOrPrivateHost(host)).toBe(expected);
   });
@@ -233,16 +242,20 @@ describe("hostOf", () => {
     expect(hostOf("http://192.168.1.50:3000/api")).toBe("192.168.1.50");
   });
 
-  it("extraction is IDENTICAL to assertSecureBaseUrl's own inline parse (no new behavior)", () => {
-    // `hostOf` is a pure extraction of the exact regex `assertSecureBaseUrl`
-    // already used inline — this pin is the refactor's safety net: any
-    // future edit to one MUST edit the other, since a future edit to only
-    // one would desync the transport guard from the e2e-door gate that now
-    // shares it (R-door-7). NOT `@`-userinfo-safe (that guard lives only in
-    // `resolveMetroHost`, a different function with a different input
-    // source) — a pre-existing characteristic this refactor does not change.
-    expect(hostOf("http://192.168.1.1@evil.example:8081/index.bundle")).toBe(
-      "192.168.1.1@evil.example",
-    );
+  it('rejects userinfo — a `user@host` or `host@host` authority resolves to "", never the pre-`@` text (review round 1 security A1)', () => {
+    // Falsification: drop the `authority.includes("@")` guard -> these go
+    // RED (the pre-`@` segment would be returned instead of "").
+    expect(hostOf("http://192.168.1.1@evil.example:8081/index.bundle")).toBe("");
+    expect(hostOf("http://10.0.0.5@collector.example/api")).toBe("");
+    expect(hostOf("http://user:pass@evil.example/api")).toBe("");
+  });
+
+  it("the userinfo rejection makes the door gate fail-closed on the exact adversarial URLs security A1 named", () => {
+    // http://10.0.0.5@collector.example/api and a DNS label merely starting
+    // with "10." must both be rejected — reaching `isLocalOrPrivateHost`
+    // with the REAL host (collector.example / 10.metrics.example), never the
+    // spoofed pre-`@` text.
+    expect(isLocalOrPrivateHost(hostOf("http://10.0.0.5@collector.example/api"))).toBe(false);
+    expect(isLocalOrPrivateHost(hostOf("http://10.metrics.example/api"))).toBe(false);
   });
 });
