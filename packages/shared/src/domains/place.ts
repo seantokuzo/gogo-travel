@@ -28,8 +28,11 @@ export const PlaceSchema = z
     /** Upstream id (Overture GERS / FSQ). NULL iff `source = 'custom'` (R-db-6). */
     source_id: z.string().nullable(),
     name: z.string(),
-    lat: LatSchema,
-    lng: LngSchema,
+    /** NULL only for `source='custom'` (B-7 part 3) — a user-created place
+     *  with no coordinates. Spine rows always carry coordinates (DB CHECK
+     *  `places_spine_coords_ck`); the pair moves together (`places_coords_pair_ck`). */
+    lat: LatSchema.nullable(),
+    lng: LngSchema.nullable(),
     /** Source taxonomy string, normalized where cheap. */
     category: z.string().nullable(),
     /** DERIVED from `category` via `coarseCategory` (§3.2.3) — not a DB column. */
@@ -48,6 +51,22 @@ export const PlaceSchema = z
         code: "custom",
         message: "source_id must be null exactly when source is 'custom'",
         path: ["source_id"],
+      });
+    }
+    // B-7 part 3 — mirrors places_coords_pair_ck: half a coordinate is never legal.
+    if ((val.lat === null) !== (val.lng === null)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "lat and lng must both be present or both be null",
+        path: ["lng"],
+      });
+    }
+    // B-7 part 3 — mirrors places_spine_coords_ck: only custom places may omit coordinates.
+    if (val.source !== "custom" && val.lat === null) {
+      ctx.addIssue({
+        code: "custom",
+        message: "only custom places may omit coordinates",
+        path: ["lat"],
       });
     }
   });
@@ -133,14 +152,30 @@ const PlaceCategorySchema = z.string().trim().min(1).max(200);
 
 /**
  * `POST /places` (places spec §3.3): the server sets `source = 'custom'`,
- * `source_id = NULL`, `created_by = caller` (R-places-9).
+ * `source_id = NULL`, `created_by = caller` (R-places-9). Every custom place
+ * this endpoint creates is a legal `PlaceSchema` "no coordinates" row
+ * (`source = 'custom'`), so no "non-custom ⇒ coords required" refine belongs
+ * here — that arm lives on `PlaceSchema` alone, which reads every source.
  */
-export const PlaceCreateSchema = z.object({
-  name: PlaceNameSchema,
-  lat: LatSchema,
-  lng: LngSchema,
-  category: PlaceCategorySchema.optional(),
-});
+export const PlaceCreateSchema = z
+  .object({
+    name: PlaceNameSchema,
+    /** Omit BOTH to create a coordinate-less custom place (B-7 part 3).
+     *  Explicit `null` is rejected — one way to say "no coordinates". */
+    lat: LatSchema.optional(),
+    lng: LngSchema.optional(),
+    category: PlaceCategorySchema.optional(),
+  })
+  .superRefine((val, ctx) => {
+    // B-7 part 3: coordinates move as a pair — half a coordinate is never legal.
+    if ((val.lat === undefined) !== (val.lng === undefined)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "lat and lng must be sent together",
+        path: ["lng"],
+      });
+    }
+  });
 export type PlaceCreate = z.infer<typeof PlaceCreateSchema>;
 
 /**

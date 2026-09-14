@@ -52,11 +52,14 @@ describe("TripCreate", () => {
     expect(TripCreateSchema.safeParse({ ...valid, start_date: "2026-09-11" }).success).toBe(false);
   });
 
-  it("rejects missing dates or coordinates (Gate 2: required at creation)", () => {
+  it("rejects missing dates or an OMITTED destination coordinate key (B-7 part 3: the key stays required — see the describe block below for the nullable VALUE)", () => {
     const { start_date: _s, ...noStart } = valid;
     expect(TripCreateSchema.safeParse(noStart).success).toBe(false);
     const { destination_lat: _lat, ...noLat } = valid;
     expect(TripCreateSchema.safeParse(noLat).success).toBe(false);
+    // Falsification: swap `LatSchema.nullable()` for `LatSchema.nullable().optional()`
+    // on TripCreateSchema — this reds (mirrors fresh-install.db.test.ts's two
+    // B-7 escape pins, which this schema must never break).
   });
 
   it("rejects out-of-range coordinates and lowercase currency", () => {
@@ -94,6 +97,90 @@ describe("TripUpdate", () => {
       TripUpdateSchema.safeParse({ start_date: "2026-09-11", end_date: "2026-09-01" }).success,
     ).toBe(false);
     expect(TripUpdateSchema.safeParse({ start_date: "2026-09-11" }).success).toBe(true);
+  });
+});
+
+describe("B-7 part 3 — nullable destination coordinates", () => {
+  const valid = {
+    name: "Grandma's cabin trip",
+    destination_name: "Grandma's cabin",
+    destination_lat: null as number | null,
+    destination_lng: null as number | null,
+    start_date: "2026-09-01",
+    end_date: "2026-09-10",
+  };
+
+  describe("TripCreateSchema", () => {
+    it("happy: both destination coordinates null creates a coordinate-less trip", () => {
+      const parsed = TripCreateSchema.parse(valid);
+      expect(parsed.destination_lat).toBeNull();
+      expect(parsed.destination_lng).toBeNull();
+    });
+
+    it("happy: both real coordinates still work (regression)", () => {
+      const parsed = TripCreateSchema.parse({
+        ...valid,
+        destination_lat: 35.6812,
+        destination_lng: 139.7671,
+      });
+      expect(parsed.destination_lat).toBe(35.6812);
+    });
+
+    it("error/adversarial: one coordinate null, the other a number, is rejected", () => {
+      expect(
+        TripCreateSchema.safeParse({ ...valid, destination_lat: 35.6812, destination_lng: null })
+          .success,
+      ).toBe(false);
+      expect(
+        TripCreateSchema.safeParse({ ...valid, destination_lat: null, destination_lng: 139.7671 })
+          .success,
+      ).toBe(false);
+      // Falsification: delete the `destinationCoordsPairRule` superRefine — both go green.
+    });
+
+    it("boundary: the coordinate range checks still apply to a non-null value", () => {
+      expect(
+        TripCreateSchema.safeParse({ ...valid, destination_lat: 91, destination_lng: 139.7671 })
+          .success,
+      ).toBe(false);
+    });
+  });
+
+  describe("TripUpdateSchema", () => {
+    it("happy: patching to null (the settings 'no coordinates' write) parses", () => {
+      const parsed = TripUpdateSchema.parse({
+        destination_lat: null,
+        destination_lng: null,
+      });
+      expect(parsed.destination_lat).toBeNull();
+    });
+
+    it("happy: omitting both keys (a patch touching other fields) is unaffected", () => {
+      expect(TripUpdateSchema.parse({ name: "Renamed" }).destination_lat).toBeUndefined();
+    });
+
+    it("happy: the settings remediation PATCH — real coordinates heal a null-coord trip", () => {
+      const parsed = TripUpdateSchema.parse({
+        destination_name: "Tokyo, Japan",
+        destination_lat: 35.6812,
+        destination_lng: 139.7671,
+      });
+      expect(parsed.destination_lat).toBe(35.6812);
+    });
+
+    it("error/adversarial: touching exactly one coordinate key is rejected — the pair is one logical field", () => {
+      expect(TripUpdateSchema.safeParse({ destination_lat: 35.6812 }).success).toBe(false);
+      expect(TripUpdateSchema.safeParse({ destination_lng: 139.7671 }).success).toBe(false);
+      expect(TripUpdateSchema.safeParse({ destination_lat: null }).success).toBe(false);
+      // Falsification: delete the "both-or-neither KEY present" branch in
+      // `destinationCoordsPairRule` — all three go green.
+    });
+
+    it("error/adversarial: one null, one real, both present — rejected", () => {
+      expect(
+        TripUpdateSchema.safeParse({ destination_lat: null, destination_lng: 139.7671 }).success,
+      ).toBe(false);
+    });
   });
 });
 

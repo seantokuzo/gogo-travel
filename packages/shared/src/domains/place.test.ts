@@ -151,6 +151,107 @@ describe("PlaceCreate / PlaceUpdate (R-places-9/10; T-6.1 string-cap convention)
   });
 });
 
+describe("B-7 part 3 — nullable coordinates for custom places", () => {
+  describe("PlaceSchema (read shape)", () => {
+    it("happy: a custom place with null lat/lng parses", () => {
+      const parsed = PlaceSchema.parse({
+        ...base,
+        source: "custom",
+        source_id: null,
+        created_by: UUID,
+        lat: null,
+        lng: null,
+      });
+      expect(parsed.lat).toBeNull();
+      expect(parsed.lng).toBeNull();
+    });
+
+    it("happy: a custom place still parses with real coordinates (PATCH after a map-drop)", () => {
+      const parsed = PlaceSchema.parse({
+        ...base,
+        source: "custom",
+        source_id: null,
+        created_by: UUID,
+      });
+      expect(parsed.lat).toBe(base.lat);
+    });
+
+    it("error/adversarial: a non-custom place with null coordinates is rejected — spine rows always carry coordinates", () => {
+      expect(
+        PlaceSchema.safeParse({
+          ...base,
+          source: "overture",
+          source_id: "gers-123",
+          lat: null,
+          lng: null,
+        }).success,
+      ).toBe(false);
+      // Falsification: delete the `val.source !== "custom" && val.lat === null`
+      // superRefine arm — this reds.
+    });
+
+    it("adversarial: one of the pair null (lat null, lng real, or vice versa) is rejected for ANY source", () => {
+      expect(
+        PlaceSchema.safeParse({
+          ...base,
+          source: "custom",
+          source_id: null,
+          created_by: UUID,
+          lat: null,
+          lng: 135.7727,
+        }).success,
+      ).toBe(false);
+      expect(
+        PlaceSchema.safeParse({
+          ...base,
+          source: "custom",
+          source_id: null,
+          created_by: UUID,
+          lat: 34.9671,
+          lng: null,
+        }).success,
+      ).toBe(false);
+      // Falsification: delete the `(val.lat === null) !== (val.lng === null)`
+      // superRefine arm — this reds.
+    });
+  });
+
+  describe("PlaceCreateSchema (POST /places)", () => {
+    it("happy: omitting BOTH lat and lng creates a coordinate-less custom place", () => {
+      const parsed = PlaceCreateSchema.parse({ name: "Grandma's cabin" });
+      expect(parsed.lat).toBeUndefined();
+      expect(parsed.lng).toBeUndefined();
+    });
+
+    it("happy: a normal create with both coordinates is unaffected", () => {
+      const parsed = PlaceCreateSchema.parse({ name: "Mom's House", lat: 34.1, lng: -118.2 });
+      expect(parsed.lat).toBe(34.1);
+    });
+
+    it("error: exactly one of lat/lng present is rejected — the pair moves together", () => {
+      expect(PlaceCreateSchema.safeParse({ name: "x", lat: 34.1 }).success).toBe(false);
+      expect(PlaceCreateSchema.safeParse({ name: "x", lng: -118.2 }).success).toBe(false);
+      // Falsification: delete the PlaceCreateSchema superRefine — both reds go green.
+    });
+
+    it("adversarial: explicit null is rejected — omission is the only way to say 'no coordinates'", () => {
+      expect(PlaceCreateSchema.safeParse({ name: "x", lat: null, lng: null }).success).toBe(false);
+    });
+
+    it("adversarial: NaN and a numeric-looking string both reject (type/range boundary)", () => {
+      expect(PlaceCreateSchema.safeParse({ name: "x", lat: Number.NaN, lng: -118.2 }).success).toBe(
+        false,
+      );
+      expect(PlaceCreateSchema.safeParse({ name: "x", lat: "0", lng: "0" }).success).toBe(false);
+    });
+
+    it("boundary: both null AND both present are the only two legal shapes", () => {
+      expect(PlaceCreateSchema.safeParse({ name: "x" }).success).toBe(true);
+      expect(PlaceCreateSchema.safeParse({ name: "x", lat: 0, lng: 0 }).success).toBe(true);
+    });
+  });
+});
+
 describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
   it("requires at least one of q / bbox / near", () => {
     expect(PlaceSearchQuerySchema.safeParse({}).success).toBe(false);
