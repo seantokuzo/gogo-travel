@@ -25,6 +25,7 @@ import { createLocalJWKSet, generateKeyPair } from "jose";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { paginatedSchema } from "@gogo/shared/api/envelope";
 import { PlaceSchema } from "@gogo/shared/domains/place";
+import { TripWithRoleSchema } from "@gogo/shared/domains/trip";
 import { createApp } from "../app.js";
 import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
@@ -119,6 +120,12 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     };
     app = createApp({
       auth: authDeps,
+      // B-7 round-1 blocking finding: nothing previously exercised
+      // search-hit -> POST /trips through this suite's app instance. `trips`
+      // needs no ingest/rate-limit seam to prove the closure — `placesIngest`
+      // stays absent (optional; a no-op skip, same posture as the places
+      // deps' own stub below).
+      trips: { db },
       places: {
         db,
         placesIngest: { enqueueDestination: () => undefined, enqueueSearchMiss: () => undefined },
@@ -197,6 +204,44 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     const athens = await searchOk(user.accessToken, "q=Athens");
     expect(athens.items.some((p) => p.source_id === ATHENS_GR.sourceId)).toBe(true);
     expect(athens.items.some((p) => p.source_id === ATHENS_US.sourceId)).toBe(true);
+  });
+
+  // ===========================================================================
+  // [B-7 closure] search-hit -> POST /trips (the half B-7 repro alone never
+  // proved) — B-7 round-1 blocking finding: no pin anywhere carried a tier
+  // row from search into trip create. `POST /trips` has no `place_id`
+  // param; the picker hands the searched-result fields straight through
+  // (apps/mobile/src/data/trips-mutations.ts + apps/mobile/src/app/
+  // (trips)/new.tsx:179-181 build `TripCreate` from `selectedPlace.{name,
+  // lat,lng}` verbatim). This test sends exactly those fields.
+  // ===========================================================================
+
+  it("[B-7 closure] a search hit round-trips into a created trip — search -> pick -> POST /trips, the exact picker flow", async () => {
+    const user = await seedUserWithToken();
+    const page = await searchOk(user.accessToken, `q=${encodeURIComponent(ATHENS_GR.name)}`);
+    const hit = page.items.find((p) => p.source_id === ATHENS_GR.sourceId);
+    expect(hit, `${ATHENS_GR.name} (${ATHENS_GR.sourceId}) not found via search`).toBeDefined();
+
+    const res = await request("/api/trips", user.accessToken, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Greece Trip",
+        // Exactly the fields trips-mutations.ts's TripCreate candidate
+        // carries from a picked search result — no place_id exists.
+        destination_name: hit?.name,
+        destination_lat: hit?.lat,
+        destination_lng: hit?.lng,
+        start_date: "2026-10-01",
+        end_date: "2026-10-10",
+      }),
+    });
+    expect(res.status).toBe(201);
+    const trip = TripWithRoleSchema.parse(await res.json());
+    expect(trip.destination_name).toBe(ATHENS_GR.name);
+    // The `toPlaceWire`/numeric round-trip (Number(row.lat)) survives into
+    // trips.destination_lat/lng — the other half of the blocking finding.
+    expect(trip.destination_lat).toBeCloseTo(ATHENS_GR.lat, 3);
+    expect(trip.destination_lng).toBeCloseTo(ATHENS_GR.lng, 3);
   });
 
   it("4-char text-only query (the existing global floor, PLACES_SEARCH_TEXT_ONLY_MIN_CHARS) finds Rome and Oslo", async () => {

@@ -43,6 +43,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DuckDBInstance } from "@duckdb/node-api";
+import { DESTINATION_NAME_MAX_CHARS } from "@gogo/shared/domains/trip";
 
 /** Operator-facing generation report — the script's whole point is its output. */
 // eslint-disable-next-line no-console -- generator report for the operator
@@ -60,7 +61,14 @@ const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "reference-d
 const OVERTURE_RELEASE = "2026-08-19.0";
 const DIVISIONS_URL = `s3://overturemaps-us-west-2/release/${OVERTURE_RELEASE}/theme=divisions/type=division/*`;
 
-const NAME_MAX = 500; // mirrors normalize.ts's MAX_NAME_CHARS (same `places.name` column)
+// `TripCreateSchema.destination_name`'s wire cap (packages/shared/src/domains/
+// trip.ts), NOT normalize.ts's 500-char `places.name` column cap — a name
+// past this can be seeded and searched but can never survive a real
+// `POST /trips` (B-7 round-1 blocking finding: the two caps had silently
+// diverged, 500 vs 200). `generate-destination-tier.test.ts` pins the
+// boundary directly against this constant so a future re-divergence fails
+// loud here, not on a traveler's device.
+export const NAME_MAX = DESTINATION_NAME_MAX_CHARS;
 const SOURCE_ID_MAX = 200; // mirrors normalize.ts's MAX_SOURCE_ID_CHARS
 const WIKI_REF_MAX = 200; // mirrors normalize.ts's MAX_WIKI_REF_CHARS
 const CONTROL_CHARS_RE = /\p{Cc}/u;
@@ -103,7 +111,7 @@ const clean = (value: string | null | undefined): string | null => {
   return trimmed.length === 0 ? null : trimmed;
 };
 
-interface DivisionRow {
+export interface DivisionRow {
   id: unknown;
   name: unknown;
   country: unknown;
@@ -161,7 +169,7 @@ async function queryDivisions(): Promise<DivisionRow[]> {
   }
 }
 
-function toSeed(row: DivisionRow, skipped: string[]): DestinationSeed | null {
+export function toSeed(row: DivisionRow, skipped: string[]): DestinationSeed | null {
   const sourceId = typeof row.id === "string" ? row.id.trim() : "";
   if (sourceId.length === 0 || sourceId.length > SOURCE_ID_MAX || CONTROL_CHARS_RE.test(sourceId)) {
     skipped.push(`(unknown id): unusable source id`);
