@@ -292,6 +292,14 @@ distinct peers per test case (via R-door-11's injectable resolver) or
 reset/advance the rate-limit store between cases that are not themselves
 testing R-door-9.
 
+**Test-design note, recorded not required (review round 2, A5 residual):** a
+warm-authed door open — `gogo://e2e-session` opened while the app already
+has a live session, rather than from a cold, signed-out start — is not a
+supported lane path; every default Maestro flow (§5.1) begins from
+`clearState`/a signed-out simulator, so T4's `AuthGate` redirect handling is
+not required to special-case a warm-authed open, and no test is required to
+cover it.
+
 ---
 
 ## 3. Threat model + the gates
