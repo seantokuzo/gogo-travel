@@ -261,3 +261,61 @@ describe("server rejection (R-door-3): a 401 never applies a session", () => {
     });
   });
 });
+
+describe("overlapping opens (review round 1 A4): only the LATEST invocation may apply a session", () => {
+  it("two openLinks with different user_keys, the FIRST resolving LAST, still leave the store on the SECOND (latest) user", async () => {
+    // Falsification: remove the `cancelled` guard around `applySignIn` in
+    // the route (leave it only around the final `setState`) -> RED (the
+    // store would end on flow-1, the loser-by-request-order winner-by-
+    // resolve-order, instead of flow-2).
+    process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
+    process.env.EXPO_PUBLIC_API_URL = LOCAL_API_URL;
+
+    let releaseFirst: (() => void) | undefined;
+    const firstPending = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse((init?.body as string) ?? "{}") as { user_key: string };
+      if (body.user_key === "flow-1") {
+        // Held open until explicitly released, AFTER flow-2 has resolved —
+        // simulates the first request being the slower one.
+        await firstPending;
+        return jsonResponse(200, {
+          ...signInJson(),
+          user: { ...signInJson().user, id: "00000000-0000-4000-8000-00000000f001" },
+        });
+      }
+      return jsonResponse(200, {
+        ...signInJson(),
+        user: { ...signInJson().user, id: "00000000-0000-4000-8000-00000000f002" },
+      });
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    mockSearchParams = { user_key: "flow-1", first_run: "false" };
+    const { rerender } = await renderWithTheme(<E2eSessionRoute />);
+    // flow-1's mint is now in flight (held on `firstPending`). Before it
+    // resolves, a SECOND openLink lands with a different user_key — the
+    // params change, the effect re-runs, the FIRST invocation's cleanup
+    // sets its `cancelled` flag.
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    mockSearchParams = { user_key: "flow-2", first_run: "false" };
+    await rerender(<E2eSessionRoute />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    // flow-2 (the LATEST, active invocation) resolves and applies first.
+    await waitFor(() =>
+      expect(useSessionStore.getState().user?.id).toBe("00000000-0000-4000-8000-00000000f002"),
+    );
+
+    // NOW release flow-1 — the SUPERSEDED invocation resolves last. It must
+    // NOT clobber flow-2's already-applied session.
+    releaseFirst?.();
+    // Drain any microtasks flow-1's continuation schedules.
+    await act(async () => {});
+    await act(async () => {});
+
+    expect(useSessionStore.getState().user?.id).toBe("00000000-0000-4000-8000-00000000f002");
+  });
+});

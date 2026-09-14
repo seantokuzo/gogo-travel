@@ -43,6 +43,16 @@
  * in a screenshot artifact (§4.5). The only params ever read are the two
  * typed below; an extraneous `?secret=...` on the link is never looked at
  * (R-door-7: the secret travels only build-inlined, never over the wire).
+ *
+ * 🔴 ONLY THE LATEST INVOCATION MAY EVER APPLY A SESSION (review round 1
+ * A4). If the params change (a second `openLink` with a different
+ * `user_key` lands before the first one's mint resolves), the effect's
+ * cleanup sets `cancelled = true` for the SUPERSEDED invocation — but a
+ * superseded invocation's `openSessionDoor` call keeps running regardless
+ * (nothing aborts an in-flight `fetch`), so `cancelled` MUST also guard the
+ * `applySignIn` call, not just the final `setState`. Otherwise whichever of
+ * the two mints happens to resolve LAST wins the store, regardless of which
+ * `openLink` was actually the later (intended) one.
  */
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
@@ -89,7 +99,13 @@ export default function E2eSessionRoute() {
           api: apiClient,
           apiBase,
           resetLocalSession: () => useSessionStore.getState().resetLocalSession(),
-          applySignIn: (response) => useSessionStore.getState().applySignIn(response),
+          // Guarded by `cancelled` (review round 1 A4): a superseded
+          // invocation (params changed before this one's mint resolved)
+          // must never apply its session — only the CURRENT invocation may.
+          applySignIn: (response) => {
+            if (cancelled) return Promise.resolve();
+            return useSessionStore.getState().applySignIn(response);
+          },
         },
       );
       if (cancelled) return;

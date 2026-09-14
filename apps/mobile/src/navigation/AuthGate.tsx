@@ -100,32 +100,43 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setRouteReadSettled(true);
       return;
     }
+    // Read the session store FRESH here rather than close over this render's
+    // `authed`/`firstRun`/`resetting` (S-4 T4 R1 A5 — "warm-authed start"):
+    // React fires a newly-mounted child's effects BEFORE this ancestor
+    // effect in the SAME commit, so a route that synchronously clears the
+    // session store from its own mount effect (e.g. the E2E session door's
+    // `resetLocalSession`, awaited from `(auth)/e2e-session`) has ALREADY
+    // landed that write by the time this runs — but the `authed` etc.
+    // closure values above were captured at RENDER time, before that write,
+    // and would otherwise still say "authed". Reading live avoids `resume`
+    // firing on stale pre-reset state and yanking the door route out of
+    // `(auth)` before its reset+mint sequence gets to apply the new session.
+    const live = useSessionStore.getState();
     const action = resolveGate({
       hydrated,
-      authed,
-      firstRun,
-      resetting,
+      authed: live.user !== null,
+      firstRun: live.firstRun,
+      resetting: live.resetting,
       inAuthGroup,
       onOnboarding,
       pathname,
     });
-    const store = useSessionStore.getState();
     switch (action.type) {
       case "sign-in":
-        if (action.stash) store.stashDestination(action.stash);
+        if (action.stash) live.stashDestination(action.stash);
         router.replace("/(auth)/sign-in");
         break;
       case "onboarding":
         router.replace("/(auth)/onboarding");
         break;
       case "resume": {
-        const dest = store.consumeDestination();
+        const dest = live.consumeDestination();
         router.replace((dest as Href | null) ?? "/");
         break;
       }
       case "render":
         // Landed back on sign-in after a sign-out reset — release the guard.
-        if (inAuthGroup && !authed && resetting) {
+        if (inAuthGroup && live.user === null && live.resetting) {
           useSessionStore.setState({ resetting: false });
         }
         break;
