@@ -25,7 +25,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### SESSION 2026-09-13 — B-7 ruled + building, B-28, S-4 wave 2 contract merged, spec-pass round 2, feature-batch spec
+### SESSION 2026-09-13/14 — B-7 CLOSED, B-28 done, S-4 door server+mobile merged, teardown fix, spec-pass round 2, feature-batch spec
 
 Sean (director of product) ruled several parked spec questions in-session;
 PR #72 (S-4 wave 2 session-door contract) merged.
@@ -70,6 +70,93 @@ fixed by Sean at the host level.
 search-name question, B-27 device confirmation; removes
 `.claude/agent-memory/` and `chore/doctor-cleanup-review-loop` (merged PR
 #65, 2026-09-09).
+
+#### 2026-09-14 continuation — 8 more PRs merged (B-7 CLOSED, B-28 done, S-4 T3+T4 door merged, teardown fix)
+
+Ten PRs closed out the 2026-09-13/14 session in total: #72 (S-4 wave-2
+contract, covered above) and #76 (`chore/queue-sync-2026-09-13`, the first
+docs-sync pass), plus eight more merged 2026-09-13/14:
+
+- **#67 `b0e264b`** (B-26 booking-form UX) — scrollable zone picker in a
+  PickerCard modal, required markers derived from shared Zod, real save
+  errors mapped to fields, scroll-to-banner. Two review rounds; a round-1
+  regression (keyboard avoider swallowed scrim taps) caught by the
+  fix-verifier, fixed with `pointerEvents="box-none"`. Closes half of B-8's
+  SECONDARY; the shared-schema ordering half stays deferred (R-shared-7).
+  Accepted residual: a landscape-small window + open keyboard leaves the
+  list tail under the keyboard. Device pass still owed (jest can't
+  hit-test). A pre-existing `GridSurface.test.tsx` act-warning contention
+  flake was seen once (new P3 QUEUE row).
+- **#73 `51decf1`** (B-7 part 2, inline custom destination) — same-name race
+  guard on `selectedPlace`, search-cache invalidation with a prod-staleTime
+  pin.
+- **#75 `a5e8a98`** (B-7 part 1, destination tier) — Overture
+  `divisions`/`locality` release `2026-08-19.0`, cut `population ≥ 100k OR
+sovereign capital`, 6,927 rows, migration 0004, capital arm via
+  `capital_of_divisions subtype='country'` (Vatican absent — not an Overture
+  locality). Two rounds + a NUL-byte guard fix; the round-1 fix introduced a
+  test that imported the generator script's top-level I/O (live S3 + rewrite
+  of committed JSON during `pnpm test`) — caught by the fix-verifier, fixed
+  with a pure module + main-guarded CLI. **Landmine:** scripts with
+  top-level I/O must never be imported by tests; 4 other
+  `apps/server/scripts/*` files still have top-level I/O (new P3 QUEUE row).
+- **#80 `e273e56`** (B-7 part 3, incl. #81 `578745a` merged into its branch)
+  — nullable coords for custom places + trips (Option A), migration 0005.
+  **B-7 is now CLOSED** (all three parts), pending Sean's device
+  confirmation. Its adversarial review lane ran against a superseded head
+  and its output was discarded by the judge; its PR body's S4/S5 matrix cell
+  mislabels the `<`→`<=` mutation probe as a "fix" (it was the probe, not a
+  fix).
+- **#74 `40e23a3`** (B-28 migration-state check) — drift detection by set
+  difference, `/health` wiring (`pendingCount`, `checkedAt`, dev-only tag
+  names, 30s single-flight refresh), diagnostics leg, real subprocess arm
+  for the dev refuse. Two rounds (round-1 watermark bug reproduced on real
+  PG; round-2 edited-after-apply + unbounded `/health` regressions).
+  **B-28 done.**
+- **#78 `d53d69d`** (`chore/pg-teardown-timeout`) — bounded/tolerant
+  `drop()` (12s `statement_timeout`, discriminating tolerance:
+  57014/CONNECTION_*/ECONNREFUSED/ECONNRESET only), vitest `hookTimeout`
+  30s; induced-load repro 9/8/10 → 0/0/0.
+- **#79 `b6b6a39`** (S-4 T3, server session door) — positive opt-in env
+  gate, IP-literal peer gate first, 4 KiB body cap, constant work on every
+  rejection, byte-identical 401s (headers too), fixture-cleanup CLI,
+  trip-delete core extracted from the route. One round; recovered from a
+  masked-merge-failure incident (see landmines below) by restoring the
+  branch from its SHA.
+- **#77 `4025dc1`** (S-4 T4, mobile session door) — `gogo://e2e-session`
+  route, triple client gate (secret ≥32 inlined, private API base, installed
+  bundle id `.e2edoor`), prebuild-based `ios:door`/`ios:doorfree` scripts,
+  reset-before-mint pinned. Two rounds; an AuthGate change was REVERTED at
+  the orchestrator's decision (unfalsifiable auth-routing change — Autonomy
+  #4). **S-4 T3+T4 done; T5 (`S-4/session-door-flows`) now in progress** —
+  `--variant` lane defaults, evidence copy, flows 5–10 +
+  `session-door-absent`; the reference-search E2E row rides it.
+
+**New landmines (don't re-walk):**
+
+1. **Masked merge failure** — `gh pr merge … | tail && … git push --delete`
+   deleted a branch after a conflicting merge because the pipe hid the exit
+   code; recovered via `git branch <b> <sha> && git push && gh pr reopen`.
+   Rule: check MERGEABLE/CLEAN first, never pipe the merge, delete the
+   branch in a separate step gated on state MERGED.
+2. **Worktree-isolated agents cannot write into the main repo's `.tmp/`** —
+   records come back in reports instead.
+3. **Fresh-worktree `FULL TURBO` false cache hits** persist as a pattern —
+   quote `--force` numbers only (restates the 09-13 daytime finding above).
+4. **`expo run:ios` skips prebuild when `apps/mobile/ios/` exists** —
+   bundle-id changes in `app.config.ts` need `expo prebuild` (the
+   `ios:door`/`ios:doorfree` scripts do it).
+5. **Test files importing a script with top-level I/O ran live network and
+   rewrote committed data during `pnpm test`** (see #75 above).
+
+**QUEUE sync:** B-7 and B-28 Active rows flipped `done`; the ID-less
+migration-state row and the shared-PG-container teardown row both flipped
+`done`; 5 new Recently-done narrative rows added (B-26, B-7, B-28,
+PG-teardown, S-4 T3+T4); 8 new P3 follow-up Active rows filed (B-28
+follow-ups, PG-teardown follow-ups, `apps/server/scripts/*` top-level-I/O
+landmine, B-26 residuals, S-4 mobile-door overlapping-opens flake, B-7/#80
+deferred follow-ups, `trips.destination_place_id` parked/deferred, B-7/#75
+spec gaps).
 
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
@@ -850,6 +937,12 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 - **B-27 device confirmation still owed:** the doubled top safe-area inset
   fix shipped via PR #68 (`098b3e5`) but has not been confirmed on Sean's
   device.
+- **Device confirmation newly owed (2026-09-13/14 merges):** B-26 (#67,
+  booking-form UX); B-7 parts 1–3 (CLOSED — bootstrap tier + inline custom
+  destination + nullable coords); B-28 (migration-state check). None yet
+  run on Sean's device.
+- **S-4 T5 PR** — session-door flows 5–10 (branch
+  `S-4/session-door-flows`), in progress; will need review once opened.
 - **Device QA still owed:** the F-0xx ledger flips, and the P-9
   spec-pass batch (43+ interpretations) plus the other Sean-gated spec
   decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
