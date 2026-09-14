@@ -16,6 +16,8 @@ export {
   explainApiBaseUrl,
   googleClientIds,
   isGoogleConfigured,
+  isLocalOrPrivateHost,
+  hostOf,
   DEV_SERVER_PORT,
 } from "./config";
 export type { ApiBaseUrlResolution, ApiBaseUrlSource } from "./config";

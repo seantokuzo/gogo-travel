@@ -68,6 +68,23 @@ export interface SessionState {
   completeOnboarding(): void;
   /** Local sign-out reset (R-nav-4): clear identity, token, and stashes. */
   signOut(): Promise<void>;
+  /**
+   * Client-local-only reset (session-door spec R-door-8): the SAME local
+   * clearing `signOut()` performs (identity, secure-store refresh token,
+   * query cache, tab/trip memory, money-segment memory, deeplink-return and
+   * settle-return records, last-zone map via `onSignedOut`) but with NO
+   * server call, ever — unlike `signOut()`, this never fires the
+   * best-effort `/auth/logout` POST. The E2E session door calls this (never
+   * `signOut()`) for LATENCY, not reachability — `signOut()` already
+   * swallows the logout call's failure in its best-effort try/catch below,
+   * so it never depended on the server being reachable; what it DOES do is
+   * AWAIT that POST, capped at the client's 12s request timeout, so a door
+   * run through `signOut()` on an offline/black-holed rig would stall up to
+   * 12s before ever minting. The old session needing server-side revocation
+   * is not this step's job either way — the door is about to mint a
+   * brand-new session immediately after.
+   */
+  resetLocalSession(): Promise<void>;
   /** Remember the intended destination while redirecting to sign-in (R-nav-1). */
   stashDestination(path: string): void;
   /** Read + clear the stashed destination (R-nav-2). */
@@ -90,76 +107,16 @@ export interface SessionDeps {
 /** The store initializer — shared by the singleton and the test factory. */
 export const createSessionSlice =
   (deps: SessionDeps): StateCreator<SessionState> =>
-  (set, get) => ({
-    hydrated: false,
-    user: null,
-    accessToken: null,
-    firstRun: false,
-    pendingDestination: null,
-    resetting: false,
-
-    async hydrate() {
-      if (get().hydrated) return;
-      const refreshToken = await deps.storage.getRefreshToken();
-      if (!refreshToken) {
-        set({ hydrated: true, user: null, accessToken: null });
-        return;
-      }
-      try {
-        const tokens = await deps.api.request(authEndpoints.refresh, {
-          body: { refresh_token: refreshToken },
-        });
-        await deps.storage.setRefreshToken(tokens.refresh_token);
-        set({ accessToken: tokens.access_token });
-        const user = await deps.api.request(userEndpoints.getMe, {});
-        set({ hydrated: true, user, firstRun: false, resetting: false });
-      } catch (err) {
-        if (err instanceof ApiRequestError && err.status === 401) {
-          // Expired / revoked — the token is dead, drop it.
-          await deps.storage.clearRefreshToken();
-        }
-        // Network/transient failures keep the token for a later recovery.
-        set({ hydrated: true, user: null, accessToken: null });
-      }
-    },
-
-    async applySignIn(response) {
-      await deps.storage.setRefreshToken(response.tokens.refresh_token);
-      set({
-        hydrated: true,
-        user: response.user,
-        accessToken: response.tokens.access_token,
-        firstRun: response.is_new_user,
-        resetting: false,
-      });
-    },
-
-    async applyRefreshedTokens(tokens) {
-      // Persist the rotated refresh token BEFORE resolving: the ApiClient
-      // single-flight awaits this bridge, then clears `refreshInFlight`. If the
-      // write is fire-and-forget, a later 401 can re-enter refresh and read the
-      // PRE-rotation token from secure store → server reuse-detection nukes the
-      // family (R-auth-11) → forced logout. Await closes that ordering hole.
-      await deps.storage.setRefreshToken(tokens.refresh_token);
-      set({ accessToken: tokens.access_token });
-    },
-
-    completeOnboarding() {
-      set({ firstRun: false });
-    },
-
-    async signOut() {
-      // Logout-first (auth-users spec §3.6.1): best-effort server-side session
-      // revocation while the access token is still valid, THEN clear locally.
-      // Swallow any failure — a dead/offline session must never block the local
-      // sign-out (R-nav-4). Skipped when there's no token (nothing to revoke).
-      if (get().accessToken !== null) {
-        try {
-          await deps.api.request(authEndpoints.logout, { body: {} });
-        } catch {
-          // best-effort: ignore an already-revoked session or a network failure
-        }
-      }
+  (set, get) => {
+    /**
+     * The LOCAL half of a sign-out: identity + token cleared, refresh token
+     * wiped from secure storage, then the `onSignedOut` seam (query cache,
+     * tab/trip memory, money-segment memory, deeplink-return/settle-return
+     * records, last-zone map — navigation.spec §2.2 / R-nav-4). Shared by
+     * `signOut()` (which additionally attempts the best-effort server
+     * logout FIRST) and `resetLocalSession()` (which never does).
+     */
+    async function clearLocalSessionState(): Promise<void> {
       set({
         user: null,
         accessToken: null,
@@ -171,18 +128,98 @@ export const createSessionSlice =
       // Drop all cached server state so the next account never sees this one's
       // profile/sessions/entitlements (navigation.spec §2.2).
       deps.onSignedOut?.();
-    },
+    }
 
-    stashDestination(path) {
-      set({ pendingDestination: path });
-    },
+    return {
+      hydrated: false,
+      user: null,
+      accessToken: null,
+      firstRun: false,
+      pendingDestination: null,
+      resetting: false,
 
-    consumeDestination() {
-      const dest = get().pendingDestination;
-      if (dest !== null) set({ pendingDestination: null });
-      return dest;
-    },
-  });
+      async hydrate() {
+        if (get().hydrated) return;
+        const refreshToken = await deps.storage.getRefreshToken();
+        if (!refreshToken) {
+          set({ hydrated: true, user: null, accessToken: null });
+          return;
+        }
+        try {
+          const tokens = await deps.api.request(authEndpoints.refresh, {
+            body: { refresh_token: refreshToken },
+          });
+          await deps.storage.setRefreshToken(tokens.refresh_token);
+          set({ accessToken: tokens.access_token });
+          const user = await deps.api.request(userEndpoints.getMe, {});
+          set({ hydrated: true, user, firstRun: false, resetting: false });
+        } catch (err) {
+          if (err instanceof ApiRequestError && err.status === 401) {
+            // Expired / revoked — the token is dead, drop it.
+            await deps.storage.clearRefreshToken();
+          }
+          // Network/transient failures keep the token for a later recovery.
+          set({ hydrated: true, user: null, accessToken: null });
+        }
+      },
+
+      async applySignIn(response) {
+        await deps.storage.setRefreshToken(response.tokens.refresh_token);
+        set({
+          hydrated: true,
+          user: response.user,
+          accessToken: response.tokens.access_token,
+          firstRun: response.is_new_user,
+          resetting: false,
+        });
+      },
+
+      async applyRefreshedTokens(tokens) {
+        // Persist the rotated refresh token BEFORE resolving: the ApiClient
+        // single-flight awaits this bridge, then clears `refreshInFlight`. If the
+        // write is fire-and-forget, a later 401 can re-enter refresh and read the
+        // PRE-rotation token from secure store → server reuse-detection nukes the
+        // family (R-auth-11) → forced logout. Await closes that ordering hole.
+        await deps.storage.setRefreshToken(tokens.refresh_token);
+        set({ accessToken: tokens.access_token });
+      },
+
+      completeOnboarding() {
+        set({ firstRun: false });
+      },
+
+      async signOut() {
+        // Logout-first (auth-users spec §3.6.1): best-effort server-side session
+        // revocation while the access token is still valid, THEN clear locally.
+        // Swallow any failure — a dead/offline session must never block the local
+        // sign-out (R-nav-4). Skipped when there's no token (nothing to revoke).
+        if (get().accessToken !== null) {
+          try {
+            await deps.api.request(authEndpoints.logout, { body: {} });
+          } catch {
+            // best-effort: ignore an already-revoked session or a network failure
+          }
+        }
+        await clearLocalSessionState();
+      },
+
+      async resetLocalSession() {
+        // NEVER a server call (session-door spec R-door-8) — see the interface
+        // doc comment. `deps.api` is not read here at all.
+        await clearLocalSessionState();
+      },
+
+      stashDestination(path) {
+        set({ pendingDestination: path });
+      },
+
+      consumeDestination() {
+        const dest = get().pendingDestination;
+        if (dest !== null) set({ pendingDestination: null });
+        return dest;
+      },
+    };
+  };
 
 /**
  * Wired singletons. The API client and store form a cycle (client needs the

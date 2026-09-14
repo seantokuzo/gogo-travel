@@ -13,6 +13,7 @@
     "@tanstack/react-query": "^5.101.4",
     "expo": "~57.0.13",
     "expo-apple-authentication": "~57.0.1",
+    "expo-application": "~57.0.3",
     "expo-auth-session": "~57.0.5",
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.6",
@@ -64,12 +65,14 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint src jest.setup.js",
+    "lint": "expo lint src jest.setup.js app.config.ts app.config.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
     "e2e": "bash ../../scripts/e2e.sh",
-    "build": "expo export --platform ios --output-dir dist"
+    "build": "expo export --platform ios --output-dir dist",
+    "ios:door": "node -e \"const s=process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;if(!s||s.length<32){console.error('EXPO_PUBLIC_E2E_DOOR_SECRET must be set to >=32 chars for a door build (ios:door)');process.exit(1)}\" && expo prebuild --platform ios && expo run:ios --configuration Release",
+    "ios:doorfree": "unset EXPO_PUBLIC_E2E_DOOR_SECRET; expo prebuild --platform ios && expo run:ios --configuration Release"
   },
   "jest": {
     "preset": "jest-expo",

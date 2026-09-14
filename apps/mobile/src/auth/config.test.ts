@@ -15,7 +15,7 @@
 import Constants from "expo-constants";
 import { NativeModules } from "react-native";
 
-import { assertSecureBaseUrl, resolveApiBaseUrl } from "./config";
+import { assertSecureBaseUrl, hostOf, isLocalOrPrivateHost, resolveApiBaseUrl } from "./config";
 
 describe("assertSecureBaseUrl", () => {
   it("allows any https URL (prod transport)", () => {
@@ -198,5 +198,64 @@ describe("resolveApiBaseUrl", () => {
       setScriptUrl("http://192.168.1.69:8081/index.bundle?platform=ios&dev=true");
       expect(resolveApiBaseUrl()).toBe("http://192.168.1.69:3000/api");
     });
+  });
+});
+
+// Exported (session-door spec R-door-7): the e2e-door client gate imports
+// this SAME predicate rather than duplicating the host list — these pins
+// double as the door's own gate coverage.
+describe("isLocalOrPrivateHost (session-door spec R-door-7)", () => {
+  it.each([
+    ["localhost", true],
+    ["127.0.0.1", true],
+    ["::1", true],
+    ["0.0.0.0", true],
+    ["macbook.local", true],
+    ["10.0.0.5", true],
+    ["192.168.1.50", true],
+    ["172.16.5.5", true],
+    ["172.31.255.255", true],
+    // boundary: 172.15/172.32 are OUTSIDE the 172.16.0.0/12 RFC-1918 block.
+    ["172.15.0.1", false],
+    ["172.32.0.1", false],
+    ["api.gogotravel.example", false],
+    ["8.8.8.8", false],
+    ["evil.com", false],
+    // Review round 1 security A1: a DNS label merely STARTING WITH a
+    // private-range prefix must never impersonate a real IP literal — only
+    // a bare, complete dotted-quad in the range matches. Falsification:
+    // revert the anchored regexes to bare `/^10\./`-style prefix matches ->
+    // these go RED (true instead of false).
+    ["10.metrics.example", false],
+    ["192.168.evil.example", false],
+    ["172.16.evil.example", false],
+    ["10.0.0.5.evil.example", false],
+  ])("%s -> %s", (host, expected) => {
+    expect(isLocalOrPrivateHost(host)).toBe(expected);
+  });
+});
+
+describe("hostOf", () => {
+  it("extracts the bare host from a base URL, port and path stripped", () => {
+    expect(hostOf("http://localhost:3000/api")).toBe("localhost");
+    expect(hostOf("https://api.gogotravel.example/api")).toBe("api.gogotravel.example");
+    expect(hostOf("http://192.168.1.50:3000/api")).toBe("192.168.1.50");
+  });
+
+  it('rejects userinfo — a `user@host` or `host@host` authority resolves to "", never the pre-`@` text (review round 1 security A1)', () => {
+    // Falsification: drop the `authority.includes("@")` guard -> these go
+    // RED (the pre-`@` segment would be returned instead of "").
+    expect(hostOf("http://192.168.1.1@evil.example:8081/index.bundle")).toBe("");
+    expect(hostOf("http://10.0.0.5@collector.example/api")).toBe("");
+    expect(hostOf("http://user:pass@evil.example/api")).toBe("");
+  });
+
+  it("the userinfo rejection makes the door gate fail-closed on the exact adversarial URLs security A1 named", () => {
+    // http://10.0.0.5@collector.example/api and a DNS label merely starting
+    // with "10." must both be rejected — reaching `isLocalOrPrivateHost`
+    // with the REAL host (collector.example / 10.metrics.example), never the
+    // spoofed pre-`@` text.
+    expect(isLocalOrPrivateHost(hostOf("http://10.0.0.5@collector.example/api"))).toBe(false);
+    expect(isLocalOrPrivateHost(hostOf("http://10.metrics.example/api"))).toBe(false);
   });
 });
