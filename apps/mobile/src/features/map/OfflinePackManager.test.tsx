@@ -118,6 +118,50 @@ it("UNUSABLE destination coords (the world degrade arm): renders degraded — no
   expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
 });
 
+// B-7 part 3 (R-map-18/26): the REAL live signal for this degrade arm —
+// a coordinate-less custom destination, not just a defensive NaN case.
+// Falsification: revert `isUsableDestination`'s widened null-check and this
+// throws inside `packRegionKeyFor` → `regionCellsForDestination`.
+it("NULL destination coords (coordinate-less custom place): no download/refresh/retry controls, explanation shown", async () => {
+  const coordless = {
+    ...makeActiveTrip(TEST_TRIP_ID),
+    destination_lat: null,
+    destination_lng: null,
+  };
+  await renderManager(coordless);
+  await settle();
+
+  expect(screen.getByTestId("offline-pack-status")).toHaveTextContent("Not downloaded");
+  expect(screen.getByTestId("offline-pack-notice-no-location")).toHaveTextContent(
+    "Offline maps need a destination with a location. Change the destination in trip settings.",
+  );
+  expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
+  expect(screen.queryByTestId("offline-pack-button-refresh")).toBeNull();
+  expect(screen.queryByTestId("offline-pack-button-retry")).toBeNull();
+  expect(screen.queryByTestId("offline-pack-button-delete")).toBeNull();
+});
+
+// Round-1 architecture fix: pins the SAME boundary input as
+// `offline-pack-controller.test.ts`'s "out-of-range (non-null) coords"
+// sibling test — both consumers now route through the ONE
+// `usableDestinationCoords` helper. Mutation: revert either consumer to a
+// bare `lat === null || lng === null` check (dropping the range bound) and
+// ONLY that consumer starts treating this pair as usable, so this test (or
+// its controller sibling) goes RED while the other stays green.
+it("out-of-range (non-null) coords: same degrade as NULL — no download affordance, no crash", async () => {
+  const outOfRange = {
+    ...makeActiveTrip(TEST_TRIP_ID),
+    destination_lat: 91,
+    destination_lng: 0,
+  };
+  await renderManager(outOfRange);
+  await settle();
+
+  expect(screen.getByTestId("offline-pack-status")).toHaveTextContent("Not downloaded");
+  expect(screen.getByTestId("offline-pack-notice-no-location")).toBeOnTheScreen();
+  expect(screen.queryByTestId("offline-pack-button-download")).toBeNull();
+});
+
 it("R-map-22 proactive degrade: the derived offline signal renders the notice with no press", async () => {
   // Seeded via cache.build + setState with gcTime: Infinity — under the
   // test client's default gcTime: 0 an unobserved query is GC'd one

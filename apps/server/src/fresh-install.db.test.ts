@@ -323,6 +323,14 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
   });
 
   it("[B-7] a coordinate-less trip create is STILL rejected with a clean 400 — the fix is a data tier, not a schema relax", async () => {
+    // B-7 PART 3 NOTE (survives unmodified): this body OMITS the
+    // destination_lat/destination_lng KEYS entirely (not `null` values).
+    // Part 3 made the columns nullable but kept `TripCreateSchema`'s
+    // destination_lat/lng keys REQUIRED (`LatSchema.nullable()`, not
+    // `.nullable().optional()`) precisely so this pin — and the one below —
+    // stay green untouched: "no coordinates" must be said explicitly via
+    // `null`, never by omitting the key. See B-7 part 3 spec §2.1.
+    //
     // Companion to the escape pin below (its ruling-A arm): the pin below
     // passes on ANY throw for that arm, so without this pin a 500-class
     // regression on the coordinate-less create path would hide inside the
@@ -345,6 +353,22 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
   });
 
   it("[B-7] FLIPPED: a first user can escape the cold-start deadlock: text-only search self-seeds (ruling B) OR text-only trip create is accepted (ruling A)", async () => {
+    // B-7 PART 3 NOTE (survives unmodified): same key-omission shape as the
+    // pin above — arm A's create body below still omits destination_lat/lng
+    // entirely, so it still 400s (arm A stays false; arm B carries the fix).
+    // Falsification (round-1 fix — the "both pins go RED" claim was
+    // FALSE, verified empirically): swapping either TripCreateSchema
+    // coordinate field to `.optional()` reds ONLY the pin above (it reads
+    // "expect 400" literally, and the swap turns the omitted-key create
+    // into a 500 — `String(undefined)` on a numeric column — never a 400).
+    // THIS pin stays GREEN under that same swap: `armA` here is defined as
+    // `create.status === 201`, and a 500 makes `armA` false exactly like a
+    // 400 does, so the assertion `expect(armA).toBe(false)` can't tell the
+    // two failure modes apart. This pin's OWN falsification is genuinely
+    // ruling-A being (re)adopted — flip the create handler to accept and
+    // persist an omitted-key destination (a real schema/route change, not a
+    // one-field swap) and `armA` goes true, reding `expect(armA).toBe(false)`.
+    //
     // R-test-8 pin, ruling-independent by disjunction. B-7 shipped
     // ruling (b) from the options brief — a bootstrap destination tier
     // (migration 0004) — which makes arm B true: the q-only search below

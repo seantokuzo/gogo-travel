@@ -53,6 +53,11 @@ export interface UpsertBatchResult {
  * Candidates that already exist under their OWN `(source, source_id)` are
  * NOT dupes — they're ours; skipping them would strand stale rows (upsert
  * refreshes them instead; deletion is forbidden either way, R-places-2).
+ *
+ * B-7 part 3: `p.lat`/`p.lng` in the box join below can never be NULL —
+ * every candidate `p` here is a HIGHER-priority spine row (`source in
+ * (overture, fsq_os, ...)`), and `places_spine_coords_ck` forbids a NULL
+ * coordinate on any non-`custom` row. No null-arm needed.
  */
 export function crossSourceDuplicateQuery(
   db: DbClient,

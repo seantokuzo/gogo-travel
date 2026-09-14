@@ -361,6 +361,317 @@ it("destination edit rides the CT-2 structured search: pick required, all three 
   );
 });
 
+it("round-1 A3: the destination input caps at 200 chars, mirroring new.tsx's maxLength parity fix", async () => {
+  const trip = makePlanningTrip(TEST_TRIP_ID);
+  const client = seededClient(trip);
+  spyRequest();
+  await renderSettings(trip, client);
+  expect(screen.getByTestId("trip-settings-input-destination").props.maxLength).toBe(200);
+  // Mutation-verify: delete the `maxLength={200}` prop off the destination
+  // Input in settings.tsx and this assertion goes RED.
+});
+
+describe("B-7 part 3 — coordinate-less destination remediation (R-tripui-24)", () => {
+  const NOWHEREVILLE = makePlace({
+    id: "77777777-7777-4777-8777-777777777777",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    lat: null,
+    lng: null,
+    category: null,
+    created_by: TEST_USER.id,
+  });
+
+  it("zero-result search offers the ported custom row; tapping it creates+selects a coordinate-less place, and Save PATCHes NULL coordinates", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        return Promise.resolve(NOWHEREVILLE);
+      }
+      if (descriptor.method === "PATCH") {
+        return Promise.resolve({
+          ...trip,
+          destination_name: NOWHEREVILLE.name,
+          destination_lat: null,
+          destination_lng: null,
+          updated_at: "2026-07-21T00:00:00.000Z",
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Nowhereville",
+    );
+    const row = await screen.findByTestId("trip-settings-list-item-custom");
+    expect(row).toHaveTextContent('Use "Nowhereville" as a custom destination');
+    await fireEvent.press(row);
+    await drainNotify();
+
+    // POST body: exactly {name} — B-7 part 3, no lat/lng at all.
+    const createCall = request.mock.calls.find(
+      ([d]) =>
+        (d as { method: string; path: string }).method === "POST" &&
+        (d as { path: string }).path === "/places",
+    );
+    expect((createCall?.[1] as { body: unknown }).body).toEqual({ name: "Nowhereville" });
+
+    // Selected exactly like an existing-result pick.
+    expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe("Nowhereville");
+    expect(screen.queryByTestId("trip-settings-list-item-custom")).toBeNull();
+
+    await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+    await drainNotify();
+
+    await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
+    // Falsification: a naive `?? 0` fallback anywhere on this path would
+    // still satisfy a loose equality check — pin the literal nulls.
+    expect(patchBodies(request)[0]).toEqual({
+      destination_name: "Nowhereville",
+      destination_lat: null,
+      destination_lng: null,
+      expect_updated_at: trip.updated_at,
+    });
+  });
+
+  it("picking a SPINE city from a coordinate-less trip PATCHes real coordinates — the heal", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_name: "Nowhereville",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    const client = seededClient(trip);
+    const kyoto = makePlace({ name: "Kyoto, Japan", lat: 35.0116, lng: 135.7681 });
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [kyoto], nextCursor: null });
+      }
+      if (descriptor.method === "PATCH") {
+        return Promise.resolve({
+          ...trip,
+          destination_name: kyoto.name,
+          destination_lat: kyoto.lat,
+          destination_lng: kyoto.lng,
+          updated_at: "2026-07-21T00:00:00.000Z",
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    // R-tripui-24 standing notice, visible before any edit.
+    expect(screen.getByTestId("trip-settings-notice-no-location")).toBeOnTheScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-settings-input-destination"), "Kyoto");
+    await fireEvent.press(
+      await screen.findByTestId(`trip-settings-list-item-destination-${kyoto.id}`),
+    );
+
+    // The EFFECTIVE destination now has real coordinates — the notice hides
+    // BEFORE Save (it's about to heal).
+    expect(screen.queryByTestId("trip-settings-notice-no-location")).toBeNull();
+
+    await fireEvent.press(screen.getByTestId("trip-settings-button-save"));
+    await drainNotify();
+
+    await waitFor(() => expect(patchBodies(request)).toHaveLength(1));
+    expect(patchBodies(request)[0]).toEqual({
+      destination_name: kyoto.name,
+      destination_lat: kyoto.lat,
+      destination_lng: kyoto.lng,
+      expect_updated_at: trip.updated_at,
+    });
+  });
+
+  it("picking ANOTHER coordinate-less custom place from a coordinate-less trip keeps the notice — a legitimate end state", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_name: "Nowhereville",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    const client = seededClient(trip);
+    const elsewhere = makePlace({
+      id: "77777777-7777-4777-8777-777777777778",
+      source: "custom",
+      source_id: null,
+      name: "Elsewhereville",
+      lat: null,
+      lng: null,
+    });
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search")
+        return Promise.resolve({ items: [], nextCursor: null });
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        return Promise.resolve(elsewhere);
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Elsewhereville",
+    );
+    await fireEvent.press(await screen.findByTestId("trip-settings-list-item-custom"));
+    await drainNotify();
+
+    // Still coordinate-less by construction — the notice stays up.
+    expect(screen.getByTestId("trip-settings-notice-no-location")).toBeOnTheScreen();
+  });
+
+  it("round-1 A2: a genuinely held create shows the busy row — a double tap fires ONE create, never two", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    const resolvers: ((value: unknown) => void)[] = [];
+    let posts = 0;
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        posts += 1;
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+        });
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Nowhereville",
+    );
+    const row = await screen.findByTestId("trip-settings-list-item-custom");
+
+    try {
+      await fireEvent.press(row);
+      // Spinner testID present while genuinely in flight (not an
+      // already-settled promise — mobile.md's vacuous-pin taxonomy).
+      expect(await screen.findByTestId("trip-settings-list-item-custom-spinner")).toBeOnTheScreen();
+      expect(posts).toBe(1);
+
+      // The busy row replaces the pressable one structurally (no `onPress`
+      // to invoke) — a second physical tap has nothing to press.
+      const busyRow = screen.getByTestId("trip-settings-list-item-custom");
+      await fireEvent.press(busyRow);
+      expect(posts).toBe(1);
+      // Mutation-verify (checked empirically, not assumed — Law #7): this
+      // screen has TWO independent double-submit defenses — the render swap
+      // at :583-596 (no `onPress` reaches a pending row) and the handler's
+      // own `if (createCustomDestination.isPending) return;` guard at :306.
+      // A black-box press-driven test like this one is dominated by the
+      // FIRST: breaking the render swap (forcing the pressable branch to
+      // keep rendering while pending) turns this RED — confirmed. Dropping
+      // ONLY the :306 handler guard does NOT turn it red on its own, because
+      // no press ever reaches the handler a second time while the render
+      // swap is intact; that guard is real defense-in-depth (the busy row
+      // rebuilding via `results` or a fast re-render racing the swap is the
+      // scenario it actually covers) but isn't independently reachable from
+      // this UI-level pin.
+    } finally {
+      // Release + its follow-on notify batch INSIDE one act window (T-7.9
+      // rule) — releasing bare risks the settle landing un-act'd in a later
+      // findBy/waitFor poll (the B-2 floating-act class, mobile.md).
+      await act(async () => {
+        for (const release of resolvers) release(NOWHEREVILLE);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    await waitFor(() =>
+      expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe(
+        "Nowhereville",
+      ),
+    );
+    expect(posts).toBe(1);
+  });
+
+  it("a custom-create failure (400) surfaces inline and preserves the typed text (R-tripui-23 parity)", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        return Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "bad"));
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Nowhereville",
+    );
+    const row = await screen.findByTestId("trip-settings-list-item-custom");
+    await fireEvent.press(row);
+    await drainNotify();
+
+    expect(await screen.findByTestId("trip-settings-error-create-destination")).toHaveTextContent(
+      /That destination name isn't valid — try editing it\./,
+    );
+    // Preserved — no clobber of what the user typed.
+    expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("round-1 A4/architecture: a 409 renders the SAME message as trip-new.tsx — one shared error mapper", async () => {
+    // Cross-screen consistency pin for the round-1 extraction
+    // (createCustomDestinationErrorMessage now lives ONCE in
+    // data/trips-mutations.ts): trip-new-screen.test.tsx's "a 409 surfaces
+    // inline, keeps the typed text, and retry re-creates" pins the SAME
+    // literal text for `new.tsx`. Mutation-verify: change either screen's
+    // call site back to a re-typed local copy with drifted 409 copy and
+    // ONE of the two suites goes RED while the other stays green.
+    const trip = makePlanningTrip(TEST_TRIP_ID);
+    const client = seededClient(trip);
+    const request = spyRequest();
+    request.mockImplementation((descriptor: { method: string; path: string }) => {
+      if (descriptor.path === "/places/search") {
+        return Promise.resolve({ items: [], nextCursor: null });
+      }
+      if (descriptor.method === "POST" && descriptor.path === "/places") {
+        return Promise.reject(new ApiRequestError(409, "CONFLICT", "boom"));
+      }
+      return Promise.reject(new Error(`unexpected ${descriptor.method} ${descriptor.path}`));
+    });
+    await renderSettings(trip, client);
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-settings-input-destination"),
+      "Nowhereville",
+    );
+    const row = await screen.findByTestId("trip-settings-list-item-custom");
+    await fireEvent.press(row);
+    await drainNotify();
+
+    expect(await screen.findByTestId("trip-settings-error-create-destination")).toHaveTextContent(
+      /That change conflicted with another update — try again\./,
+    );
+    expect(screen.getByTestId("trip-settings-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("no standing notice for a trip that already has destination coordinates (regression control)", async () => {
+    const trip = makePlanningTrip(TEST_TRIP_ID); // real coords by default
+    const client = seededClient(trip);
+    spyRequest().mockResolvedValue({ items: [], nextCursor: null });
+    await renderSettings(trip, client);
+    expect(screen.queryByTestId("trip-settings-notice-no-location")).toBeNull();
+  });
+});
+
 it("date edit saves the changed dates and FLIPS the optimistic derived status; order violation blocks", async () => {
   const trip = makePlanningTrip(TEST_TRIP_ID);
   const client = seededClient(trip);

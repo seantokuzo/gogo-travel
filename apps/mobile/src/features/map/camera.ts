@@ -7,11 +7,13 @@
  * only translates a target into one `setCamera` call.
  *
  * §2.1 ladder: fit all visible pins (padded) → no pins: destination point
- * at z12 → no coordinates: world view + EmptyState overlay. The world arm
- * is structurally dormant in prod — `destination_lat/lng` are
- * schema-guaranteed (Gate 2: destination input is structured) — but the
- * function stays total so a malformed row degrades to a world map, never a
- * crash.
+ * at z12 → no coordinates: world view + EmptyState overlay. B-7 part 3
+ * (R-map-26) makes the world arm LIVE in prod, not just a defensive
+ * fallback: a `source='custom'` destination with no coordinates
+ * (`destination_lat/lng: null`) is an honest end state
+ * (`app/[tripId]/map/index.tsx`'s `destination` memo yields `undefined` for
+ * it), and this function stays total either way so a malformed row still
+ * degrades to a world map, never a crash.
  */
 import type { CameraStop } from "@rnmapbox/maps";
 

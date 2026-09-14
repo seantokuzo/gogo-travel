@@ -253,7 +253,7 @@ describe("useCreateCustomDestination (B-7 — empty-results fallback, R-tripui-2
     created_by: "11111111-1111-4111-8111-111111111111",
   });
 
-  it("POSTs exactly {name, lat: 0, lng: 0} trimmed — Law #3: the wire shape has no visibility field to widen", async () => {
+  it("POSTs exactly {name} trimmed, no lat/lng at all (B-7 part 3) — Law #3: the wire shape has no visibility field to widen", async () => {
     const request = spyRequest();
     request.mockResolvedValue(CUSTOM);
     const { result, unmount } = await renderHook(() => useCreateCustomDestination(), {
@@ -266,12 +266,16 @@ describe("useCreateCustomDestination (B-7 — empty-results fallback, R-tripui-2
     });
 
     expect(request).toHaveBeenCalledWith(placeEndpoints.createPlace, {
-      body: { name: "Nowhereville", lat: 0, lng: 0 },
+      body: { name: "Nowhereville" },
     });
-    // Falsifies if a future edit rides `category`/`trip_id`/a visibility
-    // field along: the key set must stay EXACTLY the schema's own shape.
+    // Key-set pin (B-7 part 3): falsifies if a future edit re-adds a fixed
+    // lat/lng placeholder OR rides `category`/`trip_id`/a visibility field
+    // along — the key set must stay EXACTLY `["name"]`. Mutation-verify:
+    // restoring `lat: 0, lng: 0` on the body turns this red.
     const body = (request.mock.calls[0][1] as { body: Record<string, unknown> }).body;
-    expect(Object.keys(body).sort()).toEqual(["lat", "lng", "name"]);
+    expect(Object.keys(body).sort()).toEqual(["name"]);
+    expect(body["lat"]).toBeUndefined();
+    expect(body["lng"]).toBeUndefined();
     expect(returned).toEqual(CUSTOM);
     await unmount();
   });
@@ -318,8 +322,11 @@ describe("useCreateCustomDestination cache invalidation (B-7 review R1 B2, block
     source: "custom",
     source_id: null,
     name: "Nowhereville",
-    lat: 0,
-    lng: 0,
+    // B-7 part 3: a real created custom place carries NO coordinates — the
+    // old (0, 0) placeholder fixture would silently re-mint the exact bug
+    // this task closes.
+    lat: null,
+    lng: null,
     category: null,
     created_by: "11111111-1111-4111-8111-111111111111",
   });

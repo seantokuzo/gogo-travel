@@ -18,7 +18,11 @@ import type { ReactNode } from "react";
 
 import { apiClient } from "@/auth";
 import { queryKeys } from "@/data/query-client";
-import { isSearchableMapQuery, useMapPlaceSearch } from "@/features/map/map-search";
+import {
+  isSearchableMapQuery,
+  mapSearchMinChars,
+  useMapPlaceSearch,
+} from "@/features/map/map-search";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient } from "@/test-utils/render";
 import { makePlace } from "@/test-utils/trip-fixtures";
@@ -42,7 +46,12 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
-describe("isSearchableMapQuery (R-map-25 floor)", () => {
+describe("mapSearchMinChars / isSearchableMapQuery (R-map-25 floor, B-7 part 3 R-map-26)", () => {
+  it("is 2 with a geo bound, 4 (the shared text-only floor) without one", () => {
+    expect(mapSearchMinChars(DESTINATION)).toBe(2);
+    expect(mapSearchMinChars(null)).toBe(4);
+  });
+
   it.each([
     ["", false],
     [" ", false],
@@ -51,8 +60,22 @@ describe("isSearchableMapQuery (R-map-25 floor)", () => {
     ["ky", true],
     ["  ky  ", true],
     ["kyoto", true],
-  ])("%j → %s", (raw, expected) => {
-    expect(isSearchableMapQuery(raw)).toBe(expected);
+  ])("bounded: %j → %s", (raw, expected) => {
+    expect(isSearchableMapQuery(raw, DESTINATION)).toBe(expected);
+  });
+
+  // B-7 part 3: a coordinate-less trip needs the WIDER floor — a 2-3 char
+  // query that would be legal WITH a bbox is a live server 400 without one.
+  it.each([
+    ["", false],
+    ["k", false],
+    ["ky", false],
+    ["kyo", false],
+    ["kyot", true],
+    ["  kyot  ", true],
+    ["kyoto", true],
+  ])("unbounded (destination null): %j → %s", (raw, expected) => {
+    expect(isSearchableMapQuery(raw, null)).toBe(expected);
   });
 });
 
@@ -149,5 +172,80 @@ describe("useMapPlaceSearch", () => {
       for (const resolve of resolvers) resolve({ items: [], nextCursor: null });
     }
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+});
+
+describe("useMapPlaceSearch — coordinate-less trip (B-7 part 3, R-map-26)", () => {
+  const NO_DEST_CONTEXT = { tripId: TEST_TRIP_ID, destination: null };
+
+  it("below the WIDER 4-char floor: no request fires, even at 2-3 chars (would be a live server 400)", async () => {
+    const request = spyRequest();
+    const client = makeTestQueryClient();
+
+    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "ky"), {
+      wrapper: makeWrapper(client),
+    });
+
+    expect(request).not.toHaveBeenCalled();
+    expect(result.current.isPending).toBe(true);
+  });
+
+  it("at the 4-char floor: fires with q + trip_id + limit and NO bbox key at all", async () => {
+    const page: Paginated<Place> = { items: [makePlace()], nextCursor: null };
+    const request = spyRequest().mockResolvedValue(page);
+    const client = makeTestQueryClient();
+
+    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "  kyot  "), {
+      wrapper: makeWrapper(client),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(request).toHaveBeenCalledTimes(1);
+    const [, input] = request.mock.calls[0] as [unknown, { query: Record<string, unknown> }];
+    expect(input.query["q"]).toBe("kyot");
+    expect(input.query["trip_id"]).toBe(TEST_TRIP_ID);
+    expect(input.query["limit"]).toBe(20);
+    // Falsification: sending a `bbox` key here (even `undefined`) would be a
+    // structural regression back toward the Null Island bbox this fixes —
+    // the request must carry NO bbox key at all, not just a falsy one.
+    expect("bbox" in input.query).toBe(false);
+  });
+
+  it("keys the bbox slot with the literal 'no-bbox' marker — never collides with a real bbox key", async () => {
+    const page: Paginated<Place> = { items: [], nextCursor: null };
+    spyRequest().mockResolvedValue(page);
+    const client = makeTestQueryClient();
+
+    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "kyot"), {
+      wrapper: makeWrapper(client),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const expectedKey = [...queryKeys.placeSearch("kyot"), "map", TEST_TRIP_ID, "no-bbox"];
+    expect(client.getQueryData(expectedKey)).toEqual(page);
+  });
+
+  it("a trip HEALED to real coordinates (settings remediation) is a cache MISS, never a stale unbounded hit", async () => {
+    const client = makeTestQueryClient();
+    // Seed the unbounded entry a coordinate-less trip would have cached.
+    client.setQueryData([...queryKeys.placeSearch("kyot"), "map", TEST_TRIP_ID, "no-bbox"], {
+      items: [makePlace({ id: "stale-unbounded-hit" })],
+      nextCursor: null,
+    } satisfies Paginated<Place>);
+
+    const page: Paginated<Place> = { items: [makePlace()], nextCursor: null };
+    const request = spyRequest().mockResolvedValue(page);
+    const { result } = await renderHook(
+      () => useMapPlaceSearch({ ...NO_DEST_CONTEXT, destination: DESTINATION }, "kyot"),
+      {
+        wrapper: makeWrapper(client),
+      },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // The healed trip's bounded key is a real bbox string, disjoint from
+    // "no-bbox" — it never sees the stale unbounded page.
+    expect(result.current.data?.items).toEqual(page.items);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

@@ -36,6 +36,13 @@
       "when": 1789325567870,
       "tag": "0004_destination_tier_seed",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789355501488,
+      "tag": "0005_nullable_custom_coords",
+      "breakpoints": true
     }
   ]
 }

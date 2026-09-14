@@ -15,6 +15,13 @@
  * the screen's `map-source-search` mirrors the list exactly and "clearing
  * the search removes temporary pins" holds by construction.
  *
+ * COORDINATE-LESS TRIP (B-7 part 3, R-map-26): `destination === null` runs
+ * search UNBOUNDED (no bbox) at the wider text-only floor
+ * (`mapSearchMinChars`/`isSearchableMapQuery`, map-search.ts) and shows a
+ * standing caption under the input so the raised floor is never a silent
+ * surprise — the helper text ("Keep typing…") already derives from the same
+ * floor, so the two copy lines never disagree.
+ *
  * OFFLINE (R-map-25 ⇒ R-map-22 "degrade with an offline notice, no
  * spinners that never resolve"): two arms, both covered —
  *  - proactive: `useTripOffline` already true ⇒ the query never fires
@@ -36,11 +43,12 @@ import { FlatList, Pressable, StyleSheet, View } from "react-native";
 import { AppText, ErrorBanner, Input, ListItem, Skeleton } from "@/components";
 import { isOfflineError, useTripOffline } from "@/data";
 
-import { isSearchableMapQuery, useMapPlaceSearch } from "./map-search";
+import { isSearchableMapQuery, mapSearchMinChars, useMapPlaceSearch } from "./map-search";
 
 export interface MapSearchProps {
   tripId: string;
-  destination: { lat: number; lng: number };
+  /** null = the trip has no destination coordinates (B-7 part 3, R-map-26). */
+  destination: { lat: number; lng: number } | null;
   onSelectResult(place: Place): void;
   /** Temp-pin feed (module doc) — reports the visible result rows. */
   onResultsChange?(places: readonly Place[]): void;
@@ -85,7 +93,8 @@ export function MapSearch({
   const search = useMapPlaceSearch({ tripId, destination }, offline ? "" : deferredQuery);
 
   const trimmed = query.trim();
-  const searchable = isSearchableMapQuery(deferredQuery);
+  const minChars = mapSearchMinChars(destination);
+  const searchable = isSearchableMapQuery(deferredQuery, destination);
   const active = searchable && !offline;
   const results = search.data?.items ?? [];
   const searchOffline = offline || isOfflineError(search.error);
@@ -109,7 +118,9 @@ export function MapSearch({
         // B-20: autocorrect fights foreign place names (destination-search parity).
         autoCorrect={false}
         helper={
-          trimmed !== "" && !searchable ? "Keep typing — search starts at 2 characters." : undefined
+          trimmed !== "" && !searchable
+            ? `Keep typing — search starts at ${minChars} characters.`
+            : undefined
         }
         trailing={
           query !== "" ? (
@@ -127,6 +138,11 @@ export function MapSearch({
         }
         testID="map-search-input"
       />
+      {destination === null ? (
+        <AppText role="caption" color="muted" testID="map-search-notice-no-destination">
+          No map area for this trip yet — searching everywhere.
+        </AppText>
+      ) : null}
       {trimmed !== "" && searchable && searchOffline ? (
         <View style={[s.panel, s.panelPadded]}>
           <AppText role="caption" color="secondary" testID="map-search-offline">

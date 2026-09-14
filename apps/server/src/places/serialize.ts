@@ -17,8 +17,11 @@ export function toPlaceWire(row: PlaceRow): Place {
     source: row.source,
     source_id: row.sourceId,
     name: row.name,
-    lat: Number(row.lat),
-    lng: Number(row.lng),
+    // NULL only for source='custom' (B-7 part 3) — `Number(null) === 0`
+    // would silently re-mint Null Island on the wire, so the null case is
+    // its own arm, never fed to `Number`.
+    lat: row.lat === null ? null : Number(row.lat),
+    lng: row.lng === null ? null : Number(row.lng),
     category: row.category,
     coarse_category: coarseCategory(row.source, row.category),
     wiki_ref: row.wikiRef,
