@@ -59,4 +59,18 @@ describe("distanceLabelFor", () => {
     );
     expect(label).toMatch(/km away$/);
   });
+
+  // B-7 part 3: a coordinate-less custom place — null, never NaN/"NaN m away".
+  // Falsification: drop either null check and this throws inside
+  // haversineMeters (NaN propagates) or renders "NaN m away".
+  it("null when the place has no coordinates at all, even WITH a known position", () => {
+    const position = { lat: 34.9858, lng: 135.7588 };
+    expect(distanceLabelFor(position, { lat: null, lng: null })).toBeNull();
+  });
+
+  it("null on a HALF-null pair too (defensive — the pair invariant should make this unreachable)", () => {
+    const position = { lat: 34.9858, lng: 135.7588 };
+    expect(distanceLabelFor(position, { lat: null, lng: 135.7727 })).toBeNull();
+    expect(distanceLabelFor(position, { lat: 34.9671, lng: null })).toBeNull();
+  });
 });

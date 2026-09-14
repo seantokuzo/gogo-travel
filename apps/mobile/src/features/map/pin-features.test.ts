@@ -46,6 +46,23 @@ describe("buildPlaceIndex", () => {
     expect(index.get(PLACE_B)).toEqual({ lat: 35.005, lng: 135.7646 });
     expect(index.get("unknown")).toBeUndefined();
   });
+
+  // B-7 part 3: a coordinate-less custom place is unrepresentable in the
+  // index — never `{lat: null, lng: null}`, and never crashes the index
+  // build. Falsification: drop the null-skip and this throws (`.set` with
+  // a null coordinate type-errors upstream) or seeds a bogus entry.
+  it("skips a coordinate-less custom place entirely — never seeds a null entry", () => {
+    const CUSTOM_ID = "66666666-6666-4666-8666-666666666661";
+    const savedCustom = makeSavedPlaceWithPlace({
+      id: "55555555-5555-4555-8555-555555555553",
+      place_id: CUSTOM_ID,
+      place: { id: CUSTOM_ID, source: "custom", name: "Nowhereville", lat: null, lng: null },
+    });
+    const index = buildPlaceIndex([savedA, savedCustom, savedB]);
+    expect(index.size).toBe(2);
+    expect(index.get(CUSTOM_ID)).toBeUndefined();
+    expect(index.get(PLACE_A)).toEqual({ lat: 34.9671, lng: 135.7727 });
+  });
 });
 
 describe("savedPinFeatures", () => {
@@ -68,6 +85,24 @@ describe("savedPinFeatures", () => {
       color: colors.pinSaved,
       label: null,
     });
+  });
+
+  // B-7 part 3: a coordinate-less custom place produces NO feature — never
+  // malformed GeoJSON `coordinates: [null, null]` handed to the native
+  // ShapeSource. Falsification: remove the filter and this either throws
+  // (the coordinates tuple no longer type-checks as [number, number]) or,
+  // if forced through with `as`, emits a feature with null coordinates.
+  it("filters out a coordinate-less custom place — no malformed [null, null] feature", () => {
+    const CUSTOM_ID = "66666666-6666-4666-8666-666666666662";
+    const savedCustom = makeSavedPlaceWithPlace({
+      id: "55555555-5555-4555-8555-555555555554",
+      place_id: CUSTOM_ID,
+      place: { id: CUSTOM_ID, source: "custom", name: "Nowhereville", lat: null, lng: null },
+    });
+    const collection = savedPinFeatures([savedA, savedCustom, savedB], colors);
+    expect(collection.features).toHaveLength(2);
+    expect(collection.features.map((f) => f.id)).toEqual([PLACE_A, PLACE_B]);
+    expect(collection.features.some((f) => f.id === CUSTOM_ID)).toBe(false);
   });
 });
 

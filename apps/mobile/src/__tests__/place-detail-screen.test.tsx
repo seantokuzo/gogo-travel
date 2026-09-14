@@ -198,6 +198,28 @@ describe("§2.3 — the loaded surface", () => {
     expect(screen.queryByTestId("place-detail-attribution")).toBeNull();
   });
 
+  // B-7 part 3 (R-map-8 amendment): a coordinate-less custom place has no
+  // handoff URL — Navigate must be ABSENT, never merely `disabled`
+  // (mobile.md's vacuous-pin rule). Spy the handler's own effect.
+  it("a coordinate-less custom place has NO Navigate control — Linking.openURL never called", async () => {
+    const openUrl = jest.spyOn(Linking, "openURL").mockResolvedValue(undefined as never);
+    await renderDetail({
+      getPlace: () =>
+        Promise.resolve({
+          place: makePlace({
+            source: "custom",
+            source_id: null,
+            created_by: "00000000-0000-4000-8000-000000000001",
+            lat: null,
+            lng: null,
+          }),
+        }),
+    });
+    await screen.findByTestId("place-detail-screen");
+    expect(screen.queryByTestId("place-detail-button-navigate")).toBeNull();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
   it("NO request from this screen carries the fresh param (§2.4 dormancy — the v1 truth)", async () => {
     const { request } = await renderDetail();
     await screen.findByText("Fushimi Inari");

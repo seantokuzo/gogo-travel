@@ -28,8 +28,12 @@ import {
 
 /** What routers depend on — the enqueue half only (jobs run behind it). */
 export interface PlacesIngestTrigger {
-  /** R-places-1: primary trigger. Never throws; never blocks. */
-  enqueueDestination(lat: number, lng: number): void;
+  /**
+   * R-places-1: primary trigger. Never throws; never blocks. `null` (B-7
+   * part 3: the destination came from a coordinate-less custom place) skips
+   * the enqueue with a debug log — there is no area to ingest.
+   */
+  enqueueDestination(lat: number | null, lng: number | null): void;
   /** R-places-7: secondary trigger, per-cell-per-hour throttle. Never throws. */
   enqueueSearchMiss(cells: readonly RegionCell[]): void;
 }
@@ -38,7 +42,7 @@ export interface PlacesIngestQueueDeps {
   /** The job (region-ingest.ts, wired) — errors are caught + logged here. */
   ingestCell: (cell: RegionCell) => Promise<unknown>;
   now?: () => Date;
-  logger?: { warn: (message: string) => void };
+  logger?: { warn: (message: string) => void; debug?: (message: string) => void };
   /** Override seam for tests; default PLACES_SEARCH_MISS_THROTTLE_MS. */
   searchMissThrottleMs?: number;
   /** Override seams for tests; defaults PLACES_SEARCH_MISS_GLOBAL_*. */
@@ -129,6 +133,17 @@ export function createPlacesIngestQueue(deps: PlacesIngestQueueDeps): PlacesInge
   return {
     enqueueDestination(lat, lng) {
       try {
+        // B-7 part 3: a coordinate-less destination (custom place with no
+        // coordinates) has no area to ingest — skip before touching the
+        // grid, rather than let `regionCellsForDestination` throw and be
+        // caught below as if it were a data error.
+        if (lat === null || lng === null) {
+          (logger.debug ?? logger.warn).call(
+            logger,
+            "places-ingest: destination has no coordinates; ingest skipped",
+          );
+          return;
+        }
         // Coordinate guard stays as robustness (R-places-1 resolved note):
         // invalid coords log-and-drop rather than throw into the request.
         schedule(regionCellsForDestination(lat, lng), "destination");

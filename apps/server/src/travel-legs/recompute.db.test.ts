@@ -177,6 +177,22 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     return row!;
   }
 
+  /** B-7 part 3: a custom place with NO coordinates (a legal spine-CHECK-exempt row). */
+  async function seedCoordinateLessCustomPlace() {
+    const [row] = await db
+      .insert(schema.places)
+      .values({
+        source: "custom",
+        name: `Coordinate-less ${uniq()}`,
+        lat: null,
+        lng: null,
+        createdBy: userId,
+      })
+      .returning();
+    expect(row).toBeDefined();
+    return row!;
+  }
+
   async function seedBooking(tripId: string, placeId: string | null) {
     const [row] = await db
       .insert(schema.bookings)
@@ -271,6 +287,39 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     expect(mapbox.calls).toHaveLength(3);
     expect(transitous.calls).toHaveLength(1);
     expect(mapbox.calls[0]?.from.lat).toBeCloseTo(35.6895);
+  });
+
+  it("[B-7 part 3] an item on a coordinate-less custom place is treated as UNLOCATED — no Null-Island leg, chain connects across it", async () => {
+    const trip = await seedTrip();
+    const p1 = await seedPlace("35.689500", "139.691700");
+    const noCoords = await seedCoordinateLessCustomPlace();
+    const p2 = await seedPlace("35.659500", "139.700500");
+    const a = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 1024, placeId: p1.id });
+    const middle = await seedItem(trip.id, {
+      day: "2026-09-02",
+      sortOrder: 2048,
+      placeId: noCoords.id,
+    });
+    const c = await seedItem(trip.id, { day: "2026-09-02", sortOrder: 3072, placeId: p2.id });
+
+    const { recompute, mapbox } = buildRecomputer();
+    await recompute({ tripId: trip.id, days: ["2026-09-02"] });
+
+    const legs = await legsOf(trip.id);
+    // Exactly the located pair (a, c) — same shape as the unlocated-custom-item
+    // case above, NOT a real pair touching `middle` at (0,0).
+    expect(legs).toHaveLength(4);
+    for (const leg of legs) {
+      expect(leg.fromItemId).toBe(a.id);
+      expect(leg.toItemId).toBe(c.id);
+    }
+    expect(legs.some((l) => l.fromItemId === middle.id || l.toItemId === middle.id)).toBe(false);
+    // Falsification: restore `item.lat = Number(place.lat)` at recompute.ts's
+    // place-attach step — `Number(null) === 0` makes `middle` "located" at
+    // Null Island, `locatedPairs` produces (a, middle) and (middle, c)
+    // instead of (a, c), and both this length assertion AND the from/to
+    // assertions above go red.
+    expect(mapbox.calls.every((call) => call.from.lat !== 0 || call.from.lng !== 0)).toBe(true);
   });
 
   it("same-place pairs get zero legs per mode with NO provider call (§3.5 step 2)", async () => {

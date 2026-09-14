@@ -172,6 +172,19 @@ viewer}` no higher than the creator's own role, and generate a unique
   preserving the `budgets.currency == trips.base_currency` invariant
   (schema §3.3.15). (Resolved 2026-07-09, Gate 2)
 
+### Nullable destination coordinates (B-7 part 3)
+
+- **R-trips-23 (destination ingest trigger, new):** WHEN a trip is created
+  or its destination changes AND the new destination carries coordinates
+  THE SYSTEM SHALL enqueue the destination region ingest (places spec
+  R-places-1); WHEN it does not (a coordinate-less custom place was picked)
+  THE SYSTEM SHALL skip the enqueue and record a debug log, and SHALL NOT
+  fail the write. The comparison that decides "did the destination change"
+  is null-safe: a stored NULL coordinate is never coerced to `0` for the
+  diff (that coercion previously either enqueued Null Island on a
+  real→null change, or silently skipped a legitimate null→exactly-`(0,0)`
+  change).
+
 ---
 
 ## 3. Design
@@ -274,24 +287,38 @@ Create a trip; creator becomes owner in the same transaction. **Auth**: Required
 end_date, base_currency?, theme? }`
 (`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
 from `UserPrefs.home_currency` — client spec. Dates are required at
-creation and destination is structured — picked from the Overture-backed
-place search, so `destination_lat/lng` are always present at the API layer
-even though the columns stay nullable (schema §3.3.4, resolved Gate 2,
-2026-07-09).)
+creation. **Amended B-7 part 3 (2026-09-13):** the destination is
+structured — picked from the Overture-backed place search OR a
+user-created custom place — so the `destination_lat`/`destination_lng`
+KEYS are always present in the request; their VALUES are `null` exactly
+when the picked place has no coordinates (`source='custom'`, a
+coordinate-less custom place). The prior text — "`destination_lat/lng` are
+always present at the API layer even though the columns stay nullable" —
+was factually wrong in both halves even before this change (the columns
+were NOT NULL until this migration, and "always present" said nothing
+about nullability); this is the corrected statement. Omitting either key
+entirely still 400s (R-trips-3 amendment) — see R-trips-23.)
 
-**Response 201** — `Trip & { role: 'owner' }`
+**Response 201** — `Trip & { role: 'owner' }` (`destination_lat`/`lng` may
+be `null`, B-7 part 3)
 
-**Errors**: 400 `VALIDATION_FAILED` — bad shapes, `start_date > end_date`.
+**Errors**: 400 `VALIDATION_FAILED` — bad shapes, `start_date > end_date`,
+exactly one of `destination_lat`/`destination_lng` present (B-7 part 3).
 
-**Requirements covered**: R-trips-3
+**Requirements covered**: R-trips-3, R-trips-23
 
 **Tests required**:
 
 - [ ] Happy path: trip + owner membership row exist after one call; role returned
 - [ ] Transactionality: forced membership-insert failure rolls back the trip row
 - [ ] `start_date > end_date` rejected
-- [ ] Missing dates or missing `destination_lat/lng` → 400 (required at creation, resolved Gate 2)
+- [ ] Missing dates or missing `destination_lat/lng` KEYS → 400 (the keys stay
+      required — B-7 part 3 keeps this pin green, does not relax it)
 - [ ] Unauthenticated → 401
+- [ ] B-7 part 3: both `destination_lat`/`destination_lng` explicitly `null`
+      → 201 with `null` destination coordinates, never `(0, 0)` —
+      `apps/server/src/trips/routes.db.test.ts`
+- [ ] B-7 part 3: exactly one of `destination_lat`/`destination_lng` present → 400
 
 ---
 
@@ -352,7 +379,13 @@ precondition.
 **Errors**: 404 non-member; 403 `FORBIDDEN` — role lacks a touched field;
 409 `CONFLICT` — `expect_updated_at` mismatch; 400 date-order violation.
 
-**Requirements covered**: R-trips-5, R-trips-6, R-trips-20
+`destination_lat`/`destination_lng` are `number | null`, optional as a KEY
+but paired as a VALUE (B-7 part 3): touching one without the other 400s;
+patching both to `null` records "no coordinates" (the settings remediation
+flow patches a real pair back in to heal a coordinate-less trip — client
+spec R-tripui-24).
+
+**Requirements covered**: R-trips-5, R-trips-6, R-trips-20, R-trips-23
 
 **Tests required**:
 
@@ -363,6 +396,11 @@ precondition.
 - [ ] Omitted `expect_updated_at` → plain LWW applies
 - [ ] `updated_at` bumped; full row returned
 - [ ] Push event `trip.updated` emitted to other members, not actor
+- [ ] B-7 part 3: real→null destination change — 200, no ingest enqueue
+      (R-trips-23); null→real change — 200, ingest enqueues the new
+      destination; null→null resubmit — no destination-change side effect;
+      touching exactly one destination coordinate key → 400 —
+      `apps/server/src/trips/routes.db.test.ts`
 
 ---
 
@@ -695,8 +733,10 @@ Upstream resolutions this section depends on (canonical homes):
   deferred.
 - Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2,
   2026-07-09): destination input is structured — search against the
-  Overture city/locality subset — so `destination_lat/lng` are always
-  present.
+  Overture city/locality subset OR a user-created custom place (B-7 part 3
+  amendment, 2026-09-13) — so the `destination_lat`/`destination_lng` KEYS
+  are always present; their VALUES are `null` when the picked place has no
+  coordinates. See R-trips-23.
 - Resolved at `.specs/database/schema.spec.md`:§3.3.5 (Gate 2, 2026-07-09):
   owner may transfer ownership; leaving a trip with other members requires
   transfer first.

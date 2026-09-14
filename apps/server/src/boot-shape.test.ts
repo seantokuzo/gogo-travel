@@ -46,6 +46,7 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { createApp } from "./app.js";
+import { E2E_DOOR_BOOT_WARNING } from "./auth/e2e-door.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
 import { shapeMigrationStateForHealth } from "./boot-migration-check.js";
 import { closeDb } from "./db/index.js";
@@ -544,6 +545,95 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
       expect(boot.sawBanner).toBe(true);
       expect(boot.stderr).toContain("auth env not configured");
       expect(boot.stderr).toContain("health-only");
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// S-4/T3 — E2E session door composition-root arms (session-door spec
+// R-door-1/R-door-2/R-door-6). Subprocess, through the REAL `src/index.ts`
+// wiring (`buildE2eDoorDepsFromEnv` called from a live boot), not just the
+// in-process `createApp({ e2eDoor })` unit/integration coverage in
+// `auth/e2e-door.db.test.ts`.
+// ---------------------------------------------------------------------------
+
+describe("composition root (src/index.ts): E2E session door arms — subprocess", () => {
+  const DOOR_SECRET = "s".repeat(40);
+
+  it(
+    "door-mounted arm: development + FULL auth + E2E_SESSION_DOOR=1 + a valid secret boots and prints the R-door-6 boot warning",
+    { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+    async () => {
+      // Falsification: comment out the `buildE2eDoorDepsFromEnv` call (or
+      // its `console.warn(E2E_DOOR_BOOT_WARNING)`) in index.ts and this
+      // warning line disappears from stderr — RED.
+      const { vars } = await makeFullAuthTestEnv({ databaseUrl: FAKE_DB_URL });
+      const boot = await bootOnFreePort({
+        NODE_ENV: "development",
+        E2E_SESSION_DOOR: "1",
+        E2E_SESSION_DOOR_SECRET: DOOR_SECRET,
+        ...vars,
+      });
+      expect(boot.sawBanner).toBe(true);
+      expect(boot.stderr).toContain(E2E_DOOR_BOOT_WARNING);
+      // ASCII-only (R-door-6 / Hermes-`strings` trap, `.claude/rules/mobile.md`)
+      // and names the route path — pinned directly against what actually
+      // printed, not just the constant's own definition.
+      expect([...E2E_DOOR_BOOT_WARNING].every((ch) => (ch.codePointAt(0) ?? 0) <= 0x7f)).toBe(true);
+      expect(E2E_DOOR_BOOT_WARNING).toContain("/auth/e2e/session");
+    },
+  );
+
+  it(
+    "door-absent arm (control): development + FULL auth WITHOUT door vars boots but prints NO door warning",
+    { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+    async () => {
+      // Falsification: the warning printing UNCONDITIONALLY (dropping the
+      // `if (e2eDoorDeps)` guard in index.ts) makes this go RED — proves the
+      // arm above's warning is door-STATE-dependent, not universal boot noise.
+      const { vars } = await makeFullAuthTestEnv({ databaseUrl: FAKE_DB_URL });
+      const boot = await bootOnFreePort({ NODE_ENV: "development", ...vars });
+      expect(boot.sawBanner).toBe(true);
+      expect(boot.stderr).not.toContain("E2E SESSION DOOR ENABLED");
+    },
+  );
+
+  it(
+    "door-absent arm: test + FULL auth + E2E_SESSION_DOOR_SECRET alone (no E2E_SESSION_DOOR=1) does NOT mount — G0 is a positive opt-in",
+    { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+    async () => {
+      const { vars } = await makeFullAuthTestEnv({ databaseUrl: FAKE_DB_URL });
+      const boot = await bootOnFreePort({
+        NODE_ENV: "test",
+        E2E_SESSION_DOOR_SECRET: DOOR_SECRET,
+        ...vars,
+      });
+      expect(boot.sawBanner).toBe(true);
+      expect(boot.stderr).not.toContain("E2E SESSION DOOR ENABLED");
+    },
+  );
+
+  it(
+    "production-refuses arm: production + FULL auth + door vars set refuses to boot (G4), naming the variable(s) and never the secret value",
+    { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+    async () => {
+      // The REAL composition root's own refusal, not just the unit-level
+      // `loadEnv()` throw already pinned in `env.test.ts`. Falsification:
+      // remove the `superRefine` cross-field check in env.ts (or call
+      // `loadEnv()` after some other side effect in index.ts) and this
+      // banners up instead of refusing — RED.
+      const { vars } = await makeFullAuthTestEnv({ databaseUrl: FAKE_DB_URL });
+      const boot = await bootCompositionRoot({
+        NODE_ENV: "production",
+        E2E_SESSION_DOOR: "1",
+        E2E_SESSION_DOOR_SECRET: DOOR_SECRET,
+        ...vars,
+      });
+      expect(boot.sawBanner).toBe(false);
+      expect(boot.exitCode).not.toBe(0);
+      expect(boot.exitCode).not.toBeNull();
+      expect(boot.stderr).toContain("E2E_SESSION_DOOR");
+      expect(boot.stderr).not.toContain(DOOR_SECRET);
     },
   );
 });

@@ -520,6 +520,42 @@ describe("degrade states", () => {
     });
     expect(screen.getByTestId("map-empty-state")).toBeTruthy();
   });
+
+  // B-7 part 3 (R-map-26): the world arm is now LIVE, not just a malformed-row
+  // defensive fallback — a real coordinate-less trip (custom destination with
+  // no location) hits it. Falsification: revert the screen's `destination`
+  // memo to pass `{lat: null, lng: null}` straight through (instead of
+  // `undefined`) and this either crashes camera.ts's `Number.isFinite(null)`
+  // path (it wouldn't — it degrades) or, if the copy branch regresses to the
+  // "Add places" title, this test's exact-text assertion reds.
+  it("coordinate-less trip: world camera + the honest no-map-area empty state (not 'Add places')", async () => {
+    await renderMap({
+      trip: tripFixture({ destination_lat: null, destination_lng: null }),
+      saved: [],
+      items: [],
+    });
+    expect(screen.getByTestId("map-empty-state")).toBeTruthy();
+    expect(screen.getByText("No map area for this trip yet")).toBeOnTheScreen();
+    expect(
+      screen.getByText("Set a destination with a location in trip settings."),
+    ).toBeOnTheScreen();
+    expect(screen.queryByText("Add places to see them here")).toBeNull();
+    // Never a Null-Island camera write — the initial `defaultSettings` and
+    // every later `setCamera` call must avoid [0, 0].
+    const zeroZero = mapboxMock.__mock.camera.setCamera.mock.calls.some(
+      ([stop]: [{ centerCoordinate?: [number, number] }]) =>
+        stop.centerCoordinate?.[0] === 0 && stop.centerCoordinate[1] === 0,
+    );
+    expect(zeroZero).toBe(false);
+    expect(screen.getByTestId("map-view").props.children).toBeTruthy(); // no crash mounting Camera
+  });
+
+  it("coordinate-less trip WITH pins: fits the pins, no empty state (destination undefined ≠ no data)", async () => {
+    await renderMap({
+      trip: tripFixture({ destination_lat: null, destination_lng: null }),
+    });
+    expect(screen.queryByTestId("map-empty-state")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

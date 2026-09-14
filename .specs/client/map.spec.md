@@ -34,6 +34,9 @@ Screen-level; every requirement names its testIDs (grammar: navigation spec
   (`map-pin-itinerary-{itemId}`), and photo pins
   (`map-pin-photo-{photoId}`) — all from cached trip data so the render
   also works offline (PLANNING offline pattern).
+  **AMENDED (B-7 part 3):** a place with no coordinates (a coordinate-less
+  custom place) renders NO pin — never a malformed feature at `[null,
+null]`; it still appears in list surfaces by name. See R-map-26.
 - **R-map-2 (clustering):** WHEN pins overlap at the current zoom THE
   SYSTEM SHALL cluster them (`map-cluster-{clusterId}`) with a count badge;
   WHEN a cluster is tapped THE SYSTEM SHALL zoom/expand to reveal its
@@ -68,6 +71,10 @@ Screen-level; every requirement names its testIDs (grammar: navigation spec
   SYSTEM SHALL hand off to Apple/Google Maps via URL scheme with the
   place's coordinates — never in-app turn-by-turn (competitor research:
   never replace the nav app).
+  **AMENDED (B-7 part 3):** WHEN the place has no coordinates (a
+  coordinate-less custom place) THE SYSTEM SHALL NOT render the navigate
+  control at all — never a URL built from `null` coordinates, never merely
+  a `disabled` affordance.
 
 ### Place sheet & detail (`map/place/[placeId]`, root `place-detail-screen`)
 
@@ -128,6 +135,10 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   pill (`map-pill-offline`); WHEN not on wifi THE SYSTEM SHALL defer and
   retry on the next wifi + app-active window (download billing is $0 —
   research — the wifi gate is for the user's data plan, not cost).
+  **AMENDED (B-7 part 3):** WHILE the trip's destination has no
+  coordinates THE SYSTEM SHALL stand the WHOLE pack machine down (state
+  pinned `none`, no fingerprint, no network listener, no SDK touch) rather
+  than attempt a download the region grid cannot compute — see R-map-26.
 - **R-map-19 (manual management UI):** WHEN the user opens trip settings →
   Offline map (`trip-settings-list-item-offline` → section testIDs
   `offline-pack-*`) THE SYSTEM SHALL show pack state (`none / downloading
@@ -147,6 +158,9 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   SHALL mark the pack `failed` with a retry action in the pill and
   management UI (`offline-pack-button-retry`) and keep the map fully
   usable online — pack state never blocks map interaction.
+  **AMENDED (B-7 part 3):** a coordinate-less trip can never REACH `failed`
+  — R-map-18's stand-down (below) keeps it pinned to `none` with the
+  R-map-26 explanation instead.
 - **R-map-22 (offline behavior):** WHEN the device is offline within a
   downloaded region THE SYSTEM SHALL render tiles from the pack and pins
   from cached trip data; search and fresh details are unavailable offline
@@ -177,6 +191,12 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   destination input is structured (Overture-backed search), so
   `destination_lat/lng` are always present — the tile region and default
   camera are always derivable.
+  **AMENDED (B-7 part 3, `B-7/nullable-custom-coords`, Sean ruling
+  2026-09-13):** no longer true. A trip's destination may be a `source=
+'custom'` place with NO coordinates (created via the destination search's
+  empty-results fallback, R-tripui-23/24 in the trips client spec) —
+  `destination_lat/lng` are now `number | null` on the wire
+  (`.specs/database/schema.spec.md` §3.3.4/§3.3.7 updated). See R-map-26.
 - **Place discovery on the map — decided: option (a), a search bar on the
   map tab** querying `GET /places/search` (spine-backed) with results as
   temporary pins; no basemap-POI tap-through in v1 (option b composes
@@ -192,6 +212,44 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   pin); clearing the search removes temporary pins. Offline, the search
   entry degrades with an offline notice (R-map-22 rule). (Resolved
   2026-07-09, Gate 2)
+  **AMENDED (B-7 part 3):** the ≥ 2 character floor applies only WHEN the
+  trip has destination coordinates to bias the query with (a `bbox` bound).
+  WHILE the trip has none, see R-map-26 — the floor widens and the bound
+  drops entirely, never a fixed 2-char request against no geo bound (a live
+  server 400).
+
+- **R-map-26 (coordinate-less destination degrade), NEW — B-7 part 3
+  (`B-7/nullable-custom-coords`, Sean ruling 2026-09-13):** WHILE a trip's
+  destination has no coordinates (a `source='custom'` place created via the
+  empty-results fallback, R-tripui-23, that was never given a location) THE
+  SYSTEM SHALL:
+  - open the map tab at a WORLD camera (never a Null-Island / `(0, 0)`
+    center) with an honest empty state (`map-empty-state`): title "No map
+    area for this trip yet", body "Set a destination with a location in
+    trip settings.";
+  - run map search (R-map-25) UNBOUNDED — no `bbox` — at the shared
+    text-only floor (`PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, 4 chars; places
+    spec R-places-27) instead of the geo-biased 2-char floor, with a
+    standing caption (`map-search-notice-no-destination`) naming the wider
+    floor's reason; a search under the floor fires NO request (would be a
+    live server 400 with no bbox to widen it);
+  - render NO pin (saved, search-result, or otherwise) for any place that
+    itself has no coordinates — never a malformed `[null, null]` GeoJSON
+    feature; such places still appear in list surfaces (search results,
+    saved-places list) by name;
+  - replace the offline-pack download/refresh/retry controls
+    (`offline-pack-button-*`) with a one-line explanation
+    (`offline-pack-notice-no-location`) — the whole pack machine stands
+    down (R-map-18/21 amendment below), never crashing on the region grid;
+  - hide (not merely disable) `map-sheet-place-button-navigate` /
+    `place-detail-button-navigate` for a coordinate-less place — R-map-8
+    amendment.
+
+  The remediation path is trip settings, not this screen: R-tripui-24
+  (trips client spec) — picking a real-coordinate destination and saving
+  heals the trip in one PATCH, which is a cache MISS for the map search key
+  (the bbox slot flips from the literal `"no-bbox"` marker to a real bbox
+  string) and un-stands the offline-pack machine on the next mount.
 
 Related: the schema spec's public-photos surface question resolved Gate 2
 (place detail sheet only v1) — the place detail surface here gains a
@@ -328,12 +386,12 @@ photos.
 | Surface            | testIDs                                                                                                                                                                                                                                     |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`                                                                                                                                          |
-| Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`                                                                                                                                        |
+| Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26)                                                                             |
 | Day filter         | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}`                                                                                                                                                               |
 | Pins/clusters      | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index)                                                                                       |
 | Place sheet        | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details`                                                                                                     |
 | Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
-| Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec)                                                                                 |
+| Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
 
 ### 2.9 Out of scope (explicit)
 

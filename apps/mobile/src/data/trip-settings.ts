@@ -70,13 +70,22 @@ export function isBaseCurrencyLocked(error: unknown): boolean {
  * default; `status: null` = clear the manual override (wire capability,
  * R-trips-20 — no client surface renders it in P-6). Destination fields
  * travel TOGETHER from a structured pick (name+lat+lng — §2.3 posture, no
- * free text). Absent key = untouched.
+ * free text). Absent key = untouched. B-7 part 3: `lat`/`lng` are nullable —
+ * a picked CUSTOM place (R-tripui-24 remediation row, `more/settings.tsx`)
+ * may carry no coordinates, and the diff below is already null-correct
+ * (`null !== <number>` and `<number> !== null` both read as "changed", so a
+ * pick that HEALS a coordinate-less trip and a pick that clears one to a
+ * custom destination both touch the patch). Round-1 A1 fix: the pair is
+ * diffed and emitted as ONE unit (see `buildTripPatch` below) — diffing the
+ * two axes independently could emit a half-pair PATCH that
+ * `destinationCoordsPairRule` (packages/shared/src/domains/trip.ts) rejects
+ * outright with a 400.
  */
 export interface TripSettingsEdits {
   name?: string;
   destination_name?: string;
-  destination_lat?: number;
-  destination_lng?: number;
+  destination_lat?: number | null;
+  destination_lng?: number | null;
   start_date?: string;
   end_date?: string;
   theme?: string | null;
@@ -91,6 +100,18 @@ export interface TripSettingsEdits {
  * always. `status` compares against `status_override` (the wire field IS the
  * override), so "clear" (`null`) on an already-clear row is a no-op. Returns
  * null when nothing changed — the caller skips the request entirely.
+ *
+ * `destination_lat`/`destination_lng` are diffed as ONE PAIR, never
+ * independently (round-1 A1 fix): the wire schema's `destinationCoordsPairRule`
+ * rejects a patch touching one axis without the other, so a pick that changes
+ * only longitude while sharing the current latitude to full precision — a
+ * real case in the seeded destination tier, ≥1 pair shares a latitude across
+ * two distinct rows — must still emit BOTH keys, not just the changed one.
+ * Tri-state: both edits `undefined` ⇒ untouched (the `if` below never
+ * enters); both edits `null` diffed against a non-null current (or vice
+ * versa) ⇒ the pair is sent; both edits numbers that differ from current ⇒
+ * the pair is sent. Only the caller (`more/settings.tsx`) ever supplies these
+ * edits, and it always supplies both or neither from one `Place` pick.
  */
 export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpdate | null {
   const patch: TripUpdate = { expect_updated_at: current.updated_at };
@@ -103,13 +124,15 @@ export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpd
     patch.destination_name = edits.destination_name;
     touched = true;
   }
-  if (edits.destination_lat !== undefined && edits.destination_lat !== current.destination_lat) {
-    patch.destination_lat = edits.destination_lat;
-    touched = true;
-  }
-  if (edits.destination_lng !== undefined && edits.destination_lng !== current.destination_lng) {
-    patch.destination_lng = edits.destination_lng;
-    touched = true;
+  if (edits.destination_lat !== undefined && edits.destination_lng !== undefined) {
+    if (
+      edits.destination_lat !== current.destination_lat ||
+      edits.destination_lng !== current.destination_lng
+    ) {
+      patch.destination_lat = edits.destination_lat;
+      patch.destination_lng = edits.destination_lng;
+      touched = true;
+    }
   }
   if (edits.start_date !== undefined && edits.start_date !== current.start_date) {
     patch.start_date = edits.start_date;

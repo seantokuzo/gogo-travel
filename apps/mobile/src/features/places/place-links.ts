@@ -115,8 +115,13 @@ export function visiblePlacePhotos(
  * maps.apple.com variant stays unshipped for the same reason directions.ts
  * documents (no research-verified format row — flagged to the spec-sync
  * batch there).
+ *
+ * B-7 part 3: `lat`/`lng` are no longer schema-guaranteed (a coordinate-less
+ * custom place) — null rather than a URL pointing at nothing; the caller
+ * hides `place-detail-button-navigate` when it does (R-map-8 amendment).
  */
-export function placeNavigateUrl(place: Pick<Place, "lat" | "lng">): string {
+export function placeNavigateUrl(place: Pick<Place, "lat" | "lng">): string | null {
+  if (place.lat === null || place.lng === null) return null;
   const destination = encodeURIComponent(`${place.lat},${place.lng}`);
   return `${GOOGLE_MAPS_DIRECTIONS_BASE}&destination=${destination}`;
 }

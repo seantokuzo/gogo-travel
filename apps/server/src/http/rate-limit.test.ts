@@ -9,7 +9,12 @@ import { Hono } from "hono";
 import { describe, expect, it } from "vitest";
 import { requestIdMiddleware } from "./app-middleware.js";
 import type { RequestVars } from "./errors.js";
-import { InMemoryRateLimitStore, rateLimit, type RateLimitRule } from "./rate-limit.js";
+import {
+  InMemoryRateLimitStore,
+  isLoopbackOrPrivatePeer,
+  rateLimit,
+  type RateLimitRule,
+} from "./rate-limit.js";
 
 const HOUR_MS = 3_600_000;
 
@@ -50,6 +55,119 @@ describe("InMemoryRateLimitStore", () => {
     const blocked = store.hit("k", 1, 500, t + 499);
     expect(blocked.allowed).toBe(false);
     expect(blocked.retryAfterSeconds).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("isLoopbackOrPrivatePeer (S-4/T3, R-door-11)", () => {
+  // The spec's own pinned vector table, verbatim — every allowed and
+  // disallowed address it names.
+  it.each([
+    "127.0.0.1",
+    "::1",
+    "10.0.0.1",
+    "172.16.0.1",
+    "192.168.0.1",
+    "fc00::1",
+    "::ffff:10.0.0.5",
+    "[::1]",
+  ])("%s → true", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(true);
+  });
+
+  it.each(["8.8.8.8", "0.0.0.0", "169.254.0.1", "fe80::1", "unknown", ""])("%s → false", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(false);
+  });
+
+  it("null → false", () => {
+    expect(isLoopbackOrPrivatePeer(null)).toBe(false);
+  });
+
+  it("undefined → false", () => {
+    expect(isLoopbackOrPrivatePeer(undefined)).toBe(false);
+  });
+
+  // Boundary of the 172.16.0.0/12 range — 172.15.x and 172.32.x are PUBLIC,
+  // only 172.16.x through 172.31.x are private.
+  it("172.16.0.0/12 boundary: 172.15.255.255 and 172.32.0.0 are public; 172.31.255.255 is private", () => {
+    expect(isLoopbackOrPrivatePeer("172.15.255.255")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("172.31.255.255")).toBe(true);
+    expect(isLoopbackOrPrivatePeer("172.32.0.0")).toBe(false);
+  });
+
+  it("a hostname (including .local) is NEVER accepted — IP-literal-only predicate", () => {
+    // Falsification: revert `isLoopbackOrPrivatePeer` to the pre-round-1-fix
+    // `lower.startsWith("fc") || lower.startsWith("fd")` prefix check (no
+    // `net.isIP` gate) and THIS test goes RED on the fc*/fd* cases below —
+    // the prior falsification note ("swap for a substring/DNS-ish match")
+    // was wrong: the regressed code IS a prefix/substring match already, and
+    // stayed green because nothing here fed it an fc*/fd*-prefixed hostname
+    // (review round 1 adversarial-verifier finding 22).
+    expect(isLoopbackOrPrivatePeer("localhost")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("my-mac.local")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("evil.com")).toBe(false);
+  });
+
+  it("a hostname beginning fc or fd is NEVER accepted (review round 1 F1/A1) — the prefix-only predicate's exact hole", () => {
+    // Falsification: this is the pin that reds on the regression above.
+    expect(isLoopbackOrPrivatePeer("fcell.example.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("fdsomething.evil.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("10.metrics.example")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("fd-rig.internal")).toBe(false);
+  });
+
+  // The adversarial-verifier's round-1 38-input table, verbatim (round-1
+  // adversarial-verifier.md row 20) — every case it hand-checked against the
+  // real exported function, both directions.
+  it.each([
+    "127.0.0.1",
+    "127.255.255.254",
+    "10.0.0.1",
+    "172.16.0.1",
+    "172.31.255.255",
+    "192.168.0.1",
+    "::1",
+    "[::1]",
+    "[10.0.0.1]",
+    "fc00::1",
+    "fd12:3456::1",
+    "FC00::1",
+    "FD00::1",
+    "::ffff:10.0.0.1",
+    "::FFFF:10.0.0.1",
+    "::ffff:127.0.0.1",
+    "  127.0.0.1  ",
+  ])("38-entry table: %s → true", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(true);
+  });
+
+  it.each([
+    "172.32.0.1",
+    "172.15.0.1",
+    "192.169.0.1",
+    "100.64.0.1",
+    "8.8.8.8",
+    "::ffff:8.8.8.8",
+    "::ffff:0.0.0.0",
+    "0.0.0.0",
+    "169.254.1.1",
+    "fe80::1",
+    "fe80::1%en0",
+    "fe00::1",
+    "2001:db8::1",
+    "999.999.999.999",
+    "10.0.0.1@evil",
+    "127.0.0.1.evil.com",
+    "localhost",
+    "my-mac.local",
+    "unknown",
+    "",
+  ])("38-entry table: %s → false", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(false);
+  });
+
+  it("a spoofed Host-style value embedded in the string is not enough — must be the literal address", () => {
+    expect(isLoopbackOrPrivatePeer("127.0.0.1.evil.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("evil.com/127.0.0.1")).toBe(false);
   });
 });
 

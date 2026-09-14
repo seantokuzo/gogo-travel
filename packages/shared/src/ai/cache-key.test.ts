@@ -86,10 +86,17 @@ describe("deriveSeason (ai spec §3.6.2 — deterministic)", () => {
     // 2026-02-25 → 2026-03-15 midpoint = 2026-03-06 → spring (N)
     expect(deriveSeason(35.68, "2026-02-25", "2026-03-15")).toBe("spring");
   });
-  it("'unknown' when dates are absent; null lat → northern assumed", () => {
+  it("'unknown' when dates are absent; null/undefined lat → northern assumed (B-7 part 3: a coordinate-less custom destination)", () => {
     expect(deriveSeason(35.68, null, "2026-07-10")).toBe("unknown");
     expect(deriveSeason(35.68, "2026-07-01", undefined)).toBe("unknown");
+    // Already null-safe pre-B-7 (no `Number(null)` coercion anywhere in this
+    // module) — pinned here so the seam stays green as the rest of the
+    // stack grows null arms around it. `deriveSeason` is dormant in v1
+    // (nothing calls it outside this test), but the schema type
+    // (`number | null | undefined`) is the contract T-b's AI callers build
+    // against once the feature lands.
     expect(deriveSeason(null, "2026-07-01", "2026-07-10")).toBe("summer");
+    expect(deriveSeason(undefined, "2026-07-01", "2026-07-10")).toBe("summer");
   });
 });
 

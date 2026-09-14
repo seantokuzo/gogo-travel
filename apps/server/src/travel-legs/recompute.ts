@@ -280,8 +280,12 @@ export function createLegRecomputer(deps: LegRecomputerDeps): (batch: LegBatch) 
         continue;
       }
       // numeric() columns are STRING-mode (db/schema/_shared.ts) — convert.
-      item.lat = Number(place.lat);
-      item.lng = Number(place.lng);
+      // NULL (B-7 part 3: a coordinate-less custom place) stays null, never
+      // `Number(null) === 0` — that would mint a Null-Island leg endpoint;
+      // `locatedPairs` (adjacency.ts) already treats a null lat/lng item as
+      // unlocated, exactly like an item with no place at all.
+      item.lat = place.lat === null ? null : Number(place.lat);
+      item.lng = place.lng === null ? null : Number(place.lng);
     }
 
     // ---- desired pairs (§3.5 step 2; dedup across days — a spanning pair

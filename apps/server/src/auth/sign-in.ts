@@ -101,8 +101,12 @@ function lowerEmailEquals(email: string): SQL {
   return sql`lower(${schema.users.email}) = ${email.toLowerCase()}`;
 }
 
-/** Postgres unique_violation (23505), possibly wrapped by Drizzle — walk `cause`. */
-function isUniqueViolation(error: unknown): boolean {
+/**
+ * Postgres unique_violation (23505), possibly wrapped by Drizzle — walk
+ * `cause`. Exported: the e2e session door's fixture find-or-create
+ * (`auth/e2e-door.ts`, S-4/T3) mirrors this exact same-key-race retry.
+ */
+export function isUniqueViolation(error: unknown): boolean {
   let current: unknown = error;
   while (current instanceof Error) {
     if ((current as { code?: unknown }).code === "23505") return true;
