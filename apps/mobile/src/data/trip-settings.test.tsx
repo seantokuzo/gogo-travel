@@ -121,6 +121,49 @@ describe("buildTripPatch (diffField semantics on the trip row)", () => {
     ]);
   });
 
+  it("B-7 part 3: a NULL destination heals to real coordinates — the null-vs-number diff fires", () => {
+    const coordless: Trip = { ...current, destination_lat: null, destination_lng: null };
+    const patch = buildTripPatch(coordless, {
+      destination_name: "Kyoto, Japan",
+      destination_lat: 35.0116,
+      destination_lng: 135.7681,
+    });
+    expect(patch).not.toBeNull();
+    expect(patch?.destination_lat).toBe(35.0116);
+    expect(patch?.destination_lng).toBe(135.7681);
+  });
+
+  it("B-7 part 3: picking ANOTHER coordinate-less custom place diffs null→null as unchanged (no key)", () => {
+    const coordless: Trip = { ...current, destination_lat: null, destination_lng: null };
+    // Falsification: this must stay a no-op patch on lat/lng specifically —
+    // if the diff regressed to `!== undefined` alone (dropping the
+    // value-equality check) it would wrongly emit `destination_lat: null`
+    // even though nothing changed.
+    const patch = buildTripPatch(coordless, {
+      destination_name: "Somewhere Else",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    expect(patch).not.toBeNull(); // destination_name DID change
+    expect(patch?.destination_lat).toBeUndefined();
+    expect(patch?.destination_lng).toBeUndefined();
+  });
+
+  it("B-7 part 3: a real destination going coordinate-less (re-picking a custom place) diffs number→null", () => {
+    // Mutation-verify: comment out the null-arm of the `!==` comparison (or
+    // coerce `edits.destination_lat` through `Number(...)`) and this reds —
+    // `Number(null) === 0 !== current.destination_lat` would still diff, but
+    // a naive `?? 0` default on the edits side would silently swallow it.
+    const patch = buildTripPatch(current, {
+      destination_name: "Nowhereville",
+      destination_lat: null,
+      destination_lng: null,
+    });
+    expect(patch).not.toBeNull();
+    expect(patch?.destination_lat).toBeNull();
+    expect(patch?.destination_lng).toBeNull();
+  });
+
   it("theme null (back to app default) survives when a theme is set; no-ops when already default", () => {
     const themed: Trip = { ...current, theme: "deepWaters" };
     expect(buildTripPatch(themed, { theme: null })?.theme).toBeNull();

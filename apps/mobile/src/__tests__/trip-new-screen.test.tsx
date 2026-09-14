@@ -302,11 +302,11 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     source: "custom",
     source_id: null,
     name: "Nowhereville",
-    // The placeholder coordinates the create mutation actually sends
-    // (`useCreateCustomDestination` doc) — a realistic mock echoes them
-    // back, not the fixture's default Kyoto lat/lng.
-    lat: 0,
-    lng: 0,
+    // B-7 part 3: the create mutation sends NO coordinates
+    // (`useCreateCustomDestination` doc) — a realistic mock echoes null
+    // back, not the fixture's default Kyoto lat/lng and not a (0,0) stand-in.
+    lat: null,
+    lng: null,
     category: null,
     coarse_category: "other",
     wiki_ref: null,
@@ -369,8 +369,6 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     expect(createCalls).toHaveLength(1);
     expect((createCalls[0][1] as { body: unknown }).body).toEqual({
       name: "Nowhereville",
-      lat: 0,
-      lng: 0,
     });
 
     // Selected exactly like an existing-result pick: canonical name fills
@@ -385,7 +383,8 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
 
     // Save gate: the rest of the form + submit now succeeds with the
-    // custom place's placeholder coordinates riding the trip body.
+    // custom place's NULL coordinates riding the trip body (B-7 part 3) —
+    // the keys stay present, the values are null, never a re-minted 0.
     await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Somewhere Trip");
     await pickDate("trip-new-input-dates-start", 2027, 5, 1);
     await pickDate("trip-new-input-dates-end", 2027, 5, 8);
@@ -396,13 +395,21 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
         body: {
           name: "Somewhere Trip",
           destination_name: "Nowhereville",
-          destination_lat: 0,
-          destination_lng: 0,
+          destination_lat: null,
+          destination_lng: null,
           start_date: "2027-05-01",
           end_date: "2027-05-08",
         },
       }),
     );
+    // Falsification: a naive `?? 0` fallback anywhere on this path would
+    // still satisfy a loose check, so pin the literal null explicitly.
+    const tripCall = request.mock.calls.find(([d]) => (d as { path: string }).path === "/trips");
+    const tripBody = (
+      tripCall?.[1] as { body: { destination_lat: unknown; destination_lng: unknown } }
+    ).body;
+    expect(tripBody.destination_lat).toBeNull();
+    expect(tripBody.destination_lng).toBeNull();
   });
 
   it("a genuinely held create shows the busy row (no double-submit — one tap has nothing left to press)", async () => {
@@ -563,7 +570,7 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     await pickDate("trip-new-input-dates-end", 2027, 5, 8);
     await pressSettled("trip-new-button-create");
 
-    // The trip must POST Kyoto — never the abandoned custom Null Island row.
+    // The trip must POST Kyoto — never the abandoned coordinate-less custom row.
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
     );
@@ -629,7 +636,7 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     await pressSettled("trip-new-button-create");
 
     // The trip must POST the explicit spine pick's REAL coordinates — never
-    // the abandoned custom Null Island place, even though the names match
+    // the abandoned coordinate-less custom place, even though the names match
     // and the input text never moved.
     await waitFor(() =>
       expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {

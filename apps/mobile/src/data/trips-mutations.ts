@@ -170,15 +170,23 @@ export interface CreateCustomDestinationOptions {
  * `POST /places` — the destination-search empty-results fallback (B-7, Sean
  * ruling 2026-09-13, trips spec R-tripui-23): when structured search settles
  * with zero hits, the picker offers to create the typed text as a permanent
- * `source='custom'` place (`PlaceCreateSchema`: `name`, `lat`, `lng`,
+ * `source='custom'` place (`PlaceCreateSchema`: `name`, `lat?`, `lng?`,
  * `category?` — no visibility field exists on the wire shape at all, so
  * there is nothing here to accidentally widen past the schema default;
  * creator-scoping is entirely the server's, per `search-query.ts`) and
- * select it — no map-drop screen this pass (queued separately), so `lat`/
- * `lng` are a fixed placeholder (`0, 0` — "Null Island"): the only job here
- * is unblocking trip creation with a searchable, selectable destination.
- * `category` is omitted (schema optional; server default `null` → coarse
- * category `'other'`, same as the `scripts/seed-qa-places.mjs` precedent).
+ * select it. B-7 PART 3 (2026-09-13 ruling, `B-7/nullable-custom-coords`):
+ * the body carries `name` ONLY — no `lat`/`lng` at all. `PlaceCreateSchema`
+ * now treats the pair as fully optional (omit both ⇒ a coordinate-less
+ * custom place; an explicit `null` is a 400 — one way to say "no
+ * coordinates"), so the old `(0, 0)` "Null Island" placeholder this hook
+ * used to send is GONE — every mobile consumer of a place/trip coordinate
+ * now takes a real null arm instead of silently treating `(0, 0)` as a real
+ * position (`features/map/**`, `map.spec.md` R-map-26). A trip created from
+ * a coordinate-less custom place carries `destination_lat/lng: null`; the
+ * settings remediation path (`more/settings.tsx`) is how the user gives it
+ * real coordinates later. `category` is omitted (schema optional; server
+ * default `null` → coarse category `'other'`, same as the
+ * `scripts/seed-qa-places.mjs` precedent).
  *
  * Success/error ride the HOOK's OWN `useMutation` options, not a per-call
  * `.mutate()` callback (the `places.ts` module-doc landmine: TanStack v5
@@ -193,12 +201,15 @@ export function useCreateCustomDestination(
   return useMutation({
     // Trim at the hook boundary (the `usePlaceSearch`/`normalizeSearchText`
     // precedent above: one normalization owner, not "the caller remembered
-    // to trim"). The request body carries EXACTLY `name`/`lat`/`lng` — no
-    // `category`, `trip_id`, or visibility field rides along (Law #3: the
-    // wire shape has no visibility knob to widen in the first place).
+    // to trim"). The request body carries EXACTLY `name` (B-7 part 3 — no
+    // `lat`/`lng`, no `category`, `trip_id`, or visibility field rides along
+    // — Law #3: the wire shape has no visibility knob to widen in the first
+    // place). Omitting BOTH coordinate keys is what makes the created place
+    // coordinate-less (`PlaceCreateSchema`'s pair rule) — sending an explicit
+    // `null` for either is a 400, so the key must be absent, not nulled.
     mutationFn: (rawName: string) =>
       apiClient.request(placeEndpoints.createPlace, {
-        body: { name: rawName.trim(), lat: 0, lng: 0 },
+        body: { name: rawName.trim() },
       }),
     onSuccess: (place) => {
       // B-7 review R1 B2 (blocking): with no invalidation, the EMPTY

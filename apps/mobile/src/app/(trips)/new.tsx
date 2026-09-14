@@ -42,12 +42,16 @@
  * typist could otherwise create a place for text that was never actually
  * searched; a failed create's error also resets on the next query change
  * (R1 A2), and the input caps at 200 chars mirroring `PlaceNameSchema`
- * (R1 A4). `PlaceCreateSchema` requires coordinates today, so `lat`/`lng`
- * ride as a fixed `(0, 0)` placeholder until real coordinate capture ships
- * as its own cross-component pass, B-7 part 3 (`B-7/nullable-custom-coords`)
- * — until then the map tab degrades for any trip built on a custom
- * destination (search bbox pinned to Null Island, ocean camera/offline
- * pack); disclosed in trips.spec.md R-tripui-23.
+ * (R1 A4). B-7 PART 3 (2026-09-13 ruling, `B-7/nullable-custom-coords`):
+ * `PlaceCreateSchema` no longer requires coordinates — the created place
+ * carries NO `lat`/`lng` at all (`useCreateCustomDestination`), and
+ * `selectedPlace.lat/lng` (now `number | null`) flow straight through to
+ * `TripCreate.destination_lat/lng` below with no special-casing — the wire
+ * type already allows null, and `TripCreateSchema` requires the KEYS, not
+ * non-null VALUES. The map tab's coordinate-less degrade (world view, honest
+ * empty state, unbounded search, no offline pack) is real behavior now, not
+ * a known gap; see `.specs/client/map.spec.md` R-map-26 and
+ * `.specs/client/trips.spec.md` R-tripui-23/24.
  *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.

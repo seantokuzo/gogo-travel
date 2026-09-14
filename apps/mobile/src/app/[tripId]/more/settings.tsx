@@ -5,7 +5,17 @@
  * - details form (name / destination / dates — editor+): destination is the
  *   CT-2 structured search (Overture spine typeahead, 4-char floor, no free
  *   text — editing after a pick voids it so lat/lng always match the visible
- *   text); dates ride T-6.7's native `DateField` pickers,
+ *   text); dates ride T-6.7's native `DateField` pickers. B-7 part 3
+ *   (2026-09-13 ruling, R-tripui-24): a zero-hit search offers the SAME
+ *   inline "Use as a custom destination" row `new.tsx` ships (R-tripui-23),
+ *   ported here so the settings destination change never dead-ends. A trip
+ *   whose EFFECTIVE destination (the pending pick, or else the saved row)
+ *   carries no coordinates gets a standing caption naming the consequence
+ *   (no map area) and the fix (pick a searchable place) — this IS the
+ *   remediation path for the trips B-7 part 2's placeholder created: picking
+ *   a spine result and saving heals the trip in one PATCH; picking another
+ *   custom place is equally legal and leaves it coordinate-less (§5 of the
+ *   part-3 spec — a legitimate end state, not a failure),
  * - theme (editor+, Sheet picker, optimistic apply — §2.6; labels come from
  *   `@gogo/tokens` themes so a palette add is one line, R-ds-5),
  * - base currency (owner-only; the LOCK is server-truth — R-trips-22 409
@@ -39,7 +49,7 @@ import { isThemeName, THEME_NAMES, themes } from "@gogo/tokens";
 import { createStyles } from "@gogo/tokens/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, View } from "react-native";
 
 import { ApiRequestError, useSessionStore } from "@/auth";
@@ -61,9 +71,11 @@ import {
   evictTripSubtree,
   invalidateTripLists,
   isBaseCurrencyLocked,
+  isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
   isStaleUpdatedAt,
   queryKeys,
+  useCreateCustomDestination,
   useDeleteTrip,
   usePlaceSearch,
   useRemoveMember,
@@ -83,9 +95,34 @@ import { useTripContext } from "@/navigation/trip-context";
 const CONFLICT_NOTICE = "Updated by someone else — review and re-save.";
 const CURRENCY_LOCKED_NOTICE = "Locked — the trip already has expenses.";
 const SAVE_ERROR = "Couldn't save changes. Please try again.";
+/** R-tripui-24: the standing explanation while the effective destination has
+ *  no coordinates — the map tab's world-view degrade named at its source. */
+const NO_LOCATION_NOTICE =
+  "This destination has no location, so the map tab has no area to show. Pick a place from search to add one.";
 
 /** Bounded typeahead render (CT-2 parity — server page ≤ 50, typeahead wants few). */
 const MAX_RESULTS = 8;
+
+/**
+ * Same envelope mapping as `new.tsx`'s `createCustomDestinationErrorMessage`
+ * (R-tripui-23 parity, ported for R-tripui-24) — kept as a screen-local copy
+ * rather than a shared module: the two screens own disjoint file sets by
+ * design (T-b file-ownership split) and the mapper is a few lines.
+ */
+function createCustomDestinationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 400) {
+      return "That destination name isn't valid — try editing it.";
+    }
+    if (error.status === 409) {
+      return "That change conflicted with another update — try again.";
+    }
+    if (error.status === 0) {
+      return "No connection — check your network and retry.";
+    }
+  }
+  return "Couldn't create that destination. Retry?";
+}
 
 /**
  * Trip accent label from the tokens registry (R-ds-5: palette add = one
@@ -247,6 +284,36 @@ export default function TripSettingsScreen() {
   const searchActive = deferredEditing && isSearchableDestinationQuery(deferredQuery);
   const search = usePlaceSearch(deferredEditing ? deferredQuery : "");
   const results = (search.data?.items ?? []).slice(0, MAX_RESULTS);
+  // The row/mutate argument is the SEARCHED text (R-tripui-23 R1 A3 parity),
+  // never the live `destinationQuery` — see `handleCreateCustomDestination`.
+  const trimmedSearchedDestinationQuery = deferredQuery.trim();
+
+  // B-7 part 3 (R-tripui-24): the SAME empty-results fallback `new.tsx`
+  // ships, ported. `onMutationSuccess` guards on `selectedPlace` directly
+  // (R2 B1 precedent — a name-equality proxy is blind to a same-named later
+  // pick), and falls back to the live-text guard only when nothing has been
+  // selected since.
+  const createCustomDestination = useCreateCustomDestination({
+    onMutationSuccess: (place) => {
+      if (selectedPlace !== null) return;
+      if (destinationQuery.trim() !== place.name) return;
+      setSelectedPlace(place);
+      setDestinationQuery(place.name);
+      setDestinationError(undefined);
+    },
+  });
+  const handleCreateCustomDestination = useCallback(() => {
+    if (createCustomDestination.isPending) return;
+    if (!isNonBlankDestinationQuery(deferredQuery)) return;
+    createCustomDestination.mutate(deferredQuery);
+  }, [createCustomDestination, deferredQuery]);
+
+  // R-tripui-24: the EFFECTIVE destination — the pending pick if one exists,
+  // else the saved row. A picked SPINE result clears the notice immediately
+  // (it's about to heal on Save); a picked CUSTOM place keeps it (§5: a
+  // legitimate end state, not a failure).
+  const effectiveDestinationLat = selectedPlace !== null ? selectedPlace.lat : trip.destination_lat;
+  const showNoLocationNotice = effectiveDestinationLat === null;
 
   const trimmedName = name.trim();
   const nameError =
@@ -473,11 +540,16 @@ export default function TripSettingsScreen() {
                     // match the visible text (CT-2 structured posture).
                     setSelectedPlace(null);
                     setDestinationError(undefined);
+                    // R1 A2 parity (new.tsx): a stale create FAILURE must not
+                    // survive a query change — TanStack only clears `isError`
+                    // on the next `mutate()`.
+                    if (createCustomDestination.isError) createCustomDestination.reset();
                   }}
                   placeholder="Search cities"
                   // B-20: autocorrect fights foreign place names (CT-2 parity
                   // with trip-new).
                   autoCorrect={false}
+                  maxLength={200}
                   helper={
                     destinationEditing && !searchActive && destinationQuery !== ""
                       ? "Keep typing — search starts at 4 characters."
@@ -496,9 +568,44 @@ export default function TripSettingsScreen() {
                       testID="trip-settings-banner-search"
                     />
                   ) : results.length === 0 ? (
-                    <AppText role="caption" color="muted">
-                      No places matched — try a different spelling.
-                    </AppText>
+                    <View style={s.fieldGroup}>
+                      <AppText role="caption" color="muted">
+                        No places matched — try a different spelling.
+                      </AppText>
+                      {createCustomDestination.isError ? (
+                        <ErrorBanner
+                          message={createCustomDestinationErrorMessage(
+                            createCustomDestination.error,
+                          )}
+                          onRetry={handleCreateCustomDestination}
+                          testID="trip-settings-error-create-destination"
+                        />
+                      ) : createCustomDestination.isPending ? (
+                        <View style={s.results}>
+                          <ListItem
+                            // Binds to the MUTATION's OWN variables, not live
+                            // state (R1 B1 parity, new.tsx).
+                            title={`Creating "${(createCustomDestination.variables ?? "").trim()}"…`}
+                            leading={
+                              <ActivityIndicator
+                                size="small"
+                                testID="trip-settings-list-item-custom-spinner"
+                              />
+                            }
+                            testID="trip-settings-list-item-custom"
+                          />
+                        </View>
+                      ) : (
+                        <View style={s.results}>
+                          <ListItem
+                            title={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
+                            onPress={handleCreateCustomDestination}
+                            accessibilityLabel={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
+                            testID="trip-settings-list-item-custom"
+                          />
+                        </View>
+                      )}
+                    </View>
                   ) : (
                     <View style={s.results}>
                       {results.map((place) => (
@@ -516,6 +623,15 @@ export default function TripSettingsScreen() {
                       ))}
                     </View>
                   )
+                ) : null}
+                {/* R-tripui-24: standing explanation while the EFFECTIVE
+                    destination has no coordinates — hidden while the search
+                    results region is open so the two never compete for the
+                    same line. */}
+                {!searchActive && showNoLocationNotice ? (
+                  <AppText role="caption" color="muted" testID="trip-settings-notice-no-location">
+                    {NO_LOCATION_NOTICE}
+                  </AppText>
                 ) : null}
               </View>
               <View style={s.dateRow} testID="trip-settings-input-dates">

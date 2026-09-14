@@ -70,13 +70,18 @@ export function isBaseCurrencyLocked(error: unknown): boolean {
  * default; `status: null` = clear the manual override (wire capability,
  * R-trips-20 — no client surface renders it in P-6). Destination fields
  * travel TOGETHER from a structured pick (name+lat+lng — §2.3 posture, no
- * free text). Absent key = untouched.
+ * free text). Absent key = untouched. B-7 part 3: `lat`/`lng` are nullable —
+ * a picked CUSTOM place (R-tripui-24 remediation row, `more/settings.tsx`)
+ * may carry no coordinates, and the diff below is already null-correct
+ * (`null !== <number>` and `<number> !== null` both read as "changed", so a
+ * pick that HEALS a coordinate-less trip and a pick that clears one to a
+ * custom destination both touch the patch).
  */
 export interface TripSettingsEdits {
   name?: string;
   destination_name?: string;
-  destination_lat?: number;
-  destination_lng?: number;
+  destination_lat?: number | null;
+  destination_lng?: number | null;
   start_date?: string;
   end_date?: string;
   theme?: string | null;
