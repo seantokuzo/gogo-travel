@@ -75,10 +75,14 @@ export interface SessionState {
    * settle-return records, last-zone map via `onSignedOut`) but with NO
    * server call, ever — unlike `signOut()`, this never fires the
    * best-effort `/auth/logout` POST. The E2E session door calls this (never
-   * `signOut()`) so a door run's local reset never depends on network
-   * reachability to the API: it is about to mint a brand-new session
-   * immediately after, and the old session needing revocation is not this
-   * step's job.
+   * `signOut()`) for LATENCY, not reachability — `signOut()` already
+   * swallows the logout call's failure in its best-effort try/catch below,
+   * so it never depended on the server being reachable; what it DOES do is
+   * AWAIT that POST, capped at the client's 12s request timeout, so a door
+   * run through `signOut()` on an offline/black-holed rig would stall up to
+   * 12s before ever minting. The old session needing server-side revocation
+   * is not this step's job either way — the door is about to mint a
+   * brand-new session immediately after.
    */
   resetLocalSession(): Promise<void>;
   /** Remember the intended destination while redirecting to sign-in (R-nav-1). */

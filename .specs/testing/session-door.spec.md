@@ -663,15 +663,22 @@ following the `(auth)/diagnostics.tsx` pattern exactly:
 - **Ordering (R-door-8), this order exactly:** (1) wait for
   `useSessionStore(s => s.hydrated)` — otherwise boot hydration from a stale
   Keychain refresh token races the mint and can end up the **last** writer of
-  `accessToken` / `user`; (2) `await resetLocalSession()` — the real
-  `signOut()`, which clears the query cache, tab memory, last-viewed trip,
-  money-segment memory, deeplink-return and settle-return records, and the
-  per-trip last-zone map — skipping it leaks the previous run's account state
-  into the flow, the exact Law-#3 class this repo has fixed five separate
-  times; (3) `await openSessionDoor(...)`, then `applySignIn(response)`; (4)
-  **do not navigate** — `AuthGate`'s `resume` branch (`authed && inAuthGroup`)
-  fires `router.replace(dest ?? "/")` on the next effect cycle and takes the
-  app out of `(auth)` by itself.
+  `accessToken` / `user`; (2) `await resetLocalSession()` — **the LOCAL HALF
+  of `signOut()`** (the shared `clearLocalSessionState()` helper, session-
+  store.ts): query cache, tab memory, last-viewed trip, money-segment
+  memory, deeplink-return and settle-return records, and the per-trip
+  last-zone map — deliberately **NOT** `signOut()` itself: `signOut()`
+  additionally fires a best-effort `/auth/logout` POST first, which
+  `resetLocalSession()` skips on purpose, so the reset never waits on the
+  client's 12s request-timeout cap on an offline/black-holed rig (review
+  round 1 security A2 — not a reachability concern; `signOut()`'s logout
+  call already swallows its own failure). Skipping the local clear entirely
+  leaks the previous run's account state into the flow, the exact Law-#3
+  class this repo has fixed five separate times; (3) `await
+openSessionDoor(...)`, then `applySignIn(response)`; (4) **do not
+  navigate** — `AuthGate`'s `resume` branch (`authed && inAuthGroup`) fires
+  `router.replace(dest ?? "/")` on the next effect cycle and takes the app
+  out of `(auth)` by itself.
 
 ### 4.6 Deep-link path — no registry change needed
 
