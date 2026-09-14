@@ -266,6 +266,9 @@ export async function runOrphanPackSweep(): Promise<void> {
 
 export interface PackDownloadTarget {
   tripId: string;
+  // Unchanged (B-7 part 3 spec 3.3) — deliberately non-null: callers must
+  // resolve `isUsableDestination`/`usableDestinationCoords` FIRST and never
+  // construct one for a null-coordinate trip.
   destinationLat: number;
   destinationLng: number;
   styleUrl: string;
@@ -362,12 +365,15 @@ export async function deleteTripPack(tripId: string): Promise<void> {
 // Controller hook (pill + settings surfaces)
 // ---------------------------------------------------------------------------
 
-/** The trip fields the controller needs (structural — `TripWithRole` fits). */
+/** The trip fields the controller needs (structural — `TripWithRole` fits).
+ *  B-7 part 3: nullable — a custom-place destination may carry no
+ *  coordinates; `isUsableDestination` (offline-packs.ts) already treats null
+ *  as unusable, standing the whole machine down (module doc). */
 export interface OfflinePackTrip {
   id: string;
   status: TripStatus;
-  destination_lat: number;
-  destination_lng: number;
+  destination_lat: number | null;
+  destination_lng: number | null;
 }
 
 /**
@@ -392,14 +398,19 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
   const { scheme } = useTheme();
   const styleUrl = mapStyleUrlForScheme(scheme);
   const { id: tripId, status, destination_lat: lat, destination_lng: lng } = trip;
-  // The map screen's degrade arm renders with UNUSABLE coords (R-map-1 world
-  // fallback) — the region grid throws on them, so the whole machine stands
-  // down: no fingerprint, no effects, state pinned to `none`.
+  // The map screen's degrade arm renders with UNUSABLE coords — null
+  // (B-7 part 3: a coordinate-less custom destination) or NaN/out-of-range
+  // (R-map-1 world fallback) — the region grid throws on either, so the
+  // whole machine stands down: no fingerprint, no effects, state pinned to
+  // `none`.
   const usable = isUsableDestination(lat, lng);
-  const regionKey = usable ? packRegionKeyFor(lat, lng) : "";
+  const regionKey = lat !== null && lng !== null && usable ? packRegionKeyFor(lat, lng) : "";
 
   useEffect(() => {
-    if (!usable) return;
+    // Narrows lat/lng to `number` for the rest of this effect (both are
+    // `const` destructures, never reassigned — the narrowing survives into
+    // the nested async closure below).
+    if (lat === null || lng === null || !usable) return;
     const current: PackFingerprint = { styleUrl, regionKey };
     syncPackStateFromAnnotation(tripId, current);
     void runOrphanPackSweep();

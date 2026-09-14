@@ -99,10 +99,17 @@ export function MapPlaceSheetSlot({
   // the switcher bar owns the safe-area top here (B-27).
   const topInset = useTopInset();
   // The slot mounts under the [tripId] layout's TripProvider by contract
-  // (the screen renders it) — destination coords are schema-guaranteed.
+  // (the screen renders it). B-7 part 3: destination coords are no longer
+  // guaranteed — a custom-place destination may be null (module doc).
   const trip = useTripContext();
 
   const savedQuery = useSavedPlaces(tripId);
+  // B-7 part 3 (R-map-26): null when either coordinate is null — MapSearch
+  // runs unbounded text-only search for a coordinate-less trip.
+  const destination =
+    trip.destination_lat !== null && trip.destination_lng !== null
+      ? { lat: trip.destination_lat, lng: trip.destination_lng }
+      : null;
 
   const screenPlace =
     selectedPlaceId === null ? null : savedPlaceRowFor(savedQuery.data?.items, selectedPlaceId);
@@ -134,7 +141,7 @@ export function MapPlaceSheetSlot({
       >
         <MapSearch
           tripId={tripId}
-          destination={{ lat: trip.destination_lat, lng: trip.destination_lng }}
+          destination={destination}
           onSelectResult={handleSelectResult}
           onResultsChange={onSearchResultsChange}
         />

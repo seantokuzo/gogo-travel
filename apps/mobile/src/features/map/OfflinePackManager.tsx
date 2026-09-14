@@ -26,11 +26,15 @@
  * installed SDK has no estimate API (machine module doc). Every action
  * handler is gated in the HANDLER, never only `disabled` (mobile.md).
  *
- * UNUSABLE destination (the R-map-1 world degrade arm renders with NaN
- * coords): the whole surface stands down like the pill — the controller pins
- * state to `none`, and the estimate/actions are gated on
- * `isUsableDestination` (the region grid THROWS on bad coords; round-1: the
- * unguarded estimate memo crashed this surface where the pill survived).
+ * UNUSABLE destination (the R-map-1 world degrade arm renders with NaN or
+ * — B-7 part 3 — NULL coords, a coordinate-less custom destination): the
+ * whole surface stands down like the pill — the controller pins state to
+ * `none`, and the estimate/actions are gated on `isUsableDestination` (the
+ * region grid THROWS on bad coords; round-1: the unguarded estimate memo
+ * crashed this surface where the pill survived). When unusable, every
+ * download/refresh/retry control is REPLACED by a one-line explanation
+ * naming the fix (trip settings), never merely `disabled` (mobile.md
+ * vacuous-pin rule — the handler stays gated too, belt-and-braces).
  *
  * Mounting this surface mounts the pack controller — the second R-map-18
  * activation-trigger mount point (controller doc).
@@ -61,6 +65,10 @@ import {
 } from "./offline-pack-controller";
 
 const OFFLINE_NOTICE = "You're offline — map downloads need a connection.";
+/** B-7 part 3 (R-map-26): the unusable-destination explanation, replacing
+ *  every download/refresh/retry control. */
+const NO_LOCATION_NOTICE =
+  "Offline maps need a destination with a location. Change the destination in trip settings.";
 
 /** State line for the sheet AND the settings row subtitle (one wording home). */
 export function offlinePackSummary(state: OfflinePackState): string {
@@ -110,25 +118,29 @@ export function OfflinePackManager() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [offlineNotice, setOfflineNotice] = useState(false);
 
-  const target: PackDownloadTarget = {
-    tripId: trip.id,
-    destinationLat: trip.destination_lat,
-    destinationLng: trip.destination_lng,
-    styleUrl: mapStyleUrlForScheme(scheme),
-  };
-
-  // Degrade-arm guard (module doc): the grid throws on unusable coords, so
-  // the estimate is null and every download entry stands down with it.
+  // Degrade-arm guard (module doc): the grid throws on unusable coords
+  // (null — B-7 part 3 — or NaN/out-of-range), so the estimate is null and
+  // every download entry stands down with it.
   const usable = isUsableDestination(trip.destination_lat, trip.destination_lng);
-  const estimate = useMemo(
-    () =>
-      usable
-        ? formatPackSize(
-            estimatePackSizeBytes(packBoundsFor(trip.destination_lat, trip.destination_lng)),
-          )
-        : null,
-    [trip.destination_lat, trip.destination_lng, usable],
-  );
+
+  const target: PackDownloadTarget | null = useMemo(() => {
+    const lat = trip.destination_lat;
+    const lng = trip.destination_lng;
+    if (lat === null || lng === null || !usable) return null;
+    return {
+      tripId: trip.id,
+      destinationLat: lat,
+      destinationLng: lng,
+      styleUrl: mapStyleUrlForScheme(scheme),
+    };
+  }, [trip.id, trip.destination_lat, trip.destination_lng, usable, scheme]);
+
+  const estimate = useMemo(() => {
+    const lat = trip.destination_lat;
+    const lng = trip.destination_lng;
+    if (lat === null || lng === null || !usable) return null;
+    return formatPackSize(estimatePackSizeBytes(packBoundsFor(lat, lng)));
+  }, [trip.destination_lat, trip.destination_lng, usable]);
 
   /**
    * Download/refresh/retry entry: resolve the network AT PRESS TIME (the
@@ -136,7 +148,10 @@ export function OfflinePackManager() {
    * wifi → start, cellular → size-estimate ConfirmDialog, none → notice.
    */
   const requestDownload = (dialogKey: Exclude<CellularDialog, null>) => {
-    if (!usable || state.phase === "downloading") return; // handler gate, not `disabled`
+    // Handler gate, not `disabled` (mobile.md) — `target === null` is the
+    // same unusable-destination guard as `usable`, kept explicit so TS
+    // narrows `target` to non-null for the rest of this closure.
+    if (!usable || target === null || state.phase === "downloading") return;
     void Network.getNetworkStateAsync().then((network) => {
       if (isWifiState(network)) {
         setOfflineNotice(false);
@@ -154,6 +169,10 @@ export function OfflinePackManager() {
 
   const onConfirmCellular = () => {
     setCellularDialog(null);
+    // The dialog only opens through `requestDownload`, which already gated
+    // on `target !== null` — this stands unreachable, not `disabled`, so
+    // TS still needs the explicit check to narrow `target` here.
+    if (target === null) return;
     startPackDownload(target);
   };
 
@@ -173,6 +192,11 @@ export function OfflinePackManager() {
       {state.phase === "failed" ? (
         <AppText role="caption" color="muted">
           {state.message}
+        </AppText>
+      ) : null}
+      {!usable ? (
+        <AppText role="caption" color="muted" testID="offline-pack-notice-no-location">
+          {NO_LOCATION_NOTICE}
         </AppText>
       ) : null}
       {state.phase === "none" && estimate !== null ? (

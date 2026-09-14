@@ -209,6 +209,46 @@ it("nothing selected: no sheet; search + locate ARE mounted through the slot", a
   expect(screen.getByTestId("map-button-locate")).toBeTruthy();
 });
 
+// B-7 part 3 (R-map-26, M3): the slot passes null to MapSearch when either
+// trip destination coordinate is null — never a `{lat: null, lng: ...}`
+// object, which would fail MapSearch's own type and, if forced through,
+// throw inside searchGeoBoundFor at request time.
+it("coordinate-less trip: MapSearch mounts with destination=null (no-destination notice, no bbox request)", async () => {
+  mockRequests();
+  const handlers = makeHandlers();
+  const coordlessTrip = makeTrip({
+    id: TEST_TRIP_ID,
+    destination_lat: null,
+    destination_lng: null,
+  });
+  await renderWithProviders(
+    <TripProvider trip={coordlessTrip}>
+      <MapPlaceSheetSlot
+        tripId={TEST_TRIP_ID}
+        selectedPlaceId={null}
+        selectedItemId={null}
+        searchPlace={null}
+        onSelectSearchPlace={handlers.onSelectSearchPlace}
+        onSearchResultsChange={handlers.onSearchResultsChange}
+        onClose={handlers.onClose}
+      />
+    </TripProvider>,
+    { queryClient: makeTestQueryClient() },
+  );
+  await settle();
+
+  expect(screen.getByTestId("map-search-notice-no-destination")).toBeOnTheScreen();
+
+  const request = jest.spyOn(apiClient, "request") as unknown as jest.Mock;
+  request.mockClear();
+  await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyot");
+  await settle();
+  const searchCall = request.mock.calls.find(([d]) => d === placeEndpoints.searchPlaces) as
+    [unknown, { query: Record<string, unknown> }] | undefined;
+  expect(searchCall).toBeDefined();
+  expect("bbox" in (searchCall?.[1].query ?? {})).toBe(false);
+});
+
 it("R-map-4: a selected pin's placeId presents the sheet for its saved row", async () => {
   await renderSlot(PLACE_A);
 

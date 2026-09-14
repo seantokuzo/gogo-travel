@@ -46,7 +46,9 @@ const seedReadyPack = () => {
   writePackAnnotation({
     tripId: TEST_TRIP_ID,
     styleUrl: LIGHT_STYLE,
-    regionKey: packRegionKeyFor(trip().destination_lat, trip().destination_lng),
+    // The fixture always carries real coordinates (Lisbon) — B-7 part 3
+    // widened the wire type to `number | null`, not this fixture's value.
+    regionKey: packRegionKeyFor(trip().destination_lat as number, trip().destination_lng as number),
     completedAt: "2026-08-18T00:00:00.000Z",
     sizeBytes: 7_000_000,
   });
@@ -154,6 +156,23 @@ it("UNUSABLE destination coords (the screen's world degrade arm): machine stands
   const degraded = { ...trip(), destination_lat: Number.NaN, destination_lng: Number.NaN };
   await renderWithProviders(
     <TripProvider trip={degraded}>
+      <MapOfflinePillSlot tripId={TEST_TRIP_ID} />
+    </TripProvider>,
+  );
+  await settle();
+  expect(screen.queryByTestId("map-pill-offline")).toBeNull();
+  expect(om.createPack).not.toHaveBeenCalled();
+});
+
+it("NULL destination coords (B-7 part 3 — coordinate-less custom place): machine stands down, no crash, no SDK touch", async () => {
+  // Same degrade arm as the NaN case above, but the REAL post-part-3 signal:
+  // a trip whose destination is a coordinate-less custom place.
+  // Falsification: widen only the TYPE (`OfflinePackTrip`) without the
+  // `lat === null || lng === null` guard in `useOfflinePackController` and
+  // this throws through `packRegionKeyFor` → `regionCellsForDestination`.
+  const coordless = { ...trip(), destination_lat: null, destination_lng: null };
+  await renderWithProviders(
+    <TripProvider trip={coordless}>
       <MapOfflinePillSlot tripId={TEST_TRIP_ID} />
     </TripProvider>,
   );

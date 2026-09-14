@@ -445,6 +445,25 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
+  // B-7 part 3 (R-map-18 amendment, M9): a coordinate-less trip (a custom
+  // destination with no location) stands the WHOLE machine down — same
+  // degrade arm as NaN, but the REAL live signal now, not a defensive-only
+  // arm. Falsification: revert the widened `OfflinePackTrip` type / the
+  // `usable` guard's null check, and this throws inside `packRegionKeyFor`
+  // → `regionCellsForDestination` (NaN.toFixed-style crash on null math).
+  it("NULL destination coords: never fingerprints, never auto-downloads, renders none", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const coordless = { ...activeTrip(), destination_lat: null, destination_lng: null };
+    const { result, unmount } = await renderHook(() => useOfflinePackController(coordless), {
+      wrapper,
+    });
+    expect(result.current).toEqual({ phase: "none" });
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+    await unmount();
+  });
+
   it("the deferred wifi listener is removed on unmount — no leak", async () => {
     const remove = jest.fn();
     network.getNetworkStateAsync.mockImplementation(async () => cellular);
