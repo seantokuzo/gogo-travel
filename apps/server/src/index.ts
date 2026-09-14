@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import type { MigrationState } from "@gogo/shared/api/health";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { buildE2eDoorDepsFromEnv, E2E_DOOR_BOOT_WARNING } from "./auth/e2e-door.js";
 import { decideBootMigrationAction, shapeMigrationStateForHealth } from "./boot-migration-check.js";
 import { buildBookingsDeps } from "./bookings/wire.js";
 import { buildBudgetsDeps } from "./budgets/wire.js";
@@ -100,8 +101,18 @@ if (authDeps) {
         "will be absent until it is set (transit via Transitous still computes)",
     );
   }
+  // E2E session door (S-4/T3, session-door spec §3.2/§3.7) — null unless
+  // G0/G1/G2 all hold (`e2eDoorGatesPass`), in which case `createApp` mounts
+  // the route; otherwise nothing changes about this boot at all. Shares the
+  // SAME db/signer sign-in uses (R-door-4) — never a second key or pool.
+  const e2eDoorDeps = buildE2eDoorDepsFromEnv(env, { db: authDeps.db, signer: authDeps.signer });
+  if (e2eDoorDeps) {
+    console.warn(E2E_DOOR_BOOT_WARNING);
+  }
+
   appOptions = {
     auth: authDeps,
+    ...(e2eDoorDeps ? { e2eDoor: e2eDoorDeps } : {}),
     users: await buildUsersDepsFromEnv(env),
     trips: { ...buildTripsDeps(), placesIngest: placesIngest.trigger },
     // Same queue instance as trips: destination + search-miss triggers feed

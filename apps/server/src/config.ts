@@ -168,7 +168,48 @@ export const RATE_LIMITS = {
    * then day-cached), ≪ probe-spam utility.
    */
   fxRate: { limit: 20, windowMs: MINUTE_MS },
+  /**
+   * `POST /auth/e2e/session` (S-4/T3, session-door spec §3.7, R-door-9) — its
+   * OWN bucket, per socket peer (`isLoopbackOrPrivatePeer`'s subject, never
+   * XFF). 20/min ≫ PR #61's measured ~1 door call per 30s authoring cadence;
+   * 200/day bounds a runaway loop. Deliberately NOT mounted via the generic
+   * `rateLimit([...])` middleware (that middleware's only rejection is 429 +
+   * `Retry-After`, itself a door-exists oracle) — the door handler charges
+   * this window directly and folds a hit into the SAME uniform 401 every
+   * other rejection reason returns (§3.6, no oracle).
+   */
+  e2eDoor: [
+    { limit: 20, windowMs: MINUTE_MS },
+    { limit: 200, windowMs: DAY_MS },
+  ],
 } as const satisfies Record<string, RateLimitWindow | readonly RateLimitWindow[]>;
+
+// ---------------------------------------------------------------------------
+// E2E session door (S-4/T3 — session-door spec §5.4 "Bounded growth guard")
+// ---------------------------------------------------------------------------
+
+/**
+ * R-door-14: the total distinct `e2e:`-prefixed fixture users the door will
+ * ever find-or-create before find-or-create for a NEW key starts rejecting
+ * with `reason=fixture_cap`. Lookups of already-existing keys are unaffected.
+ * A boot constant (not an env var) — tests override it via DI on the door's
+ * deps, never through the environment.
+ */
+export const E2E_DOOR_MAX_FIXTURE_USERS = 500;
+
+/**
+ * The door's OWN body-size cap (review round 1 A2/F2) — strictly smaller
+ * than the app-wide `BODY_LIMIT_MAX_BYTES` (256 KiB). The door's entire
+ * legitimate body (`{secret<=512 chars, user_key<=32 chars, device,
+ * first_run?}`, session-door spec §3.6 body-size-ordering note: "the
+ * legitimate body is well under 1 KiB") never needs anywhere close to 256
+ * KiB; capping the door's per-route `bodyLimit` at the SAME size as every
+ * other route let a caller buffer/parse up to 256 KiB before the peer gate
+ * or the secret compare ever ran — an unbounded unauthenticated
+ * allocate/parse surface. 4 KiB leaves headroom for an unusually long
+ * `device_name` (unbounded in `DeviceInfoSchema`) without reopening it.
+ */
+export const E2E_DOOR_BODY_LIMIT_MAX_BYTES = 4 * 1024;
 
 // ---------------------------------------------------------------------------
 // Trips surface (trips spec §3.3) — T-6.1

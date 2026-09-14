@@ -103,6 +103,13 @@ const lines = [
   `APPLE_PRIVATE_KEY="${throwawayPkcs8Escaped()}"`,
   `APPLE_CREDENTIALS_KEY=${randomBytes(32).toString("base64")}`,
   "",
+  "# E2E session door (S-4/T3, .specs/testing/session-door.spec.md §3.2 G0/G2).",
+  "# NODE_ENV=development above already satisfies G1 (explicitly provided).",
+  "# Local test rigs only — loadEnv() refuses to boot if NODE_ENV=production",
+  "# and either of these is set (§3.8).",
+  "E2E_SESSION_DOOR=1",
+  `E2E_SESSION_DOOR_SECRET=${randomBytes(32).toString("base64")}`,
+  "",
 ];
 
 writeFileSync(envTestPath, lines.join("\n"), { mode: 0o600 });
@@ -113,7 +120,10 @@ chmodSync(envTestPath, 0o600);
 console.warn(`wrote apps/server/.env.test (mode 600) with throwaway values for:`);
 console.warn("  NODE_ENV, AUTH_ES256_PRIVATE_KEY, AUTH_ES256_KID, APPLE_CLIENT_ID,");
 console.warn("  GOOGLE_CLIENT_IDS, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY,");
-console.warn("  APPLE_CREDENTIALS_KEY" + (databaseUrl !== undefined ? ", DATABASE_URL" : ""));
+console.warn(
+  "  APPLE_CREDENTIALS_KEY, E2E_SESSION_DOOR, E2E_SESSION_DOOR_SECRET" +
+    (databaseUrl !== undefined ? ", DATABASE_URL" : ""),
+);
 if (databaseUrl === undefined) {
   console.warn(
     "no DATABASE_URL resolved — wrote a commented placeholder; authed boot " +

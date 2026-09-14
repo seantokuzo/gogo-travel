@@ -104,6 +104,88 @@ export interface TripsRouterDeps {
 // malformed cursors fall back to page 1 (the endpoint's documented errors
 // don't include a cursor 400 — §3.3 GET /trips).
 
+/** Result of the extracted trip-delete core (see `deleteTripCore` below). */
+export interface DeleteTripCoreResult {
+  /** `false` iff the trip row didn't exist (or was already gone). */
+  deleted: boolean;
+  /**
+   * The pre-delete member id snapshot (R-trips-8: "captured before the
+   * delete") — empty when the trip didn't exist.
+   */
+  memberSnapshot: readonly string[];
+}
+
+/**
+ * Callable core of `DELETE /trips/:tripId` (R-trips-8), extracted at S-4/T3
+ * (session-door spec §5.4 step 1) so `scripts/e2e-cleanup.mjs` can delete an
+ * all-fixture trip in-process — no HTTP request, no session, no door — while
+ * the route below keeps calling this SAME function, so the two paths can
+ * never drift apart. Preserves the route's `FOR UPDATE` membership fence
+ * (T-6.2 round-1 blocking #2 — see the route's own doc comment for the full
+ * deadlock-avoidance rationale) and the schema §3.6 cascade byte-for-byte.
+ *
+ * `actorUserId`: the route's own `requireTripMember("owner")` gate already
+ * proves the caller owns the trip before this ever runs, so re-checking
+ * membership here is a no-op on every HTTP-path test (byte-identical
+ * behavior, S-4/T3 deliverable #1). For a caller with NO upstream gate (the
+ * cleanup script), this checks MEMBERSHIP, not ownership (review round 1
+ * correctness finding 6 — the prior wording here read as an authz boundary
+ * it is not): a trip whose fenced membership snapshot doesn't include the
+ * presented actor is left untouched (`deleted: false`). An ungated caller
+ * that needs OWNER semantics must check `role = 'owner'` itself, the way
+ * `scripts/e2e-cleanup.mjs`'s `ownedByFixture` query already does.
+ *
+ * `allowedMemberIds` (review round 1 security finding 1 / correctness
+ * advisory 4): an optional second fence, checked against the SAME `FOR
+ * UPDATE` snapshot as the actor check — every fenced member must also be in
+ * this set, or the trip is left untouched. `scripts/e2e-cleanup.mjs`
+ * classifies a trip as "all-fixture" from a snapshot taken OUTSIDE this
+ * transaction; a real (non-fixture) user can join between that snapshot and
+ * this delete. Passing the live fixture id set here makes the
+ * classification authoritative AT DELETE TIME — one extra `Set.has` per
+ * fenced member, no extra query — instead of trusting the caller's earlier
+ * read.
+ */
+export async function deleteTripCore(
+  db: DbClient,
+  tripId: string,
+  actorUserId: string,
+  allowedMemberIds?: ReadonlySet<string>,
+): Promise<DeleteTripCoreResult> {
+  let memberSnapshot: readonly string[] = [];
+
+  const deleted = await db.transaction(async (tx) => {
+    const fencedMembers = await tx
+      .select({ userId: schema.tripMembers.userId })
+      .from(schema.tripMembers)
+      .where(eq(schema.tripMembers.tripId, tripId))
+      .orderBy(schema.tripMembers.userId)
+      .for("update");
+    memberSnapshot = fencedMembers.map((row) => row.userId);
+
+    // Trip absent: fall through to the 0-row delete below (same shape a
+    // stale/nonexistent id always produced pre-extraction). Trip present:
+    // require the presented actor to be a fenced member — a no-op for the
+    // route (already gate-proven), a real guard for an ungated caller.
+    if (memberSnapshot.length > 0 && !memberSnapshot.includes(actorUserId)) {
+      return [];
+    }
+    // `allowedMemberIds` re-verifies EVERY fenced member, not just the
+    // actor — closes the snapshot-vs-fence window a caller like cleanup's
+    // all-fixture classification is otherwise exposed to.
+    if (allowedMemberIds && memberSnapshot.some((id) => !allowedMemberIds.has(id))) {
+      return [];
+    }
+
+    return tx
+      .delete(schema.trips)
+      .where(eq(schema.trips.id, tripId))
+      .returning({ id: schema.trips.id });
+  });
+
+  return { deleted: deleted.length > 0, memberSnapshot };
+}
+
 /** Any transaction scope — the `places/visibility.ts` `Tx` precedent. Named
  * so the create/update transaction bodies below can be pulled out as their
  * own `const`s (B-7 part 3 round-1 fix's `.catch(rethrowCoordsCkMapped)`
@@ -561,38 +643,21 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     const { tripId } = tripContextOf(c);
     const { userId } = authContextOf(c);
 
-    // R-trips-8: trip.deleted goes "to all other members CAPTURED BEFORE THE
-    // DELETE" — the fence SELECT below reads exactly that set, so capturing
-    // it here adds no query and no lock. Post-commit the membership rows are
-    // cascade-gone; this snapshot is the only correct recipient source.
-    let memberSnapshot: readonly string[] = [];
-
-    const deleted = await deps.db.transaction(async (tx) => {
-      // Membership FENCE before the cascade (T-6.2 round-1 blocking #2). The
-      // RI cascade exclusive-locks this trip's INVITE rows BEFORE its member
-      // rows (Postgres fires FK triggers in creation order; 0000 creates the
-      // invites FK before the trip_members FK), inverting the global
-      // users → trip_members → invites acquisition order — an in-flight
-      // invite-accept (owner-row FOR SHARE held, invite lock wanted) would
-      // cycle with the cascade → 40P01. Taking every membership row
-      // FOR UPDATE first, in user_id order (the account-deletion step-1
-      // fence shape), parks this delete until in-flight accepts commit and
-      // blocks new ones — by cascade time no other transaction holds
-      // trip-scoped row locks, regardless of FK trigger order.
-      const fencedMembers = await tx
-        .select({ userId: schema.tripMembers.userId })
-        .from(schema.tripMembers)
-        .where(eq(schema.tripMembers.tripId, tripId))
-        .orderBy(schema.tripMembers.userId)
-        .for("update");
-      memberSnapshot = fencedMembers.map((row) => row.userId);
-
-      return tx
-        .delete(schema.trips)
-        .where(eq(schema.trips.id, tripId))
-        .returning({ id: schema.trips.id });
-    });
-    if (deleted.length === 0) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
+    // Membership FENCE before the cascade (T-6.2 round-1 blocking #2). The
+    // RI cascade exclusive-locks this trip's INVITE rows BEFORE its member
+    // rows (Postgres fires FK triggers in creation order; 0000 creates the
+    // invites FK before the trip_members FK), inverting the global
+    // users → trip_members → invites acquisition order — an in-flight
+    // invite-accept (owner-row FOR SHARE held, invite lock wanted) would
+    // cycle with the cascade → 40P01. Taking every membership row FOR UPDATE
+    // first, in user_id order (the account-deletion step-1 fence shape),
+    // parks this delete until in-flight accepts commit and blocks new ones —
+    // by cascade time no other transaction holds trip-scoped row locks,
+    // regardless of FK trigger order. (Extracted at S-4/T3 into
+    // `deleteTripCore` — see its doc comment; this route calls it so the two
+    // never drift apart.)
+    const { deleted, memberSnapshot } = await deleteTripCore(deps.db, tripId, userId);
+    if (!deleted) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
     // POST-COMMIT push invalidation (T-6.3): the pre-delete member set minus
     // the actor (R-trips-8; §3.3 DELETE bullet). Live-filtering happens in
