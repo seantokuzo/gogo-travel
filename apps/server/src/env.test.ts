@@ -6,6 +6,10 @@ describe("loadEnv", () => {
     const env = loadEnv({});
     expect(env).toEqual({
       NODE_ENV: "development",
+      // S-4/T3 (session-door spec R-door-1/G1): NODE_ENV was NOT in the
+      // source object here, so it's `false` even though the value resolved
+      // to the schema's "development" default.
+      NODE_ENV_EXPLICIT: false,
       PORT: 3000,
       // T-7.3: the community Transitous instance is keyless, so the base URL
       // DEFAULTS instead of degrading (unlike the Mapbox token, absent here).

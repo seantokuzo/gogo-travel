@@ -3,7 +3,13 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { MigrationState } from "@gogo/shared/api/health";
 import { authEndpoints } from "@gogo/shared/domains/auth";
+import { e2eEndpoints } from "@gogo/shared/domains/e2e";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import {
+  createE2eDoorRouter,
+  performDoorConstantWorkFloor,
+  type E2eDoorRouterDeps,
+} from "./auth/e2e-door.js";
 import { createBookingsRouter, type BookingsRouterDeps } from "./bookings/routes.js";
 import { createBudgetsRouter, type BudgetsRouterDeps } from "./budgets/routes.js";
 import { createExpensesRouter, type ExpensesRouterDeps } from "./expenses/routes.js";
@@ -142,6 +148,17 @@ export interface CreateAppOptions {
    * wiring bug like every other surface.
    */
   fx?: FxRouterDeps;
+  /**
+   * E2E session door deps (S-4/T3, session-door spec §4.3). Present ONLY on
+   * a non-production server holding a valid `E2E_SESSION_DOOR_SECRET`
+   * (`auth/e2e-door.ts`'s `buildE2eDoorDepsFromEnv` returns `null`
+   * otherwise) — every other server never constructs this router at all, so
+   * there is nothing for a request to reach. Same pairing rule as every
+   * other surface: door-without-auth is a wiring bug, rejected at
+   * construction (it mints via the SAME issuance path sign-in uses,
+   * R-door-4, so it cannot exist without `auth`).
+   */
+  e2eDoor?: E2eDoorRouterDeps;
   /**
    * Boot-time migration-state snapshot (B-28) — computed ONCE at startup
    * (`src/index.ts`'s `checkMigrationState` + `decideBootMigrationAction`,
@@ -301,6 +318,9 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   if (options.fx && !options.auth) {
     throw new Error("fx router requires auth deps — it must sit behind requireAuth");
   }
+  if (options.e2eDoor && !options.auth) {
+    throw new Error("e2eDoor router requires auth deps — it mints via the sign-in issuance path");
+  }
 
   const app = new Hono<RequestVars>();
   const logger = options.auth?.logger;
@@ -314,15 +334,50 @@ export function createApp(options: CreateAppOptions = {}): Hono<RequestVars> {
   if (options.devRequestLog) app.use("*", createDevRequestLog(logger ?? console));
   app.onError(createErrorHandler(logger ?? console));
 
+  // R-door-13 (SHOULD): a constant-work floor even when the door was NEVER
+  // mounted, so response latency alone can't reveal whether the gates
+  // passed on an otherwise-quiet host. Only added when the door is absent —
+  // when it IS mounted, the router's own handler already does this compare
+  // on every one of its failure paths.
+  if (!options.e2eDoor) {
+    const doorPath = `${API_BASE}${e2eEndpoints.mintSession.path}`;
+    app.use(doorPath, async (_c, next) => {
+      performDoorConstantWorkFloor();
+      await next();
+    });
+  }
+
+  // The e2e door's own path joins the allowlist ONLY when it's mounted
+  // (session-door spec §4.3) — `PUBLIC_ALLOWLIST` itself is never touched
+  // (`app.test.ts` pins its `size === 5`; prod's public surface genuinely
+  // stays at 5). Without this the door would 401 at `requireAuth` before its
+  // own handler ever runs — the same response as every other failure mode,
+  // so the failure is safe, but the door would never work.
+  const effectiveAllowlist: ReadonlySet<string> = options.e2eDoor
+    ? new Set([
+        ...PUBLIC_ALLOWLIST,
+        `${e2eEndpoints.mintSession.method} ${API_BASE}${e2eEndpoints.mintSession.path}`,
+      ])
+    : PUBLIC_ALLOWLIST;
+
   if (options.auth) {
     app.use(
       "*",
       createRequireAuth({
         verifier: options.auth.accessVerify,
-        allowlist: PUBLIC_ALLOWLIST,
+        allowlist: effectiveAllowlist,
         ...(logger ? { logger } : {}),
       }),
     );
+  }
+
+  // E2E session door (S-4/T3, session-door spec §3.6 body-size-ordering):
+  // mounted BEFORE the app-wide bodyLimit below so its OWN per-route guard
+  // (uniform 401, never 413) is what observes an oversized request on this
+  // now-allowlisted path — mounting it after would let the 256 KiB app-wide
+  // cap answer 413 first, which is itself a door-exists oracle (§3.6).
+  if (options.e2eDoor) {
+    app.route(API_BASE, createE2eDoorRouter(options.e2eDoor));
   }
 
   // App-wide body cap (PR #11 R1 security defer): ONE bodyLimit in front of

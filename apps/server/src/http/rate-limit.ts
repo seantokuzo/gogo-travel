@@ -141,3 +141,51 @@ export function clientIp(c: Context<RequestVars>): string {
     return "unknown";
   }
 }
+
+/**
+ * R-door-11's server-only peer gate (session-door spec §3.2 G5) — co-located
+ * with `clientIp` deliberately (the R-door-11 "implementation location" note:
+ * a NEW predicate, never `apps/mobile/src/auth/config.ts`'s
+ * `isLocalOrPrivateHost` — that checks a client-chosen HOSTNAME, this checks
+ * an IP-literal SOCKET PEER; different trust boundary, different input
+ * shape, no shared code by design).
+ *
+ * Accepts IPv4 loopback (`127.0.0.0/8`) and RFC-1918 private ranges
+ * (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and IPv6 loopback
+ * (`::1`) and ULA (`fc00::/7`, i.e. a first hextet of `fc`/`fd`) — after
+ * normalizing an IPv4-mapped IPv6 prefix (`::ffff:10.0.0.5` → `10.0.0.5`)
+ * and a bracketed form (`[::1]` → `::1`). Every other input — a public
+ * address, `0.0.0.0`, link-local (`169.254.0.0/16`, `fe80::/10`), a name
+ * (`.local` included), the unresolvable `"unknown"` `clientIp()` returns
+ * under `app.request()`, empty, or `null` — is rejected. Pure and
+ * synchronous: no DNS, no I/O, safe to call before any DB access (R-door-11:
+ * "evaluated before the secret comparison and before any database access").
+ */
+export function isLoopbackOrPrivatePeer(addr: string | null | undefined): boolean {
+  if (!addr) return false;
+
+  let normalized = addr.trim();
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+  if (normalized.toLowerCase().startsWith("::ffff:")) {
+    normalized = normalized.slice("::ffff:".length);
+  }
+
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
+  if (ipv4) {
+    const octets = ipv4.slice(1, 5).map(Number);
+    if (octets.some((octet) => octet > 255)) return false;
+    const [first, second] = octets as [number, number, number, number];
+    if (first === 127) return true; // 127.0.0.0/8 loopback
+    if (first === 10) return true; // 10.0.0.0/8 private
+    if (first === 172 && second >= 16 && second <= 31) return true; // 172.16.0.0/12
+    if (first === 192 && second === 168) return true; // 192.168.0.0/16
+    return false; // 0.0.0.0, 169.254.0.0/16 link-local, and every public range
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower === "::1") return true; // IPv6 loopback
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 ULA
+  return false; // fe80::/10 link-local, public IPv6, names, "unknown", ""
+}
