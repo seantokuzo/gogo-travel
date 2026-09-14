@@ -87,7 +87,8 @@ types, so typecheck catches shape drift in the location/network/mapbox stubs.
 New unauthed-reachable route `(auth)/diagnostics` (file-based — no
 `_layout.tsx` edit; sibling of `sign-in.tsx`, which is NOT
 edited). Legs v1, self-running on mount ("run again" button; testIDs per
-navigation.spec §2.7):
+navigation.spec §2.7) — now SEVEN legs (B-28 added the 7th, additively; the
+six below are unchanged):
 
 1. Resolved API base URL + which tier fired + raw `hostUri` value (B-5).
 2. `GET /health` round-trip from the phone: status, latency (B-5, wrong-side
@@ -97,6 +98,10 @@ navigation.spec §2.7):
    authorize URL (B-4).
 5. secure-store round-trip (session persistence substrate).
 6. Last surfaced auth-error cause (B-6's dev surface, read back).
+7. Server migration state (B-28): `/health`'s optional `migrations` field —
+   green CURRENT, red PENDING (tag names in development/test, a redacted
+   count elsewhere), or amber UNKNOWN when the server doesn't say (older
+   server, unreachable, or an unparseable response).
 
 Entry: on-device deeplink `gogo://diagnostics` (the SpringBoard prompt is
 tappable on a physical device; on the sim, AXe tap automation — proven
@@ -291,9 +296,9 @@ same material to gitignored `apps/server/.env.test` for the live rig +
   link is rider #3 — the "qa-owned" reason dissolved d4f7637; the guard
   stays to keep T-S3.5's file set disjoint), `_layout.tsx`, any Stream-A
   component.
-- **Acceptance:** all six §3.2 legs render PASS/FAIL + copyable evidence;
+- **Acceptance:** all seven §3.2 legs render PASS/FAIL + copyable evidence;
   route content is `__DEV__`-only (release renders nothing); legs 1/2/3/5
-  meaningful on simulator, all six on device; leg 1 demonstrably surfaces
+  meaningful on simulator, all seven on device; leg 1 demonstrably surfaces
   the tier decision (evidence: run on sim showing localhost tier vs
   explicit-override tier); testIDs per §2.7 grammar; panel works unauthed.
 - **Depends on:** —.
