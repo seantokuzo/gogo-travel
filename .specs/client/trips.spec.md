@@ -73,15 +73,20 @@
   THE SYSTEM SHALL surface the error inline and preserve the typed text;
   WHILE a create is in flight THE SYSTEM SHALL NOT allow a second create
   for the same tap (the row itself becomes non-interactive). Until B-7
-  part 3 (`B-7/nullable-custom-coords`, dispatched after PR #75 merges)
-  ships nullable coordinates for custom places, a `source='custom'`
-  destination's `lat`/`lng` ride as a fixed `(0, 0)` placeholder
-  (`PlaceCreateSchema` requires coordinates today, so there is no other
-  wire-legal value) — meanwhile, for the life of any trip created from it,
-  the map tab's destination-bound search returns zero results (its bbox is
-  pinned to the Null Island cell), the initial camera opens on open ocean
-  at street zoom, and the offline-pack pill offers/downloads that ocean
-  region.
+  part 3 (QUEUE row, `queued` — branch `B-7/nullable-custom-coords`,
+  blocked on PR #75's server-tier merge) ships nullable coordinates for
+  custom places, a `source='custom'` destination's `lat`/`lng` ride as a
+  fixed `(0, 0)` placeholder (`PlaceCreateSchema` requires coordinates
+  today, so there is no other wire-legal value) — meanwhile, for the life
+  of any trip created from it: the map tab's destination-bound search
+  returns zero results (its bbox is pinned to the Null Island cell), the
+  initial camera opens on open ocean at street zoom, the offline-pack pill
+  offers/downloads that ocean region, the trip-settings destination editor
+  has no way to correct it in-app (same no-custom-fallback dead end this
+  create flow exists to solve — `more/settings.tsx`), and the server's
+  destination-tier place ingest pays nine wasted (self-limiting,
+  per-refresh-window) remote parquet scans for the ocean cells
+  (`ingest-queue.ts`).
 
 ### Join via invite (`invite-join`, deep-link target)
 
