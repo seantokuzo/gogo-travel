@@ -18,6 +18,37 @@
  * `UserPrefs.home_currency ?? 'USD'` (omitted from the body when unknown —
  * the server defaults 'USD'); `theme` is trip-settings'.
  *
+ * Custom-destination fallback (B-7, Sean ruling 2026-09-13, R-tripui-23):
+ * WHEN structured search settles with zero hits for a non-blank trimmed
+ * query, an inline row offers `Use "<typed text>" as a custom destination`.
+ * One tap creates a permanent `source='custom'` place (`POST /places`,
+ * `useCreateCustomDestination`) and selects it — no map-drop screen this
+ * pass; trip save unblocks the same way a spine pick does. Creation failure
+ * surfaces inline and preserves the typed text; the row itself becomes a
+ * non-interactive "Creating…" status while a create is in flight, so a
+ * second tap has nothing to press (no double-submit).
+ * `onMutationSuccess` ignores a SUPERSEDED create (R1/R2 B1 review): if the
+ * user has SELECTED anything by the time success lands, that selection is
+ * necessarily later than the create (nothing can be selected while the
+ * empty-results row that fires a create is showing) and must not be
+ * clobbered — checked directly on `selectedPlace`, not on a name-equality
+ * proxy for it (a same-named spine pick showed the proxy blind, R2). A
+ * retype to a different UNMATCHED query with nothing yet selected is the
+ * one case that proxy still earns its keep for, so it stays as a second
+ * check. The busy row's own label binds to the mutation's `variables`,
+ * never live state, for the same "don't trust live state after the fact"
+ * reason. The row/mutate argument itself is the SEARCHED text
+ * (`deferredQuery`), never the live `destinationQuery` (R1 A3) — a fast
+ * typist could otherwise create a place for text that was never actually
+ * searched; a failed create's error also resets on the next query change
+ * (R1 A2), and the input caps at 200 chars mirroring `PlaceNameSchema`
+ * (R1 A4). `PlaceCreateSchema` requires coordinates today, so `lat`/`lng`
+ * ride as a fixed `(0, 0)` placeholder until real coordinate capture ships
+ * as its own cross-component pass, B-7 part 3 (`B-7/nullable-custom-coords`)
+ * — until then the map tab degrades for any trip built on a custom
+ * destination (search bbox pinned to Null Island, ocean camera/offline
+ * pack); disclosed in trips.spec.md R-tripui-23.
+ *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.
  *
@@ -35,7 +66,14 @@ import { TripCreateSchema, type Place, type TripCreate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useNavigation, useRouter, type Href } from "expo-router";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  View,
+} from "react-native";
 
 import { ApiRequestError } from "@/auth";
 import {
@@ -48,7 +86,14 @@ import {
   PageHeader,
   Skeleton,
 } from "@/components";
-import { isSearchableDestinationQuery, useCreateTrip, useMe, usePlaceSearch } from "@/data";
+import {
+  isNonBlankDestinationQuery,
+  isSearchableDestinationQuery,
+  useCreateCustomDestination,
+  useCreateTrip,
+  useMe,
+  usePlaceSearch,
+} from "@/data";
 import { DateField } from "@/features/trips";
 
 /** Bounded result render (server page ≤ 50, default 20; typeahead wants few). */
@@ -94,6 +139,28 @@ function createErrorMessage(error: unknown): string {
   return "Couldn't create the trip. Retry?";
 }
 
+/**
+ * Same envelope mapping as `createErrorMessage`, for the custom-destination
+ * create (`POST /places`). 409 isn't documented for this endpoint today
+ * (places spec §3.3 lists only 400 `VALIDATION_FAILED`) — kept for
+ * symmetry with every other create-mutation error mapper in this screen and
+ * as a defensive branch if that ever changes.
+ */
+function createCustomDestinationErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 400) {
+      return "That destination name isn't valid — try editing it.";
+    }
+    if (error.status === 409) {
+      return "That change conflicted with another update — try again.";
+    }
+    if (error.status === 0) {
+      return "No connection — check your network and retry.";
+    }
+  }
+  return "Couldn't create that destination. Retry?";
+}
+
 export default function TripNewScreen() {
   const s = useStyles();
   const router = useRouter();
@@ -123,8 +190,50 @@ export default function TripNewScreen() {
   const deferredQuery = useDeferredValue(destinationQuery);
   const searchActive = selectedPlace === null && isSearchableDestinationQuery(deferredQuery);
   const search = usePlaceSearch(selectedPlace === null ? deferredQuery : "");
+  // The custom-destination row/create argument is the SEARCHED text, not
+  // the live query (R1 A3) — see the module doc and `handleCreateCustomDestination`.
+  const trimmedSearchedDestinationQuery = deferredQuery.trim();
 
   const createTrip = useCreateTrip();
+
+  // B-7 custom-destination fallback (Sean ruling 2026-09-13, R-tripui-23):
+  // one tap on the empty-results row creates + selects a permanent custom
+  // place. Success mirrors the pick-an-existing-result path exactly (fill
+  // selectedPlace + the canonical name, clear any stale destination error).
+  const createCustomDestination = useCreateCustomDestination({
+    onMutationSuccess: (place) => {
+      // R2 B1 (blocking, was PARTIAL): a name-equality check is not a
+      // "the user picked since" signal — a spine row can share the
+      // in-flight create's exact name, and selecting it never changes the
+      // visible text, so the old guard saw no difference and still
+      // clobbered the pick. A custom create can only ever FIRE while
+      // nothing is selected (the empty-results row only renders when
+      // `selectedPlace === null`), so ANY selection present when success
+      // lands — same name or not — is necessarily the user's LATER pick.
+      // Guard on that fact directly, not on a text proxy for it.
+      if (selectedPlace !== null) return;
+      // Retained (still earns its keep): the user can retype to a
+      // DIFFERENT unmatched query without ever selecting anything, which
+      // leaves `selectedPlace` null — live text is the only signal a
+      // stale create is being superseded in that case.
+      if (destinationQuery.trim() !== place.name) return;
+      setSelectedPlace(place);
+      setDestinationQuery(place.name);
+      if (fieldErrors.destination) {
+        setFieldErrors((prev) => ({ ...prev, destination: undefined }));
+      }
+    },
+  });
+  const handleCreateCustomDestination = useCallback(() => {
+    // Defense in depth alongside the busy-row UI swap below (the row itself
+    // stops being pressable while pending) — a render race should never be
+    // the ONLY thing standing between a tap and a second in-flight create.
+    if (createCustomDestination.isPending) return;
+    // Guards `deferredQuery` (what actually gets created — R1 A3), not the
+    // live `destinationQuery`.
+    if (!isNonBlankDestinationQuery(deferredQuery)) return;
+    createCustomDestination.mutate(deferredQuery);
+  }, [createCustomDestination, deferredQuery]);
 
   const dirty = name !== "" || destinationQuery !== "" || startDate !== "" || endDate !== "";
   // The dialog decision needs the CURRENT dirty state inside a listener
@@ -270,6 +379,12 @@ export default function TripNewScreen() {
                 // Editing after a pick voids it — lat/lng must always match
                 // the visible text (structured input, no free-text fallback).
                 setSelectedPlace(null);
+                // R1 A2 (advisory): a stale create FAILURE must not survive
+                // a query change — TanStack only clears `isError` on the
+                // next `mutate()`, so without this a single failed create
+                // permanently hides the plain create-row/idle state behind
+                // the OLD error banner for every later query.
+                if (createCustomDestination.isError) createCustomDestination.reset();
                 if (fieldErrors.destination) {
                   setFieldErrors((prev) => ({ ...prev, destination: undefined }));
                 }
@@ -278,6 +393,10 @@ export default function TripNewScreen() {
               // B-20: autocorrect fights foreign place names — the core input
               // of a travel app's destination search.
               autoCorrect={false}
+              // Mirrors the name field + PlaceNameSchema's 200-char cap
+              // (R1 A2/A4 boundary) — without it a >200-char custom
+              // destination was a reachable, avoidable 400.
+              maxLength={200}
               helper={
                 selectedPlace === null && destinationQuery !== "" && !searchActive
                   ? "Keep typing — search starts at 4 characters."
@@ -296,9 +415,45 @@ export default function TripNewScreen() {
                   testID="trip-new-error-search"
                 />
               ) : results.length === 0 ? (
-                <AppText role="caption" color="muted">
-                  No places matched — try a different spelling.
-                </AppText>
+                <View style={s.fieldGroup}>
+                  <AppText role="caption" color="muted">
+                    No places matched — try a different spelling.
+                  </AppText>
+                  {createCustomDestination.isError ? (
+                    <ErrorBanner
+                      message={createCustomDestinationErrorMessage(createCustomDestination.error)}
+                      onRetry={handleCreateCustomDestination}
+                      testID="trip-new-error-create-destination"
+                    />
+                  ) : createCustomDestination.isPending ? (
+                    <View style={s.results}>
+                      <ListItem
+                        // The busy title binds to the MUTATION'S OWN
+                        // variables, not live state (R1 B1): if the user
+                        // keeps typing while this POST is still in flight,
+                        // the label must keep naming what is actually being
+                        // created, never a newer, unrelated query.
+                        title={`Creating "${(createCustomDestination.variables ?? "").trim()}"…`}
+                        leading={
+                          <ActivityIndicator
+                            size="small"
+                            testID="trip-new-list-item-custom-spinner"
+                          />
+                        }
+                        testID="trip-new-list-item-custom"
+                      />
+                    </View>
+                  ) : (
+                    <View style={s.results}>
+                      <ListItem
+                        title={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
+                        onPress={handleCreateCustomDestination}
+                        accessibilityLabel={`Use "${trimmedSearchedDestinationQuery}" as a custom destination`}
+                        testID="trip-new-list-item-custom"
+                      />
+                    </View>
+                  )}
+                </View>
               ) : (
                 <View style={s.results}>
                   {results.map((place) => (

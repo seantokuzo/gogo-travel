@@ -296,6 +296,479 @@ describe("destination structured search (§2.3 — Overture spine, no free text)
   });
 });
 
+describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-13)", () => {
+  const CUSTOM_PLACE = makePlace({
+    id: "77777777-7777-4777-8777-777777777777",
+    source: "custom",
+    source_id: null,
+    name: "Nowhereville",
+    // The placeholder coordinates the create mutation actually sends
+    // (`useCreateCustomDestination` doc) — a realistic mock echoes them
+    // back, not the fixture's default Kyoto lat/lng.
+    lat: 0,
+    lng: 0,
+    category: null,
+    coarse_category: "other",
+    wiki_ref: null,
+    created_by: TEST_USER.id,
+  });
+
+  it("is absent while the search request is still loading", async () => {
+    let resolveSearch!: (value: unknown) => void;
+    mockApi({
+      "GET /places/search": () =>
+        new Promise((resolve) => {
+          resolveSearch = resolve;
+        }),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    await act(async () => {
+      resolveSearch({ items: [], nextCursor: null });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(await screen.findByTestId("trip-new-list-item-custom")).toBeOnTheScreen();
+  });
+
+  it("is absent while real results render, and disappears again once the query is cleared", async () => {
+    mockApi();
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`);
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    // Blank/whitespace query: the whole results region (including the
+    // fallback row) closes — `searchActive` drops below the 4-char floor.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "   ");
+    await waitFor(() => expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull());
+  });
+
+  it("appears once search settles empty, and one tap creates + selects the trimmed text (save unblocks)", async () => {
+    const request = mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(
+      screen.getByTestId("trip-new-input-destination"),
+      "  Nowhereville  ",
+    );
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    expect(row).toHaveTextContent('Use "Nowhereville" as a custom destination');
+
+    await pressSettled("trip-new-list-item-custom");
+
+    const createCalls = request.mock.calls.filter(
+      ([d]) => (d as { path: string }).path === "/places",
+    );
+    expect(createCalls).toHaveLength(1);
+    expect((createCalls[0][1] as { body: unknown }).body).toEqual({
+      name: "Nowhereville",
+      lat: 0,
+      lng: 0,
+    });
+
+    // Selected exactly like an existing-result pick: canonical name fills
+    // the input, the results region (row included) closes.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    // Settle B2's post-success placeSearch invalidation before driving more
+    // interaction — its refetch notify can otherwise land during a later,
+    // non-act-wrapped waitFor/findBy poll under contention (R2 determinism
+    // finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
+    // Save gate: the rest of the form + submit now succeeds with the
+    // custom place's placeholder coordinates riding the trip body.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Somewhere Trip");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: {
+          name: "Somewhere Trip",
+          destination_name: "Nowhereville",
+          destination_lat: 0,
+          destination_lng: 0,
+          start_date: "2027-05-01",
+          end_date: "2027-05-08",
+        },
+      }),
+    );
+  });
+
+  it("a genuinely held create shows the busy row (no double-submit — one tap has nothing left to press)", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    let posts = 0;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => {
+        posts += 1;
+        return new Promise((resolve) => {
+          resolvers.push(resolve);
+        });
+      },
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+
+    try {
+      await fireEvent.press(row);
+      expect(await screen.findByTestId("trip-new-list-item-custom-spinner")).toBeOnTheScreen();
+      expect(posts).toBe(1);
+
+      // The busy row replaces the pressable one (structural, not a
+      // `disabled` prop) — a second physical tap has no onPress to invoke.
+      const busyRow = screen.getByTestId("trip-new-list-item-custom");
+      await fireEvent.press(busyRow);
+      expect(posts).toBe(1);
+    } finally {
+      // Release + its follow-on notify batch INSIDE one act window (T-7.9
+      // rule) — releasing bare and letting a later findBy/waitFor poll catch
+      // the settle is the B-2 floating-act class (mobile.md).
+      await act(async () => {
+        for (const release of resolvers) release(CUSTOM_PLACE);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    await waitFor(() =>
+      expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville"),
+    );
+    expect(posts).toBe(1);
+    // Settle B2's post-success placeSearch invalidation before the test
+    // ends (R2 determinism finding) — see the file-level note above.
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+  });
+
+  it("a 409 surfaces inline, keeps the typed text, and retry re-creates", async () => {
+    let fail = true;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        fail
+          ? Promise.reject(new ApiRequestError(409, "CONFLICT", "boom"))
+          : Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(
+      screen.getByText("That change conflicted with another update — try again."),
+    ).toBeOnTheScreen();
+    // Preserved, not cleared — a retry needs the same typed text.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+    expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
+
+    fail = false;
+    await pressSettled("trip-new-error-create-destination-retry");
+    await waitFor(() =>
+      expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull(),
+    );
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("a transport failure (status 0, offline) surfaces the offline message and keeps the typed text", async () => {
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.reject(new ApiRequestError(0, "NETWORK", "offline")),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(screen.getByText("No connection — check your network and retry.")).toBeOnTheScreen();
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+  });
+
+  it("a 400 surfaces the validation message (4xx branch distinct from 409/0)", async () => {
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () => Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "bad")),
+    });
+    await renderScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(
+      screen.getByText("That destination name isn't valid — try editing it."),
+    ).toBeOnTheScreen();
+  });
+
+  it("R1 B1 (blocking): a slow create must not clobber a destination picked while it was in flight", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    const request = mockApi({
+      "GET /places/search": (input) => {
+        const q = (input as { query?: { q?: string } }).query?.q;
+        return Promise.resolve(
+          q === "Kyoto" ? { items: [KYOTO], nextCursor: null } : { items: [], nextCursor: null },
+        );
+      },
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    });
+    await renderScreen();
+
+    // Fire the custom create for "Nowhereville" and hold it open.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    await fireEvent.press(row);
+    await screen.findByTestId("trip-new-list-item-custom-spinner");
+
+    // The user changes their mind WHILE the create is still in flight and
+    // picks a real spine result instead.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
+    await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+
+    // NOW the superseded create resolves — it must be a no-op.
+    await act(async () => {
+      resolveCreate(CUSTOM_PLACE);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Kyoto");
+    const createDestinationCalls = request.mock.calls.filter(
+      ([d]) => (d as { path: string }).path === "/places",
+    );
+    expect(createDestinationCalls).toHaveLength(1); // the POST genuinely fired — this IS the race
+
+    // Settle B2's post-success placeSearch invalidation (the mutation
+    // invalidates on EVERY success, even one this screen's own guard
+    // discards) before driving more interaction — its refetch can
+    // otherwise notify during a later, non-act-wrapped waitFor poll under
+    // contention (R2 determinism finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    // The trip must POST Kyoto — never the abandoned custom Null Island row.
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, { body: FILLED_BODY }),
+    );
+  });
+
+  it("R2 B1 (was PARTIAL): a same-named spine pick during an in-flight custom create must not be clobbered", async () => {
+    let resolveCreate!: (value: unknown) => void;
+    let searchHasSpineHit = false;
+    // Default `makePlace()` coords (35.0116/135.7681) stand in for the
+    // explicit, real pick — same NAME as the in-flight custom create, so
+    // picking it changes zero visible text (the exact blind spot a
+    // name-equality guard cannot see).
+    const SPINE_SAME_NAME = makePlace({
+      id: "88888888-8888-4888-8888-888888888888",
+      name: "Nowhereville",
+    });
+    const request = mockApi({
+      "GET /places/search": () =>
+        Promise.resolve(
+          searchHasSpineHit
+            ? { items: [SPINE_SAME_NAME], nextCursor: null }
+            : { items: [], nextCursor: null },
+        ),
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve;
+        }),
+    });
+    await renderScreen();
+
+    // Fire the custom create for "Nowhereville" and hold it open — zero
+    // spine hits at this point, hence the empty-results row.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+    await fireEvent.press(row);
+    await screen.findByTestId("trip-new-list-item-custom-spinner");
+
+    // A later search for the SAME text now surfaces a real spine result
+    // sharing that name (an eventually-consistent search backend) —
+    // invalidate to force the still-mounted, still-enabled search
+    // observer to refetch, the way a real background settle would.
+    searchHasSpineHit = true;
+    await act(async () => {
+      await lastClient?.invalidateQueries({ queryKey: ["places", "search"] });
+    });
+    const spineRow = await screen.findByTestId(`trip-new-list-item-${SPINE_SAME_NAME.id}`);
+    await fireEvent.press(spineRow);
+
+    // Zero visible change — same name — yet this IS the user's later pick.
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe("Nowhereville");
+
+    // NOW the superseded custom create resolves — it must still be a no-op.
+    await act(async () => {
+      resolveCreate(CUSTOM_PLACE);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-name"), "Kyoto Spring");
+    await pickDate("trip-new-input-dates-start", 2027, 5, 1);
+    await pickDate("trip-new-input-dates-end", 2027, 5, 8);
+    await pressSettled("trip-new-button-create");
+
+    // The trip must POST the explicit spine pick's REAL coordinates — never
+    // the abandoned custom Null Island place, even though the names match
+    // and the input text never moved.
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(tripEndpoints.createTrip, {
+        body: {
+          name: "Kyoto Spring",
+          destination_name: "Nowhereville",
+          destination_lat: SPINE_SAME_NAME.lat,
+          destination_lng: SPINE_SAME_NAME.lng,
+          start_date: "2027-05-01",
+          end_date: "2027-05-08",
+        },
+      }),
+    );
+  });
+
+  it("R2 B1: the busy row's label binds to the mutation's OWN variables, not a later live query", async () => {
+    const resolvers: ((value: unknown) => void)[] = [];
+    mockApi({
+      // Always empty, regardless of query text, so the busy row stays the
+      // rendered branch through the retype below.
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Nowhereville");
+    const row = await screen.findByTestId("trip-new-list-item-custom");
+
+    try {
+      await fireEvent.press(row);
+      await screen.findByTestId("trip-new-list-item-custom-spinner");
+      expect(screen.getByTestId("trip-new-list-item-custom")).toHaveTextContent(
+        'Creating "Nowhereville"…',
+      );
+
+      // Keep typing while the create for "Nowhereville" is still in
+      // flight — a brand-new query key means a fresh loading state (the
+      // Skeleton) for one hop before it resolves back to the empty-results
+      // branch, so poll rather than assert synchronously. The label must
+      // keep naming what is ACTUALLY being created, never a newer,
+      // unrelated query.
+      await fireEvent.changeText(
+        screen.getByTestId("trip-new-input-destination"),
+        "Nowhereville Bay",
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("trip-new-list-item-custom")).toHaveTextContent(
+          'Creating "Nowhereville"…',
+        ),
+      );
+    } finally {
+      await act(async () => {
+        for (const release of resolvers) release(CUSTOM_PLACE);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+  });
+
+  it("R1 A2 (advisory): a failed create does not permanently hide the row for a later query", async () => {
+    let shouldFail = true;
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": () =>
+        shouldFail
+          ? Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "bad"))
+          : Promise.resolve(CUSTOM_PLACE),
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Bad Name");
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+
+    // The user abandons that text for a new query — this is a FRESH
+    // zero-result state, not a retry of the old failure, so the OLD error
+    // (and its stale retry target) must not survive the query change.
+    shouldFail = false;
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Grandma Cabin");
+    await waitFor(() =>
+      expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull(),
+    );
+    expect(await screen.findByTestId("trip-new-list-item-custom")).toHaveTextContent(
+      'Use "Grandma Cabin" as a custom destination',
+    );
+  });
+
+  it("R1 A2/A4 boundary: the destination input caps at 200 chars, mirroring the name field + PlaceNameSchema", async () => {
+    mockApi();
+    await renderScreen();
+    expect(screen.getByTestId("trip-new-input-destination").props.maxLength).toBe(200);
+  });
+
+  it("R1 A4 boundary: a 200-char custom destination creates cleanly; 201 chars hits the server's validation branch", async () => {
+    const name200 = "n".repeat(200);
+    const name201 = "n".repeat(201);
+    const receivedNames: string[] = [];
+    mockApi({
+      "GET /places/search": () => Promise.resolve({ items: [], nextCursor: null }),
+      "POST /places": (input) => {
+        const body = (input as { body?: { name?: string } }).body;
+        const sentName = body?.name ?? "";
+        receivedNames.push(sentName);
+        if (sentName.length > 200) {
+          return Promise.reject(new ApiRequestError(400, "VALIDATION_FAILED", "too long"));
+        }
+        return Promise.resolve({ ...CUSTOM_PLACE, name: sentName });
+      },
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), name200);
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(screen.getByTestId("trip-new-input-destination").props.value).toBe(name200);
+    expect(screen.queryByTestId("trip-new-error-create-destination")).toBeNull();
+
+    // Settle the first (successful) create's B2 placeSearch invalidation
+    // before the second attempt — its refetch notify can otherwise land
+    // during a later, non-act-wrapped poll under contention (R2
+    // determinism finding).
+    await waitFor(() => expect(lastClient?.isFetching() ?? 0).toBe(0));
+
+    // 201 chars exceeds the visual cap but is still reachable through
+    // `fireEvent.changeText` (it calls the handler directly, bypassing
+    // native `maxLength` enforcement) — a real device blocks this at the
+    // keyboard; this pin covers the server-validation branch defensively.
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), name201);
+    await screen.findByTestId("trip-new-list-item-custom");
+    await pressSettled("trip-new-list-item-custom");
+    expect(await screen.findByTestId("trip-new-error-create-destination")).toBeOnTheScreen();
+    expect(receivedNames).toEqual([name200, name201]);
+  });
+});
+
 describe("submit (R-tripui-7)", () => {
   it("POSTs the schema-shaped body with prefs.home_currency and replace-navigates into the trip", async () => {
     const request = mockApi({}, { me: { ...TEST_USER, prefs: { home_currency: "EUR" } } });

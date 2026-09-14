@@ -171,7 +171,14 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
   const PASTEIS = { lat: 38.6975, lng: -9.2033 };
   const TIMEOUT_MKT = { lat: 38.7067, lng: -9.1459 };
   // Tokyo pagination cluster — distinct distances from its near point.
-  const TOKYO = { lat: 35.68, lng: 139.76 };
+  // Moved off the real Tokyo/23-wards coordinates (B-7's destination-tier
+  // migration seeded Tokyo AND several wards as real global spine rows —
+  // the original 35.68,139.76 anchor sat ~500m from the real Tokyo row and
+  // every candidate nearby anchor sat within 1-2km of some other ward);
+  // this point (Ibaraki prefecture, ~16km from the nearest real tier row,
+  // Tsuchiura) keeps the "somewhere in the Tokyo area" flavor with a safe
+  // margin for the 1km-radius queries below.
+  const TOKYO = { lat: 36.2, lng: 140.3 };
 
   let towerId = "";
   let pasteisId = "";
@@ -294,10 +301,19 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const { items } = await searchOk(user.accessToken, "q=bel%C3%A9m");
 
     const names = items.map((p) => p.name);
-    // Both Belém names match through the real GIN'd `%` operator; the
-    // shorter (more similar) name ranks first; Time Out Market is absent.
-    expect(names[0]).toBe("Belém Tower");
+    // B-7 destination tier (migration 0004) seeded the REAL city of Belém,
+    // Brazil into the global spine — an exact (case-aside) match for
+    // "belém" outranks the "Belém Tower"/"Pastéis de Belém" substring
+    // matches, so it is now the top hit; both test fixtures still match
+    // through the real GIN'd `%` operator, and the unrelated fixture is
+    // still absent.
+    expect(names[0]).toBe("Belém");
+    expect(names).toContain("Belém Tower");
     expect(names).toContain("Pastéis de Belém");
+    // Round-1 review advisory A5: restores the ordering this test is NAMED
+    // for ("similarity ranking") — the shorter, more-similar fixture name
+    // ("Belém Tower") still outranks the longer one ("Pastéis de Belém").
+    expect(names.indexOf("Belém Tower")).toBeLessThan(names.indexOf("Pastéis de Belém"));
     expect(names).not.toContain("Time Out Market");
   });
 
@@ -488,12 +504,29 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     const cellKey = regionCellAt(35.68, 139.76).key;
     expect(cellKey).toBe("r:71:279");
 
+    // Round-1 review advisory A4: this bbox now also contains the REAL
+    // Tokyo tier row (B-7 migration 0004, 35.676857,139.763885) — the
+    // "partial results still 200" assertion below used to be
+    // `length > 0`, which the tier row alone satisfies, silently making
+    // this suite's own precondition load-bearing on upstream Overture data
+    // instead of on a fixture it owns. Seed one and assert ON it.
+    const coverageMissFixture = await seedSpinePlace({
+      source: "overture",
+      sourceId: "ovt-coverage-miss-fixture",
+      name: "Coverage Miss Fixture",
+      lat: 35.685,
+      lng: 139.755,
+      category: null,
+    });
+
     // 1) Never-ingested area: results from whatever the spine holds + enqueue.
     await settleCoverage(); // drain strays from earlier geo searches
     let before = enqueued.length;
     const missed = await searchOk(user.accessToken, query);
     await settleCoverage();
-    expect(missed.items.length).toBeGreaterThan(0); // degrades, never errors
+    // Degrades, never errors — and owns its own precondition (the fixture
+    // above), not an incidental real-data row.
+    expect(missed.items.some((p) => p.id === coverageMissFixture.id)).toBe(true);
     expect(enqueued.length).toBe(before + 1);
     expect(enqueued[enqueued.length - 1]!.map((c) => c.key)).toEqual([cellKey]);
 
@@ -988,14 +1021,23 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
   });
 
   it("SQL coarse mapping ≡ shared JS mapping over every seeded category (parity pin)", async () => {
+    // `selectDistinct` (not `select`), post-B-7: `places` now also carries
+    // the 6,927-row destination tier, all `category='locality'` — parity is
+    // purely a function of `(source, category)`, so 6,927 identical checks
+    // add zero coverage while risking the test timeout (T-6.4/T-6.5 round-1
+    // precedent: this suite's tests are fast on purpose). DISTINCT keeps
+    // exactly the same assertion strength (every UNIQUE category this suite
+    // + the tier ever produces is still checked) at O(distinct) cost instead
+    // of O(rows) — 'locality' itself is still covered, once.
     const rows = await db
-      .select({
+      .selectDistinct({
         source: schema.places.source,
         category: schema.places.category,
         sqlCoarse: coarseCategorySqlExpr(schema.places.category),
       })
       .from(schema.places);
     expect(rows.length).toBeGreaterThan(8);
+    expect(rows.some((r) => r.category === "locality")).toBe(true);
     for (const row of rows) {
       expect(row.sqlCoarse).toBe(coarseCategory(row.source, row.category));
     }
