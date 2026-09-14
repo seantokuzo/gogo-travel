@@ -387,6 +387,78 @@ function expectNeverLogged(spies: Record<string, jest.SpyInstance>, needle: stri
   }
 }
 
+describe("openSessionDoor — superseded run (S-4 review round 2 A4 residual): a reset that resolves late performs no further side effects", () => {
+  it("does not fire the mint POST, and does not touch the winner's applied session, when marked superseded while its reset is still in flight", async () => {
+    // Falsification: drop the `isSuperseded` check between `resetLocalSession`
+    // and the mint POST -> RED (the loser's `firstFetch` WOULD fire after
+    // release below).
+    let releaseFirstReset: () => void = () => undefined;
+    const firstResetPromise = new Promise<void>((resolve) => {
+      releaseFirstReset = resolve;
+    });
+    const firstResetLocalSession = jest.fn(() => firstResetPromise);
+    const firstApplySignIn = jest.fn().mockResolvedValue(undefined);
+    const firstFetch = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    let firstCancelled = false;
+    const firstDeps: OpenDoorDeps = {
+      api: makeRealApi(firstFetch),
+      apiBase: LOCAL_BASE,
+      resetLocalSession: firstResetLocalSession,
+      applySignIn: firstApplySignIn,
+      secret: SECRET,
+      bundleId: DOOR_BUNDLE_ID,
+      isSuperseded: () => firstCancelled,
+    };
+
+    const firstPending = openSessionDoor({ userKey: "flow-1", firstRun: false }, firstDeps);
+    // Flush to the `await d.resetLocalSession()` suspension point, same
+    // pattern as the "AWAIT is load-bearing" pin above.
+    await Promise.resolve();
+    expect(firstResetLocalSession).toHaveBeenCalledTimes(1);
+
+    // The LATEST invocation starts and runs to completion while the first's
+    // reset is still held open.
+    const SECOND_USER: User = { ...USER, id: "00000000-0000-4000-8000-00000000f002" };
+    const secondFetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { ...SIGN_IN_RESPONSE, user: SECOND_USER }));
+    const secondApplySignIn = jest.fn().mockResolvedValue(undefined);
+    const { deps: secondDeps } = makeDeps({
+      api: makeRealApi(secondFetch),
+      applySignIn: secondApplySignIn,
+    });
+
+    const secondResult = await openSessionDoor({ userKey: "flow-2", firstRun: false }, secondDeps);
+
+    expect(secondResult).toEqual({ ok: true });
+    expect(secondApplySignIn).toHaveBeenCalledTimes(1);
+    expect(secondApplySignIn).toHaveBeenCalledWith(expect.objectContaining({ user: SECOND_USER }));
+
+    // NOW mark the first invocation superseded (the route would have flipped
+    // `cancelled` the moment flow-2's effect started) and release its reset.
+    firstCancelled = true;
+    releaseFirstReset();
+    const firstResult = await firstPending;
+
+    expect(firstResult).toEqual({ ok: false, reason: "superseded" });
+    expect(firstFetch).not.toHaveBeenCalled();
+    expect(firstApplySignIn).not.toHaveBeenCalled();
+    // The winner's session is undisturbed by the loser's late-resolving reset.
+    expect(secondApplySignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("defaults isSuperseded to false — a caller that never wires it behaves exactly as before", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    const { deps } = makeDeps({ api: makeRealApi(fetchMock) });
+    expect(deps.isSuperseded).toBeUndefined();
+
+    const result = await openSessionDoor({ userKey: "flow-1", firstRun: false }, deps);
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("openSessionDoor — server 401 (R-door-3 uniform rejection)", () => {
   it("maps a 401 to reason 'rejected', never applies a session, secret absent from the result AND every console call", async () => {
     const fetchMock = jest

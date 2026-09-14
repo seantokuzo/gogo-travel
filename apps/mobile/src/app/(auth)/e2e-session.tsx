@@ -53,6 +53,14 @@
  * `applySignIn` call, not just the final `setState`. Otherwise whichever of
  * the two mints happens to resolve LAST wins the store, regardless of which
  * `openLink` was actually the later (intended) one.
+ *
+ * 🔴 REVIEW ROUND 2 (A4 residual): `cancelled` also guards the CONTINUATION
+ * past `resetLocalSession()` — passed to `openSessionDoor` as
+ * `isSuperseded`. A superseded invocation's reset can still be genuinely in
+ * flight when a later one wins and fully applies its session; without this,
+ * the loser would resume once its reset resolves and fire a pointless mint
+ * request. `applySignIn` stays independently guarded too (a run can still
+ * lose AFTER this checkpoint, while its own mint is in flight).
  */
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
@@ -106,6 +114,10 @@ export default function E2eSessionRoute() {
             if (cancelled) return Promise.resolve();
             return useSessionStore.getState().applySignIn(response);
           },
+          // Review round 2 (A4 residual): bail before the mint POST if a
+          // later invocation already won while this one's reset was still
+          // in flight — same `cancelled` token, checked earlier.
+          isSuperseded: () => cancelled,
         },
       );
       if (cancelled) return;

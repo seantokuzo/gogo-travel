@@ -105,10 +105,24 @@ export interface OpenDoorDeps {
    *  test can drive both arms without a native module. Defaults to the real
    *  `expo-application` value. */
   bundleId?: string | null | undefined;
+  /**
+   * S-4 T4 review round 2 (A4 residual): true once a LATER invocation has
+   * superseded this one (the route wires this to the same per-invocation
+   * `cancelled` flag that already guards `applySignIn`). Checked right after
+   * `resetLocalSession()` resolves, BEFORE the mint POST fires — `reset`
+   * itself cannot be skipped for a run that was still current when it
+   * started (R-door-8 needs every invocation to clear stale state before it
+   * knows whether it will win), but nothing past that point should run for
+   * a run that lost the race while its reset was still in flight: no wasted
+   * mint request, and no chance of a stray `applySignIn` landing after a
+   * later invocation already applied the real session. Defaults to
+   * `() => false` so existing single-invocation callers are unaffected.
+   */
+  isSuperseded?: () => boolean;
 }
 
 export type OpenDoorResult =
-  { ok: true } | { ok: false; reason: "disabled" | "rejected" | "network" };
+  { ok: true } | { ok: false; reason: "disabled" | "rejected" | "network" | "superseded" };
 
 /**
  * `first_run` param parsing (adversarial guard — type-confusion). ONLY the
@@ -156,6 +170,16 @@ export async function openSessionDoor(p: OpenDoorParams, d: OpenDoorDeps): Promi
   }
 
   await d.resetLocalSession();
+
+  // S-4 T4 review round 2 (A4 residual): a later invocation may have already
+  // won the race while this one's reset was in flight. Bail before the mint
+  // POST — never fire a request whose response this invocation is not
+  // allowed to apply anyway (`applySignIn` below is guarded independently by
+  // the SAME token, but skipping the request outright avoids the wasted
+  // network call and the window it opens).
+  if (d.isSuperseded?.()) {
+    return { ok: false, reason: "superseded" };
+  }
 
   let response: SignInResponse;
   try {
