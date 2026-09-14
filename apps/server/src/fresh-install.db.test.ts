@@ -356,8 +356,18 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     // B-7 PART 3 NOTE (survives unmodified): same key-omission shape as the
     // pin above — arm A's create body below still omits destination_lat/lng
     // entirely, so it still 400s (arm A stays false; arm B carries the fix).
-    // Falsification (B-7 part 3): swap either TripCreateSchema coordinate
-    // field to `.optional()` — both this pin and the one above go RED.
+    // Falsification (round-1 fix — the "both pins go RED" claim was
+    // FALSE, verified empirically): swapping either TripCreateSchema
+    // coordinate field to `.optional()` reds ONLY the pin above (it reads
+    // "expect 400" literally, and the swap turns the omitted-key create
+    // into a 500 — `String(undefined)` on a numeric column — never a 400).
+    // THIS pin stays GREEN under that same swap: `armA` here is defined as
+    // `create.status === 201`, and a 500 makes `armA` false exactly like a
+    // 400 does, so the assertion `expect(armA).toBe(false)` can't tell the
+    // two failure modes apart. This pin's OWN falsification is genuinely
+    // ruling-A being (re)adopted — flip the create handler to accept and
+    // persist an omitted-key destination (a real schema/route change, not a
+    // one-field swap) and `armA` goes true, reding `expect(armA).toBe(false)`.
     //
     // R-test-8 pin, ruling-independent by disjunction. B-7 shipped
     // ruling (b) from the options brief — a bootstrap destination tier

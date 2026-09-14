@@ -133,14 +133,20 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
     params.q !== undefined
       ? sql`(round(similarity(${places.name}, ${params.q})::numeric * 1000000)::bigint * 10000000000::bigint)`
       : sql`0::bigint`;
-  // B-7 part 3 belt: a coordinate-less custom place (places.lat/lng NULL)
-  // can only reach here with an anchor if the geo BETWEEN predicates below
+  // B-7 part 3: a coordinate-less custom place (places.lat/lng NULL) can
+  // only reach here with an anchor if the geo BETWEEN predicates below
   // somehow let it through (they don't — NULL BETWEEN is never true, so
-  // such a row never survives the WHERE). `coalesce` guards the ranking
-  // arithmetic anyway so a future predicate change degrades to "worst rank",
-  // never a silently-dropped NULL row (see routes.db.test.ts's cursor pin).
+  // such a row never survives the WHERE). `greatest` alone (no `coalesce`
+  // belt, round-1 review finding) already can't return NULL here: one
+  // argument is the literal `0::bigint`, and Postgres's `GREATEST`/`LEAST`
+  // skip NULL arguments — they return NULL only when EVERY argument is NULL
+  // — so `greatest(0::bigint, NULL::bigint)` is `0`, not `NULL`, even if
+  // `distanceM` itself went NULL. The `coalesce(..., 0::bigint)` this
+  // replaced was PROVEN dead by that same fact (its wrapped expression can
+  // never actually be NULL) — kept as a misleading "belt" that never
+  // engages; removed rather than documented as inert.
   const proxTerm = distanceM
-    ? sql`coalesce(greatest(0::bigint, 1000000000::bigint - round(${distanceM} * 1000.0)::bigint), 0::bigint)`
+    ? sql`greatest(0::bigint, 1000000000::bigint - round(${distanceM} * 1000.0)::bigint)`
     : sql`0::bigint`;
   const rankExpr = sql<string>`(${simTerm} + ${proxTerm})`;
 

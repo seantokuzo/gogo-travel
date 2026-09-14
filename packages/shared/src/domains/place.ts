@@ -151,6 +151,50 @@ const PlaceNameSchema = z.string().trim().min(1).max(200);
 const PlaceCategorySchema = z.string().trim().min(1).max(200);
 
 /**
+ * B-7 part 3 round-1 review (blocking): coordinates move as a PAIR on EVERY
+ * place write shape, mirroring `trip.ts`'s `destinationCoordsPairRule` (same
+ * shape, same reasoning — one function serves both Create and Update):
+ *  - exactly one of `lat`/`lng` present is never legal (half a coordinate);
+ *  - on Create, `lat`/`lng` are `.optional()` (not `.nullable()`), so the
+ *    `null` arm below is unreachable there — Zod's own field-level type
+ *    check rejects `lat: null` before this refine ever runs, which is what
+ *    keeps "explicit null is rejected" true for `POST /places` unmodified;
+ *  - on Update, `lat`/`lng` are `.nullable().optional()` — omit both (no
+ *    change), send both non-null (relocate/set), or send both `null`
+ *    (clear) are the only legal shapes; one `null` and one number is
+ *    rejected same as one present/one absent.
+ * `PlaceUpdateSchema` previously had NO refine at all — a lone `lat` in a
+ * PATCH reached the DB unpaired, where `places_coords_pair_ck` was the only
+ * backstop and its escape is an unhandled 500 (round-1 architecture finding,
+ * `apps/server/src/places/routes.db.test.ts` "PATCH pair rule" pins).
+ * Whether `null,null` is ACCEPTED for a given row is source-aware (only
+ * `source='custom'` places may clear) and the schema can't see a row's
+ * `source` — that half is the route's job (`places/routes.ts`,
+ * `customPlaceAccess`'s `spine` branch).
+ */
+const placeCoordsPairRule = (
+  val: { lat?: number | null | undefined; lng?: number | null | undefined },
+  ctx: z.core.$RefinementCtx,
+): void => {
+  if ((val.lat === undefined) !== (val.lng === undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "lat and lng must be sent together",
+      path: ["lng"],
+    });
+    return;
+  }
+  if (val.lat === undefined) return; // neither present
+  if ((val.lat === null) !== (val.lng === null)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "lat and lng must both be null or both be non-null",
+      path: ["lng"],
+    });
+  }
+};
+
+/**
  * `POST /places` (places spec §3.3): the server sets `source = 'custom'`,
  * `source_id = NULL`, `created_by = caller` (R-places-9). Every custom place
  * this endpoint creates is a legal `PlaceSchema` "no coordinates" row
@@ -166,28 +210,25 @@ export const PlaceCreateSchema = z
     lng: LngSchema.optional(),
     category: PlaceCategorySchema.optional(),
   })
-  .superRefine((val, ctx) => {
-    // B-7 part 3: coordinates move as a pair — half a coordinate is never legal.
-    if ((val.lat === undefined) !== (val.lng === undefined)) {
-      ctx.addIssue({
-        code: "custom",
-        message: "lat and lng must be sent together",
-        path: ["lng"],
-      });
-    }
-  });
+  .superRefine(placeCoordsPairRule);
 export type PlaceCreate = z.infer<typeof PlaceCreateSchema>;
 
 /**
  * `PATCH /places/:placeId` (places spec §3.3): partial `PlaceCreate` —
- * creator-only server-side (R-places-10). `category: null` clears it.
+ * creator-only server-side (R-places-10). `category: null` clears it; `lat`/
+ * `lng` are nullable too (B-7 part 3 round-1) — `null,null` clears
+ * coordinates on a `source='custom'` place (the map-drop's undo). The pair
+ * rule (`placeCoordsPairRule`) is enforced here; source-aware "only custom
+ * may clear" is enforced by the route, not this schema.
  */
-export const PlaceUpdateSchema = z.object({
-  name: PlaceNameSchema.optional(),
-  lat: LatSchema.optional(),
-  lng: LngSchema.optional(),
-  category: PlaceCategorySchema.nullable().optional(),
-});
+export const PlaceUpdateSchema = z
+  .object({
+    name: PlaceNameSchema.optional(),
+    lat: LatSchema.nullable().optional(),
+    lng: LngSchema.nullable().optional(),
+    category: PlaceCategorySchema.nullable().optional(),
+  })
+  .superRefine(placeCoordsPairRule);
 export type PlaceUpdate = z.infer<typeof PlaceUpdateSchema>;
 
 // ---------------------------------------------------------------------------

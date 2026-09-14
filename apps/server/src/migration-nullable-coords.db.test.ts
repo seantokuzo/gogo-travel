@@ -110,8 +110,50 @@ describe.skipIf(!dockerAvailable)("B-7 part 3 migration 0005 (integration)", () 
         "trips_destination_coords_pair_ck",
       ]),
     );
-    // Falsification: comment out any one CHECK in db/schema/{places,trips}.ts
-    // (or the matching migration ADD CONSTRAINT) — this reds on the missing name.
+    // Falsification (round-1 fix — the TS-schema half of the original note
+    // was INERT, verified: 4/4 GREEN after deleting a CHECK from
+    // db/schema/{places,trips}.ts): this suite's shared template DB is built
+    // by replaying `drizzle/*.sql` (`test/global-setup.ts`'s `migrate()`) —
+    // it never reads the TS schema file at all, so editing a `check(...)`
+    // call there has ZERO effect on what a test container enforces. The
+    // ONLY real falsification is the shipped migration file itself: comment
+    // out (or delete) any one `ADD CONSTRAINT` in
+    // `drizzle/0005_nullable_custom_coords.sql` — this reds on the missing
+    // name. (The TS `check(...)` calls still matter — `drizzle-kit generate`
+    // diffs against them for the NEXT migration — the drift pin below is
+    // what actually exercises that half.)
+  });
+
+  it("[B-7 part 3 R1] drift pin: every CHECK constraint db/schema/{places,trips}.ts declares matches what the shipped migrations actually created", async () => {
+    // The pin above hardcodes the three B-7 names and only reads the LIVE
+    // db — it can't catch a TS `check(...)` renamed/added/removed without a
+    // matching migration edit (or the reverse). This pin reads BOTH sides:
+    // the TS schema source (static, for the declared names) and
+    // `pg_constraint` (live, for what actually shipped) and requires the
+    // sets to match exactly, closing the "Drizzle drift-check gate" QUEUE
+    // row this cheaply.
+    const CHECK_NAME_RE = /check\(\s*"([a-z0-9_]+)"/g;
+    const declared = new Set<string>();
+    for (const file of ["schema/places.ts", "schema/trips.ts"]) {
+      const source = readFileSync(fileURLToPath(new URL(`./db/${file}`, import.meta.url)), "utf8");
+      for (const match of source.matchAll(CHECK_NAME_RE)) declared.add(match[1]!);
+    }
+    expect(declared.size).toBeGreaterThanOrEqual(3); // sanity: the regex found something
+
+    // `trips.ts` also defines `trip_members` and `invites` in the same
+    // file — the regex above picks up `invites`' two checks along with
+    // `trips`', so the live side must query all three tables (`trip_members`
+    // declares none).
+    const live = await suiteDb.client<{ conname: string }[]>`
+      select conname from pg_constraint
+      where contype = 'c'
+        and conrelid in ('places'::regclass, 'trips'::regclass, 'invites'::regclass)
+    `;
+    expect(new Set(live.map((c) => c.conname))).toEqual(declared);
+    // Falsification: add a `check(...)` to db/schema/places.ts (or trips.ts)
+    // with no matching migration — declared grows, live doesn't, reds. Or
+    // rename one shipped migration's constraint without updating the TS
+    // `check(...)` call — same divergence, opposite direction.
   });
 
   it("[THE BACKFILL PIN] the shipped UPDATE statements convert exactly the (0,0) custom-place and (0,0) trip rows, nothing else", async () => {
