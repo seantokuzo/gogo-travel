@@ -64,7 +64,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "lint": "expo lint src jest.setup.js",
+    "lint": "expo lint src jest.setup.js app.config.ts app.config.test.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
