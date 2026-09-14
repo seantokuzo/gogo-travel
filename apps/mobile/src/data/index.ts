@@ -28,6 +28,7 @@ export {
 } from "./members";
 export type { InviteRow, MemberMutationOptions, MemberRoleUpdateVars } from "./members";
 export {
+  createCustomDestinationErrorMessage,
   isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
   useCreateCustomDestination,

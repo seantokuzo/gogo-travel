@@ -19,4 +19,16 @@ describe("navHandoffUrlFor", () => {
       "https://www.google.com/maps/dir/?api=1&destination=-33.8688%2C-70.6693",
     );
   });
+
+  // B-7 part 3: a coordinate-less custom place — null, never a URL pointing
+  // at "null,null". Falsification: drop either null check and this returns
+  // a string containing the literal text "null".
+  it("null for a coordinate-less place — never a 'null,null' URL", () => {
+    expect(navHandoffUrlFor({ lat: null, lng: null })).toBeNull();
+  });
+
+  it("null on a HALF-null pair too (defensive — the pair invariant should make this unreachable)", () => {
+    expect(navHandoffUrlFor({ lat: null, lng: 135.7681 })).toBeNull();
+    expect(navHandoffUrlFor({ lat: 35.0116, lng: null })).toBeNull();
+  });
 });

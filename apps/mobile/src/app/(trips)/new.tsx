@@ -4,9 +4,12 @@
  * 1. Name — required text input.
  * 2. Destination — structured search-as-you-type against the places spine
  *    (Overture city/locality subset, resolved Gate 2). No free-text
- *    fallback: submitting requires a PICKED result, so
- *    `destination_lat/lng` are always present. Text-only search carries the
- *    4-char floor (shared scale bound) — shorter input just shows guidance.
+ *    fallback: submitting requires a PICKED result — a spine hit or the
+ *    custom-destination fallback below — so `destination_lat/lng` are
+ *    always PRESENT as keys, but B-7 part 3 (2026-09-13 ruling) means their
+ *    VALUES may be `null` for a coordinate-less custom pick; `null` is the
+ *    signal, never `(0, 0)`. Text-only search carries the 4-char floor
+ *    (shared scale bound) — shorter input just shows guidance.
  * 3. Dates — REQUIRED range picker (§2.3 point 3; resolved Gate 2):
  *    start/end platform date pickers (`@react-native-community/
  *    datetimepicker`, R1 review) composing the range under one
@@ -42,12 +45,16 @@
  * typist could otherwise create a place for text that was never actually
  * searched; a failed create's error also resets on the next query change
  * (R1 A2), and the input caps at 200 chars mirroring `PlaceNameSchema`
- * (R1 A4). `PlaceCreateSchema` requires coordinates today, so `lat`/`lng`
- * ride as a fixed `(0, 0)` placeholder until real coordinate capture ships
- * as its own cross-component pass, B-7 part 3 (`B-7/nullable-custom-coords`)
- * — until then the map tab degrades for any trip built on a custom
- * destination (search bbox pinned to Null Island, ocean camera/offline
- * pack); disclosed in trips.spec.md R-tripui-23.
+ * (R1 A4). B-7 PART 3 (2026-09-13 ruling, `B-7/nullable-custom-coords`):
+ * `PlaceCreateSchema` no longer requires coordinates — the created place
+ * carries NO `lat`/`lng` at all (`useCreateCustomDestination`), and
+ * `selectedPlace.lat/lng` (now `number | null`) flow straight through to
+ * `TripCreate.destination_lat/lng` below with no special-casing — the wire
+ * type already allows null, and `TripCreateSchema` requires the KEYS, not
+ * non-null VALUES. The map tab's coordinate-less degrade (world view, honest
+ * empty state, unbounded search, no offline pack) is real behavior now, not
+ * a known gap; see `.specs/client/map.spec.md` R-map-26 and
+ * `.specs/client/trips.spec.md` R-tripui-23/24.
  *
  * Validation is the shared `TripCreateSchema` client-mirrored (caps, date
  * format, date order) — the wire schema stays the single source of truth.
@@ -87,6 +94,7 @@ import {
   Skeleton,
 } from "@/components";
 import {
+  createCustomDestinationErrorMessage,
   isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
   useCreateCustomDestination,
@@ -139,27 +147,9 @@ function createErrorMessage(error: unknown): string {
   return "Couldn't create the trip. Retry?";
 }
 
-/**
- * Same envelope mapping as `createErrorMessage`, for the custom-destination
- * create (`POST /places`). 409 isn't documented for this endpoint today
- * (places spec §3.3 lists only 400 `VALIDATION_FAILED`) — kept for
- * symmetry with every other create-mutation error mapper in this screen and
- * as a defensive branch if that ever changes.
- */
-function createCustomDestinationErrorMessage(error: unknown): string {
-  if (error instanceof ApiRequestError) {
-    if (error.status === 400) {
-      return "That destination name isn't valid — try editing it.";
-    }
-    if (error.status === 409) {
-      return "That change conflicted with another update — try again.";
-    }
-    if (error.status === 0) {
-      return "No connection — check your network and retry.";
-    }
-  }
-  return "Couldn't create that destination. Retry?";
-}
+// createCustomDestinationErrorMessage (the custom-destination `POST /places`
+// envelope mapper) is round-1-extracted to `@/data` (trips-mutations.ts) —
+// one mutation, one error contract, shared with `more/settings.tsx`.
 
 export default function TripNewScreen() {
   const s = useStyles();

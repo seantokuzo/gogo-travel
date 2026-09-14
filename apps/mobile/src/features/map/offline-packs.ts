@@ -74,14 +74,17 @@ export function packRegionKeyFor(lat: number, lng: number): string {
 }
 
 /**
- * Can this destination anchor a pack at all? The schema guarantees real
- * coordinates on the wire, but the map screen carries a DEGRADE arm for
- * unusable coords (world view + EmptyState — R-map-1's fallback), and the
- * pill mounts inside it: the region grid THROWS on NaN/out-of-range, so the
- * whole pack machine stands down instead of crashing the degraded screen
- * (caught live by the map-screen degrade CONTROL in the full run).
+ * Can this destination anchor a pack at all? B-7 part 3: the wire no longer
+ * guarantees real coordinates (a custom destination may be null), and the
+ * map screen carries a DEGRADE arm for that too (world view + EmptyState —
+ * R-map-1's fallback), so the pill mounts inside it either way: the region
+ * grid THROWS on null/NaN/out-of-range, so the whole pack machine stands
+ * down instead of crashing the degraded screen (caught live by the
+ * map-screen degrade CONTROL in the full run). `Number.isFinite(null)` is
+ * `false`, so a null pair already reads as unusable without a special case.
  */
-export function isUsableDestination(lat: number, lng: number): boolean {
+export function isUsableDestination(lat: number | null, lng: number | null): boolean {
+  if (lat === null || lng === null) return false;
   return (
     Number.isFinite(lat) &&
     lat >= -90 &&
@@ -90,6 +93,21 @@ export function isUsableDestination(lat: number, lng: number): boolean {
     lng >= -180 &&
     lng <= 180
   );
+}
+
+/**
+ * Narrowing companion to `isUsableDestination` for call sites that need the
+ * non-null pair back after the check — TS cannot narrow two independent
+ * parameters through a boolean-returning function, and both
+ * `offline-pack-controller.ts` and `OfflinePackManager.tsx` anchor pack
+ * geometry on the result. Null in ⇒ null out (same rule, exposed as a type).
+ */
+export function usableDestinationCoords(
+  lat: number | null,
+  lng: number | null,
+): { lat: number; lng: number } | null {
+  if (lat === null || lng === null) return null;
+  return isUsableDestination(lat, lng) ? { lat, lng } : null;
 }
 
 /** `[lng, lat]` — GeoJSON position order (createPack bounds contract). */
