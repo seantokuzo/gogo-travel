@@ -186,6 +186,21 @@ string): boolean` — co-located with `clientIp` in
   T3-deliverable clauses — a cap with no distinguishable signal and no
   scheduled cleanup owner stalls the lane silently after roughly 80 runs with
   no way to tell why, see §5.4.)
+
+  **Disclosed, not closed (review round 1 correctness advisory 5 / security
+  cross-lane note):** the count-then-insert `findOrCreateFixtureUser` does
+  for a brand-new key is three statements with no transaction or advisory
+  lock. Two concurrent door calls for two DISTINCT new `user_key`s can both
+  observe the count one below the cap and both insert, landing the cap at
+  N+1 rather than N — bounded by the concurrency of simultaneous new-key
+  door calls, never unbounded. Accepted rather than fenced with a
+  `pg_advisory_xact_lock`: the cap is a growth bound on a loopback-only
+  dev/CI rig (R-door-11 plus the shared secret are the actual security
+  boundary), not itself a security property, and this lane's convention
+  (one `user_key` per flow run) makes simultaneous NEW-key calls rare in
+  practice. This is a DIFFERENT race than the same-`user_key` one
+  `findOrCreateFixtureUser`'s unique-violation retry already closes.
+
 - **R-door-15 (E2E runner/flow app-id parameterization, review round 2,
   revised round 3 — lane-scoped defaults):** THE SYSTEM SHALL NOT hard-code
   a single bundle identifier for every lane in `scripts/e2e.sh` or in any
