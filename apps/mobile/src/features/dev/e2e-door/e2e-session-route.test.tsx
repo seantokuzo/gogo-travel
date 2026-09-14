@@ -158,14 +158,44 @@ describe("render gate (R-door-7): both conditions must hold or the arm is inert"
   it("door build + LOCAL api base -> enabled arm mounts (control arm proving the gate can open)", async () => {
     process.env.EXPO_PUBLIC_E2E_DOOR_SECRET = SECRET;
     process.env.EXPO_PUBLIC_API_URL = LOCAL_API_URL;
-    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, signInJson()));
+    // T-7.9 pattern: hold the mint genuinely in flight so the PENDING marker
+    // is observable, released in `finally` (a thrown assertion must not
+    // wedge the file).
+    let releaseMint: (() => void) | undefined;
+    const mintPending = new Promise<void>((resolve) => {
+      releaseMint = resolve;
+    });
+    const fetchMock = jest.fn(async () => {
+      await mintPending;
+      return jsonResponse(200, signInJson());
+    });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await renderWithTheme(<E2eSessionRoute />);
 
-    expect(screen.getByTestId("e2e-session-screen")).toBeOnTheScreen();
+    const root = screen.getByTestId("e2e-session-screen");
+    expect(root).toBeOnTheScreen();
     expect(screen.queryByTestId("e2e-session-screen-inert")).toBeNull();
+    try {
+      // 🔴 flex:1 is load-bearing on EVERY marker, not just the inert one —
+      // a zero-frame view is excluded from the XCUITest a11y hierarchy
+      // outright, so Maestro's `notVisible: e2e-session-screen` barrier
+      // (§5.3) would silently pass on a zero-frame screen even on a door
+      // FAILURE. Pinned here on the root and the pending marker (still
+      // visible while the mint is deliberately held open); the ready marker
+      // is pinned below, once released.
+      expect(StyleSheet.flatten(root.props.style)).toMatchObject({ flex: 1 });
+      expect(
+        StyleSheet.flatten(screen.getByTestId("e2e-session-pending").props.style),
+      ).toMatchObject({ flex: 1 });
+    } finally {
+      releaseMint?.();
+    }
+
     await waitFor(() => expect(screen.getByTestId("e2e-session-ready")).toBeOnTheScreen());
+    expect(StyleSheet.flatten(screen.getByTestId("e2e-session-ready").props.style)).toMatchObject({
+      flex: 1,
+    });
   });
 });
 
@@ -223,5 +253,11 @@ describe("server rejection (R-door-3): a 401 never applies a session", () => {
 
     await waitFor(() => expect(screen.getByTestId("e2e-session-error")).toBeOnTheScreen());
     expect(useSessionStore.getState().user).toBeNull();
+    // 🔴 flex:1 load-bearing on the error marker too (B3, mirrors the
+    // pending/ready pins above) — an error must be as reliably assertable
+    // by Maestro as success.
+    expect(StyleSheet.flatten(screen.getByTestId("e2e-session-error").props.style)).toMatchObject({
+      flex: 1,
+    });
   });
 });

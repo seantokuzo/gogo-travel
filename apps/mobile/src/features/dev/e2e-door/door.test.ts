@@ -260,7 +260,61 @@ describe("openSessionDoor — malformed user_key (adversarial, no request)", () 
 });
 
 describe("openSessionDoor — happy path: ordering, request shape, session apply", () => {
-  it("resets local session (awaited) strictly BEFORE the mint POST, then applies the response, Authorization-free", async () => {
+  it("the mint does not fire while resetLocalSession's promise is genuinely still pending — the AWAIT is load-bearing, not just call-order", async () => {
+    // T-7.9 pattern: a deferred promise held open, released in `finally` (a
+    // stuck assertion must not wedge this file). The prior version of this
+    // pin only compared `invocationCallOrder`, which stays green even if
+    // `await d.resetLocalSession()` is weakened to `void
+    // d.resetLocalSession()` — both still call reset "before" the fetch call
+    // is *issued* on the synchronous call stack, but the void form does not
+    // wait for it to actually finish. Falsification: change that `await` to
+    // `void` in openSessionDoor -> the mint fires below before `releaseReset`
+    // runs, and the "no fetch yet" assertion goes RED.
+    const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
+    let releaseReset: () => void = () => undefined;
+    const resetLocalSession = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseReset = resolve;
+        }),
+    );
+    const applySignIn = jest.fn().mockResolvedValue(undefined);
+    const deps: OpenDoorDeps = {
+      api: makeRealApi(fetchMock),
+      apiBase: LOCAL_BASE,
+      resetLocalSession,
+      applySignIn,
+      secret: SECRET,
+      bundleId: DOOR_BUNDLE_ID,
+    };
+
+    const pending = openSessionDoor({ userKey: "flow-1", firstRun: true }, deps);
+    // Flush the synchronous prefix (gate checks + schema parse) so execution
+    // has genuinely reached `await d.resetLocalSession()` and is suspended
+    // there — resetLocalSession's own promise constructor already ran
+    // synchronously, so `releaseReset` is already assigned.
+    await Promise.resolve();
+
+    try {
+      expect(resetLocalSession).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(applySignIn).not.toHaveBeenCalled();
+    } finally {
+      releaseReset();
+    }
+
+    const result = await pending;
+
+    expect(result).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(applySignIn).toHaveBeenCalledTimes(1);
+    // applySignIn happens AFTER the mint resolves.
+    expect(applySignIn.mock.invocationCallOrder[0]).toBeGreaterThan(
+      fetchMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("resets local session BEFORE the mint POST, then applies the response, Authorization-free", async () => {
     const fetchMock = jest.fn().mockResolvedValue(jsonResponse(200, SIGN_IN_RESPONSE));
     const { deps, resetLocalSession, applySignIn } = makeDeps({ api: makeRealApi(fetchMock) });
 
@@ -269,8 +323,6 @@ describe("openSessionDoor — happy path: ordering, request shape, session apply
     expect(result).toEqual({ ok: true });
     expect(resetLocalSession).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    // Ordering pin (R-door-8, §4.5): falsification — reorder openSessionDoor
-    // to call `d.api.request` before `await d.resetLocalSession()` → RED.
     expect(resetLocalSession.mock.invocationCallOrder[0]).toBeLessThan(
       fetchMock.mock.invocationCallOrder[0],
     );
