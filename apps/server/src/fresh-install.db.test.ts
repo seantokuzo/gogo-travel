@@ -1,15 +1,20 @@
 /**
  * T-S3.3 fresh-install suite (testing-overhaul spec §3.3, R-test-3) — the
- * full authed app against an EMPTY migrated database, ZERO fixtures, walking
- * first-user/first-run paths in order (the tests are one journey and rely on
- * file order): pristine-clone proof → emptiness pins → FIRST sign-in creates
- * the FIRST user → zero-state lists page → the B-7 cold-start circularity
- * (evidence pin + `it.fails` escape pin, R-test-8) → machinery controls.
+ * full authed app against a migrated database with ZERO TEST FIXTURES,
+ * walking first-user/first-run paths in order (the tests are one journey and
+ * rely on file order): pristine-clone proof → emptiness pins → FIRST sign-in
+ * creates the FIRST user → zero-state lists page → the B-7 cold-start
+ * circularity, now FIXED (R-test-8 escape pin flipped green) → machinery
+ * controls.
  *
- * ZERO FIXTURES is the contract (R-test-3: seeding inside this suite is a
- * blocking review finding): every row in this database is created THROUGH
- * the API by the first user. Assertions read the DB directly; they never
- * write it.
+ * ZERO TEST FIXTURES is the contract (R-test-3: seeding inside this suite is
+ * a blocking review finding): every row THIS SUITE creates is created
+ * THROUGH the API by the first user; assertions read the DB directly, they
+ * never write it. `places` is the one exception, and it is not a fixture —
+ * migration `drizzle/0004_destination_tier_seed.sql` (B-7) seeds a
+ * permanent, committed Overture destination tier that is present on EVERY
+ * migrated database, prod included, before this suite (or any code) ever
+ * runs (`DESTINATION_TIER_ROW_COUNT` below).
  *
  * Shape parity with prod wiring (`src/index.ts`): every router surface
  * createApp accepts is mounted; key material comes from
@@ -21,8 +26,9 @@
  * exactly the 2026-08-29 device rig where B-7 was caught (Law #5: the stub
  * reader can never be reached and network is never touched).
  *
- * Falsification (R-test-7): stated per test. The B-7 pins flip in B-7's fix
- * PR — see the `it.fails` doc-comment for the per-ruling flip instructions.
+ * Falsification (R-test-7): stated per test. The B-7 escape pin (R-test-8)
+ * is FLIPPED in this PR (`it.fails` → `it`) — see its doc-comment for which
+ * arm carries the fix.
  */
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -49,6 +55,7 @@ import {
   TEST_GOOGLE_CLIENT_IDS,
 } from "./test/env-builder.js";
 import { UNCONFIGURED_OBJECT_STORAGE } from "./storage/object-storage.js";
+import { DESTINATION_TIER_ROW_COUNT } from "./test/destination-tier-fixture.js";
 import { createSuiteDb, type SuiteDb } from "./test/suite-db.js";
 
 // Docker probe, loud skip banner, and the CI hard-fail all live in ONE
@@ -67,6 +74,20 @@ const PaginatedExpenses = paginatedSchema(ExpenseSchema);
 
 /** Lisbon — the coordinates a spine place pick would have supplied. */
 const LISBON = { lat: 38.722252, lng: -9.139337 };
+
+/**
+ * B-7 fix: migration `drizzle/0004_destination_tier_seed.sql` seeds `places`
+ * with a permanent, committed Overture city/locality tier (6,927 rows,
+ * `reference-data/README.md`) BEFORE any user ever signs in or searches —
+ * this is production reference data, not a test fixture, so it is present
+ * on every fresh install including this suite's migrated template. The
+ * "zero fixtures" contract (R-test-3) still holds: nothing in this file
+ * seeds it; it is already there when the template is cloned.
+ *
+ * `DESTINATION_TIER_ROW_COUNT` is the single named constant
+ * (`src/test/destination-tier-fixture.ts`, round-1 review advisory A3) — a
+ * dataset refresh bumps it in ONE place, not three.
+ */
 
 describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures)", () => {
   let suiteDb: SuiteDb;
@@ -231,13 +252,20 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(Number(journal?.n)).toBeGreaterThanOrEqual(4);
   });
 
-  it("a fresh install is EMPTY: zero users, zero places, zero ingest regions", async () => {
-    // The zero-fixture contract, pinned. Controls that prove these count
-    // queries CAN see rows: users flips 0→1 at first sign-in (next test),
-    // place_ingest_regions in the anchored-search control, places in the
-    // custom-place control.
+  it("a fresh install has zero users and zero ingest regions; `places` carries ONLY the B-7 bootstrap tier", async () => {
+    // The zero-FIXTURE contract, pinned (R-test-3) — `places` is no longer
+    // zero-ROWS (B-7 fix, migration 0004 seeds real reference data before
+    // any user action), but every one of those rows is the committed
+    // Overture tier, never a test-authored fixture. Controls that prove
+    // these count queries CAN see rows: users flips 0→1 at first sign-in
+    // (next test), place_ingest_regions in the anchored-search control,
+    // places flips tier→tier+1 in the custom-place control.
     expect(await countRows("users")).toBe(0);
-    expect(await countRows("places")).toBe(0);
+    expect(await countRows("places")).toBe(DESTINATION_TIER_ROW_COUNT);
+    const [tierOnly] = await suiteDb.client<
+      { n: string }[]
+    >`select count(*) as n from places where source <> 'overture' or category <> 'locality'`;
+    expect(Number(tierOnly?.n)).toBe(0);
     expect(await countRows("place_ingest_regions")).toBe(0);
   });
 
@@ -273,34 +301,40 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(page.nextCursor).toBeNull();
   });
 
-  it("[B-7 evidence] text-only destination searches 200/empty and leave the spine AND the ingest ledger untouched", async () => {
-    // The deadlock's server half, pinned exactly as observed on device
-    // 2026-08-29 (~7 searches, all 200, places 0 rows, regions 0 rows — not
-    // even `failed`): a text-only query anchors no geographic cell, so the
-    // search-miss trigger never fires. GREEN here means B-7 is still open;
-    // B-7's fix PR retires this pin when it flips the escape pin below.
+  it("[B-7 fix] text-only destination searches now find the bootstrap tier — no ingest required, ledger stays untouched", async () => {
+    // RETIRES the prior evidence pin ("text-only destination searches
+    // 200/empty" — GREEN there meant B-7 was still open). The server-half
+    // fix is a pure-data change (migration 0004): a text-only query still
+    // anchors no geographic cell, so the search-miss trigger still never
+    // fires (place_ingest_regions stays 0) — but the picker no longer needs
+    // it to, because the row already exists before the query ever runs.
     for (const q of ["lisbon", "tokyo", "paris"]) {
       const res = await request(`/api/places/search?q=${q}`);
       expect(res.status).toBe(200);
       const page = PaginatedPlaces.parse(await res.json());
-      expect(page.items).toEqual([]);
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page.items.every((p) => p.source === "overture" && p.category === "locality")).toBe(
+        true,
+      );
     }
     await settleIngest();
-    expect(await countRows("places")).toBe(0);
+    expect(await countRows("places")).toBe(DESTINATION_TIER_ROW_COUNT); // pre-seeded, not ingested
     expect(await countRows("place_ingest_regions")).toBe(0);
   });
 
-  it("[B-7 evidence] a coordinate-less trip create is rejected with a clean 400 today — retires with the escape pin", async () => {
-    // Companion to the escape pin below (its ruling-A arm): `it.fails`
-    // passes on ANY throw, so without this pin a 500-class regression on the
-    // coordinate-less create path would hide inside the disjunction. Today
-    // the shared create schema requires destination coordinates, so the
-    // boundary validator rejects this exact probe with a clean 400 —
-    // never a 5xx. Falsification: break the create path (or loosen the
-    // schema) and this reds while the `it.fails` stays green — that split is
-    // the point. Retired together with the escape pin by B-7's fix PR
-    // (under ruling A this becomes the 201 arm; under ruling B the 400 may
-    // stay by design).
+  it("[B-7] a coordinate-less trip create is STILL rejected with a clean 400 — the fix is a data tier, not a schema relax", async () => {
+    // Companion to the escape pin below (its ruling-A arm): the pin below
+    // passes on ANY throw for that arm, so without this pin a 500-class
+    // regression on the coordinate-less create path would hide inside the
+    // disjunction. B-7 shipped as the destination-tier fix (options brief
+    // (b): a bootstrap Overture city/locality tier makes the picker's
+    // text-only search findable), NOT as "allow a text-only destination"
+    // (option (a) — explicitly rejected, contradicts the locked
+    // `schema.spec.md`/`trips.spec.md` structured-search rulings). So this
+    // stays 400 BY DESIGN — arm A of the escape pin below stays false, arm
+    // B carries the fix. Falsification: break the create path (or loosen
+    // the schema) and this reds while the pin below stays green via arm B
+    // — that split is the point.
     const create = await postJson("/api/trips", {
       name: "First Trip",
       destination_name: "Lisbon, Portugal",
@@ -310,36 +344,32 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(create.status).toBe(400);
   });
 
-  it.fails(
-    "[B-7] a first user can escape the cold-start deadlock: text-only search self-seeds (ruling B) OR text-only trip create is accepted (ruling A)",
-    async () => {
-      // R-test-8 pin, ruling-independent by disjunction — EITHER of Sean's
-      // candidate rulings breaks the circularity and flips this to `it`:
-      //   ruling A (text-only destination): the coordinate-less POST /trips
-      //     below starts returning 201 → arm A true.
-      //   ruling B (self-seeding first search): the q-only search below
-      //     starts returning results or recording an ingest region → arm B
-      //     true.
-      // Flip instruction (B-7 fix PR): change `it.fails` to `it`, keep BOTH
-      // arms (the disjunction stays valid — the un-ruled arm simply stays
-      // false), and retire the evidence pin above.
-      const search = await request("/api/places/search?q=lisbon");
-      expect(search.status).toBe(200);
-      const page = PaginatedPlaces.parse(await search.json());
-      await settleIngest();
-      const armB = page.items.length > 0 || (await countRows("place_ingest_regions")) > 0;
+  it("[B-7] FLIPPED: a first user can escape the cold-start deadlock: text-only search self-seeds (ruling B) OR text-only trip create is accepted (ruling A)", async () => {
+    // R-test-8 pin, ruling-independent by disjunction. B-7 shipped
+    // ruling (b) from the options brief — a bootstrap destination tier
+    // (migration 0004) — which makes arm B true: the q-only search below
+    // now finds a pre-seeded tier row (not a self-seeded one, but the
+    // disjunction only cares that text-only search stops being a dead
+    // end). Ruling A (text-only trip create) was NOT adopted — arm A
+    // stays false, as expected and fine (disjunction, not conjunction).
+    const search = await request("/api/places/search?q=lisbon");
+    expect(search.status).toBe(200);
+    const page = PaginatedPlaces.parse(await search.json());
+    await settleIngest();
+    const armB = page.items.length > 0 || (await countRows("place_ingest_regions")) > 0;
 
-      const create = await postJson("/api/trips", {
-        name: "First Trip",
-        destination_name: "Lisbon, Portugal",
-        start_date: "2026-09-01",
-        end_date: "2026-09-08",
-      });
-      const armA = create.status === 201;
+    const create = await postJson("/api/trips", {
+      name: "First Trip",
+      destination_name: "Lisbon, Portugal",
+      start_date: "2026-09-01",
+      end_date: "2026-09-08",
+    });
+    const armA = create.status === 201;
 
-      expect(armA || armB).toBe(true);
-    },
-  );
+    expect(armA || armB).toBe(true);
+    expect(armB).toBe(true); // the actual mechanism B-7 shipped
+    expect(armA).toBe(false); // ruling A was not adopted — documented, not a bug
+  });
 
   it("control arm: an ANCHORED search reaches the ingest ledger — regions recorded `failed` (no dataset URLs)", async () => {
     // Proves the B-7 emptiness above is about text-only anchoring, not dead
@@ -358,8 +388,9 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
       expect(region.status).toBe("failed");
       expect(region.error).toMatch(/not configured/);
     }
-    // Failed ingest seeds nothing — the spine is still empty.
-    expect(await countRows("places")).toBe(0);
+    // Failed ingest seeds nothing — the spine holds ONLY the B-7 bootstrap
+    // tier, unchanged by the failed job.
+    expect(await countRows("places")).toBe(DESTINATION_TIER_ROW_COUNT);
   });
 
   it("the raw API can create the first trip once coordinates exist, and its zero-state sub-lists page correctly", async () => {
@@ -405,6 +436,6 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     });
     expect(res.status).toBe(201);
     PlaceSchema.parse(await res.json());
-    expect(await countRows("places")).toBe(1);
+    expect(await countRows("places")).toBe(DESTINATION_TIER_ROW_COUNT + 1);
   });
 });

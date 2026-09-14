@@ -1,0 +1,339 @@
+/**
+ * Bootstrap destination-tier generator — unit coverage for the pure
+ * name-cap logic (B-7 round-1 blocking finding): `src/places/destination-
+ * tier-generator.ts`'s `NAME_MAX` used to be a second literal (500,
+ * mirroring `normalize.ts`'s `places.name` column cap) that had silently
+ * diverged from `TripCreateSchema.destination_name`'s wire cap (200) — a
+ * tier row longer than 200 chars would seed and search fine, then 400 at
+ * `POST /trips`, an unrecoverable dead end on device. `NAME_MAX` is now
+ * `DESTINATION_NAME_MAX_CHARS` imported from `@gogo/shared`, so this file
+ * pins the exact boundary against that shared constant rather than a
+ * re-guessed literal — a future re-divergence (either side changing without
+ * the other) reds here.
+ *
+ * No Docker, no network, no DuckDB — every function imported below is a
+ * pure function over an already-fetched row. That is a STRUCTURAL property
+ * pinned by the "no I/O on import" describe block near the bottom (round-2
+ * regression, B-7 PR #75): `scripts/generate-destination-tier.ts` used to
+ * run a live S3 GeoParquet query and rewrite `destinations.json` at MODULE
+ * TOP LEVEL, so importing it here — this file used to import it for its
+ * exported types/functions — silently did both on every `pnpm test`,
+ * including in CI (Law #5 network-in-tests violation, Law #6 silent seed
+ * drift). This file now imports ONLY the pure module.
+ */
+import { readFileSync } from "node:fs";
+import type * as NodeFs from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it, vi } from "vitest";
+import { DESTINATION_NAME_MAX_CHARS } from "@gogo/shared/domains/trip";
+import {
+  buildDestinationTier,
+  CAPITAL_PINS,
+  NAME_MAX,
+  NAME_PINS,
+  toSeed,
+  verifyPins,
+  type DestinationSeed,
+  type DivisionRow,
+} from "./destination-tier-generator.js";
+
+// Hoisted so the vi.mock factories below (which run before any of this
+// file's own imports, vitest's usual hoisting contract) can close over them.
+const { fsWriteFileSync, fsMkdirSync, duckDbCreateSpy } = vi.hoisted(() => ({
+  fsWriteFileSync: vi.fn(),
+  fsMkdirSync: vi.fn(),
+  duckDbCreateSpy: vi.fn(() => {
+    throw new Error(
+      "@duckdb/node-api must never be invoked merely by importing generate-destination-tier.ts " +
+        "or destination-tier-generator.ts — only main() (behind the CLI's main-guard) may call it",
+    );
+  }),
+}));
+
+// Real `readFileSync` (below, loading the committed dataset fixture) keeps
+// working — only the write path is intercepted, so a stray write anywhere
+// in the import graph is caught instead of silently landing on disk.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeFs>();
+  return { ...actual, writeFileSync: fsWriteFileSync, mkdirSync: fsMkdirSync };
+});
+
+// The pure module and the CLI script's module-level code must never reach
+// this — only `queryDivisions`'s dynamic `import("@duckdb/node-api")`,
+// which only executes inside `main()`, which only runs under the CLI's
+// main-guard (false under vitest). A throwing factory converts any future
+// accidental top-level/unconditional use into an immediate, unmissable
+// failure rather than a background call an assertion might miss.
+vi.mock("@duckdb/node-api", () => ({
+  DuckDBInstance: { create: duckDbCreateSpy },
+}));
+
+const DESTINATIONS_JSON = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "reference-data",
+  "destinations.json",
+);
+const destinations = JSON.parse(readFileSync(DESTINATIONS_JSON, "utf8")) as DestinationSeed[];
+
+// Built via fromCharCode, never as a literal source byte: a raw NUL is what
+// makes git treat this file as BINARY (`.claude/rules/server.md`/`ci.md` NUL-
+// byte landmine) — the escape carries the same runtime control byte into the
+// adversarial fixture below without one landing in source (precedent:
+// `packages/shared/src/domains/e2e.test.ts`, PR #72).
+const NUL = String.fromCharCode(0);
+
+function row(overrides: Partial<DivisionRow> = {}): DivisionRow {
+  return {
+    id: "test-id-1",
+    name: "Testville",
+    country: "US",
+    lat: 12.5,
+    lng: -34.5,
+    population: 500_000,
+    is_country_capital: false,
+    wikidata: null,
+    ...overrides,
+  };
+}
+
+describe("destination-tier-generator: NAME_MAX tracks the shared wire cap", () => {
+  it("NAME_MAX equals DESTINATION_NAME_MAX_CHARS (TripCreateSchema.destination_name), not normalize.ts's 500-char column cap", () => {
+    expect(NAME_MAX).toBe(DESTINATION_NAME_MAX_CHARS);
+    expect(NAME_MAX).toBe(200);
+  });
+
+  it("a 200-char name round-trips into a seed (at the cap, not over it)", () => {
+    const name200 = "A".repeat(200);
+    const skipped: string[] = [];
+    const seed = toSeed(row({ name: name200 }), skipped);
+    expect(seed, `unexpectedly skipped: ${skipped.join("; ")}`).not.toBeNull();
+    expect(seed?.name).toBe(name200);
+    expect(seed?.name.length).toBe(200);
+    expect(skipped).toEqual([]);
+  });
+
+  it("a 201-char name is refused — it can never exist in the generated JSON", () => {
+    const name201 = "A".repeat(201);
+    const skipped: string[] = [];
+    const seed = toSeed(row({ name: name201 }), skipped);
+    expect(seed).toBeNull();
+    expect(skipped).toEqual(["test-id-1: unusable name"]);
+  });
+
+  // Mutation-verify: reverting NAME_MAX to the old hardcoded 500 (i.e.
+  // asserting against 500 instead of the shared constant) would make BOTH
+  // assertions above pass differently — the 201-char case would stop being
+  // refused. This test's failure mode IS the round-1 bug: a name the wire
+  // schema rejects that the generator still happily seeds.
+  it("falsification: a name between the old 500-char column cap and the 200-char wire cap is refused", () => {
+    const name300 = "B".repeat(300);
+    const skipped: string[] = [];
+    const seed = toSeed(row({ name: name300 }), skipped);
+    expect(seed).toBeNull();
+    expect(skipped).toEqual(["test-id-1: unusable name"]);
+  });
+});
+
+describe("buildDestinationTier: dedup + deterministic ordering", () => {
+  it("empty input yields empty output (no rows, no crash)", () => {
+    expect(buildDestinationTier([])).toEqual({ seeds: [], skipped: [] });
+  });
+
+  it("sorts by (name, source_id) regardless of input order", () => {
+    const { seeds, skipped } = buildDestinationTier([
+      row({ id: "b-2", name: "Beta" }),
+      row({ id: "a-1", name: "Alpha" }),
+      row({ id: "a-2", name: "Alpha" }),
+    ]);
+    expect(skipped).toEqual([]);
+    expect(seeds.map((s) => s.sourceId)).toEqual(["a-1", "a-2", "b-2"]);
+  });
+
+  it("a duplicate source id keeps only the first occurrence and records the skip", () => {
+    const { seeds, skipped } = buildDestinationTier([
+      row({ id: "dup-1", name: "First" }),
+      row({ id: "dup-1", name: "First (again)" }),
+    ]);
+    expect(seeds).toHaveLength(1);
+    expect(seeds[0]?.name).toBe("First");
+    expect(skipped).toEqual(["dup-1: duplicate source id — kept the first occurrence"]);
+  });
+
+  it("adversarial: a row with an unusable name is dropped, not thrown", () => {
+    const { seeds, skipped } = buildDestinationTier([row({ name: `${NUL}bad` })]);
+    expect(seeds).toEqual([]);
+    expect(skipped).toEqual(["test-id-1: unusable name"]);
+  });
+});
+
+describe("verifyPins: refuses a snapshot that regresses the B-7 repro/capital coverage", () => {
+  /** A synthetic seed set that satisfies every pin — the happy path. */
+  function passingSeeds(): DestinationSeed[] {
+    const base = (name: string, country: string, isCountryCapital: boolean): DestinationSeed => ({
+      sourceId: `${country}-${name}`,
+      name,
+      country,
+      lat: 0,
+      lng: 0,
+      population: isCountryCapital ? 1_000 : 500_000,
+      isCountryCapital,
+      wikiRef: null,
+    });
+    const namePinSeeds = NAME_PINS.map((p) => base(p.name, p.country, false));
+    const capitalPinSeeds = CAPITAL_PINS.map((p) => base(p.name, p.country, true));
+    // Sanity floor requires >= 100 capital rows; pad with synthetic ones.
+    const padding = Array.from({ length: 100 }, (_, i) => base(`Pad${i}`, "ZZ", true));
+    return [...namePinSeeds, ...capitalPinSeeds, ...padding];
+  }
+
+  it("happy path: a seed set carrying every pin passes without throwing", () => {
+    expect(() => verifyPins(passingSeeds())).not.toThrow();
+  });
+
+  it("error: a missing name pin throws naming the exact pin", () => {
+    const seeds = passingSeeds().filter((s) => s.name !== "Tokyo");
+    expect(() => verifyPins(seeds)).toThrow(/name pin failed: Tokyo \(JP\)/);
+  });
+
+  it("error: a missing capital pin throws naming the exact pin", () => {
+    const seeds = passingSeeds().filter((s) => s.name !== "Vaduz");
+    expect(() => verifyPins(seeds)).toThrow(/capital pin failed: Vaduz \(LI\)/);
+  });
+
+  // Falsification target for the round-1 capital-arm regression class: a
+  // row present under the right name/country but with the capital ARM
+  // silently dropped (isCountryCapital flipped false) must be distinguished
+  // from the row being entirely missing.
+  it("adversarial: a capital pin present by name but with isCountryCapital=false throws the capital-arm-regressed message, not the not-found message", () => {
+    const seeds = passingSeeds().map((s) =>
+      s.name === "Monaco" ? { ...s, isCountryCapital: false } : s,
+    );
+    expect(() => verifyPins(seeds)).toThrow(
+      /capital pin failed: Monaco \(MC\) found but isCountryCapital is false/,
+    );
+  });
+
+  it("boundary: exactly 100 capital rows clears the sanity floor; 99 does not", () => {
+    const namePinSeeds = NAME_PINS.map((p) => ({
+      sourceId: `${p.country}-${p.name}`,
+      name: p.name,
+      country: p.country,
+      lat: 0,
+      lng: 0,
+      population: 500_000,
+      isCountryCapital: false,
+      wikiRef: null,
+    }));
+    const capitalPinSeeds = CAPITAL_PINS.map((p) => ({
+      sourceId: `${p.country}-${p.name}`,
+      name: p.name,
+      country: p.country,
+      lat: 0,
+      lng: 0,
+      population: 1_000,
+      isCountryCapital: true,
+      wikiRef: null,
+    }));
+    const makePad = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        sourceId: `ZZ-Pad${i}`,
+        name: `Pad${i}`,
+        country: "ZZ",
+        lat: 0,
+        lng: 0,
+        population: 1_000,
+        isCountryCapital: true,
+        wikiRef: null,
+      }));
+
+    const exactly100 = [...namePinSeeds, ...capitalPinSeeds, ...makePad(100 - CAPITAL_PINS.length)];
+    expect(exactly100.filter((s) => s.isCountryCapital)).toHaveLength(100);
+    expect(() => verifyPins(exactly100)).not.toThrow();
+
+    const only99 = [...namePinSeeds, ...capitalPinSeeds, ...makePad(99 - CAPITAL_PINS.length)];
+    expect(only99.filter((s) => s.isCountryCapital)).toHaveLength(99);
+    expect(() => verifyPins(only99)).toThrow(/sanity pin failed: only 99 country-capital rows/);
+  });
+});
+
+/**
+ * Committed dataset pins (round-1 review, adversarial-verifier F9/A3): the
+ * capital arm's small-sovereign-state coverage, and the two documented
+ * gaps, checked directly against the shipped `destinations.json` rather
+ * than a live Overture re-query (no network needed for this suite).
+ */
+describe("destinations.json: capital-arm coverage and documented gaps", () => {
+  it("no seeded name exceeds the wire cap (mirrors the generator's own NAME_MAX refusal)", () => {
+    const longest = destinations.reduce((max, d) => Math.max(max, d.name.length), 0);
+    for (const d of destinations) {
+      expect(d.name.length, `${d.sourceId} (${d.name}) exceeds NAME_MAX`).toBeLessThanOrEqual(
+        NAME_MAX,
+      );
+    }
+    // Documents reality, not a magic number: currently well under the cap.
+    expect(longest).toBeLessThanOrEqual(NAME_MAX);
+  });
+
+  it.each(CAPITAL_PINS)(
+    "$name ($country) is seeded and flagged isCountryCapital (low/no-population microstate capital)",
+    ({ name, country }) => {
+      const hit = destinations.find((d) => d.name === name && d.country === country);
+      expect(hit, `${name} (${country}) not found in destinations.json`).toBeDefined();
+      expect(hit?.isCountryCapital).toBe(true);
+      // Every pin here is chosen BECAUSE population alone would not have
+      // included it — proves the capital arm, not the population arm, did
+      // the including.
+      expect((hit?.population ?? 0) < 100_000).toBe(true);
+    },
+  );
+
+  it("Vatican City is absent — a documented gap, not a regression (Overture tags it subtype='macrohood', never 'locality', in this release)", () => {
+    const hit = destinations.find((d) => d.name === "Vatican City");
+    expect(hit).toBeUndefined();
+  });
+
+  it("Wellington, NZ is present via the population arm but isCountryCapital is false — a documented upstream data gap (capital_of_divisions is null for NZ, both directions)", () => {
+    const hit = destinations.find((d) => d.name === "Wellington" && d.country === "NZ");
+    expect(hit, "Wellington (NZ) not found in destinations.json").toBeDefined();
+    expect(hit?.isCountryCapital).toBe(false);
+    expect((hit?.population ?? 0) >= 100_000).toBe(true); // included via population, not the capital arm
+  });
+});
+
+/**
+ * Round-2 regression pin (B-7 PR #75, verifier finding): `scripts/
+ * generate-destination-tier.ts` used to run `await queryDivisions()` (live
+ * S3 GeoParquet via DuckDB) and `writeFileSync(…/destinations.json)` at
+ * MODULE TOP LEVEL — so every `pnpm test`, CI included, did a live network
+ * read (Law #5) and silently rewrote the committed reference data (Law #6
+ * drift), with a generator throw reporting as "no tests" instead of a
+ * failure. Fix: the pure module (this file's other imports) has no I/O at
+ * all, and the CLI script only runs its query/write behind a main-guard.
+ *
+ * Falsification (performed by hand while writing this fix, then reverted):
+ * moving `writeFileSync(...)`/`mkdirSync(...)` back to the CLI script's
+ * module top level, or removing the `isMain` guard around `await main()`,
+ * makes the second test below RED (`fsWriteFileSync`/`fsMkdirSync` called).
+ * Re-adding a static `import { DuckDBInstance } from "@duckdb/node-api"` at
+ * the CLI script's top level, or calling `queryDivisions()` outside the
+ * guard, makes it RED via `duckDbCreateSpy` (uncalled → called, or the
+ * mock's own throw surfaces as an unhandled import-time error).
+ */
+describe("no I/O on import (round-2 regression pin)", () => {
+  it("the pure module never writes to disk or touches @duckdb/node-api merely by being imported", async () => {
+    await import("./destination-tier-generator.js");
+    expect(fsWriteFileSync).not.toHaveBeenCalled();
+    expect(fsMkdirSync).not.toHaveBeenCalled();
+    expect(duckDbCreateSpy).not.toHaveBeenCalled();
+  });
+
+  it("importing the CLI script (never executing it — the main-guard is false under vitest) never writes to disk or touches @duckdb/node-api", async () => {
+    await import("../../scripts/generate-destination-tier.js");
+    expect(fsWriteFileSync).not.toHaveBeenCalled();
+    expect(fsMkdirSync).not.toHaveBeenCalled();
+    expect(duckDbCreateSpy).not.toHaveBeenCalled();
+  });
+});
