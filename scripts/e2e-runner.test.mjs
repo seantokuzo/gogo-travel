@@ -226,6 +226,35 @@ test("--variant doorfree resolves app.gogotravel and is NEVER derived automatica
   }
 });
 
+test("R-door-15: --variant door excludes session-door-absent; --variant doorfree excludes the door-tagged authenticated flows", () => {
+  const sandbox = makeSandbox();
+  try {
+    // Deliberately NOT --flow here — this exercises the REAL .maestro/
+    // directory (the default FLOW_TARGET) so the pin covers the actual
+    // flow tags this repo ships, not a synthetic stand-in. Fully offline:
+    // the shell script's own awk-based tag scan reads the YAML text
+    // directly, no maestro/simulator involved before the (stubbed) binary
+    // ever runs.
+    const doorResult = runE2e(sandbox, ["--variant", "door"], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+    });
+    assert.equal(doorResult.status, 0, doorResult.stderr);
+    assert.match(doorResult.stdout, /exclude=\[dev,doorfree\]/);
+    assert.match(doorResult.stdout, /session-door-entry\.yaml/);
+    assert.doesNotMatch(doorResult.stdout, /session-door-absent\.yaml/);
+
+    const doorfreeResult = runE2e(sandbox, ["--variant", "doorfree"], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel",
+    });
+    assert.equal(doorfreeResult.status, 0, doorfreeResult.stderr);
+    assert.match(doorfreeResult.stdout, /exclude=\[dev,door\]/);
+    assert.match(doorfreeResult.stdout, /session-door-absent\.yaml/);
+    assert.doesNotMatch(doorfreeResult.stdout, /session-door-entry\.yaml/);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
 test("GOGO_E2E_APP_ID overrides every lane's default, including door and dev", () => {
   const sandbox = makeSandbox();
   try {

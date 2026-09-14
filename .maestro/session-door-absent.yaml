@@ -1,0 +1,60 @@
+# The door-free proof — .specs/testing/session-door.spec.md §3.4/§5.2. Runs
+# ONLY against the door-FREE build (`pnpm ios:doorfree`, app id
+# `app.gogotravel`) — `--variant doorfree` explicitly (never auto-derived;
+# R-door-15's own text: its default tag filter is otherwise identical to
+# the door lane's). Cadence per spec §5.2: every PR that touches door code,
+# plus each phase close — never the default merge gate (that stays the one
+# door-build run; running this on every gate would roughly double its wall
+# time for a claim that only changes when door code changes).
+#
+# WHAT THIS PROVES, PRECISELY (spec §3.4's own honesty boundary): "the door
+# is unreachable and useless", never "the door's bytes are absent from the
+# bundle" — Metro does not tree-shake by default, so the module may still
+# sit in a door-free bundle even though the branch is compile-time
+# constant-false and the secret literal was never inlined. Do NOT attempt to
+# prove this with `strings | grep` (the PR #61 Hermes-UTF-16 trap,
+# `.claude/rules/mobile.md`) — this flow is the sanctioned black-box,
+# behavioral alternative: drive the REAL Release artifact and observe what
+# it actually does.
+#
+# TWO ARMS, same shape as `smoke-diagnostics-cold.yaml` / `deeplink-matrix.yaml`
+# (every negative assertion needs a positive control, ADR-007 "Writing flows
+# here"):
+#
+#   ARM 1 (CONTROL) — an ordinary gated route cold-starts to sign-in on
+#   THIS build, proving the gate/transport plumbing works at all on a
+#   door-free artifact (without this, a green ARM 2 would be equally
+#   consistent with "the app crashed before rendering anything").
+#
+#   ARM 2 (THE PIN) — the session-door's OWN entry link
+#   (`gogo://e2e-session`) cold-starts. On a door-free build,
+#   `isDoorSecretConfigured()` is false (`EXPO_PUBLIC_E2E_DOOR_SECRET` was
+#   never inlined — Metro folds the unset member expression to the literal
+#   `undefined` at compile time), so `e2e-session.tsx`'s synchronous triple
+#   gate renders ONLY the inert marker and the effect that would call
+#   `openSessionDoor` never runs at all (`if (!doorReady || !hydrated)
+#   return;`) — no network request, no secret ever read past the length
+#   check, never the real `e2e-session-screen`.
+appId: ${APP_ID}
+name: session-door-absent
+tags:
+  - release
+  - doorfree
+---
+# ── ARM 1 (CONTROL) ──────────────────────────────────────────────────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://t/00000000-0000-4000-8000-000000000001"
+- assertVisible:
+    id: "sign-in-screen"
+
+# ── ARM 2 (THE PIN) ──────────────────────────────────────────────────────────
+- runFlow:
+    file: subflows/cold-open.yaml
+    env:
+      LINK: "gogo://e2e-session?user_key=session-door-absent-${RUN_ID}&first_run=false"
+- assertVisible:
+    id: "e2e-session-screen-inert"
+- assertNotVisible:
+    id: "e2e-session-screen"

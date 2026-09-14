@@ -119,6 +119,24 @@ esac
 # outright, for any variant.
 APP_ID="${GOGO_E2E_APP_ID:-$DEFAULT_APP_ID}"
 
+# Lane-scoped default flow selection. `door` and `doorfree` otherwise share
+# an IDENTICAL default tag filter (both exclude only `dev`) — without this,
+# a plain `--variant doorfree` run would ALSO attempt the six authenticated
+# flows (tagged `door`, S-4 wave 2) against a build with no door to open,
+# and a plain default `door`-lane run would ALSO attempt
+# `session-door-absent` (tagged `doorfree`) against the wrong build's app
+# id. Only adjust the filter when the caller has not already taken full
+# manual control of it via --tags/--flow — both already reset EXCLUDE_TAGS
+# to "" (the existing "an explicit selection owns the filter completely"
+# rule above), which this check treats as "leave it alone": EXCLUDE_TAGS
+# only ever still equals the literal default "dev" here when neither fired.
+if [[ "$EXCLUDE_TAGS" == "dev" ]]; then
+  case "$VARIANT" in
+    door) EXCLUDE_TAGS="dev,doorfree" ;;
+    doorfree) EXCLUDE_TAGS="dev,door" ;;
+  esac
+fi
+
 # ── maestro ───────────────────────────────────────────────────────────────────
 # The official installer puts it in ~/.maestro/bin, which is only on PATH in an
 # interactive login shell — resolve it explicitly so this works from a script,

@@ -20,8 +20,10 @@ flows:
 # S-4 wave 2 (T5): the authenticated flows (5-10) are listed session-door-entry
 # FIRST — it is the barrier every later flow's `runFlow: subflows/session-door.yaml`
 # depends on, so a red run triages there first — then in the order the
-# session-door spec's §5.1 flow list gives them. `sign-in-cancel-surface`
-# stays LAST regardless, for the reason above.
+# session-door spec's §5.1 flow list gives them. `session-door-absent` is the
+# separate door-FREE proof (--variant doorfree only; harmless to list here
+# too since a --variant door run's tag exclusion already keeps it out).
+# `sign-in-cancel-surface` stays LAST regardless, for the reason above.
 executionOrder:
   continueOnFailure: true
   flowsOrder:
@@ -34,4 +36,5 @@ executionOrder:
     - ideas-to-schedule
     - cancel-visibility
     - cross-tab-state
+    - session-door-absent
     - sign-in-cancel-surface
