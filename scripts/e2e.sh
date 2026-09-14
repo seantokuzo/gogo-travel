@@ -3,8 +3,9 @@
 # Local E2E lane (ADR-007) — runs the Maestro flows in `.maestro/` against the
 # booted iOS simulator and writes JUnit to `.tmp/e2e/`.
 #
-#   bash scripts/e2e.sh                      # release lane (excludes `dev`)
-#   bash scripts/e2e.sh --tags dev           # dev-build-only flows
+#   bash scripts/e2e.sh                      # release lane (door build, excludes `dev`)
+#   bash scripts/e2e.sh --variant doorfree    # door-free proof (session-door-absent)
+#   bash scripts/e2e.sh --tags dev           # dev-build-only flows (implies --variant dev)
 #   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
 #   bash scripts/e2e.sh --device <udid>
 #   bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug   # passthrough
@@ -20,7 +21,6 @@ set -euo pipefail
 # pin it), so the pin is asserted here at run time. Override deliberately with
 # MAESTRO_EXPECTED_VERSION=x.y.z when testing an upgrade.
 MAESTRO_EXPECTED_VERSION="${MAESTRO_EXPECTED_VERSION:-2.10.0}"
-APP_ID="app.gogotravel"
 
 # Nothing about a test run leaves this machine (ADR-007 / Law #5).
 export MAESTRO_CLI_NO_ANALYTICS=1
@@ -32,6 +32,8 @@ OUT_DIR="$REPO_ROOT/.tmp/e2e"
 DEVICE=""
 INCLUDE_TAGS=""
 EXCLUDE_TAGS="dev" # dev-build-only flows never run in the release lane
+VARIANT=""         # resolved below (R-door-15) — door|dev|doorfree
+TAGS_EXPLICIT=""   # raw --tags value, if any — feeds the --variant derivation
 PASSTHROUGH=()
 
 die() {
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --tags)
       [[ $# -ge 2 ]] || die "--tags needs a value"
       INCLUDE_TAGS="$2"
+      TAGS_EXPLICIT="$2"
       # An explicit tag selection owns the filter completely — otherwise
       # `--tags dev` would ask for the dev flows and exclude them in the same
       # breath, and silently run nothing.
@@ -59,6 +62,15 @@ while [[ $# -gt 0 ]]; do
       # flow you asked for and silently run nothing. An explicit --flow target
       # owns the filter completely, just like an explicit --tags selection.
       EXCLUDE_TAGS=""
+      shift 2
+      ;;
+    --variant)
+      [[ $# -ge 2 ]] || die "--variant needs a value (door|dev|doorfree)"
+      VARIANT="$2"
+      case "$VARIANT" in
+        door | dev | doorfree) ;;
+        *) die "--variant must be door, dev, or doorfree (got: $VARIANT)" ;;
+      esac
       shift 2
       ;;
     --device)
@@ -79,6 +91,33 @@ while [[ $# -gt 0 ]]; do
     *) die "unknown argument: $1 (use -- to pass flags through to maestro)" ;;
   esac
 done
+
+# ── variant / app id resolution (R-door-15) ─────────────────────────────────
+# No single hard-coded bundle id for every lane — each lane resolves its OWN
+# default, and every lane's default is env-overridable via GOGO_E2E_APP_ID.
+# `--variant` wins outright when given; otherwise derive from `--tags`:
+# `--tags dev` (and ONLY that exact value) implies the `dev` lane; every other
+# invocation — including the default, no-flag run (today's default merge-gate
+# cadence) — implies `door`. `doorfree` is NEVER derived from --tags/--flow —
+# the periodic door-free proof must pass --variant doorfree explicitly, since
+# its default tag filter is otherwise identical to the door lane's.
+if [[ -z "$VARIANT" ]]; then
+  if [[ "$TAGS_EXPLICIT" == "dev" ]]; then
+    VARIANT="dev"
+  else
+    VARIANT="door"
+  fi
+fi
+
+case "$VARIANT" in
+  door) DEFAULT_APP_ID="app.gogotravel.e2edoor" ;;
+  dev) DEFAULT_APP_ID="app.gogotravel" ;;
+  doorfree) DEFAULT_APP_ID="app.gogotravel" ;;
+esac
+# GOGO_E2E_APP_ID (operator-settable, same override pattern as
+# MAESTRO_EXPECTED_VERSION/--device) overrides the variant-derived default
+# outright, for any variant.
+APP_ID="${GOGO_E2E_APP_ID:-$DEFAULT_APP_ID}"
 
 # ── maestro ───────────────────────────────────────────────────────────────────
 # The official installer puts it in ~/.maestro/bin, which is only on PATH in an
@@ -163,14 +202,24 @@ fi
   xcrun simctl boot <udid> && open -a Simulator
   (xcrun simctl list devices available)"
 
-# A missing app is the single most common way this lane 'fails' — say so in one
-# line instead of letting every flow die on launchApp.
+# A missing/wrong app is the single most common way this lane 'fails' — say so
+# in one line instead of letting every flow die on launchApp. This doubles as
+# the runner's own lane self-check (R-door-15): an install of the wrong
+# variant fails this by construction (the resolved id is simply not what is
+# installed), and the message names both the resolved id and the active
+# --variant, not a fixed string, so a wrong-variant run is diagnosable from
+# the failure text alone.
 if ! xcrun simctl get_app_container "$DEVICE" "$APP_ID" >/dev/null 2>&1; then
-  die "$APP_ID is not installed on $DEVICE.
-  Build and install the Release configuration first (ADR-007 build lane):
-    LANG=en_US.UTF-8 npx expo prebuild --platform ios     # apps/mobile, CNG
-    LANG=en_US.UTF-8 npx expo run:ios --configuration Release
-  A Debug/dev build is for flow AUTHORING only — never the merge gate."
+  die "$APP_ID (--variant $VARIANT) is not installed on $DEVICE.
+  Build and install the matching configuration first:
+    door      → cd apps/mobile && set -a && . ../server/.env.test && set +a && \\
+                LANG=en_US.UTF-8 pnpm ios:door
+    dev       → cd apps/mobile && npx expo run:ios   (Debug — flow AUTHORING only)
+    doorfree  → cd apps/mobile && unset EXPO_PUBLIC_E2E_DOOR_SECRET && \\
+                LANG=en_US.UTF-8 pnpm ios:doorfree
+  See ADR-007 / .maestro/README.md / session-door.spec.md §5.2.
+  Wrong app installed for this --variant? Pass --variant explicitly, or set
+  GOGO_E2E_APP_ID to override the resolved id outright."
 fi
 
 # ── flow selection ───────────────────────────────────────────────────────────
@@ -252,12 +301,13 @@ ARGS=(--device "$DEVICE" test "$FLOW_TARGET"
   --format JUNIT
   --output "$REPORT"
   --test-output-dir "$OUT_DIR/artifacts-$STAMP"
-  --test-suite-name "gogo-e2e")
+  --test-suite-name "gogo-e2e"
+  -e "APP_ID=$APP_ID")
 [[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
 [[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
 [[ ${#PASSTHROUGH[@]} -gt 0 ]] && ARGS+=("${PASSTHROUGH[@]}")
 
-echo "e2e: maestro $ACTUAL_VERSION · device $DEVICE · $FLOW_TARGET"
+echo "e2e: maestro $ACTUAL_VERSION · device $DEVICE · variant $VARIANT · appId $APP_ID · $FLOW_TARGET"
 echo "e2e: junit → $REPORT"
 
 set +e
@@ -280,6 +330,48 @@ if [[ -f "$REPORT" ]]; then
     die "0 testcases ran (JUnit tests=\"0\") but maestro exited 0 — the tag/flow
   filter matched nothing. Check --tags/--exclude-tags against the --flow
   target, or the workspace's tag headers, before treating this as a pass."
+  fi
+
+  # ── evidence durability (R-door-10) ──────────────────────────────────────
+  # A completed run's JUnit + artifacts must survive outside this worktree —
+  # a `git clean`, a worktree teardown, or a later `--force` regen of
+  # apps/server/.env.test must never take the only copy of a run's evidence
+  # with it. Runs REGARDLESS of pass/fail (STATUS is untouched below): the
+  # failing run is exactly the one you most need durable evidence for. A
+  # failed copy fails the WHOLE run — an evidence-copy failure must never be
+  # swallowed behind a green `maestro` exit.
+  EVIDENCE_DIR="$HOME/.gogo/e2e/$STAMP"
+  if ! mkdir -p -m 700 "$EVIDENCE_DIR" 2>/dev/null; then
+    die "could not create the evidence directory $EVIDENCE_DIR (R-door-10) —
+  refusing to treat this run's report as durable. Check that
+  $(dirname "$EVIDENCE_DIR") is writable."
+  fi
+  # `mkdir -m` only applies to directories it actually CREATES — an already-
+  # existing (e.g. re-run in the same second) EVIDENCE_DIR keeps whatever mode
+  # it had, so pin the mode explicitly rather than trust the create-time flag.
+  chmod 700 "$EVIDENCE_DIR"
+  EVIDENCE_JUNIT="$EVIDENCE_DIR/$(basename "$REPORT")"
+  if ! cp "$REPORT" "$EVIDENCE_JUNIT" 2>/dev/null; then
+    die "failed to copy the JUnit report to $EVIDENCE_JUNIT (R-door-10) — this
+  run's evidence is not durable outside the worktree; treat it as unverified
+  even though maestro itself exited $STATUS."
+  fi
+  if [[ -d "$OUT_DIR/artifacts-$STAMP" ]]; then
+    EVIDENCE_ARTIFACTS="$EVIDENCE_DIR/artifacts-$STAMP"
+    if ! cp -R "$OUT_DIR/artifacts-$STAMP" "$EVIDENCE_ARTIFACTS" 2>/dev/null; then
+      die "failed to copy the artifact directory to $EVIDENCE_ARTIFACTS (R-door-10)."
+    fi
+  fi
+  # Maestro writes its OWN per-run log under a timestamp it picks itself
+  # (not $STAMP — a different clock read, a different format), so the only
+  # reliable way to name it is to ask for the newest entry after the run.
+  MAESTRO_LOG_DIR="$(ls -t "$HOME/.maestro/tests" 2>/dev/null | head -1)"
+  echo "e2e: evidence copied → $EVIDENCE_DIR (mode 700, outside the worktree)"
+  echo "e2e: junit copy → $EVIDENCE_JUNIT"
+  if [[ -n "$MAESTRO_LOG_DIR" ]]; then
+    echo "e2e: maestro log → $HOME/.maestro/tests/$MAESTRO_LOG_DIR/maestro.log"
+  else
+    echo "e2e: maestro log → (none found under $HOME/.maestro/tests)"
   fi
 else
   die "no JUnit report was written at $REPORT (maestro exited $STATUS before

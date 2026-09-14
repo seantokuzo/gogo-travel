@@ -60,7 +60,7 @@
 # on screen regardless of where execution stopped. `config.yaml`'s
 # `executionOrder.flowsOrder` also pins this flow's run position explicitly —
 # before, it ran after `deeplink-matrix` by alphabetical luck, not by design.
-appId: app.gogotravel
+appId: ${APP_ID}
 name: sign-in-cancel-surface
 tags:
   - release

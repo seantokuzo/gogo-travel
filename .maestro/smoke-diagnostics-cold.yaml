@@ -36,7 +36,7 @@
 # `assertNotVisible` while arm 1 stays green. Separately: remove the inert
 # marker (`return null` again) and arm 2 goes red on the `assertVisible` the
 # moment the route fails to mount — a regression the old shape could not see.
-appId: app.gogotravel
+appId: ${APP_ID}
 name: smoke-diagnostics-cold
 tags:
   - smoke

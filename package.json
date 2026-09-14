@@ -11,7 +11,7 @@
     "lint": "pnpm run lint:root && turbo run lint",
     "lint:root": "eslint eslint.config.mjs prettier.config.mjs .github/scripts/ scripts/ --max-warnings 0",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "turbo run test && node --test scripts/*.test.mjs",
     "build": "turbo run build",
     "dev": "turbo run dev",
     "format": "prettier --write .",
