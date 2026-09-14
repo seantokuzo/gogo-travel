@@ -9,5 +9,19 @@ export default defineConfig({
     // This is what retired the `--no-file-parallelism` workaround (QUEUE P1):
     // files run parallel again without wedging the Docker daemon.
     globalSetup: ["./src/test/global-setup.ts"],
+    // QUEUE "Shared PG container afterAll teardown timeout under concurrent
+    // gates": `afterAll(() => suiteDb?.drop())` across every `.db.test.ts`
+    // has NO per-hook override (unlike the 240s `beforeAll` boot budget), so
+    // it inherited vitest's 10s default and blew it under machine load
+    // (several worktrees' gates + Docker Desktop pegged) with ZERO assertion
+    // failures — pure false-red noise. `hookTimeout` is the knob that governs
+    // `afterAll` (confirmed against vitest docs: `teardownTimeout` is a
+    // separate worker/process force-exit budget, NOT applied to `afterAll`).
+    // 30s comfortably covers `suite-db.ts#drop()`'s own internal bound
+    // (~17s worst case across pool-close + DROP DATABASE + admin pool-close)
+    // plus scheduling slop under load — belt-and-suspenders with `drop()`
+    // itself now being bounded and tolerant rather than relying on this
+    // alone to paper over a hang.
+    hookTimeout: 30_000,
   },
 });
