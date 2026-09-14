@@ -71,8 +71,8 @@
     "test:watch": "jest --watch",
     "e2e": "bash ../../scripts/e2e.sh",
     "build": "expo export --platform ios --output-dir dist",
-    "ios:door": "expo prebuild --platform ios && expo run:ios --configuration Release",
-    "ios:doorfree": "expo prebuild --platform ios && expo run:ios --configuration Release"
+    "ios:door": "node -e \"const s=process.env.EXPO_PUBLIC_E2E_DOOR_SECRET;if(!s||s.length<32){console.error('EXPO_PUBLIC_E2E_DOOR_SECRET must be set to >=32 chars for a door build (ios:door)');process.exit(1)}\" && expo prebuild --platform ios && expo run:ios --configuration Release",
+    "ios:doorfree": "unset EXPO_PUBLIC_E2E_DOOR_SECRET; expo prebuild --platform ios && expo run:ios --configuration Release"
   },
   "jest": {
     "preset": "jest-expo",

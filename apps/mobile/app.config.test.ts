@@ -5,6 +5,9 @@
  * a synthetic `ConfigContext`, exactly as the spec's "Verification" note
  * prescribes — no native build needed for this pin.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import type { ConfigContext, ExpoConfig } from "expo/config";
 
 import { isDoorBuild, withDoorVariant } from "./app.config";
@@ -68,5 +71,25 @@ describe("withDoorVariant — the two variants can never collide (§5.2 bundle-i
     const result = withDoorVariant(withExtra, { EXPO_PUBLIC_E2E_DOOR_SECRET: "s".repeat(32) });
     expect(result.scheme).toBe("gogo");
     expect(result.version).toBe("0.0.1");
+  });
+});
+
+describe("DOOR_BUNDLE_ID_SUFFIX lockstep (S-4 review round 2 item 3)", () => {
+  it("app.config.ts's suffix literal matches door.ts's — this file's own doc comment says they must stay in lockstep BY INSPECTION (deliberately not shared code: one runs at Node/prebuild time, the other at Metro/bundle time), so pin the inspection itself", () => {
+    // Falsification: change either file's `DOOR_BUNDLE_ID_SUFFIX` literal
+    // (e.g. ".e2edoor" -> ".e2edoor2") without updating the other -> RED.
+    const appConfigSrc = readFileSync(join(__dirname, "app.config.ts"), "utf8");
+    const doorSrc = readFileSync(join(__dirname, "src/features/dev/e2e-door/door.ts"), "utf8");
+    const literalPattern = /DOOR_BUNDLE_ID_SUFFIX\s*=\s*"([^"]+)"/;
+    const appConfigMatch = appConfigSrc.match(literalPattern);
+    const doorMatch = doorSrc.match(literalPattern);
+
+    expect(appConfigMatch).not.toBeNull();
+    expect(doorMatch).not.toBeNull();
+    expect(doorMatch?.[1]).toBe(appConfigMatch?.[1]);
+    // Anchor the shared value itself, not just their equality to each other —
+    // two files silently drifting to a DIFFERENT (but still equal to each
+    // other) suffix would still pass an equality-only check.
+    expect(appConfigMatch?.[1]).toBe(".e2edoor");
   });
 });
