@@ -24,17 +24,39 @@
  * mutation-verified: degrade the wire gate to `if (missing.length > 0)
  * return null;` and the sweep + its control go RED (evidence in the T-S3.1
  * PR).
+ *
+ * B-28 round-2 (R-test-3): the dev-refuse migration gate had NO executed
+ * test anywhere — every existing composition-root arm below is deliberately
+ * DB-free (see that section's own header), because `getDb()`'s Neon
+ * serverless WebSocket driver cannot reach a vanilla Postgres without a
+ * WS↔TCP proxy this repo doesn't run. The "composition root migration
+ * gate" describe block at the bottom of this file closes that gap using the
+ * SAME already-established workaround every other DB suite in this repo
+ * uses (`migration-fixtures.ts`'s own header): inject a `postgres-js`
+ * client directly instead of going through `getDb()` — applied here to a
+ * genuine SUBPROCESS boot (`src/test/migration-gate-harness.ts`, which
+ * calls the exact same `checkMigrationState`/`decideBootMigrationAction`
+ * production functions `src/index.ts` calls) rather than `src/index.ts`
+ * itself, so the dev-refuse decision gets one real, executed, out-of-process
+ * test against a real database and a real on-disk journal.
  */
 import { spawn } from "node:child_process";
 import { createPrivateKey } from "node:crypto";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, inject, it, vi } from "vitest";
 import { createApp } from "./app.js";
 import { buildAuthDepsFromEnv } from "./auth/wire.js";
+import { shapeMigrationStateForHealth } from "./boot-migration-check.js";
 import { closeDb } from "./db/index.js";
+import { MIGRATE_COMMAND, type MigrationState } from "./db/migration-state.js";
 import { loadEnv } from "./env.js";
+import type { Env } from "./env.js";
 import { AUTH_ENV_VAR_NAMES, makeFullAuthTestEnv, TEST_AUTH_KID } from "./test/env-builder.js";
+import { createDatabaseBehindByOne, type BehindDatabase } from "./test/migration-fixtures.js";
+import { createSuiteDb, type SuiteDb } from "./test/suite-db.js";
+
+const dockerAvailable = inject("dbAvailable");
 
 /**
  * Never connected: the db pool is constructed lazily and nothing in this
@@ -245,6 +267,100 @@ describe("boot shape: key-material forms (landmine pin — DECODER::unsupported)
   });
 });
 
+describe("index.ts wiring: shapeMigrationStateForHealth feeds BOTH the initial /health value AND the refresh hook (B-28 round-2, R-test-4 — this exact call site had no test)", () => {
+  // `src/index.ts` builds `appOptions.migrations`/`migrationsRefresh` as:
+  //   migrations: shapeMigrationStateForHealth(env.NODE_ENV, migrationState),
+  //   migrationsRefresh: async () =>
+  //     shapeMigrationStateForHealth(env.NODE_ENV, await checkMigrationState(getDb())),
+  // Neither half is untested in isolation — `shapeMigrationStateForHealth`
+  // has its own exhaustive matrix in `boot-migration-check.test.ts`, and
+  // `createApp`'s handling of `migrations`/`migrationsRefresh` has its own
+  // matrix in `app.test.ts` — but nothing proved `index.ts` actually THREADS
+  // one into the other for BOTH the boot-time value and the refresh
+  // closure. `index.ts` itself can't be driven through this in-process
+  // (module docblock) or as a DB-reachable subprocess (Neon WS driver
+  // landmine — same reasoning as the migration-gate-harness section below),
+  // so this wires the exact two PRODUCTION functions together the same way,
+  // in-process, and drives them through a REAL `createApp` + `/health`
+  // request — the smallest faithful reproduction of the actual call site.
+  const CURRENT: MigrationState = {
+    onDisk: 4,
+    applied: 4,
+    pending: [],
+    pendingCount: 0,
+    modified: [],
+    modifiedCount: 0,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const BEHIND: MigrationState = {
+    onDisk: 4,
+    applied: 2,
+    pending: ["0002_lowly_venom", "0003_outstanding_doctor_spectrum"],
+    pendingCount: 2,
+    modified: ["0001_edited_after_apply"],
+    modifiedCount: 1,
+    checkedAt: "2026-01-01T00:00:00.000Z",
+  };
+
+  /** `index.ts`'s exact wiring expression, parameterized over env + the boot-time state + what a later refresh would return. */
+  function wireMigrationsLikeIndexTs(
+    nodeEnv: Env["NODE_ENV"],
+    bootState: MigrationState,
+    refreshedState: MigrationState,
+  ) {
+    return {
+      migrations: shapeMigrationStateForHealth(nodeEnv, bootState),
+      migrationsRefresh: async () =>
+        shapeMigrationStateForHealth(nodeEnv, await Promise.resolve(refreshedState)),
+    };
+  }
+
+  it("development: /health carries FULL pending AND modified tag names (dev/test are HEALTH_TAG_NAME_ENVS)", async () => {
+    const app = createApp(wireMigrationsLikeIndexTs("development", BEHIND, BEHIND));
+    const res = await app.request("/api/health");
+    const body = (await res.json()) as { migrations: MigrationState };
+    expect(body.migrations.pending).toEqual(BEHIND.pending);
+    expect(body.migrations.modified).toEqual(BEHIND.modified);
+  });
+
+  it("production: /health redacts pending AND modified NAMES but keeps the counts truthful", async () => {
+    // Falsification: dropping the `shapeMigrationStateForHealth` call at
+    // this wiring site (echoing the raw, unshaped `migrationState` instead)
+    // makes this red — the exact unauthenticated-disclosure architecture
+    // review round-1 #3 flagged, now verified at the ACTUAL wiring site
+    // instead of only at the pure-function level.
+    const app = createApp(wireMigrationsLikeIndexTs("production", BEHIND, BEHIND));
+    const res = await app.request("/api/health");
+    const body = (await res.json()) as { migrations: MigrationState };
+    expect(body.migrations.pending).toEqual([]);
+    expect(body.migrations.pendingCount).toBe(2);
+    expect(body.migrations.modified).toEqual([]);
+    expect(body.migrations.modifiedCount).toBe(1);
+  });
+
+  it("production: a BACKGROUND REFRESH is ALSO shaped — not just the boot-time initial value", async () => {
+    vi.useFakeTimers();
+    try {
+      const app = createApp(wireMigrationsLikeIndexTs("production", CURRENT, BEHIND));
+      vi.advanceTimersByTime(31_000);
+      await app.request("/api/health"); // stale-while-revalidate: triggers the background refresh
+      for (let i = 0; i < 5; i++) await Promise.resolve(); // flush the refresh's microtask chain
+      const res = await app.request("/api/health");
+      const body = (await res.json()) as { migrations: MigrationState };
+      // Falsification: wiring the refresh hook to the RAW `checkMigrationState`
+      // result (skipping `shapeMigrationStateForHealth`) makes this red —
+      // it would leak the pending/modified tag names in production on the
+      // refreshed value even though the boot-time value redacted them.
+      expect(body.migrations.pending).toEqual([]);
+      expect(body.migrations.pendingCount).toBe(2);
+      expect(body.migrations.modified).toEqual([]);
+      expect(body.migrations.modifiedCount).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Composition root: src/index.ts, run UNMODIFIED as a subprocess (it serves
 // at import time, so in-process import is off the table until the boot()
@@ -382,6 +498,15 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
       const boot = await bootOnFreePort({ NODE_ENV: "production", ...vars });
       expect(boot.sawBanner).toBe(true);
       expect(boot.stderr).not.toContain("health-only");
+      // Architecture review round-1 #2: this is the ONE arm that actually
+      // exercises `index.ts`'s new B-28 migration-check wiring (full auth →
+      // `if (authDeps)` block runs → `checkMigrationState(getDb())` against
+      // the deliberately-unreachable FAKE_DB_URL → caught → warned). No
+      // other suite touches `src/index.ts` at all. Falsification: moving the
+      // migration-state block after `appOptions` is built, or dropping the
+      // `await` on `checkMigrationState`, makes this warn line never appear
+      // (or appear malformed) → RED.
+      expect(boot.stderr).toContain("[boot] could not determine migration state");
     },
   );
 
@@ -422,3 +547,119 @@ describe("composition root (src/index.ts) boot shapes — subprocess", () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// Composition-root migration gate, subprocess, against REAL Postgres (B-28
+// round-2, R-test-3: "the dev REFUSE path has no executed test"). See the
+// file header for why this spawns `src/test/migration-gate-harness.ts`
+// (calling the exact same production `checkMigrationState`/
+// `decideBootMigrationAction` functions `src/index.ts` calls) instead of
+// `src/index.ts` itself — `getDb()`'s Neon WebSocket driver cannot reach
+// these testcontainers databases.
+// ---------------------------------------------------------------------------
+
+const HARNESS_TIMEOUT_MS = 15_000;
+
+/** Spawn `src/test/migration-gate-harness.ts` with exactly `DATABASE_URL` + `NODE_ENV` — same no-inherited-env posture as `bootCompositionRoot`. Always exits on its own (no server to bind, no banner to wait for), bounded so a genuine hang fails the test instead of the suite. */
+function spawnMigrationGateHarness(env: Record<string, string>): Promise<CompositionRootBoot> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      ["--import", "tsx", "src/test/migration-gate-harness.ts"],
+      {
+        cwd: SERVER_DIR,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          TMPDIR: process.env.TMPDIR ?? "",
+          ...env,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    const guard = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, HARNESS_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("close", (code) => {
+      clearTimeout(guard);
+      if (timedOut) {
+        reject(
+          new Error(
+            `migration-gate-harness did not exit within ${HARNESS_TIMEOUT_MS}ms\n` +
+              `stdout: ${stdout}\nstderr: ${stderr}`,
+          ),
+        );
+      } else {
+        resolve({ exitCode: code, stdout, stderr, sawBanner: false });
+      }
+    });
+    child.on("error", (err) => {
+      clearTimeout(guard);
+      reject(err);
+    });
+  });
+}
+
+describe.skipIf(!dockerAvailable)(
+  "composition root migration gate — REAL Postgres, subprocess (B-28 round-2, R-test-3)",
+  () => {
+    let suiteDb: SuiteDb | undefined;
+    let behindDb: BehindDatabase | undefined;
+
+    afterEach(async () => {
+      await suiteDb?.drop();
+      suiteDb = undefined;
+      await behindDb?.drop();
+      behindDb = undefined;
+    });
+
+    it(
+      "development + one genuinely pending migration → non-zero exit naming the tag and the migrate command",
+      { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+      async () => {
+        // Falsification: reverting `decideBootMigrationAction` (or the
+        // matching algorithm feeding it) to ever return "ok"/"warn" for a
+        // genuinely pending migration in `development` makes this exit 0
+        // (or the message assertions fail) — this is the exact "dev REFUSE
+        // path has no executed test" gap the round-2 verifier found.
+        behindDb = await createDatabaseBehindByOne("boot_shape_dev_refuse");
+        const boot = await spawnMigrationGateHarness({
+          DATABASE_URL: behindDb.uri,
+          NODE_ENV: "development",
+        });
+        expect(boot.exitCode).not.toBe(0);
+        expect(boot.exitCode).not.toBeNull();
+        expect(boot.stderr).toContain(behindDb.pendingTag);
+        expect(boot.stderr).toContain(MIGRATE_COMMAND);
+      },
+    );
+
+    it(
+      "development + a fully current DB → boots (exit 0, no refuse)",
+      { timeout: SUBPROCESS_TEST_TIMEOUT_MS },
+      async () => {
+        // The control for the arm above: same env shape, a database with
+        // NOTHING pending — proves the refuse above is driven by the actual
+        // migration state, not by `development` unconditionally refusing.
+        suiteDb = await createSuiteDb("boot_shape_dev_current");
+        const boot = await spawnMigrationGateHarness({
+          DATABASE_URL: suiteDb.uri,
+          NODE_ENV: "development",
+        });
+        expect(boot.exitCode).toBe(0);
+        expect(boot.stdout).toContain("migration-gate-harness: booted");
+        expect(boot.stderr).not.toContain("pending migration");
+      },
+    );
+  },
+);

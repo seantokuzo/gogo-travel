@@ -47,7 +47,18 @@ export type Trip = z.infer<typeof TripSchema>;
  * key into `packages/tokens` themes (schema §3.3.4) — 64 is roomy for a key.
  */
 const TripNameSchema = z.string().trim().min(1).max(200);
-const DestinationNameSchema = z.string().trim().min(1).max(200);
+/**
+ * `destination_name`'s wire cap — exported (B-7 round-1 review) so
+ * `apps/server/scripts/generate-destination-tier.ts` derives its seed-name
+ * cap from THIS number instead of duplicating a second literal that can
+ * silently drift from it. A destination-tier row longer than this can be
+ * seeded and searched but can never survive a real `POST /trips` — the
+ * generator refuses to write one past this cap, even though the underlying
+ * `places.name` column allows up to 500 (`normalize.ts`'s `MAX_NAME_CHARS`,
+ * a DIFFERENT, looser cap for POI ingest generally).
+ */
+export const DESTINATION_NAME_MAX_CHARS = 200;
+const DestinationNameSchema = z.string().trim().min(1).max(DESTINATION_NAME_MAX_CHARS);
 const ThemeKeySchema = z.string().max(64);
 
 const dateOrderRule = (

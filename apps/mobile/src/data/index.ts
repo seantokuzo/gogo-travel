@@ -28,11 +28,14 @@ export {
 } from "./members";
 export type { InviteRow, MemberMutationOptions, MemberRoleUpdateVars } from "./members";
 export {
+  isNonBlankDestinationQuery,
   isSearchableDestinationQuery,
+  useCreateCustomDestination,
   useCreateTrip,
   usePlaceSearch,
   useTripList,
 } from "./trips-mutations";
+export type { CreateCustomDestinationOptions } from "./trips-mutations";
 export {
   flightLookupKeyOf,
   isSearchableReferenceQuery,

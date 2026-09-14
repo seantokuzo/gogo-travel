@@ -1,8 +1,9 @@
 /**
  * T-6.7 data module (CT-1/CT-2) — the trip-list infinite query, the
- * create-trip mutation, and the destination place search. Lives in its own
- * file (not `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the
- * data layer in their own modules, so parallel lanes only ever touch
+ * create-trip mutation, the destination place search, and (B-7) the
+ * custom-destination create fallback. Lives in its own file (not
+ * `hooks.ts`) per the Wave-5 merge plan: T-6.8/T-6.9 extend the data layer
+ * in their own modules, so parallel lanes only ever touch
  * `query-client.ts`/`index.ts` additively.
  *
  * Conventions carried from T-5.8/T-6.6 (`hooks.ts`):
@@ -136,5 +137,83 @@ export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place
     queryFn: ({ signal }) =>
       apiClient.request(placeEndpoints.searchPlaces, { query: { q } }, { signal }),
     enabled: isSearchableDestinationQuery(rawQuery),
+  });
+}
+
+/**
+ * Non-blank after trim — a pure function, used as `handleCreateCustomDestination`'s
+ * defense-in-depth guard against `deferredQuery` (B-7 review R1 A3): the
+ * render gate no longer duplicates this check — `searchActive` already
+ * requires `isSearchableDestinationQuery(deferredQuery)` (≥4 chars) before
+ * the row can render at all, which is strictly stronger than non-blank, so
+ * a SEPARATE JSX call site against the LIVE `destinationQuery` was both
+ * redundant AND wrong: a `useDeferredValue` lag window could leave
+ * `searchActive` reading true against a STALE deferred query for one tick
+ * after the user cleared the input, while the row/mutate argument (also
+ * fixed by R1 A3 to read `deferredQuery`, never `destinationQuery`) would
+ * then create a custom place for text the user never searched. That lag
+ * never materializes under jest's synchronous renderer, so this guard's
+ * call site isn't independently mutation-verifiable there either — this
+ * pure export is (trips-mutations.test.tsx).
+ */
+export function isNonBlankDestinationQuery(raw: string): boolean {
+  return raw.trim() !== "";
+}
+
+/** Hook-level seam (places.ts precedent) — see `useCreateCustomDestination` doc. */
+export interface CreateCustomDestinationOptions {
+  onMutationSuccess?(place: Place): void;
+  onMutationError?(error: unknown): void;
+}
+
+/**
+ * `POST /places` — the destination-search empty-results fallback (B-7, Sean
+ * ruling 2026-09-13, trips spec R-tripui-23): when structured search settles
+ * with zero hits, the picker offers to create the typed text as a permanent
+ * `source='custom'` place (`PlaceCreateSchema`: `name`, `lat`, `lng`,
+ * `category?` — no visibility field exists on the wire shape at all, so
+ * there is nothing here to accidentally widen past the schema default;
+ * creator-scoping is entirely the server's, per `search-query.ts`) and
+ * select it — no map-drop screen this pass (queued separately), so `lat`/
+ * `lng` are a fixed placeholder (`0, 0` — "Null Island"): the only job here
+ * is unblocking trip creation with a searchable, selectable destination.
+ * `category` is omitted (schema optional; server default `null` → coarse
+ * category `'other'`, same as the `scripts/seed-qa-places.mjs` precedent).
+ *
+ * Success/error ride the HOOK's OWN `useMutation` options, not a per-call
+ * `.mutate()` callback (the `places.ts` module-doc landmine: TanStack v5
+ * drops per-call callbacks for a superseded call — this hook is called at
+ * most once in flight by construction, but the seam stays consistent with
+ * every other mutation in this data layer).
+ */
+export function useCreateCustomDestination(
+  options?: CreateCustomDestinationOptions,
+): UseMutationResult<Place, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    // Trim at the hook boundary (the `usePlaceSearch`/`normalizeSearchText`
+    // precedent above: one normalization owner, not "the caller remembered
+    // to trim"). The request body carries EXACTLY `name`/`lat`/`lng` — no
+    // `category`, `trip_id`, or visibility field rides along (Law #3: the
+    // wire shape has no visibility knob to widen in the first place).
+    mutationFn: (rawName: string) =>
+      apiClient.request(placeEndpoints.createPlace, {
+        body: { name: rawName.trim(), lat: 0, lng: 0 },
+      }),
+    onSuccess: (place) => {
+      // B-7 review R1 B2 (blocking): with no invalidation, the EMPTY
+      // `placeSearch(q)` page fetched before this create stays fresh under
+      // prod's 5-min staleTime — the row gets re-offered for a place that
+      // now exists, and `places` has no uniqueness constraint for custom
+      // rows (`source_id IS NULL`), so a second tap mints a duplicate. This
+      // can't target one exact key (the create doesn't know every `q` that
+      // would now match), so it invalidates the WHOLE `placeSearch` family —
+      // default `refetchType: "active"` refetches any mounted search
+      // observer immediately, which is exactly the screen that just created
+      // this place.
+      void qc.invalidateQueries({ queryKey: queryKeys.placeSearchRoot });
+      options?.onMutationSuccess?.(place);
+    },
+    onError: (error) => options?.onMutationError?.(error),
   });
 }
