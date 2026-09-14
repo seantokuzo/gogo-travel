@@ -21,6 +21,7 @@
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { createMiddleware } from "hono/factory";
 import type { Context } from "hono";
+import { isIP } from "node:net";
 import { apiError, type RequestVars } from "./errors.js";
 
 /** Result of charging one request against one window. */
@@ -152,14 +153,21 @@ export function clientIp(c: Context<RequestVars>): string {
  *
  * Accepts IPv4 loopback (`127.0.0.0/8`) and RFC-1918 private ranges
  * (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), and IPv6 loopback
- * (`::1`) and ULA (`fc00::/7`, i.e. a first hextet of `fc`/`fd`) — after
- * normalizing an IPv4-mapped IPv6 prefix (`::ffff:10.0.0.5` → `10.0.0.5`)
- * and a bracketed form (`[::1]` → `::1`). Every other input — a public
- * address, `0.0.0.0`, link-local (`169.254.0.0/16`, `fe80::/10`), a name
- * (`.local` included), the unresolvable `"unknown"` `clientIp()` returns
- * under `app.request()`, empty, or `null` — is rejected. Pure and
- * synchronous: no DNS, no I/O, safe to call before any DB access (R-door-11:
- * "evaluated before the secret comparison and before any database access").
+ * (`::1`) and ULA (`fc00::/7`, i.e. a first hextet numerically between
+ * `0xfc00` and `0xfdff`) — after normalizing an IPv4-mapped IPv6 prefix
+ * (`::ffff:10.0.0.5` → `10.0.0.5`) and a bracketed form (`[::1]` → `::1`).
+ * Every other input — a public address, `0.0.0.0`, link-local
+ * (`169.254.0.0/16`, `fe80::/10`), a name (`.local` included — this SHALL
+ * include a hostname that merely starts with `fc`/`fd`, e.g.
+ * `fcell.example.com` or `fd-rig.internal`, review round 1 F1/A1: the prior
+ * prefix-only check accepted these), the unresolvable `"unknown"`
+ * `clientIp()` returns under `app.request()`, empty, or `null` — is
+ * rejected. `node:net`'s `isIP` gates the whole normalized string as a
+ * valid IP literal FIRST (0 ⇒ reject outright) — a hostname can never reach
+ * either range test below, regardless of what characters it starts with.
+ * Pure and synchronous: no DNS, no I/O, safe to call before any DB access
+ * (R-door-11: "evaluated before the secret comparison and before any
+ * database access").
  */
 export function isLoopbackOrPrivatePeer(addr: string | null | undefined): boolean {
   if (!addr) return false;
@@ -172,10 +180,13 @@ export function isLoopbackOrPrivatePeer(addr: string | null | undefined): boolea
     normalized = normalized.slice("::ffff:".length);
   }
 
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
-  if (ipv4) {
-    const octets = ipv4.slice(1, 5).map(Number);
-    if (octets.some((octet) => octet > 255)) return false;
+  // Gate FIRST: reject anything that isn't a valid IP literal — closes the
+  // hostname hole (review round 1 F1/A1) for every prefix, not just fc/fd.
+  const family = isIP(normalized);
+  if (family === 0) return false;
+
+  if (family === 4) {
+    const octets = normalized.split(".").map(Number);
     const [first, second] = octets as [number, number, number, number];
     if (first === 127) return true; // 127.0.0.0/8 loopback
     if (first === 10) return true; // 10.0.0.0/8 private
@@ -184,8 +195,14 @@ export function isLoopbackOrPrivatePeer(addr: string | null | undefined): boolea
     return false; // 0.0.0.0, 169.254.0.0/16 link-local, and every public range
   }
 
+  // family === 6 — a validated IPv6 literal (zone ids like `%en0` included).
   const lower = normalized.toLowerCase();
   if (lower === "::1") return true; // IPv6 loopback
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 ULA
-  return false; // fe80::/10 link-local, public IPv6, names, "unknown", ""
+  // fc00::/7 ULA: the first HEXTET (16 bits), read as hex, numerically in
+  // [0xfc00, 0xfdff] — leading-zero omission (`fd1::1` = hextet 0x0fd1) is
+  // handled correctly by parseInt itself, so no manual zero-padding needed.
+  const firstHextet = lower.split(":")[0] ?? "";
+  const hextetValue = firstHextet.length > 0 ? parseInt(firstHextet, 16) : NaN;
+  if (hextetValue >= 0xfc00 && hextetValue <= 0xfdff) return true;
+  return false; // fe80::/10 link-local, public IPv6, everything else
 }

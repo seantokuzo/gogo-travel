@@ -95,11 +95,74 @@ describe("isLoopbackOrPrivatePeer (S-4/T3, R-door-11)", () => {
   });
 
   it("a hostname (including .local) is NEVER accepted — IP-literal-only predicate", () => {
-    // Falsification: swap the ipv4-regex/fc-fd checks for a substring/DNS-ish
-    // match and this goes RED.
+    // Falsification: revert `isLoopbackOrPrivatePeer` to the pre-round-1-fix
+    // `lower.startsWith("fc") || lower.startsWith("fd")` prefix check (no
+    // `net.isIP` gate) and THIS test goes RED on the fc*/fd* cases below —
+    // the prior falsification note ("swap for a substring/DNS-ish match")
+    // was wrong: the regressed code IS a prefix/substring match already, and
+    // stayed green because nothing here fed it an fc*/fd*-prefixed hostname
+    // (review round 1 adversarial-verifier finding 22).
     expect(isLoopbackOrPrivatePeer("localhost")).toBe(false);
     expect(isLoopbackOrPrivatePeer("my-mac.local")).toBe(false);
     expect(isLoopbackOrPrivatePeer("evil.com")).toBe(false);
+  });
+
+  it("a hostname beginning fc or fd is NEVER accepted (review round 1 F1/A1) — the prefix-only predicate's exact hole", () => {
+    // Falsification: this is the pin that reds on the regression above.
+    expect(isLoopbackOrPrivatePeer("fcell.example.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("fdsomething.evil.com")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("10.metrics.example")).toBe(false);
+    expect(isLoopbackOrPrivatePeer("fd-rig.internal")).toBe(false);
+  });
+
+  // The adversarial-verifier's round-1 38-input table, verbatim (round-1
+  // adversarial-verifier.md row 20) — every case it hand-checked against the
+  // real exported function, both directions.
+  it.each([
+    "127.0.0.1",
+    "127.255.255.254",
+    "10.0.0.1",
+    "172.16.0.1",
+    "172.31.255.255",
+    "192.168.0.1",
+    "::1",
+    "[::1]",
+    "[10.0.0.1]",
+    "fc00::1",
+    "fd12:3456::1",
+    "FC00::1",
+    "FD00::1",
+    "::ffff:10.0.0.1",
+    "::FFFF:10.0.0.1",
+    "::ffff:127.0.0.1",
+    "  127.0.0.1  ",
+  ])("38-entry table: %s → true", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(true);
+  });
+
+  it.each([
+    "172.32.0.1",
+    "172.15.0.1",
+    "192.169.0.1",
+    "100.64.0.1",
+    "8.8.8.8",
+    "::ffff:8.8.8.8",
+    "::ffff:0.0.0.0",
+    "0.0.0.0",
+    "169.254.1.1",
+    "fe80::1",
+    "fe80::1%en0",
+    "fe00::1",
+    "2001:db8::1",
+    "999.999.999.999",
+    "10.0.0.1@evil",
+    "127.0.0.1.evil.com",
+    "localhost",
+    "my-mac.local",
+    "unknown",
+    "",
+  ])("38-entry table: %s → false", (addr) => {
+    expect(isLoopbackOrPrivatePeer(addr)).toBe(false);
   });
 
   it("a spoofed Host-style value embedded in the string is not enough — must be the literal address", () => {

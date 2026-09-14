@@ -197,6 +197,20 @@ export const RATE_LIMITS = {
  */
 export const E2E_DOOR_MAX_FIXTURE_USERS = 500;
 
+/**
+ * The door's OWN body-size cap (review round 1 A2/F2) — strictly smaller
+ * than the app-wide `BODY_LIMIT_MAX_BYTES` (256 KiB). The door's entire
+ * legitimate body (`{secret<=512 chars, user_key<=32 chars, device,
+ * first_run?}`, session-door spec §3.6 body-size-ordering note: "the
+ * legitimate body is well under 1 KiB") never needs anywhere close to 256
+ * KiB; capping the door's per-route `bodyLimit` at the SAME size as every
+ * other route let a caller buffer/parse up to 256 KiB before the peer gate
+ * or the secret compare ever ran — an unbounded unauthenticated
+ * allocate/parse surface. 4 KiB leaves headroom for an unusually long
+ * `device_name` (unbounded in `DeviceInfoSchema`) without reopening it.
+ */
+export const E2E_DOOR_BODY_LIMIT_MAX_BYTES = 4 * 1024;
+
 // ---------------------------------------------------------------------------
 // Trips surface (trips spec §3.3) — T-6.1
 // ---------------------------------------------------------------------------

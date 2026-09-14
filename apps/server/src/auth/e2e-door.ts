@@ -27,10 +27,15 @@ import { zValidator } from "@hono/zod-validator";
 import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { e2eEndpoints, E2eSessionRequestSchema } from "@gogo/shared/domains/e2e";
 import type { SignInResponse } from "@gogo/shared/domains/auth";
-import { BODY_LIMIT_MAX_BYTES, E2E_DOOR_MAX_FIXTURE_USERS, RATE_LIMITS } from "../config.js";
+import {
+  E2E_DOOR_BODY_LIMIT_MAX_BYTES,
+  E2E_DOOR_MAX_FIXTURE_USERS,
+  RATE_LIMITS,
+} from "../config.js";
 import { createUserWithEntitlements, type DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import type { Env } from "../env.js";
@@ -129,6 +134,19 @@ export class FixtureConflictError extends Error {
  * unaffected. Mirrors `resolveSignIn`'s unique-violation retry (same-key
  * race, `sign-in.ts`) — a low-probability event given the "unique
  * `user_key` per run" convention, but cheap to close the same way.
+ *
+ * Disclosed trade-off, NOT closed (review round 1 correctness advisory 5 /
+ * security cross-lane note): the count-then-insert above is three
+ * statements with no transaction or lock, so two concurrent door calls for
+ * two DISTINCT new keys can both read `liveFixtureCount = maxFixtureUsers -
+ * 1`, both pass the check, and both insert — one row over the cap. This is
+ * a DIFFERENT race than the same-key one above (this repo's R-door-14 test
+ * obligation only exercises one call at a time). Accepted rather than
+ * fenced with a transaction-scoped advisory lock: `E2E_DOOR_MAX_FIXTURE_
+ * USERS` is a growth bound on a loopback-only dev/CI rig, not a security
+ * boundary (R-door-11 + the shared secret are), and the overshoot is capped
+ * at the concurrency of simultaneous NEW-key door calls (never a real-world
+ * pattern for this fixture-per-flow lane). See session-door spec R-door-14.
  */
 async function findOrCreateFixtureUser(
   db: DbClient,
@@ -238,18 +256,49 @@ export function createE2eDoorRouter(deps: E2eDoorRouterDeps): Hono<RequestVars> 
     return reject(c, reason, err instanceof Error ? `name=${err.name}` : undefined);
   });
 
+  // R-door-11 / G5 — socket peer, evaluated as the router's FIRST
+  // middleware: BEFORE the body-size cap, BEFORE JSON parsing, BEFORE the
+  // secret compare, and BEFORE any database access, regardless of
+  // G0/G1/G2 (defense-in-depth). Review round 1 A2: this used to run
+  // INSIDE the handler, after `doorBodyLimit` had already buffered the
+  // request and `zValidator` had already JSON-parsed it — a disallowed
+  // peer was charged none of that cost but the SERVER still paid an
+  // unbounded unauthenticated buffer/parse surface for every request that
+  // reached it. No presented secret exists at this point (the body is
+  // unread), so the constant-work floor uses the fixed-cost dummy compare
+  // — the same shape `performDoorConstantWorkFloor` already provides for
+  // the "route not mounted" and "malformed body" paths.
+  const peerGate = createMiddleware<RequestVars>(async (c, next) => {
+    const peer = peerOf(c);
+    if (!isLoopbackOrPrivatePeer(peer)) {
+      performDoorConstantWorkFloor();
+      return reject(c, "peer_disallowed");
+    }
+    await next();
+    return undefined;
+  });
+
   // §3.6 body-size-ordering note: this per-route limit must be evaluated
   // (and mounted in `app.ts`) BEFORE the app-wide `bodyLimit` can observe
   // the request — an oversized body answered by the 256 KiB app-wide cap's
   // 413 would itself be a door-exists oracle. `onError` returns the uniform
-  // 401, never `PAYLOAD_TOO_LARGE`.
+  // 401, never `PAYLOAD_TOO_LARGE`. `maxSize` is the door-SHAPED cap
+  // (`E2E_DOOR_BODY_LIMIT_MAX_BYTES`, review round 1 A2), not the app-wide
+  // 256 KiB one — the legitimate body is under 1 KiB. `onError` also pays
+  // the R-door-13 constant-work floor (review round 1 F2): this path has no
+  // presented secret to compare (the body never finished parsing), so it
+  // uses the same fixed-cost dummy compare as the peer gate above.
   const doorBodyLimit = bodyLimit({
-    maxSize: BODY_LIMIT_MAX_BYTES,
-    onError: (c: Context<RequestVars>) => reject(c, "oversized_body"),
+    maxSize: E2E_DOOR_BODY_LIMIT_MAX_BYTES,
+    onError: (c: Context<RequestVars>) => {
+      performDoorConstantWorkFloor();
+      return reject(c, "oversized_body");
+    },
   });
 
   router.post(
     e2eEndpoints.mintSession.path,
+    peerGate,
     doorBodyLimit,
     zValidator("json", E2eSessionRequestSchema, (result, c) => {
       if (result.success) return undefined;
@@ -262,16 +311,10 @@ export function createE2eDoorRouter(deps: E2eDoorRouterDeps): Hono<RequestVars> 
     async (c) => {
       const body = c.req.valid("json");
 
-      // R-door-11 / G5 — socket peer, BEFORE the secret compare and BEFORE
-      // any database access, regardless of G0/G1/G2 (defense-in-depth).
+      // R-door-9 / §3.7 — own bucket, keyed on the SAME peer the `peerGate`
+      // middleware above already proved allowed, no 429 ever: a limit hit
+      // folds into the identical uniform 401.
       const peer = peerOf(c);
-      if (!isLoopbackOrPrivatePeer(peer)) {
-        safeEqual(body.secret, deps.secret); // R-door-13 constant work
-        return reject(c, "peer_disallowed");
-      }
-
-      // R-door-9 / §3.7 — own bucket, keyed on the SAME peer, no 429 ever:
-      // a limit hit folds into the identical uniform 401.
       const nowMs = deps.rateLimit.now ? deps.rateLimit.now() : Date.now();
       const [minuteWindow, dayWindow] = RATE_LIMITS.e2eDoor;
       const minuteHit = deps.rateLimit.store.hit(
