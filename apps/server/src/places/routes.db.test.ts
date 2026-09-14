@@ -860,7 +860,7 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     // assertions above go red (the row reappears where it must not).
   });
 
-  it("[B-7 part 3] search: a text-only page containing a coordinate-less row still paginates (cursor round-trip, the coalesce belt)", async () => {
+  it("[B-7 part 3] search: a text-only page containing a coordinate-less row still paginates (cursor round-trip)", async () => {
     const user = await seedUserWithToken();
     const stem = `Nullpage${uniq()}`;
     const noCoordsName = `${stem} Alpha`;
@@ -889,9 +889,21 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     // No duplicate, no drop — both rows appear across the two pages exactly once.
     const seen = [...page1.items, ...page2.items].map((p) => p.id).sort();
     expect(seen).toEqual([noCoords.id, withCoords.id].sort());
-    // Falsification: remove the `coalesce(..., 0::bigint)` belt around
-    // `proxTerm` AND force an anchor (a `near`/`bbox` alongside `q`) — the
-    // documented reason the belt exists (round-1 review finding).
+    // Falsification note (round-1 fix — the original claim here was
+    // INERT, on two counts): this test's query is `q`-only, no `near`/
+    // `bbox` — `anchor` is null, so `proxTerm` takes the `: sql\`0::bigint\``
+    // fallback and never touches `distanceM`/`greatest` at all; separately,
+    // the `coalesce(greatest(...), 0::bigint)` this test used to reference
+    // was PROVEN dead code regardless (`greatest`'s first argument is
+    // always the literal `0::bigint`, and Postgres's GREATEST/LEAST return
+    // NULL only when EVERY argument is NULL — so it can never return NULL
+    // to coalesce) and has been removed (search-query.ts). This pin's real,
+    // still-valid job: prove a coordinate-less row coexists correctly with
+    // a located one across a keyset-paginated text search — no duplicate,
+    // no drop. Falsification: change the cursor predicate's `<` to `<=`
+    // (search-query.ts) — the boundary row reappears on page 2, and `seen`
+    // above gains a duplicate id while `page2.items` still has length 1,
+    // failing the `toEqual` sorted-array comparison.
   });
 
   it("[B-7 part 3] DB CHECK: places_coords_pair_ck rejects half a coordinate; places_spine_coords_ck rejects a null-coord spine row (23514)", async () => {
