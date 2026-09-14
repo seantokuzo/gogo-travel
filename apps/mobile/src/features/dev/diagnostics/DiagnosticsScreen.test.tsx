@@ -26,6 +26,11 @@ import { renderWithTheme } from "@/test-utils/render";
 
 import { resetConsoleTapForTests } from "./console-tap";
 import { DiagnosticsScreen } from "./DiagnosticsScreen";
+// Module namespace import (not the named re-export) so `jest.spyOn` attaches
+// to the SAME live binding `DiagnosticsScreen.tsx` calls at runtime (Babel's
+// CJS interop resolves named imports through the module object at each call
+// site, not a destructured local) — the round-2 per-leg discriminator below.
+import * as legsModule from "./legs";
 
 jest.mock("expo-secure-store", () => {
   const map = new Map<string, string>();
@@ -171,32 +176,49 @@ describe("DiagnosticsScreen (real default wiring)", () => {
     expect(evidence).toHaveTextContent(/GET http:\/\/localhost:3000\/api\/health/);
   });
 
-  it("legs are individually re-runnable: rerunning health fetches again WITHOUT rerunning others", async () => {
-    await renderWithTheme(<DiagnosticsScreen />);
-    await drainLegs();
-    // Two legs hit `/health` on mount: leg 2 (health) and leg 7 (migrations,
-    // B-28) — both now carry an abort `init` (review round-1 C4 gave leg 7
-    // the same watchdog as leg 2), so `init` presence no longer discriminates
-    // between them. Assert on the TOTAL instead: pressing "rerun health"
-    // must add exactly ONE more call — if migrations rendered a rerun too,
-    // this total would be 4, not 3.
-    expect(fetchMock.mock.calls.length).toBe(2);
+  it("legs are individually re-runnable: rerunning health calls ONLY runHealthLeg again — the per-leg discriminator (round-2 restore)", async () => {
+    // Round-1 C4 gave leg 7 (migrations) the same abort-`init` watchdog as
+    // leg 2 (health), so both hit `/health` with an indistinguishable
+    // fetch call shape — a bare fetch-call TOTAL (the round-1 fix's
+    // replacement discriminator) can't tell "health re-fired" apart from
+    // "migrations re-fired instead of health": a bug that wired "rerun
+    // health" to the WRONG leg could still land on the same total and pass.
+    // Spy on the actual leg functions instead — real per-leg discrimination.
+    const healthSpy = jest.spyOn(legsModule, "runHealthLeg");
+    const migrationsSpy = jest.spyOn(legsModule, "runMigrationsLeg");
+    try {
+      await renderWithTheme(<DiagnosticsScreen />);
+      await drainLegs();
+      // Two legs hit `/health` on mount: leg 2 (health) and leg 7
+      // (migrations, B-28).
+      expect(healthSpy).toHaveBeenCalledTimes(1);
+      expect(migrationsSpy).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.length).toBe(2);
 
-    const secureStore = jest.requireMock("expo-secure-store") as {
-      setItemAsync: jest.Mock;
-    };
-    const keychainWrites = secureStore.setItemAsync.mock.calls.length;
+      const secureStore = jest.requireMock("expo-secure-store") as {
+        setItemAsync: jest.Mock;
+      };
+      const keychainWrites = secureStore.setItemAsync.mock.calls.length;
 
-    await act(async () => {
-      await fireEvent.press(screen.getByTestId("diagnostics-button-rerun-health"));
-    });
-    // Falsification: wiring "rerun health" to also refire the migrations
-    // leg (or any other leg) makes this total 4+ instead of exactly 3.
-    expect(fetchMock.mock.calls.length).toBe(3);
-    expect(screen.getByTestId("diagnostics-status-health")).toHaveTextContent("PASS");
-    // Individual rerun: the secure-store leg did NOT run again (falsification:
-    // wire rerun to re-mount every leg → red).
-    expect(secureStore.setItemAsync.mock.calls.length).toBe(keychainWrites);
+      await act(async () => {
+        await fireEvent.press(screen.getByTestId("diagnostics-button-rerun-health"));
+      });
+
+      // Falsification: wiring "rerun health" to (also, or INSTEAD) refire
+      // the migrations leg reds `migrationsSpy`/`healthSpy` respectively —
+      // a bare total (the round-1 shape) cannot distinguish either case
+      // from the correct one, since both produce exactly 3 fetch calls.
+      expect(healthSpy).toHaveBeenCalledTimes(2);
+      expect(migrationsSpy).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.length).toBe(3);
+      expect(screen.getByTestId("diagnostics-status-health")).toHaveTextContent("PASS");
+      // Individual rerun: the secure-store leg did NOT run again (falsification:
+      // wire rerun to re-mount every leg → red).
+      expect(secureStore.setItemAsync.mock.calls.length).toBe(keychainWrites);
+    } finally {
+      healthSpy.mockRestore();
+      migrationsSpy.mockRestore();
+    }
   });
 
   it("rerunning a HUNG leg works and the stale settle is discarded (runId pin)", async () => {

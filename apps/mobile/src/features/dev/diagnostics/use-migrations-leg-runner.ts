@@ -37,6 +37,13 @@ export function useMigrationsLegRunner(
 
   const execute = useCallback(
     (id: number) => {
+      // Round-2 fix: the module doc above claims rerun aborts the PRIOR
+      // in-flight request, but this line used to just overwrite
+      // `abortRef.current` without ever calling `.abort()` on what it held
+      // — the previous run's socket stayed open until it settled on its
+      // own (result discarded by the runId check, but never cancelled).
+      // Abort whatever run is still in flight BEFORE starting the new one.
+      abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
       run(controller.signal)
