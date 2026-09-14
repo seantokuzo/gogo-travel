@@ -24,12 +24,17 @@
  *
  * NOT a return-prompt surface: a nav handoff books nothing (the
  * directions.ts interpretation) — no deeplink-out record is written.
+ *
+ * B-7 part 3: `lat`/`lng` are no longer schema-guaranteed (a coordinate-less
+ * custom place) — the builder returns null rather than a URL pointing at
+ * nothing, and every caller hides the Directions control when it does.
  */
 
 /** Documented Maps URLs API endpoint — `api=1` pins the parameter contract. */
 export const NAV_HANDOFF_BASE = "https://www.google.com/maps/dir/?api=1";
 
-/** R-map-8: directions to the place's exact coordinates. */
-export function navHandoffUrlFor(place: { lat: number; lng: number }): string {
+/** R-map-8: directions to the place's exact coordinates; null with none. */
+export function navHandoffUrlFor(place: { lat: number | null; lng: number | null }): string | null {
+  if (place.lat === null || place.lng === null) return null;
   return `${NAV_HANDOFF_BASE}&destination=${encodeURIComponent(`${place.lat},${place.lng}`)}`;
 }

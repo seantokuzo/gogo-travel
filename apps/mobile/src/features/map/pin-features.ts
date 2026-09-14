@@ -91,10 +91,16 @@ export interface PlaceCoordinate {
 /** placeId → coordinate, from whatever place rows the cache holds (module doc). */
 export type PlaceIndex = ReadonlyMap<string, PlaceCoordinate>;
 
-/** Build the coordinate index from the saved-places list's embedded places. */
+/**
+ * Build the coordinate index from the saved-places list's embedded places.
+ * B-7 part 3: a custom place may carry NO coordinates (`lat`/`lng` null) —
+ * skipped here, same as every other null-coordinate reader (a pin without a
+ * position is not a degrade state, it is unrepresentable — module doc).
+ */
 export function buildPlaceIndex(savedPlaces: readonly SavedPlaceWithPlace[]): PlaceIndex {
   const index = new Map<string, PlaceCoordinate>();
   for (const saved of savedPlaces) {
+    if (saved.place.lat === null || saved.place.lng === null) continue;
     index.set(saved.place.id, { lat: saved.place.lat, lng: saved.place.lng });
   }
   return index;
@@ -104,17 +110,24 @@ export function buildPlaceIndex(savedPlaces: readonly SavedPlaceWithPlace[]): Pl
 // Family builders
 // ---------------------------------------------------------------------------
 
-/** Saved-place pins — accent fill (§2.2 "saved-but-unscheduled = accent"). */
+/**
+ * Saved-place pins — accent fill (§2.2 "saved-but-unscheduled = accent").
+ * B-7 part 3: a coordinate-less custom place is filtered out BEFORE the map
+ * (never emitted as `[null, null]` malformed GeoJSON) — it still renders in
+ * the saved-places LIST elsewhere, just not as a pin (module doc).
+ */
 export function savedPinFeatures(
   savedPlaces: readonly SavedPlaceWithPlace[],
   colors: MapColors,
 ): PinFeatureCollection {
-  return {
-    type: "FeatureCollection",
-    features: savedPlaces.map((saved) => ({
+  const features: PinFeature[] = [];
+  for (const saved of savedPlaces) {
+    const { lat, lng } = saved.place;
+    if (lat === null || lng === null) continue; // module doc: unrepresentable, not a degrade
+    features.push({
       type: "Feature",
       id: saved.place.id,
-      geometry: { type: "Point", coordinates: [saved.place.lng, saved.place.lat] },
+      geometry: { type: "Point", coordinates: [lng, lat] },
       properties: {
         family: "saved",
         testID: `map-pin-saved-${saved.place.id}`,
@@ -126,8 +139,9 @@ export function savedPinFeatures(
         color: colors.pinSaved,
         label: null,
       },
-    })),
-  };
+    });
+  }
+  return { type: "FeatureCollection", features };
 }
 
 export interface ItineraryPinInput {
