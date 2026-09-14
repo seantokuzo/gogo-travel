@@ -82,8 +82,13 @@ tags:
     visible:
       id: "trip-new-input-dates-start-sheet"
     timeout: 10000
+# `id: "Next Month"` (the button's ACCESSIBILITY LABEL) never matches: the
+# native inline UIDatePicker's real accessibilityIdentifier is
+# `DatePicker.NextMonth` (no space) — confirmed via a real device-QA
+# hierarchy dump (S-4 T5, 2026-09-14). Selector fixed to match reality, not
+# a guess; assertion strength unchanged.
 - tapOn:
-    id: "Next Month"
+    id: "DatePicker.NextMonth"
 - tapOn:
     text: "^15$"
 - extendedWaitUntil:

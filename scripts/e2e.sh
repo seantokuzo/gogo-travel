@@ -314,13 +314,34 @@ done
 mkdir -p "$OUT_DIR"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT="$OUT_DIR/junit-$STAMP.xml"
+# R-door-14 / session-door spec §5.4: "the runner ... generates RUN_ID="$STAMP"
+# ... and passes -e RUN_ID="$RUN_ID" on every invocation" — this was written
+# but never wired to the actual `maestro` invocation below, so every
+# `${RUN_ID}` in every flow (USER_KEY, trip/item names) silently resolved to
+# the literal string "undefined" on every run (S-4 T5, found via a real
+# Neon-backed run: `ideas-to-schedule`'s title field rendered "E2E Idea
+# undefined"). Fixed by actually passing it, matching APP_ID's pattern.
+#
+# Deliberately NOT the full `$STAMP` (15 chars, "YYYYMMDD-HHMMSS") — every
+# door flow's USER_KEY is `<flow-name>-${RUN_ID}` and
+# `packages/shared/src/domains/e2e.ts`'s `E2eUserKeySchema` caps the WHOLE
+# key at 32 chars (`^[a-z0-9][a-z0-9-]{0,31}$`). `$STAMP` pushed 5 of 6 door
+# flows' keys over that cap (e.g. "add-flight-dateline-20260914-150312" = 36
+# chars) — a CLIENT-SIDE schema rejection with zero network call, which
+# looks identical to a door failure (`e2e-session-error`, no server log
+# entry) until you count characters (S-4 T5, caught via a real Neon-backed
+# re-run). Hex epoch seconds is 8 chars today (good until far past this
+# repo's lifetime) and leaves every flow name room to spare — the longest,
+# "add-flight-dateline" (19 chars) + "-" + 8 hex chars = 28, well under 32.
+RUN_ID="$(printf '%x' "$(date +%s)")"
 
 ARGS=(--device "$DEVICE" test "$FLOW_TARGET"
   --format JUNIT
   --output "$REPORT"
   --test-output-dir "$OUT_DIR/artifacts-$STAMP"
   --test-suite-name "gogo-e2e"
-  -e "APP_ID=$APP_ID")
+  -e "APP_ID=$APP_ID"
+  -e "RUN_ID=$RUN_ID")
 [[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
 [[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
 [[ ${#PASSTHROUGH[@]} -gt 0 ]] && ARGS+=("${PASSTHROUGH[@]}")
