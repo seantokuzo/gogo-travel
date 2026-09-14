@@ -86,14 +86,37 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
 
 - **R-places-9 (creation):** WHEN a user creates a custom place THE SYSTEM
   SHALL persist it with `source = 'custom'`, `source_id = NULL`,
-  `created_by = caller` (schema §3.3.7 checks), validated coordinates and
-  non-empty name.
+  `created_by = caller` (schema §3.3.7 checks), non-empty name, and EITHER a
+  validated coordinate pair OR no coordinates at all (B-7 part 3). WHEN
+  coordinates are absent from the request THE SYSTEM SHALL persist
+  `lat`/`lng` as NULL and SHALL NOT substitute a placeholder value (no
+  `(0, 0)` — that was the pre-B-7-part-3 behavior and is retired). `PATCH
+/places/:placeId` keeps accepting `lat`+`lng` on such a row (R-places-10) —
+  adding coordinates later (a map-drop) is legal and is the P-8 follow-up's
+  seam, not a new rule here.
 - **R-places-10 (creator-only mutation):** WHEN a custom place is updated or
   deleted THE SYSTEM SHALL require `created_by = caller` (403 otherwise);
   spine-source places (`overture`/`fsq_os`) SHALL reject mutation for
   everyone. WHEN deletion is blocked by references (RESTRICT from
   `saved_places`/`itinerary_items`/`tour_guide_bundles`) THE SYSTEM SHALL
-  return 409 `CONFLICT` naming the reason, not a 500.
+  return 409 `CONFLICT` naming the reason, not a 500. A custom place with no
+  coordinates MAY gain them via this endpoint (B-7 part 3) — the pair still
+  moves together (R-places-26).
+- **R-places-26 (spine coordinate invariant, B-7 part 3, new):** WHERE a
+  place's `source` is not `'custom'` THE SYSTEM SHALL reject any row with a
+  NULL coordinate (DB CHECK `places_spine_coords_ck`) — every ingested spine
+  row carries real coordinates by construction. WHEN either coordinate is
+  NULL THE SYSTEM SHALL require both to be NULL, for every source (DB CHECK
+  `places_coords_pair_ck`; mirrored client-side by a `superRefine` on
+  `PlaceSchema`/`PlaceCreateSchema` in `@gogo/shared`). Half a coordinate is
+  never a legal state.
+- **R-places-27 (coordinate-less search visibility, B-7 part 3, new):** WHEN
+  a search carries a `bbox` or `near` bound THE SYSTEM SHALL exclude
+  coordinate-less places from the results (a NULL coordinate never satisfies
+  a `BETWEEN` predicate — no query-shape change was needed, R-places-6).
+  WHEN a search is text-only THE SYSTEM SHALL include them, ranked by text
+  similarity alone, with a stable keyset cursor across pages that mix
+  coordinate-less and coordinate-bearing rows.
 
 ### Place details & Foursquare fetch-fresh
 
@@ -147,8 +170,12 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
 
 - Destination input — Resolved at `.specs/database/schema.spec.md`:§3.3.4
   `trips` (Gate 2, 2026-07-09): structured search against the Overture
-  city/locality subset; lat/lng always present — R-places-1's trigger fires
-  for every trip (the coordinates-present guard stays as robustness only).
+  city/locality subset. **Amended B-7 part 3 (2026-09-13):** "lat/lng always
+  present" no longer holds — a destination picked from a coordinate-less
+  custom place carries NULL `destination_lat`/`destination_lng`
+  (`.specs/api/trips.spec.md` §3.3). R-places-1's trigger now SKIPS (rather
+  than fires with a guard-caught error) when the destination has no
+  coordinates — see `.specs/api/trips.spec.md` R-trips-23.
 - **v1 ingestion source set — decided: BOTH Overture + FSQ OS, with
   cross-source dedup (R-places-3); Overture wins dedup priority**
   (`overture > fsq_os`). Both attribution strings ship. (Resolved
@@ -244,9 +271,13 @@ Per contracts spec §3.1: snake_case, mirrors of schema §3.3.7/§3.3.8.
 
 - **`Place`** — `{ id, source, source_id, name, lat, lng, category,
 coarse_category, wiki_ref, created_by, created_at, updated_at }`
-  (`coarse_category` is derived, §3.2.3, not a DB column).
-- **`PlaceCreate`** — `{ name, lat, lng, category? }` (server sets
-  `source='custom'`, `created_by`).
+  (`coarse_category` is derived, §3.2.3, not a DB column). `lat`/`lng` are
+  `number | null` (B-7 part 3) — NULL only when `source = 'custom'`
+  (R-places-26); every spine row's pair is always present.
+- **`PlaceCreate`** — `{ name, lat?, lng?, category? }` (server sets
+  `source='custom'`, `created_by`). `lat`/`lng` are OPTIONAL, not nullable
+  (B-7 part 3) — omit BOTH to create a coordinate-less custom place; sending
+  an explicit `null` is rejected (one way to say "no coordinates").
 - **`SavedPlace`** — `{ id, trip_id, place_id, note, created_by,
 created_at, updated_at }`; list/read endpoints return
   **`SavedPlaceWithPlace`** = `SavedPlace & { place: Place }` (one round
@@ -295,7 +326,7 @@ stability).
 **Errors**: 400 `VALIDATION_FAILED` — no criteria / malformed bbox; 404
 `NOT_FOUND` — `trip_id` given but caller not a member (posture).
 
-**Requirements covered**: R-places-6, R-places-7, R-places-8
+**Requirements covered**: R-places-6, R-places-7, R-places-8, R-places-27
 
 **Tests required**:
 
@@ -303,6 +334,12 @@ stability).
 - [ ] Coverage miss returns partial results AND enqueues throttled ingest (R-places-7)
 - [ ] Error cases: no criteria, bad bbox, oversized radius
 - [ ] Authz: stranger's custom place absent from results; own + trip-referenced custom present (R-places-8); non-member `trip_id` → 404
+- [ ] B-7 part 3 (R-places-27): a coordinate-less custom place is returned by
+      a text-only search to its creator, and absent from the SAME query with
+      a `bbox`/`near` bound covering `(0, 0)` — `apps/server/src/places/routes.db.test.ts`
+- [ ] B-7 part 3 (R-places-27): a text-only page whose items include a
+      coordinate-less row still paginates — cursor round-trips with no
+      duplicate/drop — `apps/server/src/places/routes.db.test.ts`
 
 ---
 
@@ -310,18 +347,22 @@ stability).
 
 Create a user-custom place. **Auth**: Required
 
-**Request**: `PlaceCreate`
+**Request**: `PlaceCreate` — `lat`/`lng` MAY both be omitted (B-7 part 3: a
+coordinate-less custom place); sending exactly one is rejected.
 
-**Response 201**: `Place` (`source: 'custom'`)
+**Response 201**: `Place` (`source: 'custom'`; `lat`/`lng` are `null` when
+omitted from the request — never a `(0, 0)` placeholder)
 
-**Errors**: 400 `VALIDATION_FAILED` — empty name, out-of-range lat/lng
+**Errors**: 400 `VALIDATION_FAILED` — empty name, out-of-range lat/lng,
+exactly one of lat/lng present
 
-**Requirements covered**: R-places-9
+**Requirements covered**: R-places-9, R-places-26
 
 **Tests required**:
 
 - [ ] Happy path: created with `source='custom'`, `source_id NULL`, `created_by=caller`
-- [ ] Error cases: invalid coords, blank name
+- [ ] Happy path: omitting both `lat`/`lng` → 201 with `lat: null, lng: null` (B-7 part 3)
+- [ ] Error cases: invalid coords, blank name, exactly one of lat/lng present (B-7 part 3)
 - [ ] Authz: unauthenticated → 401
 
 ---
