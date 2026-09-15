@@ -14,11 +14,35 @@
 # (R-nav-7/8, `.specs/client/navigation.spec.md` §2.5) lands on Today —
 # itself a live assertion that a same-day trip really did land where the
 # rule says, not an assumption.
+#
+# `wip` (T5 fix-round, found via a live Neon-backed door run 2026-09-14,
+# ~18:00 PDT) — this is a GENUINE, spec-contradicting server bug, not a
+# flow bug: `.specs/api/trips.spec.md` §3.4's own "Timezone note" requires
+# "the server MUST use the same @gogo/shared helper with an explicit
+# `today` input so the two surfaces [client + server] agree on the boundary
+# day" — but `apps/server/src/trips/status.ts:43`'s `todayUtc()` derives
+# `today` from `now.toISOString()`, i.e. UTC, while the client's
+# `localTodayISO()` (`apps/mobile/src/navigation/trip-defaults.ts:17-22`)
+# uses the DEVICE's local date. These disagree for a multi-hour window
+# every day in any tz west of UTC (confirmed live: PDT is UTC-7, so from
+# ~17:00 PDT the UTC calendar date has already rolled to "tomorrow" while
+# PDT's local date has not — a same-day trip created with
+# start=end=<PDT today> gets `today_UTC > end_date` server-side, so the
+# server never sets `status: "active"`, and `isTripActive`
+# (`trip-defaults.ts:26-29`) ANDs the server's `status` with its own
+# local-tz check — the local half can never save it). Reproduced twice,
+# deterministic, not flaky (two isolated `--flow` runs, identical failure).
+# Filed as a QUEUE-row draft in the PR body (B-30, HIGH — this is a
+# real-user-facing default-tab bug during evening/night hours in any
+# tz behind UTC, not merely an e2e artifact). Out of this task's lane
+# (apps/server is off-limits here) — excluded via `wip`; --include-wip
+# still runs it so the gap stays visible, not silently dropped.
 appId: ${APP_ID}
 name: cross-tab-state
 tags:
   - release
   - door
+  - wip
 ---
 - runFlow:
     file: subflows/session-door.yaml

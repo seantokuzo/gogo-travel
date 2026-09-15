@@ -417,10 +417,16 @@ test("S-4 round 1 finding 3: `wip`-tagged flows are excluded from the door lane 
     });
     assert.equal(defaultResult.status, 0, defaultResult.stderr);
     assert.match(defaultResult.stdout, /exclude=\[dev,doorfree,wip\]/);
+    // cross-tab-state joined the wip set later in this same round (a
+    // genuine, spec-contradicting server bug found via a live door run —
+    // apps/server/src/trips/status.ts's UTC `today` vs the client's
+    // local-tz `today`, `.specs/api/trips.spec.md` §3.4's own "Timezone
+    // note" — not a flow bug, out of this task's lane to fix).
     for (const wipFlow of [
       "add-flight-dateline.yaml",
       "ideas-to-schedule.yaml",
       "cancel-visibility.yaml",
+      "cross-tab-state.yaml",
     ]) {
       assert.doesNotMatch(
         defaultResult.stdout,
@@ -441,6 +447,7 @@ test("S-4 round 1 finding 3: `wip`-tagged flows are excluded from the door lane 
       "add-flight-dateline.yaml",
       "ideas-to-schedule.yaml",
       "cancel-visibility.yaml",
+      "cross-tab-state.yaml",
     ]) {
       assert.match(includeWipResult.stdout, new RegExp(wipFlow.replace(".", "\\.")));
     }
