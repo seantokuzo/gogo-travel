@@ -135,6 +135,23 @@ const FIXTURE_FLOW = [
   "",
 ].join("\n");
 
+// S-4 round 2: every FIXTURE_FLOW above carries only `release`, so no test
+// covered the exact regression a --flow FILE target with a `wip` tag would
+// hit against the DEFAULT exclusion set (dev,doorfree,wip) — a real-repo
+// example is add-flight-dateline.yaml (release+door+wip). A second, wip-
+// tagged fixture closes that gap without disturbing any existing assertion
+// that relies on the plain `release`-only FIXTURE_FLOW.
+const FIXTURE_FLOW_WIP = [
+  "appId: ${APP_ID}",
+  "name: fixture-wip",
+  "tags:",
+  "  - release",
+  "  - wip",
+  "---",
+  "- launchApp",
+  "",
+].join("\n");
+
 /** A fresh, isolated `$HOME` + stub-bin sandbox — one per test, never shared. */
 function makeSandbox() {
   const root = mkdtempSync(join(tmpdir(), "e2e-runner-test-"));
@@ -158,7 +175,9 @@ function makeSandbox() {
   writeFileSync(join(maestroBin, "maestro"), MAESTRO_STUB, { mode: 0o755 });
   const flowFile = join(root, "fixture-flow.yaml");
   writeFileSync(flowFile, FIXTURE_FLOW);
-  return { root, home, bin, maestroBin, flowFile, out };
+  const wipFlowFile = join(root, "fixture-flow-wip.yaml");
+  writeFileSync(wipFlowFile, FIXTURE_FLOW_WIP);
+  return { root, home, bin, maestroBin, flowFile, wipFlowFile, out };
 }
 
 /** Run the real `scripts/e2e.sh` against a sandbox's stubbed toolchain. */
@@ -479,6 +498,54 @@ test("S-4 round 1 advisory 6: an explicit --tags selection cannot smuggle a door
   }
 });
 
+// ---------------------------------------------------------------------------
+// S-4 round 2 — a literal --flow FILE target must bypass ALL tag filtering,
+// not just the runner's own pre-flight enumeration
+// ---------------------------------------------------------------------------
+
+test("S-4 round 2: --flow on a wip-tagged flow passes NO --exclude-tags/--include-tags to maestro, but still passes APP_ID/RUN_ID", () => {
+  // Round-1 fix-verifier finding: commit d88d487 deleted the old --flow
+  // branch's `EXCLUDE_TAGS=""` reset without replacing the bypass it existed
+  // for, so `bash scripts/e2e.sh --flow .maestro/add-flight-dateline.yaml`
+  // (a real, wip-tagged flow) silently got `--exclude-tags dev,doorfree,wip`
+  // appended to a single-file maestro invocation — undetected because every
+  // existing --flow test in this suite used the `release`-only FIXTURE_FLOW,
+  // which no exclusion set touches, and none of them asserted the ABSENCE of
+  // --exclude-tags/--include-tags in the first place. This drives a
+  // wip-tagged flow through the DEFAULT door lane (whose exclusion set is
+  // dev,doorfree,wip — the exact set that used to leak through) via --flow,
+  // with no --include-wip, and pins both halves of the contract: the file
+  // target itself still reaches maestro's argv, tag filters do not, and the
+  // unrelated -e APP_ID/-e RUN_ID plumbing --flow depends on is untouched.
+  const sandbox = makeSandbox();
+  try {
+    const argvDump = join(sandbox.root, "argv.txt");
+    const result = runE2e(sandbox, ["--flow", sandbox.wipFlowFile], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+      STUB_ARGV_DUMP: argvDump,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const argv = readFileSync(argvDump, "utf8");
+    // (a) the file target itself is what maestro was actually told to run.
+    assert.match(
+      argv,
+      new RegExp(`^${sandbox.wipFlowFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "m"),
+      `expected the --flow target path as its own argv line:\n${argv}`,
+    );
+    // (a) no tag filter reached maestro at all for a FILE target — this is
+    // the actual bug: --exclude-tags dev,doorfree,wip would otherwise
+    // silently exclude this very flow (it is tagged wip).
+    assert.doesNotMatch(argv, /--exclude-tags/, `argv must carry no --exclude-tags:\n${argv}`);
+    assert.doesNotMatch(argv, /--include-tags/, `argv must carry no --include-tags:\n${argv}`);
+    // (b) --flow still passes -e APP_ID and -e RUN_ID — the bypass above
+    // must not have collaterally dropped these two.
+    assert.match(argv, /^APP_ID=app\.gogotravel\.e2edoor$/m);
+    assert.match(argv, /^RUN_ID=[0-9a-f]{8,11}$/m);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
 test("GOGO_E2E_APP_ID overrides every lane's default, including door and dev", () => {
   const sandbox = makeSandbox();
   try {
@@ -626,4 +693,22 @@ test("R-door-10: maestro exiting before writing a report still fails loudly (pre
   } finally {
     cleanup(sandbox);
   }
+});
+
+// ---------------------------------------------------------------------------
+// root package.json wiring
+// ---------------------------------------------------------------------------
+
+test("root package.json's `test` script does not chain `turbo run test` and this suite with `&&`", () => {
+  // `&&` would let a `turbo run test` failure short-circuit past this suite
+  // entirely (never running it, exit code untouched by its result) — the
+  // opposite of the "both stages always run, exit codes OR'd" contract this
+  // file's own header comment documents. Cheap, exact pin: the script string
+  // itself must never contain `&&`.
+  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+  assert.doesNotMatch(
+    pkg.scripts.test,
+    /&&/,
+    `root package.json "scripts.test" must not chain stages with && (got: ${pkg.scripts.test})`,
+  );
 });

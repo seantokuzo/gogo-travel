@@ -7,7 +7,9 @@
 #   bash scripts/e2e.sh --variant doorfree    # door-free proof (session-door-absent)
 #   bash scripts/e2e.sh --tags dev           # dev-build-only flows (implies --variant dev)
 #   bash scripts/e2e.sh --include-wip         # also run flows tagged `wip` (known-red gaps)
-#   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
+#   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml   # runs exactly
+#                                            # this file — no tag filtering,
+#                                            # including a `wip`-tagged flow
 #   bash scripts/e2e.sh --device <udid>
 #   bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug   # passthrough
 #
@@ -144,8 +146,13 @@ APP_ID="${GOGO_E2E_APP_ID:-$DEFAULT_APP_ID}"
 #                   finding 3) are off by default in every lane; --include-wip
 #                   is the deliberate, explicit way to run them anyway.
 #
-# A literal --flow FILE target bypasses all of this by construction (see
-# above) — the sanctioned way to run one flow regardless of its tags.
+# EXCLUDE_TAGS is still computed unconditionally below even for a literal
+# --flow FILE target — it is the *application* of it to the maestro
+# invocation that a FILE target skips (S-4 round 2 finding: commit d88d487
+# deleted the old `--flow` branch's `EXCLUDE_TAGS=""` reset without
+# replacing the bypass, so a wip-tagged flow like add-flight-dateline.yaml
+# got `--exclude-tags dev,doorfree,wip` smuggled onto a single-file maestro
+# invocation anyway — see the ARGS assembly below, which is the actual gate).
 DEV_EXCLUDE=""
 [[ "$VARIANT" == "dev" ]] || DEV_EXCLUDE="dev"
 
@@ -404,8 +411,18 @@ ARGS=(--device "$DEVICE" test "$FLOW_TARGET"
   --test-suite-name "gogo-e2e"
   -e "APP_ID=$APP_ID"
   -e "RUN_ID=$RUN_ID")
-[[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
-[[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
+# A literal --flow FILE target runs EXACTLY that file: no --include-tags/
+# --exclude-tags are passed to maestro at all, matching the enumeration
+# above (which already bypasses tag matching for a `-f` FLOW_TARGET) and the
+# `--flow` argument handler's own comment. Re-testing `-f` here (rather than
+# trusting a flag set earlier) keeps this gate co-located with the ARGS it
+# actually guards. Without this, a wip/dev/lane-mismatched flow named
+# explicitly via --flow would still get filtered out by the default
+# exclusion set and silently yield 0 testcases (S-4 round 2 finding).
+if [[ ! -f "$FLOW_TARGET" ]]; then
+  [[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
+  [[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
+fi
 [[ ${#PASSTHROUGH[@]} -gt 0 ]] && ARGS+=("${PASSTHROUGH[@]}")
 
 echo "e2e: maestro $ACTUAL_VERSION · device $DEVICE · variant $VARIANT · appId $APP_ID · $FLOW_TARGET"

@@ -146,6 +146,13 @@ zero. After the run it also refuses to treat a JUnit report with `tests="0"`
 (or no report at all) as a pass, even if maestro itself exited `0`. Both are
 defense against a filter silently matching nothing.
 
+**`--flow <file>` runs exactly that file.** A literal file target (as
+opposed to the default `.maestro/` directory) bypasses ALL tag filtering —
+no `--include-tags`/`--exclude-tags` reach maestro — so it is the sanctioned
+way to run one flow deliberately regardless of its tags, `wip` included
+(e.g. authoring against a known-red flow like `add-flight-dateline.yaml`
+without `--include-wip`).
+
 ### App id / build variant (R-door-15)
 
 Every flow's `appId:` reads `${APP_ID}` — Maestro's own env-var substitution
