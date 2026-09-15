@@ -211,3 +211,26 @@ tags:
 # and composed a real instant (a silently-dropped save would leave the
 # itinerary showing nothing new).
 - assertVisible: "E2E Dateline ${RUN_ID}"
+
+# ── B-8 regression pin (S-4 round 1 advisory 4) ─────────────────────────────
+# The screen/title assertions above would stay green even if B-8's inverted-
+# instant composition reappeared — they never look at the composed times.
+# NRT 17:00 (08:00Z) → LAX 10:00 (17:00Z) is a real, same-UTC-day 9h flight,
+# but composed to the trip's own destination zone (Kyoto/Asia-Tokyo) the
+# arrival wall clock lands PAST MIDNIGHT the following day — so the item
+# detail's own derived "when" row (`itemWhenLabel`,
+# `features/itinerary/detail/detail-model.ts:167-174`, real testID
+# `itinerary-item-when`) must show the "through <next day>" clause it emits
+# whenever `end_day > day`. A reintroduced B-8 (naive wall-time-as-UTC/
+# zStamp composition) does not cross that boundary — it INVERTS the
+# interval instead — so this assertion discriminates the regression the
+# screen-level checks above cannot. Tapping the saved item's own title opens
+# its detail screen (the same day-list row jump R-itin-24 uses).
+- tapOn: "E2E Dateline ${RUN_ID}"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-screen"
+    timeout: 10000
+- assertVisible:
+    id: "itinerary-item-when"
+- assertVisible: ".*[Tt]hrough.*"
