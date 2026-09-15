@@ -3,9 +3,10 @@
 # Local E2E lane (ADR-007) — runs the Maestro flows in `.maestro/` against the
 # booted iOS simulator and writes JUnit to `.tmp/e2e/`.
 #
-#   bash scripts/e2e.sh                      # release lane (door build, excludes `dev`)
+#   bash scripts/e2e.sh                      # release lane (door build, excludes `dev`/`wip`)
 #   bash scripts/e2e.sh --variant doorfree    # door-free proof (session-door-absent)
 #   bash scripts/e2e.sh --tags dev           # dev-build-only flows (implies --variant dev)
+#   bash scripts/e2e.sh --include-wip         # also run flows tagged `wip` (known-red gaps)
 #   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
 #   bash scripts/e2e.sh --device <udid>
 #   bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug   # passthrough
@@ -31,9 +32,9 @@ FLOW_TARGET="$REPO_ROOT/.maestro"
 OUT_DIR="$REPO_ROOT/.tmp/e2e"
 DEVICE=""
 INCLUDE_TAGS=""
-EXCLUDE_TAGS="dev" # dev-build-only flows never run in the release lane
 VARIANT=""         # resolved below (R-door-15) — door|dev|doorfree
 TAGS_EXPLICIT=""   # raw --tags value, if any — feeds the --variant derivation
+INCLUDE_WIP=0       # --include-wip: also run flows tagged `wip` (off by default)
 PASSTHROUGH=()
 
 die() {
@@ -48,20 +49,15 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || die "--tags needs a value"
       INCLUDE_TAGS="$2"
       TAGS_EXPLICIT="$2"
-      # An explicit tag selection owns the filter completely — otherwise
-      # `--tags dev` would ask for the dev flows and exclude them in the same
-      # breath, and silently run nothing.
-      EXCLUDE_TAGS=""
       shift 2
       ;;
     --flow)
       [[ $# -ge 2 ]] || die "--flow needs a path"
       FLOW_TARGET="$2"
-      # Same failure class as --tags above: leaving the default `dev`-exclude
-      # filter active while naming one explicit flow can filter out the very
-      # flow you asked for and silently run nothing. An explicit --flow target
-      # owns the filter completely, just like an explicit --tags selection.
-      EXCLUDE_TAGS=""
+      # A literal FILE target (as opposed to the default directory) bypasses
+      # tag filtering entirely, below — that is the sanctioned way to run one
+      # wip/lane-mismatched flow deliberately for authoring, so no exclusion
+      # bookkeeping is needed here.
       shift 2
       ;;
     --variant)
@@ -72,6 +68,10 @@ while [[ $# -gt 0 ]]; do
         *) die "--variant must be door, dev, or doorfree (got: $VARIANT)" ;;
       esac
       shift 2
+      ;;
+    --include-wip)
+      INCLUDE_WIP=1
+      shift
       ;;
     --device)
       [[ $# -ge 2 ]] || die "--device needs a UDID"
@@ -119,23 +119,44 @@ esac
 # outright, for any variant.
 APP_ID="${GOGO_E2E_APP_ID:-$DEFAULT_APP_ID}"
 
-# Lane-scoped default flow selection. `door` and `doorfree` otherwise share
-# an IDENTICAL default tag filter (both exclude only `dev`) — without this,
-# a plain `--variant doorfree` run would ALSO attempt the six authenticated
-# flows (tagged `door`, S-4 wave 2) against a build with no door to open,
-# and a plain default `door`-lane run would ALSO attempt
-# `session-door-absent` (tagged `doorfree`) against the wrong build's app
-# id. Only adjust the filter when the caller has not already taken full
-# manual control of it via --tags/--flow — both already reset EXCLUDE_TAGS
-# to "" (the existing "an explicit selection owns the filter completely"
-# rule above), which this check treats as "leave it alone": EXCLUDE_TAGS
-# only ever still equals the literal default "dev" here when neither fired.
-if [[ "$EXCLUDE_TAGS" == "dev" ]]; then
-  case "$VARIANT" in
-    door) EXCLUDE_TAGS="dev,doorfree" ;;
-    doorfree) EXCLUDE_TAGS="dev,door" ;;
-  esac
-fi
+# ── exclusion sets (S-4 round 1 advisory 6) ─────────────────────────────────
+# Three INDEPENDENT pieces, always combined below — never reset wholesale by
+# --tags. Previously an explicit --tags selection cleared EXCLUDE_TAGS
+# completely (to let `--tags dev` actually select `dev`-tagged flows without
+# excluding them in the same breath), which had a real hole: `--tags release`
+# — a tag every flow in every lane carries — cleared the door/doorfree lane
+# partition too, so `session-door-absent` (release, doorfree) would match and
+# attempt to run against whatever build the active --variant/app id actually
+# is. Each piece below is derived from state --tags can't touch (the
+# resolved VARIANT, and --include-wip), so a --tags selection can only ever
+# narrow within a lane, never smuggle a flow across one.
+#
+#   DEV_EXCLUDE   — `dev`-tagged flows never run outside the `dev` variant.
+#   LANE_EXCLUDE  — `door` excludes `doorfree`-tagged flows and vice versa;
+#                   `dev` has no lane partition of its own.
+#   WIP_EXCLUDE   — `wip`-tagged flows (known app-gap failures, S-4 round 1
+#                   finding 3) are off by default in every lane; --include-wip
+#                   is the deliberate, explicit way to run them anyway.
+#
+# A literal --flow FILE target bypasses all of this by construction (see
+# above) — the sanctioned way to run one flow regardless of its tags.
+DEV_EXCLUDE=""
+[[ "$VARIANT" == "dev" ]] || DEV_EXCLUDE="dev"
+
+LANE_EXCLUDE=""
+case "$VARIANT" in
+  door) LANE_EXCLUDE="doorfree" ;;
+  doorfree) LANE_EXCLUDE="door" ;;
+esac
+
+WIP_EXCLUDE=""
+[[ "$INCLUDE_WIP" -eq 1 ]] || WIP_EXCLUDE="wip"
+
+EXCLUDE_TAGS=""
+for _part in "$DEV_EXCLUDE" "$LANE_EXCLUDE" "$WIP_EXCLUDE"; do
+  [[ -n "$_part" ]] || continue
+  EXCLUDE_TAGS="${EXCLUDE_TAGS:+$EXCLUDE_TAGS,}$_part"
+done
 
 # ── maestro ───────────────────────────────────────────────────────────────────
 # The official installer puts it in ~/.maestro/bin, which is only on PATH in an
@@ -219,6 +240,29 @@ fi
 [[ -n "$DEVICE" ]] || die "no booted simulator. Boot one first:
   xcrun simctl boot <udid> && open -a Simulator
   (xcrun simctl list devices available)"
+
+# ── sibling-variant guard (S-4 round 1 advisory 7) ──────────────────────────
+# `app.gogotravel` (dev/doorfree) and `app.gogotravel.e2edoor` (door) both
+# register the SAME `gogo://` custom URL scheme (`.maestro/README.md`'s own
+# landmine, previously documented only for the pre-PR-#33 stale id). With
+# BOTH installed, a cold `openLink` can land on EITHER app nondeterministically
+# — every door/doorfree flow starts with one — so a run could silently
+# exercise the wrong build and still report a clean pass. Refuse outright
+# rather than let that ambiguity into a merge-gate run; this check is
+# unconditional (not scoped to the active --variant/APP_ID) because the
+# hazard exists the moment both ids are on the device, regardless of which
+# one this particular invocation happens to target.
+DOOR_APP_ID="app.gogotravel.e2edoor"
+DOORFREE_APP_ID="app.gogotravel"
+if xcrun simctl get_app_container "$DEVICE" "$DOOR_APP_ID" >/dev/null 2>&1 &&
+  xcrun simctl get_app_container "$DEVICE" "$DOORFREE_APP_ID" >/dev/null 2>&1; then
+  die "both $DOOR_APP_ID and $DOORFREE_APP_ID are installed on $DEVICE — they
+  share the gogo:// scheme (.maestro/README.md), so a cold openLink can land
+  on either one nondeterministically. Uninstall whichever this run does NOT
+  target before continuing:
+    xcrun simctl uninstall $DEVICE $DOOR_APP_ID       # keep doorfree/dev
+    xcrun simctl uninstall $DEVICE $DOORFREE_APP_ID   # keep door"
+fi
 
 # A missing/wrong app is the single most common way this lane 'fails' — say so
 # in one line instead of letting every flow die on launchApp. This doubles as

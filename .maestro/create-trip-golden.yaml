@@ -32,10 +32,16 @@
 # a deliberate, not arbitrary, substitution.
 #
 # The result row is selected via a REGEX `id:` match
-# (`trip-new-list-item-.+`), not the literal per-pick UUID testID — see
-# `subflows/create-minimal-trip.yaml`'s header for why that ID can never be
-# hard-coded, and why an exact-one-result query makes the regex unambiguous
-# regardless.
+# (`trip-new-list-item-[0-9a-f-]{36}`), not the literal per-pick UUID testID
+# — see `subflows/create-minimal-trip.yaml`'s header for why that ID can
+# never be hard-coded, and why an exact-one-result query makes the regex
+# unambiguous regardless. The regex is shaped to the UUID's exact length
+# (36 chars) rather than a bare `.+` (S-4 round 1 finding 1): `.+` is ALSO
+# satisfied by the zero-results fallback row's testID,
+# `trip-new-list-item-custom`, so a bare `.+` would silently tap the custom-
+# destination row instead of failing if the spine search ever came back
+# empty — going green on a broken search. The `assertNotVisible` immediately
+# below is the positive control ruling that branch out explicitly.
 #
 # DATES: unlike the minimal-trip subflow (today-for-both, zero calendar
 # navigation), this flow drives the inline calendar to a REAL, non-default
@@ -67,12 +73,14 @@ tags:
 - tapOn:
     id: "trip-new-input-destination"
 - inputText: "Kyoto"
+- assertNotVisible:
+    id: "trip-new-list-item-custom"
 - extendedWaitUntil:
     visible:
-      id: "trip-new-list-item-.+"
+      id: "trip-new-list-item-[0-9a-f-]{36}"
     timeout: 15000
 - tapOn:
-    id: "trip-new-list-item-.+"
+    id: "trip-new-list-item-[0-9a-f-]{36}"
 # ── start date: navigate the inline calendar forward one month and pick a
 # day, proving the picker can be driven to a NON-default value (not merely
 # committed on its unmodified seed, as the minimal-trip subflow does) ───────

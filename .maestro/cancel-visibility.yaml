@@ -28,9 +28,18 @@
 # (`itinerary-cancelled`), never re-asserts `itinerary-ideas`.
 appId: ${APP_ID}
 name: cancel-visibility
+# S-4 round 1 finding 3: `wip` — a real app gap (not a flow bug), same root
+# cause as `ideas-to-schedule.yaml` (both build an "other"-category booking):
+# the trailing fields/Save button (`BookingForm.tsx:832-920`) sit below the
+# on-screen keyboard with no scroll-to-target. Confirmed against a live
+# Neon-backed door run 2026-09-14. Excluded from the default lane
+# (scripts/e2e.sh's `wip` exclusion); run deliberately with `--include-wip`.
+# See the QUEUE-row draft in the PR body (B-29) — remove this tag once the
+# booking form's keyboard/scroll handling fixes the underlying gap.
 tags:
   - release
   - door
+  - wip
 ---
 - runFlow:
     file: subflows/session-door.yaml

@@ -23,16 +23,23 @@
 # (`0004_destination_tier_seed.sql`) — e.g. "Kyoto". Long enough to clear the
 # 4-char search floor (`isSearchableDestinationQuery`), so this is a REAL
 # network search against the places spine, not the bare-3-letter-code path.
-# The result is selected via `id: "trip-new-list-item-.+"` (a REGEX id
-# match, Maestro's `id:` selector is regex-native) rather than by the
-# result's own testID verbatim: `place.id` is a DB-generated UUID
+# The result is selected via `id: "trip-new-list-item-[0-9a-f-]{36}"` (a
+# REGEX id match, Maestro's `id:` selector is regex-native) rather than by
+# the result's own testID verbatim: `place.id` is a DB-generated UUID
 # (`gen_random_uuid()` DEFAULT — the migration's INSERT never supplies one),
 # so it is NOT deterministic across a fresh migration run and cannot be
-# hard-coded. Because DESTINATION_QUERY is verified unique, exactly one
-# `trip-new-list-item-*` element exists whenever this runs (the "custom
-# destination" fallback row only renders in the zero-results branch, mutually
-# exclusive with the real-results branch this subflow always takes) — so the
-# regex is unambiguous by construction, not by luck.
+# hard-coded. The regex is shaped to the UUID's exact length (36 chars,
+# hex+dashes) rather than a bare `.+` (S-4 round 1 finding 1): `.+` is ALSO
+# satisfied by the zero-results fallback row's testID,
+# `trip-new-list-item-custom` — so if the spine were ever unseeded or the
+# query stopped matching, a bare `.+` selector would silently tap the
+# "custom destination" row instead of failing, going green on a broken
+# search. The `assertNotVisible: trip-new-list-item-custom` immediately
+# below is the positive control that rules that branch out explicitly,
+# belt-and-braces on top of the tightened regex. Because DESTINATION_QUERY
+# is verified unique, exactly one `trip-new-list-item-<uuid>` element exists
+# whenever the real-results branch renders — so the regex is unambiguous by
+# construction, not by luck.
 #
 # env: TRIP_NAME, DESTINATION_QUERY (a verified-unique real spine city name,
 # e.g. "Kyoto" — see the header note above).
@@ -50,12 +57,26 @@ appId: ${APP_ID}
 - tapOn:
     id: "trip-new-input-destination"
 - inputText: "${DESTINATION_QUERY}"
+# S-4 round 1 finding 1: `trip-new-list-item-.+` ALSO matches the
+# zero-results fallback row, `trip-new-list-item-custom` ("Use ... as a
+# custom destination", new.tsx:433) — `.+` is satisfied by "custom" just as
+# well as by a real place's UUID. If the spine is ever unseeded/unreachable
+# for this query, the search silently falls into the zero-results branch and
+# this flow would tap the CUSTOM row instead of a real search result — going
+# green on a broken search rather than failing loudly. `assertNotVisible`
+# is the positive control (every negative assertion needs one, ADR-007): it
+# proves the custom-destination fallback did NOT render before trusting a
+# match against the tightened, UUID-shaped selector below (real `places.id`
+# is a `gen_random_uuid()` DEFAULT — 36 chars, 8-4-4-4-12 hex+dashes — which
+# "custom" can never satisfy).
+- assertNotVisible:
+    id: "trip-new-list-item-custom"
 - extendedWaitUntil:
     visible:
-      id: "trip-new-list-item-.+"
+      id: "trip-new-list-item-[0-9a-f-]{36}"
     timeout: 15000
 - tapOn:
-    id: "trip-new-list-item-.+"
+    id: "trip-new-list-item-[0-9a-f-]{36}"
 - tapOn:
     id: "trip-new-input-dates-start"
 - extendedWaitUntil:
