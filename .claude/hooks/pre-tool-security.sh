@@ -135,6 +135,20 @@ check_bash() {
   local cmd="${1:-}" cwd="${2:-}"
   [ -z "$cmd" ] && return 0
 
+  # --- Secrets guard (delegates to the Read/Write ruleset) -------------------
+  # check_file_path stays the single source of truth, so `cat .env` is blocked
+  # exactly like Read(.env) and the two paths can never drift apart. Message and
+  # title bodies are stripped first, so prose that merely names a file
+  # ("fix: stop logging secrets.json") does not trip the scan.
+  # Globbing is already disabled at the top of this file, so the word-split
+  # below cannot expand a bare * into filenames.
+  local scan tok
+  scan="$(printf '%s' "$cmd" | sed -E "s/(-m|--message|-b|--body|-t|--title)[[:space:]]+'[^']*'//g; s/(-m|--message|-b|--body|-t|--title)[[:space:]]+\"[^\"]*\"//g")"
+  for tok in $(printf '%s' "$scan" | tr -d "\"'" | tr '=;|&()<>`' ' '); do
+    case "$tok" in -*|'') continue ;; esac
+    check_file_path "$tok"
+  done
+
   # --- Catastrophic filesystem ops ---
   if [[ "$cmd" =~ --no-preserve-root ]]; then
     block "rm --no-preserve-root targets the filesystem root."
