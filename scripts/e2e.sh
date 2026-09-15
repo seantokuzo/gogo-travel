@@ -356,8 +356,6 @@ done
 
 # ── run ───────────────────────────────────────────────────────────────────────
 mkdir -p "$OUT_DIR"
-STAMP="$(date +%Y%m%d-%H%M%S)"
-REPORT="$OUT_DIR/junit-$STAMP.xml"
 # R-door-14 / session-door spec §5.4: "the runner ... generates RUN_ID="$STAMP"
 # ... and passes -e RUN_ID="$RUN_ID" on every invocation" — this was written
 # but never wired to the actual `maestro` invocation below, so every
@@ -370,14 +368,28 @@ REPORT="$OUT_DIR/junit-$STAMP.xml"
 # door flow's USER_KEY is `<flow-name>-${RUN_ID}` and
 # `packages/shared/src/domains/e2e.ts`'s `E2eUserKeySchema` caps the WHOLE
 # key at 32 chars (`^[a-z0-9][a-z0-9-]{0,31}$`). `$STAMP` pushed 5 of 6 door
-# flows' keys over that cap (e.g. "add-flight-dateline-20260914-150312" = 36
+# flows' keys over that cap (e.g. "add-flight-dateline-20260914-150312" = 35
 # chars) — a CLIENT-SIDE schema rejection with zero network call, which
 # looks identical to a door failure (`e2e-session-error`, no server log
 # entry) until you count characters (S-4 T5, caught via a real Neon-backed
-# re-run). Hex epoch seconds is 8 chars today (good until far past this
-# repo's lifetime) and leaves every flow name room to spare — the longest,
-# "add-flight-dateline" (19 chars) + "-" + 8 hex chars = 28, well under 32.
-RUN_ID="$(printf '%x' "$(date +%s)")"
+# re-run).
+#
+# Hex epoch SECONDS alone (8 chars today) still collides at 1-second
+# resolution — two runs started in the same wall-clock second (a fast
+# `--include-wip` re-run, or two operators racing the lane) mint the SAME
+# RUN_ID, so their USER_KEYs and evidence dirs (both derived from it, see
+# EVIDENCE_DIR below) collide too (S-4 round 1 advisory 5). A 3-hex-digit
+# (`%03x`, 0-4095) `$RANDOM` suffix breaks the tie without lengthening the
+# budget past what fits: the longest flow name, "add-flight-dateline" /
+# "session-door-absent" (19 chars each) + "-" + 11-char RUN_ID = 31, still
+# under the 32-char cap.
+RUN_ID="$(printf '%x%03x' "$(date +%s)" $((RANDOM % 4096)))"
+# Evidence-dir uniqueness (R-door-10) rides the SAME suffix as RUN_ID rather
+# than a second, independent random draw — one source of uniqueness, so the
+# report/artifacts/evidence paths for a single invocation can never disagree
+# about which run they belong to.
+STAMP="$(date +%Y%m%d-%H%M%S)-$RUN_ID"
+REPORT="$OUT_DIR/junit-$STAMP.xml"
 
 ARGS=(--device "$DEVICE" test "$FLOW_TARGET"
   --format JUNIT

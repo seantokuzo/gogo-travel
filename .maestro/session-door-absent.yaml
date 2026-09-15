@@ -42,6 +42,18 @@ tags:
   - doorfree
 ---
 # ── ARM 1 (CONTROL) ──────────────────────────────────────────────────────────
+# S-4 round 1 finding 9: `clearState`/`clearKeychain` first, like every
+# other cold flow in this suite (`sign-in-renders.yaml`,
+# `sign-in-cancel-surface.yaml`, `subflows/session-door.yaml`'s own R-door-8
+# note). `subflows/cold-open.yaml` alone only `stopApp`s — it never wipes
+# the Keychain — and this build's app id (`app.gogotravel`) is SHARED with
+# the `dev` variant (diagnostics-panel-dev.yaml), so a prior dev-lane run's
+# leftover refresh token could auto-resume here, landing on `today-screen`
+# instead of `sign-in-screen` and failing the control for environmental
+# reasons that look identical to a real regression.
+- launchApp:
+    clearState: true
+    clearKeychain: true
 - runFlow:
     file: subflows/cold-open.yaml
     env:
