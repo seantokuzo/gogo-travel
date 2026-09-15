@@ -227,6 +227,10 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
 export interface PlacesExactTierMatchParams {
   /** Trimmed, NFC-normalized query text (SearchTextSchema handles that). */
   q: string;
+  /** Derived coarse-category filter (§3.2.3) — review R1 A1/ADVISORY-2:
+   * same AND-residual filter `placesSearchQuery` applies, so this arm can't
+   * leak a tier row through a mismatched `coarse_category`. */
+  coarse?: CoarseCategory | undefined;
   /** Decoded page cursor (first component is the constant rank key below). */
   cursor?: KeysetCursor | null | undefined;
   /** Page size + 1 sentinel — the route owns the arithmetic (text/geo-arm precedent). */
@@ -265,9 +269,16 @@ export interface PlacesExactTierMatchParams {
  *    scan" contract — a custom place is never read by this query,
  *    regardless of who is asking (falsified by the creator-owned-"Fez"
  *    pin, not just the stranger one).
- *  - No bbox/near/coarse_category — `routes.ts` only reaches this arm when
- *    both geo bounds are absent; a short `q` WITH a geo bound keeps using
- *    the existing geo-bounded arm (`placesSearchQuery`), unaffected.
+ *  - No bbox/near — `routes.ts` only reaches this arm when both geo bounds
+ *    are absent; a short `q` WITH a geo bound keeps using the existing
+ *    geo-bounded arm (`placesSearchQuery`), unaffected. `coarse_category`
+ *    IS applied here (review R1 A1/ADVISORY-2 fix — it was silently
+ *    dropped before): the same AND-residual `coarseCategorySqlExpr` filter
+ *    the trigram/geo arm uses, so `?q=Fez&coarse_category=food` correctly
+ *    excludes a locality (Fez's own `coarse_category` is `other`) instead
+ *    of leaking it through a mismatched category filter. The driving fold
+ *    predicate/index are unaffected — this is a residual AND, same posture
+ *    as `placesSearchQuery`'s coarse filter above.
  *  - `rankKey` is a constant `0` — every match is equally "exact," nothing
  *    to rank by — so page order is pure `id DESC`, still stable across
  *    pages via the SAME keyset-cursor codec the text/geo arm uses
@@ -286,6 +297,10 @@ export function placesExactTierMatchQuery(db: DbClient, params: PlacesExactTierM
     sql`${places.source} = 'overture' and ${places.category} = 'locality'`,
     sql`${schema.tierNameFoldExpr(places.name)} = ${schema.tierNameFoldExpr(sql`${params.q}`)}`,
   ];
+
+  if (params.coarse !== undefined) {
+    predicates.push(sql`${coarseCategorySqlExpr(places.category)} = ${params.coarse}`);
+  }
 
   if (params.cursor) {
     predicates.push(

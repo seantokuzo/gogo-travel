@@ -419,7 +419,7 @@ photos) are **fetch-fresh from the Foursquare hosted API and never cached**
 
 - **Unique (partial):** `(source, source_id) WHERE source_id IS NOT NULL` — import upsert key (R-db-6)
 - **Checks:** `(source = 'custom') = (source_id IS NULL)`; `source <> 'custom' OR created_by IS NOT NULL`; `places_coords_pair_ck` — `(lat IS NULL) = (lng IS NULL)`, every source (B-7 part 3); `places_spine_coords_ck` — `source = 'custom' OR lat IS NOT NULL` (B-7 part 3 — an ingested spine row can never lack coordinates, which is what keeps the `(lat, lng)` geo index's invariants intact)
-- **Indexes:** `(lat, lng)` composite — bbox queries for map viewport; GIN `gin_trgm_ops` on `name` (extension `pg_trgm`, enabled in the initial migration) — type-ahead place search against our spine before any paid autocomplete.
+- **Indexes:** `(lat, lng)` composite — bbox queries for map viewport; GIN `gin_trgm_ops` on `name` (extension `pg_trgm`, enabled in the initial migration) — type-ahead place search against our spine before any paid autocomplete; partial btree on `tierNameFoldExpr(name)` (exact, case-insensitive, accent-folded) `WHERE source = 'overture' AND category = 'locality'` — `places_tier_name_folded_idx` (migration `0006`, B-7 follow-up R-places-28) — drives the sub-floor exact-match search arm against the bootstrap destination tier only.
 - Bulk Overture/FSQ import tooling is **out of scope** for this spec (places-domain task); the upsert key above is its contract.
 - **B-7 part 3 (2026-09-13):** `lat`/`lng` became nullable so a custom place
   can exist with no coordinates at all (`POST /places` — places spec
@@ -973,35 +973,36 @@ viewer at render time (Law #3).
 Blanket rule (§1): every FK column is btree-indexed unless it leads a listed
 composite. Beyond that, the deliberate composites and their justification:
 
-| Index                                                            | Table                                | Why                                                                        |
-| ---------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
-| `(user_id)`                                                      | `trip_members`                       | Root query: "my trips"                                                     |
-| partial unique `(trip_id) WHERE role='owner'`                    | `trip_members`                       | ≤1 owner invariant (R-db-8)                                                |
-| `(trip_id, day, sort_order)`                                     | `itinerary_items`                    | The itinerary read (day + range views, ordered)                            |
-| `(trip_id, starts_at)`                                           | `bookings`                           | Chronological bookings; today-view "next event"                            |
-| `(trip_id, status)`                                              | `bookings`                           | Ideas/planned/booked tabs                                                  |
-| partial unique `(capture_id) WHERE NOT NULL`                     | `bookings`                           | 1 booking per capture; "landed" detection                                  |
-| unique `(source, source_id) WHERE source_id IS NOT NULL`         | `places`                             | Import upsert key (R-db-6)                                                 |
-| `(lat, lng)`                                                     | `places`                             | Map viewport bbox                                                          |
-| GIN trgm `(name)`                                                | `places`                             | Type-ahead search on our spine (free before paid autocomplete)             |
-| unique `(trip_id, place_id)`                                     | `saved_places`, `tour_guide_bundles` | Once-per-trip semantics + trip-scoped list/manifest reads                  |
-| unique `(from_item_id, to_item_id, mode)`                        | `travel_legs`                        | Leg identity (R-db-15)                                                     |
-| `(trip_id, spent_at)`                                            | `expenses`                           | Money screen + daily rollups                                               |
-| `(user_id)`                                                      | `expense_shares`                     | Cross-trip "what I owe"                                                    |
-| unique `(trip_id, category)`                                     | `budgets`                            | One row per category; budget screen                                        |
-| `(user_id, parse_status)`                                        | `capture_inbox`                      | Review-queue query (R-db-7 visibility)                                     |
-| `(trip_id, place_id)`                                            | `photos`                             | Photos-by-place (map pin tap)                                              |
-| `(trip_id, taken_at)`                                            | `photos`                             | Trip timeline/album                                                        |
-| partial `(place_id) WHERE visibility='public'`                   | `photos`                             | Cross-user public surface; privacy-correct query is the cheap one (R-db-4) |
-| PK `(user_id, feature, day)` + `(day)`                           | `ai_usage`                           | Cap check upsert; kill-switch rollup                                       |
-| `(expires_at)`                                                   | `ai_cache`                           | Eviction sweep                                                             |
-| partial `(batch_id) WHERE status='pending'`                      | `tour_guide_bundles`                 | Batch reconciliation                                                       |
-| partial `(expires_at) WHERE NOT NULL`                            | `documents`                          | Expiry-reminder job                                                        |
-| PK `(region_key, source)`                                        | `place_ingest_regions`               | Ingest idempotency per region cell                                         |
-| `(trip_id, status)`                                              | `settlement_requests`                | Open-requests list                                                         |
-| unique `(trip_id)` + partial `(batch_id) WHERE status='pending'` | `recaps`                             | One recap per trip; batch reconciliation                                   |
-| unique `(user_id, email)`                                        | `capture_senders`                    | Sender-policy lookup (capture R-cap-3)                                     |
-| partial unique `(trip_id) WHERE user_id IS NULL`                 | `packing_lists`                      | One shared list per trip (Gate-2 resolution)                               |
+| Index                                                                                    | Table                                | Why                                                                        |
+| ---------------------------------------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------------- |
+| `(user_id)`                                                                              | `trip_members`                       | Root query: "my trips"                                                     |
+| partial unique `(trip_id) WHERE role='owner'`                                            | `trip_members`                       | ≤1 owner invariant (R-db-8)                                                |
+| `(trip_id, day, sort_order)`                                                             | `itinerary_items`                    | The itinerary read (day + range views, ordered)                            |
+| `(trip_id, starts_at)`                                                                   | `bookings`                           | Chronological bookings; today-view "next event"                            |
+| `(trip_id, status)`                                                                      | `bookings`                           | Ideas/planned/booked tabs                                                  |
+| partial unique `(capture_id) WHERE NOT NULL`                                             | `bookings`                           | 1 booking per capture; "landed" detection                                  |
+| unique `(source, source_id) WHERE source_id IS NOT NULL`                                 | `places`                             | Import upsert key (R-db-6)                                                 |
+| `(lat, lng)`                                                                             | `places`                             | Map viewport bbox                                                          |
+| GIN trgm `(name)`                                                                        | `places`                             | Type-ahead search on our spine (free before paid autocomplete)             |
+| partial btree `tierNameFoldExpr(name)` WHERE `source='overture' AND category='locality'` | `places`                             | Sub-floor exact-match search arm driver (B-7 follow-up, R-places-28)       |
+| unique `(trip_id, place_id)`                                                             | `saved_places`, `tour_guide_bundles` | Once-per-trip semantics + trip-scoped list/manifest reads                  |
+| unique `(from_item_id, to_item_id, mode)`                                                | `travel_legs`                        | Leg identity (R-db-15)                                                     |
+| `(trip_id, spent_at)`                                                                    | `expenses`                           | Money screen + daily rollups                                               |
+| `(user_id)`                                                                              | `expense_shares`                     | Cross-trip "what I owe"                                                    |
+| unique `(trip_id, category)`                                                             | `budgets`                            | One row per category; budget screen                                        |
+| `(user_id, parse_status)`                                                                | `capture_inbox`                      | Review-queue query (R-db-7 visibility)                                     |
+| `(trip_id, place_id)`                                                                    | `photos`                             | Photos-by-place (map pin tap)                                              |
+| `(trip_id, taken_at)`                                                                    | `photos`                             | Trip timeline/album                                                        |
+| partial `(place_id) WHERE visibility='public'`                                           | `photos`                             | Cross-user public surface; privacy-correct query is the cheap one (R-db-4) |
+| PK `(user_id, feature, day)` + `(day)`                                                   | `ai_usage`                           | Cap check upsert; kill-switch rollup                                       |
+| `(expires_at)`                                                                           | `ai_cache`                           | Eviction sweep                                                             |
+| partial `(batch_id) WHERE status='pending'`                                              | `tour_guide_bundles`                 | Batch reconciliation                                                       |
+| partial `(expires_at) WHERE NOT NULL`                                                    | `documents`                          | Expiry-reminder job                                                        |
+| PK `(region_key, source)`                                                                | `place_ingest_regions`               | Ingest idempotency per region cell                                         |
+| `(trip_id, status)`                                                                      | `settlement_requests`                | Open-requests list                                                         |
+| unique `(trip_id)` + partial `(batch_id) WHERE status='pending'`                         | `recaps`                             | One recap per trip; batch reconciliation                                   |
+| unique `(user_id, email)`                                                                | `capture_senders`                    | Sender-policy lookup (capture R-cap-3)                                     |
+| partial unique `(trip_id) WHERE user_id IS NULL`                                         | `packing_lists`                      | One shared list per trip (Gate-2 resolution)                               |
 
 ### 3.6 Referential-integrity matrix (delete behavior)
 

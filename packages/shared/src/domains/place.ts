@@ -514,11 +514,17 @@ export const placeEndpoints = {
   /**
    * Spine-only search (R-places-6): text (pg_trgm) / geo (bbox|near) /
    * blend; ranked deterministically for cursor stability. Coverage misses
-   * degrade + backfill (R-places-7) — never an error. Scale bounds
-   * (config/places.ts): text-ONLY searches need `q` ≥
-   * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (2–3-char typeahead requires a geo
-   * bound); bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per
-   * axis around the box center (degrade, not reject).
+   * degrade + backfill (R-places-7) — never an error. TWO ARMS select on
+   * `q` length + geo bound (config/places.ts, B-7 follow-up R-places-28): a
+   * geo-bounded `q` (bbox/near present) stays legal from the ABSOLUTE floor
+   * `PLACES_SEARCH_MIN_CHARS` (2) — the lat/lng window bounds the
+   * candidates. A TEXT-ONLY `q` (no geo bound) at/above
+   * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (4) runs the trigram scan as before;
+   * BELOW it (but still ≥ PLACES_SEARCH_MIN_CHARS) no longer rejects — it
+   * runs an exact, case-insensitive, accent-folded match against the
+   * bootstrap destination tier only (never the trgm scan, never a `custom`
+   * row). bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per axis
+   * around the box center (degrade, not reject).
    */
   searchPlaces: {
     method: "GET",

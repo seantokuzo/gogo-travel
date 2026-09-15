@@ -82,13 +82,22 @@ export const places = pgTable(
     // drop-and-rebuild this index without coordinating with live search traffic.
     index("places_name_trgm_idx").using("gin", t.name.op("gin_trgm_ops")),
     // B-7 follow-up (sub-floor exact-match arm, R-places-28): a small,
-    // static partial index scoped to the bootstrap destination tier ONLY
-    // (`source='overture' AND category='locality'`, the 0004 seed) — the
-    // WHERE clause here must stay byte-identical to the predicate
-    // `placesExactTierMatchQuery` sends, or Postgres won't recognize the
-    // index applies. Never grows with POI ingest (region-ingest.ts never
-    // writes `category='locality'` rows), so this stays cheap regardless of
-    // how large `places` gets from on-demand ingestion.
+    // partial index scoped to `source='overture' AND category='locality'`
+    // — the migration-0004 bootstrap seed today. The WHERE clause here must
+    // stay byte-identical to the predicate `placesExactTierMatchQuery`
+    // sends, or Postgres won't recognize the index applies.
+    // Review R1 correction (adversarial claim 15): an earlier version of
+    // this comment claimed the index "never grows with POI ingest" because
+    // "region-ingest.ts never writes category='locality' rows" — that was
+    // unsupported. `normalize.ts` stores whatever raw taxonomy string the
+    // source dataset carries with NO category filter, so an on-demand
+    // Overture region-ingest row that happens to carry `category='locality'`
+    // DOES enter this index's scope too. That's INTENDED, not a bug — a
+    // future ingested Overture locality is exactly the kind of row the
+    // sub-floor exact-match arm should be able to find by exact name — but
+    // it means this index's size is bounded by "how many locality rows any
+    // ingested source has produced," not fixed at the 0004 seed's 6,927
+    // rows forever.
     index("places_tier_name_folded_idx")
       .on(tierNameFoldExpr(t.name))
       .where(sql`${t.source} = 'overture' and ${t.category} = 'locality'`),

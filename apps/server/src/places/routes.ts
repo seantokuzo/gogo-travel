@@ -238,6 +238,7 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
         near === undefined
           ? await placesExactTierMatchQuery(deps.db, {
               q: query.q,
+              coarse: query.coarse_category,
               cursor,
               limit: pageSize + 1,
             })

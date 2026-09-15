@@ -128,11 +128,14 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   caller's own). WHEN no tier row matches exactly THE SYSTEM SHALL return
   200 with an empty list, not 400 (Sean's ruling, 2026-09-14: 54 seeded tier
   rows — Fez, Van, Ufa, Qom, … — are shorter than the floor and were
-  otherwise unreachable by their own name). This requirement lives under
-  PL-2 (search, R-places-6..10), not PL-3 (details) — the task brief that
-  requested this line named PL-3, but PL-2 is where every other floor/search
-  requirement (R-places-6, R-places-27) already sits; filed here instead,
-  flagged rather than silently diverging.
+  otherwise unreachable by their own name).
+
+  _Spec-placement note (review R1 A5 — process meta moved out of the SHALL
+  text):_ this requirement lives under PL-2 (search, R-places-6..10), not
+  PL-3 (details) — the task brief that requested this line named PL-3, but
+  PL-2 is where every other floor/search requirement (R-places-6,
+  R-places-27) already sits; filed here instead, flagged rather than
+  silently diverging.
 
 ### Place details & Foursquare fetch-fresh
 
