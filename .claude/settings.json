@@ -1,15 +1,33 @@
 {
   "permissions": {
+    "defaultMode": "auto",
     "allow": [
-      "mcp__github__*",
-      "mcp__context7__*",
+      "Bash(rm -rf node_modules)",
+      "Bash(rm -rf apps/mobile/node_modules)",
+      "Bash(rm -rf apps/server/node_modules)",
+      "Bash(rm -rf packages/shared/node_modules)",
+      "Bash(rm -rf packages/tokens/node_modules)",
+      "Bash(rm -rf apps/mobile/dist)",
+      "Bash(rm -rf apps/server/dist)",
+      "Bash(rm -rf packages/shared/dist)",
+      "Bash(rm -rf packages/tokens/dist)",
+      "Bash(rm -rf apps/mobile/ios/build)",
+      "Bash(git worktree remove *)",
       "Bash(pnpm *)",
       "Bash(npm view *)",
       "Bash(node *)",
       "Bash(git *)",
-      "Bash(gh *)"
+      "Bash(gh *)",
+      "mcp__context7__*",
+      "mcp__claude_ai_Context7__*"
     ],
-    "deny": []
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git clean *)",
+      "Bash(gh repo delete*)",
+      "Bash(gh api -X DELETE*)"
+    ],
+    "deny": ["Read(**/.env)", "Read(**/.env.*)"]
   },
   "hooks": {
     "PreToolUse": [
