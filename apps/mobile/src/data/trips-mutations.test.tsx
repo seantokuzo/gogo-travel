@@ -201,21 +201,40 @@ describe("useTripList cold-start seed (R1 perf)", () => {
 });
 
 describe("usePlaceSearch (CT-2 — destination search)", () => {
-  it("mirrors the shared text-only floor: <4 chars never fires", async () => {
+  it("mirrors the ABSOLUTE floor (2 chars, PLACES_SEARCH_MIN_CHARS): <2 chars never fires — B-7 review R1: this used to gate at the WIDER PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (4), which meant a 2-3 char query never reached the server's new sub-floor exact-tier arm (falsification: reverting isSearchableDestinationQuery to PLACES_SEARCH_TEXT_ONLY_MIN_CHARS turns 'Fe'/'Fez' back to not-fired below)", async () => {
     const request = spyRequest();
-    const { result, unmount } = await renderHook(() => usePlaceSearch("Kyo"), {
+    const { result, unmount } = await renderHook(() => usePlaceSearch("F"), {
       wrapper: makeWrapper(makeTestQueryClient()),
     });
     expect(result.current.status).toBe("pending");
     expect(request).not.toHaveBeenCalled();
-    expect(isSearchableDestinationQuery("Kyo")).toBe(false);
-    expect(isSearchableDestinationQuery("Kyot")).toBe(true);
+    expect(isSearchableDestinationQuery("F")).toBe(false);
+    expect(isSearchableDestinationQuery("Fe")).toBe(true);
+    expect(isSearchableDestinationQuery("Fez")).toBe(true);
     // Whitespace padding doesn't sneak past the floor (schema trims).
-    expect(isSearchableDestinationQuery("  Kyo  ")).toBe(false);
+    expect(isSearchableDestinationQuery("  F  ")).toBe(false);
     await unmount();
   });
 
-  it("fires GET /places/search with the trimmed q at ≥4 chars", async () => {
+  it("fires GET /places/search with the trimmed q, no bbox, at exactly 3 chars (B-7 review R1 fix — reaches the server's new sub-floor exact-tier arm; a sub-4-char destination-tier row like Fez was previously unreachable from this hook)", async () => {
+    const request = spyRequest();
+    request.mockResolvedValue({ items: [], nextCursor: null });
+    const { result, unmount } = await renderHook(() => usePlaceSearch("Fez"), {
+      wrapper: makeWrapper(makeTestQueryClient()),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.items).toEqual([]);
+    expect(request).toHaveBeenCalledWith(
+      placeEndpoints.searchPlaces,
+      { query: { q: "Fez" } },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(request).toHaveBeenCalledTimes(1);
+    await unmount();
+  });
+
+  it("fires GET /places/search with the trimmed q at ≥4 chars (unchanged — trigram arm)", async () => {
     const request = spyRequest();
     request.mockResolvedValue({ items: [PLACE], nextCursor: null });
     const { result, unmount } = await renderHook(() => usePlaceSearch("  Kyoto "), {

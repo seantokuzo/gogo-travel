@@ -1,0 +1,1 @@
+CREATE INDEX "places_tier_name_folded_idx" ON "places" USING btree (lower(regexp_replace(normalize(trim("name"), NFD), '[̀-ͯ]', '', 'g'))) WHERE "places"."source" = 'overture' and "places"."category" = 'locality';

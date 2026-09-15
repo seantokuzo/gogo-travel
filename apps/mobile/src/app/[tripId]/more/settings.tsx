@@ -3,9 +3,10 @@
  * Role-gated rows off the guarded `TripWithRole` context:
  *
  * - details form (name / destination / dates — editor+): destination is the
- *   CT-2 structured search (Overture spine typeahead, 4-char floor, no free
- *   text — editing after a pick voids it so lat/lng always match the visible
- *   text); dates ride T-6.7's native `DateField` pickers. B-7 part 3
+ *   CT-2 structured search (Overture spine typeahead, ABSOLUTE 2-char floor
+ *   — B-7 review R1, `PLACES_SEARCH_MIN_CHARS` — no free text — editing
+ *   after a pick voids it so lat/lng always match the visible text); dates
+ *   ride T-6.7's native `DateField` pickers. B-7 part 3
  *   (2026-09-13 ruling, R-tripui-24): a zero-hit search offers the SAME
  *   inline "Use as a custom destination" row `new.tsx` ships (R-tripui-23),
  *   ported here so the settings destination change never dead-ends. A trip
@@ -44,7 +45,13 @@
  * `[tripId]` observers are live re-creates + refetches dead queries (the
  * T-6.6 scrub landmine).
  */
-import { CurrencyCodeSchema, type Place, type Trip, type TripUpdate } from "@gogo/shared";
+import {
+  CurrencyCodeSchema,
+  PLACES_SEARCH_MIN_CHARS,
+  type Place,
+  type Trip,
+  type TripUpdate,
+} from "@gogo/shared";
 import { isThemeName, THEME_NAMES, themes } from "@gogo/tokens";
 import { createStyles } from "@gogo/tokens/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -257,8 +264,9 @@ export default function TripSettingsScreen() {
 
   // CT-2 typeahead: search only while the text is EDITED away from the seeded
   // destination with no pick yet — a pristine form must never fire a search
-  // (its initial value is already a valid ≥4-char destination name). The
-  // HOOK gates on the DEFERRED state (round 2): during the first keystroke's
+  // (its initial value is already the trip's saved destination name — a
+  // real search hit, so equality alone suppresses it regardless of length).
+  // The HOOK gates on the DEFERRED state (round 2): during the first keystroke's
   // interim commit the deferred value still equals the seeded name — gating
   // on the immediate value would dispatch one spurious search for the
   // CURRENT destination. Trim-equal text counts as pristine.
@@ -537,7 +545,7 @@ export default function TripSettingsScreen() {
                   maxLength={200}
                   helper={
                     destinationEditing && !searchActive && destinationQuery !== ""
-                      ? "Keep typing — search starts at 4 characters."
+                      ? `Keep typing — search starts at ${PLACES_SEARCH_MIN_CHARS} characters.`
                       : undefined
                   }
                   error={destinationError}

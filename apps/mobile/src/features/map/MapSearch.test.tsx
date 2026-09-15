@@ -185,15 +185,30 @@ describe("coordinate-less trip (B-7 part 3, R-map-26)", () => {
     expect(screen.getByTestId("map-search-notice-no-destination")).toBeOnTheScreen();
   });
 
-  it("raises the floor to 4 chars — a 2-3 char query fires NOTHING (would be a live server 400)", async () => {
+  it("below the ABSOLUTE 2-char floor (1 char): notice shown, zero requests — coordinate-less trip included", async () => {
     const { request } = await renderSearch({ destination: null });
 
-    await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyo");
-    expect(screen.getByText("Keep typing — search starts at 4 characters.")).toBeOnTheScreen();
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "k");
+    expect(screen.getByText("Keep typing — search starts at 2 characters.")).toBeOnTheScreen();
     expect(searchCalls(request)).toHaveLength(0);
   });
 
-  it("at the 4-char floor: fires with NO bbox key at all (unbounded)", async () => {
+  it("B-7 review R1 fix: the ABSOLUTE 2-char floor fires WITHOUT a bbox on a coordinate-less trip — this used to require 4 chars (falsification: reverting mapSearchMinChars's null-destination branch to PLACES_SEARCH_TEXT_ONLY_MIN_CHARS turns this red — back to the 'Keep typing' notice + zero requests at 2-3 chars)", async () => {
+    const { request } = await renderSearch({ destination: null, results: [KYOTO] });
+
+    await fireEvent.changeText(screen.getByTestId("map-search-input"), "ky");
+    await screen.findByTestId(`map-search-list-item-${KYOTO.id}`);
+
+    expect(screen.queryByText(/Keep typing/)).toBeNull();
+    const calls = searchCalls(request);
+    expect(calls.length).toBeGreaterThan(0);
+    const [, input] = calls[0] as [unknown, { query: Record<string, unknown> }];
+    // Falsification: a `bbox` key riding along here — even one pinned to
+    // Null Island — is exactly the part-2 bug this closes.
+    expect("bbox" in input.query).toBe(false);
+  });
+
+  it("at 4+ chars (trigram arm): still fires with NO bbox key at all (unbounded, unchanged)", async () => {
     const { request } = await renderSearch({ destination: null, results: [KYOTO] });
 
     await fireEvent.changeText(screen.getByTestId("map-search-input"), "kyot");

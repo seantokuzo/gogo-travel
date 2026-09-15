@@ -16,10 +16,14 @@
  * the search removes temporary pins" holds by construction.
  *
  * COORDINATE-LESS TRIP (B-7 part 3, R-map-26): `destination === null` runs
- * search UNBOUNDED (no bbox) at the wider text-only floor
- * (`mapSearchMinChars`/`isSearchableMapQuery`, map-search.ts) and shows a
- * standing caption under the input so the raised floor is never a silent
- * surprise — the helper text ("Keep typing…") already derives from the same
+ * search UNBOUNDED (no bbox). B-7 review R1: this used to gate at a WIDER
+ * text-only floor (4) before firing a request at all — now gates at the
+ * SAME absolute floor as the bbox-bound case
+ * (`mapSearchMinChars`/`isSearchableMapQuery`, map-search.ts both return
+ * `PLACES_SEARCH_MIN_CHARS` for a null destination) — the SERVER picks the
+ * arm for a sub-floor text-only query (R-places-28). The standing caption
+ * under the input still explains the coordinate-less state so it's never a
+ * silent surprise; the helper text ("Keep typing…") derives from the same
  * floor, so the two copy lines never disagree.
  *
  * OFFLINE (R-map-25 ⇒ R-map-22 "degrade with an offline notice, no

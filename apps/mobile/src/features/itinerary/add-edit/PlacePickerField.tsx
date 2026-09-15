@@ -1,10 +1,12 @@
 /**
  * Place picker (T-7.6 / IT-7 — R-itin-23): REUSES the CT-2
  * destination-typeahead machinery verbatim — `usePlaceSearch` +
- * `isSearchableDestinationQuery` (the 4-char text-only floor is the ONLY
- * client gate; the ApiClient never validates inputs) with
- * `useDeferredValue` debouncing and pick-voids-on-edit semantics
- * (structured input: the id always matches the visible text).
+ * `isSearchableDestinationQuery` (the ABSOLUTE 2-char floor,
+ * `PLACES_SEARCH_MIN_CHARS`, is the ONLY client gate — B-7 review R1; the
+ * ApiClient never validates inputs, and the server, not this gate, picks
+ * the search arm above the floor) with `useDeferredValue` debouncing and
+ * pick-voids-on-edit semantics (structured input: the id always matches
+ * the visible text).
  *
  * R-itin-23's "trip's saved places first" leg has NO endpoint yet (the
  * saved-places descriptors land with PL-3/PL-4 — place.ts module doc);
@@ -13,7 +15,7 @@
  * testIDs: query input `{testID}`, result rows `{testID}-result-{placeId}`,
  * clear `{testID}-clear` (not in the §2.9 inventory — spec-sync batch).
  */
-import type { Place } from "@gogo/shared";
+import { PLACES_SEARCH_MIN_CHARS, type Place } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useDeferredValue, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -79,7 +81,7 @@ export function PlacePickerField({
         autoCorrect={false}
         helper={
           selected === null && query !== "" && !searchActive
-            ? "Keep typing — search starts at 4 characters."
+            ? `Keep typing — search starts at ${PLACES_SEARCH_MIN_CHARS} characters.`
             : undefined
         }
         error={error}

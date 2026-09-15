@@ -12,7 +12,7 @@
  * - wire shapes are `@gogo/shared` descriptors end to end.
  */
 import {
-  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
+  PLACES_SEARCH_MIN_CHARS,
   placeEndpoints,
   tripEndpoints,
   type Paginated,
@@ -110,25 +110,40 @@ function normalizeSearchText(raw: string): string {
 }
 
 /**
- * Client mirror of the text-ONLY search floor (`PlaceSearchQuerySchema`):
- * the create form has no geo bound (no trip exists yet), so `q` must carry
- * ≥ `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` (4) chars — shorter typeahead is a
- * server 400 by design (trgm-GIN scale bound, config/places.ts).
+ * Client mirror of the ABSOLUTE search floor (`PLACES_SEARCH_MIN_CHARS`, 2
+ * — mirrors `SearchTextSchema.min(2)`): the create form has no geo bound
+ * (no trip exists yet), so `q` must carry ≥ 2 chars after trim.
+ *
+ * B-7 review R1 (BLOCKING × 3 lanes, 2026-09-15): this used to gate at the
+ * WIDER `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` (4) — the trgm-GIN scale bound
+ * that only matters to the SERVER's arm selection — which meant none of
+ * the 54 sub-4-char destination-tier rows R-places-28 exists to unblock
+ * (Fez, Van, Ufa, Qom, …) were ever reachable from this screen: the
+ * request that would hit the server's new exact-match arm never fired.
+ * Below `PLACES_SEARCH_MIN_CHARS` is still a genuine floor —
+ * `SearchTextSchema.min(2)` 400s it (VALIDATION_FAILED), unaffected by
+ * R-places-28 — but at/above it the SERVER, not this client, now picks the
+ * arm (exact-tier below `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, trigram at/
+ * above it).
  */
 export function isSearchableDestinationQuery(raw: string): boolean {
-  return normalizeSearchText(raw).length >= PLACES_SEARCH_TEXT_ONLY_MIN_CHARS;
+  return normalizeSearchText(raw).length >= PLACES_SEARCH_MIN_CHARS;
 }
 
 /**
  * `GET /places/search` — destination structured search (CT-2; §2.3 resolved
  * Gate 2: Overture city/locality subset lives in the same `places` spine, so
  * the standard search endpoint IS the destination source). Text-only (no
- * bbox/near) with the 4-char floor enforced by the `enabled` gate — and the
- * gate is the ONLY client-side floor: the ApiClient validates RESPONSES
- * against the descriptor schema, never inputs (params/query/body serialize
- * unvalidated — R1 review), so a sub-floor query fired past this gate would
- * be a live server 400. Don't lean on a client input-validation layer that
- * doesn't exist.
+ * bbox/near) from the ABSOLUTE 2-char floor (`isSearchableDestinationQuery`)
+ * — the gate is the ONLY client-side floor: the ApiClient validates
+ * RESPONSES against the descriptor schema, never inputs (params/query/body
+ * serialize unvalidated — R1 review), so a `q` shorter than the ABSOLUTE
+ * floor fired past this gate would still be a live server 400
+ * (VALIDATION_FAILED) — that boundary is unchanged. At/above the absolute
+ * floor the server ALWAYS answers 200 (B-7 follow-up, R-places-28) and
+ * picks which arm ran (exact-tier match below
+ * `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, trigram scan at/above it) — this
+ * client no longer needs to know which.
  */
 export function usePlaceSearch(rawQuery: string): UseQueryResult<Paginated<Place>, Error> {
   const q = normalizeSearchText(rawQuery);

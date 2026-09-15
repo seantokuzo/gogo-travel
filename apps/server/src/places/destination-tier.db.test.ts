@@ -32,7 +32,9 @@ import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
 import type { ErrorEnvelope } from "../http/idor-404.test-util.js";
+import { placesExactTierMatchQuery, placesSearchQuery } from "./search-query.js";
 import { DESTINATION_TIER_ROW_COUNT } from "../test/destination-tier-fixture.js";
+import { encodeKeysetCursor } from "../http/keyset-cursor.js";
 import { createSuiteDb, type SuiteDb } from "../test/suite-db.js";
 
 const dockerAvailable = inject("dbAvailable");
@@ -102,6 +104,36 @@ const FEZ = {
   sourceId: "934d4327-381f-4abb-a53b-aecad75be1a1",
   name: "Fez",
 };
+/** B-7 follow-up (sub-floor exact-match arm) fixtures — all real seeded
+ * 3-char tier rows sharing FEZ's fate (54 total; QUEUE-row draft). */
+const VAN = { sourceId: "65ce9851-d747-4305-8666-4d49d8448784", name: "Van" };
+const QOM = { sourceId: "b47c150c-ffcf-4d7f-9d53-4d30b346dc3e", name: "Qom" };
+const UFA = { sourceId: "68cd8260-da3a-4080-86b6-3f2c287d8c21", name: "Ufa" };
+/** China — 3-char CJK, the positive unicode-adversarial case (folding is a
+ * no-op on CJK; still must round-trip through the exact-match arm). */
+const HAILUN = { sourceId: "5fd34d6e-72cc-4735-8239-04486b2eb94a", name: "海伦镇" };
+/**
+ * Review R1 B2 (blocking): "accent-folded" — R-places-28's own headline
+ * clause — had ZERO behavioral coverage; every prior fixture (FEZ, VAN,
+ * QOM, UFA, HAILUN) is fold-invariant (its ASCII spelling never touches the
+ * combining-mark strip). These 5 are real seeded 3-char tier rows whose
+ * ASCII-folded spelling ONLY reaches them through `tierNameFoldExpr`'s
+ * `normalize(…, NFD)` + combining-mark strip — verified against the
+ * committed `reference-data/destinations.json` snapshot. `asciiQuery` is
+ * the bare-ASCII spelling a user without an accented keyboard would type.
+ */
+const HUE = { sourceId: "9cc13945-6317-4904-acae-563b2121d783", name: "Huế", asciiQuery: "Hue" };
+const MUS = { sourceId: "cbaeb270-1c03-4dd6-b641-ccdb9c1efb3f", name: "Muş", asciiQuery: "Mus" };
+const NIS = { sourceId: "3f596f9a-bcf7-4160-bd53-8b8978d4b858", name: "Niš", asciiQuery: "Nis" };
+const OME = { sourceId: "0bc521ce-ef5f-4404-b569-4bd84ae36439", name: "Ōme", asciiQuery: "Ome" };
+const JAU = { sourceId: "6a18a8a3-2ea0-46f4-8d91-e6768a0e7f97", name: "Jaú", asciiQuery: "Jau" };
+/**
+ * Review R1 A3 (advisory): the exact arm's pagination/cursor semantics were
+ * unpinned. Two real seeded rows both fold to "ota" (Ōta-ku, Tokyo's ward,
+ * and a smaller Ōta — the seed's only sub-floor folded collision).
+ */
+const OTA_A = { sourceId: "21766799-1aab-4aea-8385-f5d6b96f79ba", name: "Ota" };
+const OTA_B = { sourceId: "b85b1e2a-3fa5-4617-814c-aa0d82cbe1f9", name: "Ota" };
 
 describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed)", () => {
   let suiteDb: SuiteDb;
@@ -267,18 +299,215 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     }
   });
 
-  it("3-char text-only query is rejected even for a real seeded city (Fez, MA, pop. 1.17M) — the floor is not a synthetic edge case here; 54 tier rows share this fate (QUEUE-row draft: 'destination search floor makes short city names unreachable by their own exact name')", async () => {
+  // ===========================================================================
+  // [B-7 follow-up] sub-floor exact-match arm (Sean's ruling, 2026-09-14,
+  // R-places-28): a text-only query shorter than
+  // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS no longer 400s — it runs an exact,
+  // case-insensitive, accent-folded, trimmed match against the bootstrap
+  // destination tier ONLY, never the trgm scan the floor still protects
+  // against everywhere else.
+  // ===========================================================================
+
+  it("[B-7 follow-up] a 3-char exact-match query finds a real seeded city (Fez, MA, pop. 1.17M) — 200, not 400 (falsification: reverting routes.ts's arm branch, or `PlaceSearchQuerySchema`'s relaxed floor, turns this back into a 400)", async () => {
     const user = await seedUserWithToken();
     expect(FEZ.name.length).toBe(3);
     const res = await search(user.accessToken, `q=${FEZ.name}`); // 3 chars, no geo bound
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    expect(res.status).toBe(200);
+    const page = PaginatedPlacesSchema.parse(await res.json());
+    expect(page.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
 
-    // Recovery: padding past the floor still finds Fez by trigram similarity
-    // — the mitigation is real, but it requires the user to type MORE than
-    // the city's own name, which "search Fez" alone never suggests.
+    // Recovery (unaffected by this change — "Fez Morocco" is 11 chars, still
+    // the trigram arm): padding past the floor still finds Fez.
     const recovered = await searchOk(user.accessToken, "q=Fez Morocco");
     expect(recovered.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+  });
+
+  it("[B-7 follow-up] case-insensitive: 'van' (lowercase) finds 'Van' (Turkey, pop. 468K)", async () => {
+    const user = await seedUserWithToken();
+    const page = await searchOk(user.accessToken, "q=van");
+    expect(page.items.some((p) => p.source_id === VAN.sourceId)).toBe(true);
+  });
+
+  it("[B-7 follow-up] Qom and Ufa (both real 3-char seeded cities) are findable by exact name", async () => {
+    const user = await seedUserWithToken();
+    for (const city of [QOM, UFA] as const) {
+      const page = await searchOk(user.accessToken, `q=${city.name}`);
+      expect(page.items.some((p) => p.source_id === city.sourceId)).toBe(true);
+    }
+  });
+
+  it("[B-7 follow-up] accent folding round-trips BOTH directions for 5 real seeded rows whose ASCII spelling is NOT fold-invariant (Huế, Muş, Niš, Ōme, Jaú) — the bare-ASCII spelling a user without an accented keyboard would type finds the accented row, and the accented spelling finds it too (review R1 B2, blocking: falsification — replacing tierNameFoldExpr's `normalize(…, NFD)` + combining-mark strip with a plain `lower(trim(x))` drops every one of the 5 ASCII-form queries to empty while all prior fixtures, being fold-invariant, stayed green)", async () => {
+    const user = await seedUserWithToken();
+    for (const city of [HUE, MUS, NIS, OME, JAU] as const) {
+      expect(city.name.length).toBe(3);
+      const asciiHit = await searchOk(user.accessToken, `q=${encodeURIComponent(city.asciiQuery)}`);
+      expect(
+        asciiHit.items.some((p) => p.source_id === city.sourceId),
+        `q=${city.asciiQuery} should find ${city.name}`,
+      ).toBe(true);
+
+      const accentedHit = await searchOk(user.accessToken, `q=${encodeURIComponent(city.name)}`);
+      expect(
+        accentedHit.items.some((p) => p.source_id === city.sourceId),
+        `q=${city.name} should find itself`,
+      ).toBe(true);
+    }
+  });
+
+  it("[B-7 follow-up] pagination over the exact arm's only folded collision ('Ota' — two real seeded rows) pages cleanly with limit=1, and a cursor MINTED BY THE TRIGRAM ARM resets to page 1 instead of erroring or skipping a row (review R1 A3, advisory: the exact arm's rank key is a constant 0::bigint, so `(0, id) < (foreignMicros, id)` holds for every row when foreignMicros is drawn from the trigram arm's much larger rank-key space — documented behavior, not a bug, since clients key cursors per query string)", async () => {
+    const user = await seedUserWithToken();
+
+    const full = await searchOk(user.accessToken, "q=Ota");
+    expect(full.items.map((p) => p.source_id).sort()).toEqual(
+      [OTA_A.sourceId, OTA_B.sourceId].sort(),
+    );
+
+    const page1 = await searchOk(user.accessToken, "q=Ota&limit=1");
+    expect(page1.items).toHaveLength(1);
+    expect(page1.nextCursor).not.toBeNull();
+
+    const page2 = await searchOk(
+      user.accessToken,
+      `q=Ota&limit=1&cursor=${encodeURIComponent(page1.nextCursor as string)}`,
+    );
+    expect(page2.items).toHaveLength(1);
+    expect(page2.nextCursor).toBeNull();
+    expect(page2.items[0]?.id).not.toBe(page1.items[0]?.id);
+    expect(new Set([page1.items[0]?.source_id, page2.items[0]?.source_id])).toEqual(
+      new Set([OTA_A.sourceId, OTA_B.sourceId]),
+    );
+
+    // A cursor whose micros component sits in the TRIGRAM arm's rank-key
+    // space (round-1 correctness A3's "~1e17" example) fed to the exact
+    // arm: the exact arm's rank key is always 0, so (0, id) < (1e17, id)
+    // holds regardless of id — the predicate excludes nothing and the
+    // exact arm silently resets to page 1, rather than 500ing or skipping.
+    const foreignCursor = encodeKeysetCursor({
+      micros: "100000000000000000",
+      id: "00000000-0000-0000-0000-000000000000",
+    });
+    const resetPage = await searchOk(
+      user.accessToken,
+      `q=Ota&limit=1&cursor=${encodeURIComponent(foreignCursor)}`,
+    );
+    expect(resetPage.items).toHaveLength(1);
+    expect(resetPage.items[0]?.id).toBe(page1.items[0]?.id); // identical to page 1 — the reset
+  });
+
+  it("[B-7 follow-up] coarse_category IS applied on the exact arm (review R1 A1/ADVISORY-2, advisory: was silently dropped) — a category filter that doesn't match a locality's own coarse_category excludes it; a matching one keeps it", async () => {
+    const user = await seedUserWithToken();
+    // FEZ's own coarse_category is 'other' (no 'locality' coarse rule,
+    // pinned above at the [B-7 repro] test) — a mismatched filter like
+    // 'food' must exclude it, exactly like the trigram arm already does.
+    const mismatched = await searchOk(user.accessToken, "q=Fez&coarse_category=food");
+    expect(mismatched.items.some((p) => p.source_id === FEZ.sourceId)).toBe(false);
+
+    const matched = await searchOk(user.accessToken, "q=Fez&coarse_category=other");
+    expect(matched.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+  });
+
+  it("[B-7 follow-up] trailing/leading whitespace trims before the exact match ('Fez ' still finds Fez)", async () => {
+    const user = await seedUserWithToken();
+    const page = await searchOk(user.accessToken, `q=${encodeURIComponent(" Fez ")}`);
+    expect(page.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+  });
+
+  it("[B-7 follow-up] a 3-char CJK query (folding is a no-op on non-Latin script) still round-trips exactly", async () => {
+    const user = await seedUserWithToken();
+    expect(HAILUN.name.length).toBe(3);
+    const page = await searchOk(user.accessToken, `q=${encodeURIComponent(HAILUN.name)}`);
+    expect(page.items.some((p) => p.source_id === HAILUN.sourceId)).toBe(true);
+  });
+
+  it("[B-7 follow-up] a 2-char query with NO exact tier match is 200 + empty, not 400 (the client shows 'no results' + offers custom-destination create, per apps/mobile/src/app/(trips)/new.tsx) — and this is the anti-prefix-widening mutation probe: 'Fe' must NOT prefix-match the real row 'Fez'", async () => {
+    const user = await seedUserWithToken();
+    const page = await searchOk(user.accessToken, "q=Fe");
+    expect(page.items).toEqual([]);
+    expect(page.items.some((p) => p.source_id === FEZ.sourceId)).toBe(false);
+  });
+
+  it("[B-7 follow-up] adversarial input never 500s and never loosens the exact match: SQL wildcard chars, an apostrophe, and a non-matching 3-char unicode string all resolve to 200 + empty", async () => {
+    const user = await seedUserWithToken();
+    for (const q of ["Fe%", "Fe_", "a'a", "Ⓕⓔⓩ"]) {
+      const res = await search(user.accessToken, `q=${encodeURIComponent(q)}`);
+      expect(res.status, `q=${q} should be 200`).toBe(200);
+      const page = PaginatedPlacesSchema.parse(await res.json());
+      expect(page.items, `q=${q} should match nothing`).toEqual([]);
+    }
+  });
+
+  it("[B-7 follow-up] below the ABSOLUTE 2-char floor (1-char, all-spaces) is still 400 — unaffected by this change", async () => {
+    const user = await seedUserWithToken();
+    for (const q of ["V", "   "]) {
+      const res = await search(user.accessToken, `q=${encodeURIComponent(q)}`);
+      expect(res.status, `q=${JSON.stringify(q)} should be 400`).toBe(400);
+      expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    }
+  });
+
+  it("[B-7 follow-up] a 4-char query ('Rome') still takes the TRIGRAM arm, not the exact-match arm — a superficially-similar 4-char query ('Fézz') does NOT spuriously match 'Fez' (EXPLAIN arm-selection pin)", async () => {
+    const user = await seedUserWithToken();
+    const rome = await searchOk(user.accessToken, "q=Rome");
+    expect(rome.items.some((p) => p.source_id === ROME.sourceId)).toBe(true);
+
+    const fezz = await searchOk(user.accessToken, "q=Fézz"); // "Fézz", 4 chars
+    expect(fezz.items.some((p) => p.source_id === FEZ.sourceId)).toBe(false);
+
+    // Direct EXPLAIN: the 4-char query drives the pg_trgm GIN (SARGABILITY
+    // CONTRACT precedent, routes.db.test.ts) — NEVER the exact-match arm's
+    // partial index — proving arm selection, not just result shape.
+    const { sql: text, params: values } = placesSearchQuery(db, {
+      userId: user.userId,
+      q: "Rome",
+      limit: 21,
+    }).toSQL();
+    const planRows = await suiteDb.client.begin(async (tx) => {
+      await tx`set local enable_seqscan = off`;
+      return tx.unsafe(`explain (costs false) ${text}`, values as never[]);
+    });
+    const plan = planRows.map((row) => String(Object.values(row as object)[0])).join("\n");
+    expect(plan).toContain("places_name_trgm_idx");
+    expect(plan).not.toContain("places_tier_name_folded_idx");
+  });
+
+  it("[B-7 follow-up] a sub-floor query drives the NEW partial index via an INDEX CONDITION, not a filter-only scan of it (EXPLAIN arm-selection pin; falsification: dropping `places_tier_name_folded_idx`, widening the predicate to `LIKE`, or DRIFTING the fold expression by one codepoint all change this plan — review R1 B1: the prior version of this pin only asserted the index NAME appeared, which a filter-only full-index scan also satisfies)", async () => {
+    const { sql: text, params: values } = placesExactTierMatchQuery(db, {
+      q: "Fez",
+      limit: 21,
+    }).toSQL();
+    const planRows = await suiteDb.client.begin(async (tx) => {
+      await tx`set local enable_seqscan = off`;
+      return tx.unsafe(`explain (costs false) ${text}`, values as never[]);
+    });
+    const plan = planRows.map((row) => String(Object.values(row as object)[0])).join("\n");
+    expect(plan).toContain("places_tier_name_folded_idx");
+    // The load-bearing assertion: an INDEX COND (the fold expression itself
+    // drives the index probe), never a Filter (which a plain full-index
+    // scan — the drift scenario — would produce instead, at ~6,926 rows
+    // removed for the same 6,927-row seed).
+    expect(plan).toMatch(/Index Cond: \(lower\(regexp_replace/);
+    expect(plan).not.toMatch(/Seq Scan on places\b/);
+    expect(plan).not.toContain("places_name_trgm_idx");
+  });
+
+  it("[B-7 follow-up] Law #3: a stranger's custom place named exactly 'Fez' (even with category='locality', matching the tier predicate) is NEVER returned by the exact-match arm — and NEITHER is the CREATOR's own, because this arm is tier-rows-only, full stop (falsification: dropping the `source = 'overture'` predicate turns both red)", async () => {
+    const creator = await seedUserWithToken();
+    const stranger = await seedUserWithToken();
+
+    const created = await request("/api/places", creator.accessToken, {
+      method: "POST",
+      body: JSON.stringify({ name: "Fez", category: "locality" }),
+    });
+    expect(created.status).toBe(201);
+    const custom = PlaceSchema.parse(await created.json());
+
+    const creatorView = await searchOk(creator.accessToken, "q=Fez");
+    expect(creatorView.items.some((p) => p.id === custom.id)).toBe(false);
+    expect(creatorView.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+
+    const strangerView = await searchOk(stranger.accessToken, "q=Fez");
+    expect(strangerView.items.some((p) => p.id === custom.id)).toBe(false);
+    expect(strangerView.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
   });
 
   // ===========================================================================

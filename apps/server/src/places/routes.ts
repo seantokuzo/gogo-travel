@@ -30,6 +30,7 @@ import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { Paginated } from "@gogo/shared/api/envelope";
+import { PLACES_SEARCH_TEXT_ONLY_MIN_CHARS } from "@gogo/shared/config/places";
 import { placeEndpoints, type Place, type PlaceDetails } from "@gogo/shared/domains/place";
 import { regionCellsForBbox } from "@gogo/shared/region-grid";
 import {
@@ -49,7 +50,12 @@ import { authContextOf } from "../http/require-auth.js";
 import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "./ingest-queue.js";
 import { intersectBoxes, staleSearchCells } from "./search-coverage.js";
-import { nearPrefilterBox, placesSearchQuery, type SearchBox } from "./search-query.js";
+import {
+  nearPrefilterBox,
+  placesExactTierMatchQuery,
+  placesSearchQuery,
+  type SearchBox,
+} from "./search-query.js";
 import { toPlaceWire, type PlaceRow } from "./serialize.js";
 import { resolvePlaceAccess } from "./visibility.js";
 
@@ -218,16 +224,34 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
       // precedent — no list spec documents a cursor 400).
       const cursor = query.cursor ? decodeKeysetCursor(query.cursor) : null;
 
-      const rows = await placesSearchQuery(deps.db, {
-        userId,
-        q: query.q,
-        bbox,
-        near,
-        coarse: query.coarse_category,
-        tripId: query.trip_id,
-        cursor,
-        limit: pageSize + 1,
-      });
+      // B-7 follow-up (Sean's ruling, 2026-09-14; R-places-28): a sub-floor
+      // TEXT-ONLY query (`q` trimmed shorter than the global floor, no
+      // bbox/near) no longer 400s at the validation boundary — it runs the
+      // exact-match tier arm instead of the trgm scan `placesSearchQuery`
+      // would otherwise drive. A short `q` WITH a geo bound is unaffected
+      // (the existing bbox/near-driven arm already bounds the candidate
+      // set, so it keeps using `placesSearchQuery` unchanged).
+      const rows =
+        query.q !== undefined &&
+        query.q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS &&
+        bbox === undefined &&
+        near === undefined
+          ? await placesExactTierMatchQuery(deps.db, {
+              q: query.q,
+              coarse: query.coarse_category,
+              cursor,
+              limit: pageSize + 1,
+            })
+          : await placesSearchQuery(deps.db, {
+              userId,
+              q: query.q,
+              bbox,
+              near,
+              coarse: query.coarse_category,
+              tripId: query.trip_id,
+              cursor,
+              limit: pageSize + 1,
+            });
 
       const page = rows.slice(0, pageSize);
       const items = page.map((row) => toPlaceWire(row.place));

@@ -7,11 +7,7 @@
 import { z } from "zod";
 import type { EndpointDescriptor } from "../api/descriptor.js";
 import { CursorQuerySchema, NoContentSchema, paginatedSchema } from "../api/envelope.js";
-import {
-  COARSE_CATEGORY_RULES,
-  PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES,
-  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
-} from "../config/places.js";
+import { COARSE_CATEGORY_RULES, PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES } from "../config/places.js";
 import {
   CoarseCategorySchema,
   PlaceSourceSchema,
@@ -347,23 +343,21 @@ export const PlaceSearchQuerySchema = CursorQuerySchema.extend({
       message: "at least one of q, bbox, near is required",
     });
   }
-  // TEXT-ONLY floor (round-1 perf finding): a 2–3-char q against the trgm
-  // GIN alone is an O(10^5–10^6)-candidate scan at spine scale — see
+  // TEXT-ONLY floor (round-1 perf finding; B-7 follow-up, Sean's ruling
+  // 2026-09-14, R-places-28): a 2–3-char q against the trgm GIN alone is an
+  // O(10^5–10^6)-candidate scan at spine scale — see
   // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS for the math. With a geo bound the
   // lat/lng window bounds the candidates instead, so map typeahead keeps
-  // its 2-char floor.
-  if (
-    val.q !== undefined &&
-    val.q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS &&
-    val.bbox === undefined &&
-    val.near === undefined
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: `text-only search requires q of at least ${PLACES_SEARCH_TEXT_ONLY_MIN_CHARS} characters (add a geo bound for shorter typeahead)`,
-      path: ["q"],
-    });
-  }
+  // its 2-char floor. A sub-floor TEXT-ONLY query is NO LONGER rejected
+  // here — 54 seeded destination-tier rows (Fez, Van, Ufa, Qom, …) are
+  // shorter than the floor and were otherwise unreachable by their own
+  // name. The floor now selects the search ARM instead of gating
+  // validation: `apps/server/src/places/routes.ts` runs an exact,
+  // case-insensitive, accent-folded match against the bootstrap
+  // destination tier ONLY (never the trgm scan this floor still protects
+  // against for everything else) — see `places/search-query.ts`'s
+  // `placesExactTierMatchQuery`. `q` still can't be shorter than 2 chars
+  // (SearchTextSchema.min(2) above); that boundary is unaffected.
   if (val.radius_m !== undefined && val.near === undefined) {
     ctx.addIssue({
       code: "custom",
@@ -520,11 +514,17 @@ export const placeEndpoints = {
   /**
    * Spine-only search (R-places-6): text (pg_trgm) / geo (bbox|near) /
    * blend; ranked deterministically for cursor stability. Coverage misses
-   * degrade + backfill (R-places-7) — never an error. Scale bounds
-   * (config/places.ts): text-ONLY searches need `q` ≥
-   * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (2–3-char typeahead requires a geo
-   * bound); bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per
-   * axis around the box center (degrade, not reject).
+   * degrade + backfill (R-places-7) — never an error. TWO ARMS select on
+   * `q` length + geo bound (config/places.ts, B-7 follow-up R-places-28): a
+   * geo-bounded `q` (bbox/near present) stays legal from the ABSOLUTE floor
+   * `PLACES_SEARCH_MIN_CHARS` (2) — the lat/lng window bounds the
+   * candidates. A TEXT-ONLY `q` (no geo bound) at/above
+   * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (4) runs the trigram scan as before;
+   * BELOW it (but still ≥ PLACES_SEARCH_MIN_CHARS) no longer rejects — it
+   * runs an exact, case-insensitive, accent-folded match against the
+   * bootstrap destination tier only (never the trgm scan, never a `custom`
+   * row). bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per axis
+   * around the box center (degrade, not reject).
    */
   searchPlaces: {
     method: "GET",
