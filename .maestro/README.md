@@ -85,6 +85,22 @@ Traps, all previously hit here:
   `xcrun simctl get_app_container <UDID> com.anonymous.gogo-travel` — "No such
   file or directory" is what you want.
 
+- **🔴 SAME TRAP, new cause: a door build AND the door-free build installed
+  side by side.** `app.json`'s `"scheme": "gogo"` is shared — `app.config.ts`'s
+  door variant only suffixes `bundleIdentifier`/`name`, never the scheme — so
+  `app.gogotravel.e2edoor` and `app.gogotravel` BOTH claim `gogo:` whenever
+  both are installed at once (e.g. building door then door-free back to back
+  to verify both lanes in one sitting, S-4 T5, 2026-09-14). `openLink` then
+  becomes nondeterministic about which one iOS hands the URL to — this
+  produced a real, reproducible `session-door-absent` false failure
+  (`e2e-session-screen`/`-error` where `-inert` was expected — the door
+  build answering a link meant for the door-free one), confirmed by
+  `xcrun simctl uninstall <UDID> app.gogotravel.e2edoor` making the SAME run
+  green immediately after, with no other change. `--variant doorfree`'s own
+  proof is therefore only trustworthy with the door build ABSENT from the
+  simulator — never test both variants' `openLink` flows on one simulator in
+  the same session without uninstalling the other first.
+
 - **`expo run:ios` has no `--derived-data` flag** and finds the built product by
   scraping the default `~/Library/Developer/Xcode/DerivedData` path out of the
   build log. Derived data is still isolated per checkout because the key is a
@@ -113,8 +129,9 @@ Traps, all previously hit here:
 ## Run
 
 ```bash
-pnpm --filter @gogo/mobile e2e          # release lane (excludes `dev` flows)
-bash scripts/e2e.sh --tags dev          # dev-build-only flows
+pnpm --filter @gogo/mobile e2e          # release lane (door build, excludes `dev` flows)
+bash scripts/e2e.sh --variant doorfree  # the periodic door-free proof (flows 1-4 + session-door-absent)
+bash scripts/e2e.sh --tags dev          # dev-build-only flows (implies --variant dev)
 bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
 bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug
 ```
@@ -128,6 +145,47 @@ count and the list (S-4 round 1) — and refuses to run at all if that count is
 zero. After the run it also refuses to treat a JUnit report with `tests="0"`
 (or no report at all) as a pass, even if maestro itself exited `0`. Both are
 defense against a filter silently matching nothing.
+
+**`--flow <file>` runs exactly that file.** A literal file target (as
+opposed to the default `.maestro/` directory) bypasses ALL tag filtering —
+no `--include-tags`/`--exclude-tags` reach maestro — so it is the sanctioned
+way to run one flow deliberately regardless of its tags, `wip` included
+(e.g. authoring against a known-red flow like `add-flight-dateline.yaml`
+without `--include-wip`).
+
+### App id / build variant (R-door-15)
+
+Every flow's `appId:` reads `${APP_ID}` — Maestro's own env-var substitution
+— rather than a literal, injected by the runner via `-e APP_ID=<value>` on
+every `maestro test` invocation. There is no single hard-coded bundle id:
+each lane resolves its own default, every one overridable with
+`GOGO_E2E_APP_ID`:
+
+| `--variant`           | Default app id           | Build                                           |
+| --------------------- | ------------------------ | ----------------------------------------------- |
+| `door` (default)      | `app.gogotravel.e2edoor` | `pnpm ios:door` — the merge-gate build          |
+| `dev` (`--tags dev`)  | `app.gogotravel`         | `npx expo run:ios` (Debug) — authoring only     |
+| `doorfree` (explicit) | `app.gogotravel`         | `pnpm ios:doorfree` — the door-free proof build |
+
+`--variant` wins outright when passed. Otherwise it derives from `--tags`:
+`--tags dev` implies `dev`; every other invocation (including the default,
+no-flag run) implies `door`. `doorfree` is **never** derived automatically —
+pass `--variant doorfree` explicitly, since its default tag filter is
+otherwise identical to `door`'s. The installed-app self-check
+(`scripts/e2e.sh`, the `xcrun simctl get_app_container` guard) runs against
+the resolved id, so a wrong-variant install `die()`s naming both the
+resolved id and the active `--variant`.
+
+### Evidence durability (R-door-10)
+
+A completed run's JUnit report and artifact directory are copied to
+`~/.gogo/e2e/<timestamp>/` (mode `0700`, outside this worktree) regardless of
+pass/fail, and the run prints that path, the copied JUnit path, and the
+run's own `~/.maestro/tests/<maestro-timestamp>/maestro.log` path (Maestro
+picks its own timestamp for this — a different clock read than the runner's
+`$STAMP` — so the runner resolves it post-run as the newest entry under
+`~/.maestro/tests`). A failed copy fails the whole run, even if `maestro`
+itself exited `0`.
 
 The runner requires a **booted** simulator and refuses to start without one:
 

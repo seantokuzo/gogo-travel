@@ -60,7 +60,7 @@
 # on screen regardless of where execution stopped. `config.yaml`'s
 # `executionOrder.flowsOrder` also pins this flow's run position explicitly —
 # before, it ran after `deeplink-matrix` by alphabetical luck, not by design.
-appId: app.gogotravel
+appId: ${APP_ID}
 name: sign-in-cancel-surface
 tags:
   - release
@@ -79,8 +79,18 @@ onFlowComplete:
         - tapOn:
             id: "sign-in-error-dismiss"
 ---
+# `clearKeychain: true` too (not just `clearState`), matching
+# `subflows/session-door.yaml`'s own R-door-8 note: the refresh token lives
+# in the iOS Keychain, which `clearState` alone never wipes. `config.yaml`
+# deliberately runs this flow LAST, after every authenticated door flow
+# (cross-tab-state included) — so without this, a real device-QA run (S-4
+# T5, 2026-09-14, first run against a reachable DB) found the door's leftover
+# session auto-resuming on this flow's "cold" launch: `today-screen` +
+# `tab-bar` rendered instead of `sign-in-screen`, failing Cell 0 before any
+# of this flow's own cells even ran.
 - launchApp:
     clearState: true
+    clearKeychain: true
 - extendedWaitUntil:
     visible:
       id: "sign-in-screen"

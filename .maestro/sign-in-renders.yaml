@@ -12,9 +12,19 @@
 # screen is asserting the render gate held, on the real native runtime, with
 # the real hook, in the state that broke.
 #
-# `clearState: true` guarantees signed-out: no stale session container, no
-# leftover stash from a previous flow.
-appId: app.gogotravel
+# `clearState: true` + `clearKeychain: true` guarantee signed-out: no stale
+# session container, no leftover stash from a previous flow. `clearKeychain`
+# matters now that door flows exist (S-4 T5) — the refresh token lives in
+# the iOS Keychain (R-door-8 note, `subflows/session-door.yaml`), which
+# `clearState` alone never wipes, and this flow runs FIRST in
+# `config.yaml`'s `executionOrder` — so it is the one flow that must reset
+# BOTH stores unconditionally, or a previous run's leftover authenticated
+# session (e.g. `cross-tab-state`, which never signs out) leaks into this
+# and every flow after it until a door flow's own subflow clears it again.
+# Found via a real Neon-backed re-run (S-4 T5, 2026-09-14): without this,
+# this flow — and the two `cold-open`-based flows after it, which do no
+# clearing of their own — landed on `today-screen`, not `sign-in-screen`.
+appId: ${APP_ID}
 name: sign-in-renders
 tags:
   - smoke
@@ -22,6 +32,7 @@ tags:
 ---
 - launchApp:
     clearState: true
+    clearKeychain: true
 - extendedWaitUntil:
     visible:
       id: "sign-in-screen"

@@ -1,0 +1,47 @@
+# Reusable subflow — the E2E session-door entry point (S-4 T5;
+# .specs/testing/session-door.spec.md §5.3). Every authenticated flow (5-10)
+# `runFlow`s this FIRST, with a UNIQUE `USER_KEY` per calling flow (§5.4 —
+# `<flow>-${RUN_ID}`, never reused across runs) and `FIRST_RUN` explicitly
+# passed through.
+#
+# `clearState: true` AND `clearKeychain: true` together (R-door-8 note): the
+# app's own local reset (query cache, tab memory, …) is `openSessionDoor`'s
+# job once the app is running — but the REFRESH TOKEN lives in the iOS
+# Keychain, which `clearState` alone does NOT wipe, and a stale Keychain
+# token could otherwise race boot hydration against the mint. `stopApp` then
+# makes the following `openLink` genuinely COLD — a WARM `openLink` arrives
+# on a different code path (`+native-intent` `initial: false`), the same
+# reasoning `subflows/cold-open.yaml` documents for the unauthenticated
+# flows.
+#
+# Terminal barrier: `notVisible: e2e-session-screen`, deliberately NOT
+# `visible: e2e-session-ready` (spec §5.3) — on success `AuthGate`'s resume
+# branch replaces out of `(auth)` on the very next effect cycle, so `ready`
+# can unmount before Maestro's poll ever observes it. On failure the screen
+# stays showing `e2e-session-error` and this barrier goes red BY DESIGN — a
+# door failure must fail the calling flow immediately, not silently continue
+# toward assertions on a screen this flow never reached.
+#
+# env: USER_KEY (required — unique per calling flow, never reused across
+# runs), FIRST_RUN ("true"/"false"; every flow in this suite passes "false"
+# so onboarding is skipped deterministically — R-door spec's own decoupling
+# of `is_new_user` from whether the fixture row was actually created).
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+    clearKeychain: true
+- stopApp
+- openLink:
+    link: "gogo://e2e-session?user_key=${USER_KEY}&first_run=${FIRST_RUN}"
+- waitForAnimationToEnd:
+    timeout: 3000
+- runFlow:
+    when:
+      visible: "Open"
+    commands:
+      - tapOn: "Open"
+- extendedWaitUntil:
+    notVisible:
+      id: "e2e-session-screen"
+    timeout: 20000

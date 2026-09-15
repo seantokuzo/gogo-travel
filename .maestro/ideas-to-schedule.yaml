@@ -1,0 +1,113 @@
+# Flow 8 — ideas-to-schedule: create a booking with NO date (lands in the
+# Ideas bucket, `IdeasBucket.tsx`) then schedule it onto a day via the
+# "Add to day" ScheduleSheet (T-7.6/IT-5, R-itin-11).
+#
+# Category "other" (`itinerary-add-option-other`) — the cheapest category:
+# only `title` is required on the wire for ANY category
+# (`required-fields.ts`'s own doc comment: "Name is the only required
+# booking field" — every `BookingDetails` member's fields are `.optional()`
+# by design). Status is left untouched: create-mode defaults to "idea"
+# (`BookingForm.tsx`: `useState<BookingStatus>(booking?.status ?? "idea")`),
+# which is exactly the Ideas-bucket entry point this flow needs.
+#
+# SCHEDULING — no calendar navigation needed. `ScheduleSheet`'s Day field
+# seeds from `contextDay` (the trip's start date) whenever the booking
+# carries no date of its own (`schedulePrefill` → `""`), so opening it and
+# tapping the PickerCard's Done commits the trip's start date on the
+# UNMODIFIED seed — the same "commit-the-seed" shape
+# `subflows/create-minimal-trip.yaml` uses throughout. Start/end time are
+# BOTH optional (`ScheduleForm.tsx`'s confirm guard is only `day === ""`),
+# so this flow never touches the time spinner at all.
+#
+# The booking's id is DB-generated and unknown ahead of time, so the "Add to
+# day" button (`itinerary-ideas-schedule-{booking.id}`) is reached via its
+# rendered TEXT ("Add to day") instead — safe here because this trip has
+# exactly ONE idea at that point (this flow creates exactly one, on a fresh
+# trip), so the text is unambiguous by construction, not by luck.
+appId: ${APP_ID}
+name: ideas-to-schedule
+# S-4 round 1 finding 3: `wip` — a real app gap (not a flow bug), confirmed
+# against a live Neon-backed door run 2026-09-14. The "other" category's
+# trailing fields (price/currency, confirmation, place, Save —
+# `BookingForm.tsx:832-920`) sit below the on-screen keyboard with no
+# scroll-to-target; `itinerary-item-new-button-save` never renders into the
+# query. Excluded from the default lane (scripts/e2e.sh's `wip` exclusion);
+# run deliberately with `--include-wip`. See the QUEUE-row draft in the PR
+# body (B-29) — remove this tag once the booking form's keyboard/scroll
+# handling fixes the underlying reachability gap.
+tags:
+  - release
+  - door
+  - wip
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "ideas-to-schedule-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- runFlow:
+    file: subflows/create-minimal-trip.yaml
+    env:
+      TRIP_NAME: "Ideas Test ${RUN_ID}"
+      DESTINATION_QUERY: "Kyoto"
+- tapOn:
+    id: "tab-bar-itinerary"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-fab-add"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-add-sheet"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-add-option-other"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-item-new-input-title"
+- inputText: "E2E Idea ${RUN_ID}"
+- tapOn:
+    id: "itinerary-item-new-button-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "itinerary-item-new-screen"
+    timeout: 15000
+- assertVisible:
+    id: "itinerary-screen"
+- assertVisible:
+    id: "itinerary-ideas"
+- tapOn:
+    id: "itinerary-ideas-toggle"
+- assertVisible:
+    id: "itinerary-ideas-list"
+- assertVisible: "E2E Idea ${RUN_ID}"
+- tapOn: "Add to day"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-ideas-schedule-sheet"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-ideas-schedule-input-day"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-ideas-schedule-input-day-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-ideas-schedule-input-day-sheet-done"
+- tapOn:
+    id: "itinerary-ideas-schedule-button-confirm"
+- extendedWaitUntil:
+    notVisible:
+      id: "itinerary-ideas-schedule-sheet"
+    timeout: 15000
+- assertNotVisible:
+    id: "itinerary-ideas-schedule-error"

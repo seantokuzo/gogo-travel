@@ -9,7 +9,7 @@
 # No `stopApp`, and no splash barrier: a warm app is already hydrated.
 #
 # env: LINK — the URL to deliver.
-appId: app.gogotravel
+appId: ${APP_ID}
 ---
 - openLink:
     link: ${LINK}
