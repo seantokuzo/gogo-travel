@@ -8,8 +8,9 @@
  *    custom-destination fallback below — so `destination_lat/lng` are
  *    always PRESENT as keys, but B-7 part 3 (2026-09-13 ruling) means their
  *    VALUES may be `null` for a coordinate-less custom pick; `null` is the
- *    signal, never `(0, 0)`. Text-only search carries the 4-char floor
- *    (shared scale bound) — shorter input just shows guidance.
+ *    signal, never `(0, 0)`. Text-only search carries the ABSOLUTE 2-char
+ *    floor (`PLACES_SEARCH_MIN_CHARS`, B-7 review R1 — the server picks the
+ *    arm above it) — shorter input just shows guidance.
  * 3. Dates — REQUIRED range picker (§2.3 point 3; resolved Gate 2):
  *    start/end platform date pickers (`@react-native-community/
  *    datetimepicker`, R1 review) composing the range under one
@@ -69,7 +70,12 @@
  * the navigator's `beforeRemove` event, which is intercepted with a discard
  * ConfirmDialog (`trip-new-button-cancel` derives `-confirm`/`-cancel`).
  */
-import { TripCreateSchema, type Place, type TripCreate } from "@gogo/shared";
+import {
+  PLACES_SEARCH_MIN_CHARS,
+  TripCreateSchema,
+  type Place,
+  type TripCreate,
+} from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useNavigation, useRouter, type Href } from "expo-router";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
@@ -389,7 +395,7 @@ export default function TripNewScreen() {
               maxLength={200}
               helper={
                 selectedPlace === null && destinationQuery !== "" && !searchActive
-                  ? "Keep typing — search starts at 4 characters."
+                  ? `Keep typing — search starts at ${PLACES_SEARCH_MIN_CHARS} characters.`
                   : undefined
               }
               error={fieldErrors.destination}

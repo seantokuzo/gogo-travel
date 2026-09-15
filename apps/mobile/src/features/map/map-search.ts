@@ -3,14 +3,22 @@
  * the map search bar. CT-2 typeahead machinery precedent
  * (`data/trips-mutations.ts` `usePlaceSearch`) with the map-surface deltas:
  *
- *  - 2-char floor (R-map-25 "≥ 2 characters") when the request carries the
- *    destination-region `bbox` geo bound (`search-geo.ts`; PL-3: 2–3-char
- *    typeahead requires a geo bound — the client mirror of
- *    `PlaceSearchQuerySchema`'s text-only floor). B-7 part 3 (R-map-26): a
+ *  - `MAP_SEARCH_MIN_CHARS` (2, R-map-25 "≥ 2 characters") when the request
+ *    carries the destination-region `bbox` geo bound (`search-geo.ts`) —
+ *    the lat/lng window bounds the candidate set. B-7 part 3 (R-map-26): a
  *    trip with NO destination coordinates has no bbox to send, so the
- *    request runs TEXT-ONLY at the wider `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`
- *    floor (4) — a sub-4-char query on a coordinate-less trip would
- *    otherwise be a live server 400 (no bbox, no geo-widened floor).
+ *    request runs TEXT-ONLY instead. B-7 review R1 (BLOCKING × 3 lanes,
+ *    2026-09-15): this used to gate at the WIDER
+ *    `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` floor (4) — a leftover from when a
+ *    sub-floor text-only query was a live server 400 — which made every
+ *    sub-4-char destination-tier row unreachable from a coordinate-less
+ *    trip's map search. Now gates at the same ABSOLUTE floor as the
+ *    bbox-bound case (`PLACES_SEARCH_MIN_CHARS`, 2 — mirrors
+ *    `SearchTextSchema.min(2)`): the SERVER picks the arm for a sub-floor
+ *    text-only query (R-places-28), same as every other text-only surface.
+ *    `MAP_SEARCH_MIN_CHARS` and `PLACES_SEARCH_MIN_CHARS` are equal today
+ *    (both 2) but stay two DISTINCT constants — R-map-25's own bbox-bound
+ *    requirement vs. the shared absolute floor — not one reused.
  *  - `trip_id` rides along so custom places saved to THIS trip are findable
  *    (R-places-8 visibility widening; membership is server-checked) — this
  *    is also how a coordinate-less trip's OWN custom places stay findable
@@ -35,16 +43,14 @@
  * staleTime, not trip data the 404-scrub must evict. The tripId suffix keeps
  * per-trip custom-place visibility from bleeding across trips' search UIs.
  *
- * The `enabled` gate is the ONLY client-side floor (CT-2 doc: the ApiClient
- * never validates inputs — a sub-floor query fired past the gate is a live
- * server 400). Every query forwards `{ signal }` (T-6.6 posture).
+ * The `enabled` gate is the ONLY client-side floor below the ABSOLUTE
+ * `PLACES_SEARCH_MIN_CHARS` (CT-2 doc: the ApiClient never validates
+ * inputs) — a `q` shorter than the absolute floor fired past the gate
+ * would still be a live server 400 (VALIDATION_FAILED). At/above the
+ * absolute floor the server ALWAYS answers 200 (R-places-28) and picks
+ * which arm ran. Every query forwards `{ signal }` (T-6.6 posture).
  */
-import {
-  PLACES_SEARCH_TEXT_ONLY_MIN_CHARS,
-  placeEndpoints,
-  type Paginated,
-  type Place,
-} from "@gogo/shared";
+import { PLACES_SEARCH_MIN_CHARS, placeEndpoints, type Paginated, type Place } from "@gogo/shared";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { apiClient } from "@/auth";
@@ -78,9 +84,12 @@ export interface MapSearchContext {
   destination: { lat: number; lng: number } | null;
 }
 
-/** 2 with a geo bound, the shared text-only floor (4) without one (module doc). */
+/** 2 either way now (module doc, B-7 review R1): `MAP_SEARCH_MIN_CHARS` with
+ *  a geo bound, the shared ABSOLUTE floor `PLACES_SEARCH_MIN_CHARS` without
+ *  one — the server, not this client, picks the arm for a sub-
+ *  `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` text-only query. */
 export function mapSearchMinChars(destination: MapSearchContext["destination"]): number {
-  return destination === null ? PLACES_SEARCH_TEXT_ONLY_MIN_CHARS : MAP_SEARCH_MIN_CHARS;
+  return destination === null ? PLACES_SEARCH_MIN_CHARS : MAP_SEARCH_MIN_CHARS;
 }
 
 /** Client mirror of the map-search floor (module doc) — floor depends on the bound. */

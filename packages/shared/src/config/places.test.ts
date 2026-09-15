@@ -11,6 +11,7 @@ import {
   PLACES_DEDUP_DISTANCE_M,
   PLACES_DEDUP_NAME_SIMILARITY,
   PLACES_REGION_GRID_DEGREES,
+  PLACES_SEARCH_MIN_CHARS,
   SPINE_SOURCE_PRIORITY,
   spineSourcesAbove,
 } from "./places.js";
@@ -21,6 +22,10 @@ describe("places spine config", () => {
     expect(PLACES_REGION_GRID_DEGREES).toBe(0.5);
     expect(PLACES_DEDUP_DISTANCE_M).toBe(50);
     expect(PLACES_DEDUP_NAME_SIMILARITY).toBe(0.6);
+  });
+
+  it("PLACES_SEARCH_MIN_CHARS mirrors SearchTextSchema's absolute floor (2) — B-7 review R1, single source for both the server 400 boundary and every client search gate", () => {
+    expect(PLACES_SEARCH_MIN_CHARS).toBe(2);
   });
 
   it("orders sources overture > fsq_os (R-places-18) and excludes custom", () => {

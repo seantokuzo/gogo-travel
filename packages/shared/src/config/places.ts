@@ -54,6 +54,24 @@ export function spineSourcesAbove(source: SpineSource): readonly SpineSource[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * The ABSOLUTE floor for any `q` — mirrors `SearchTextSchema.min(2)`
+ * (`packages/shared/src/domains/place.ts`) so nobody hand-copies that
+ * literal a second time. B-7 review R1 (BLOCKING × 3 lanes, 2026-09-15):
+ * this is now also the CLIENT's gate for every text-only, no-geo-bound
+ * search surface (trip-create destination, itinerary place picker, trip
+ * settings destination, a coordinate-less trip's map search) — those
+ * screens used to gate at `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` (4), which
+ * meant none of the 54 sub-4-char destination-tier rows R-places-28 exists
+ * to unblock (Fez, Van, Ufa, Qom, …) were ever reachable: the request that
+ * would hit the server's new exact-match arm never fired. A `q` shorter
+ * than THIS constant is still a genuine floor — `SearchTextSchema.min(2)`
+ * 400s it (VALIDATION_FAILED), unaffected by R-places-28 — but at/above it
+ * the SERVER, not the client, now picks the arm (exact-tier below
+ * `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, trigram at/above it).
+ */
+export const PLACES_SEARCH_MIN_CHARS = 2;
+
+/**
  * Minimum `q` length for a TRIGRAM (`%` operator) TEXT-ONLY search (no
  * bbox/near). A 2-char query yields only 3 padded trigrams ("  x", " xy",
  * "xy "), against a multi-million-row spine the trgm GIN's candidate set is
