@@ -18,8 +18,10 @@
  *
  * Stub design: `xcrun` answers `simctl list devices booted` (one fake UDID)
  * and `simctl get_app_container <device> <appid>` (exit 0 iff `<appid>`
- * equals `$STUB_INSTALLED_APP_ID`, else 1 — the ENTIRE mismatch-die surface
- * this suite pins). `maestro` answers `--version` (prints
+ * equals `$STUB_INSTALLED_APP_ID` OR appears in the space-separated
+ * `$STUB_INSTALLED_APP_IDS` — the latter simulates multiple apps installed
+ * at once, for the sibling-variant guard — else 1). `maestro` answers
+ * `--version` (prints
  * `$STUB_MAESTRO_VERSION`, default 2.10.0) and, for a real test invocation,
  * dumps its full argv to `$STUB_ARGV_DUMP` (so a test can assert exactly what
  * `-e APP_ID=...` the runner resolved and passed through), writes a JUnit
@@ -39,6 +41,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -61,10 +64,20 @@ if [[ "\${1:-}" == "simctl" ]]; then
       echo "    Fake iPhone (\${STUB_UDID}) (Booted)"
       ;;
     get_app_container)
-      if [[ "\${4:-}" == "\${STUB_INSTALLED_APP_ID:-}" ]]; then
-        echo "/fake/Bundle/Application/\${4}.app"
+      REQ="\${4:-}"
+      if [[ -n "$REQ" && "$REQ" == "\${STUB_INSTALLED_APP_ID:-}" ]]; then
+        echo "/fake/Bundle/Application/\${REQ}.app"
         exit 0
       fi
+      # $STUB_INSTALLED_APP_IDS (space-separated, S-4 round 1 advisory 7):
+      # simulates MULTIPLE apps installed at once, for the sibling-variant
+      # guard — $STUB_INSTALLED_APP_ID alone can only ever represent one.
+      for id in \${STUB_INSTALLED_APP_IDS:-}; do
+        if [[ "$REQ" == "$id" ]]; then
+          echo "/fake/Bundle/Application/\${REQ}.app"
+          exit 0
+        fi
+      done
       exit 1
       ;;
     *)
@@ -128,6 +141,16 @@ function makeSandbox() {
   const home = join(root, "home");
   const bin = join(root, "bin");
   const maestroBin = join(home, ".maestro", "bin");
+  // S-4 round 1 advisory 8: the script's own `$OUT_DIR` (JUnit/artifacts
+  // destination) must NEVER be the repo's real `.tmp/e2e` — this suite ran
+  // 9 test() cases, each of which used to `rm -rf` that shared directory,
+  // and `pnpm test` runs it on every gate. A concurrent real human run's
+  // in-progress evidence, or a future test added alongside these, would get
+  // wiped mid-flight. `$GOGO_E2E_OUT_DIR` (added to scripts/e2e.sh
+  // specifically for this) redirects it under this sandbox's own mkdtemp'd
+  // root instead — unique per test by construction, so no purge is needed
+  // either.
+  const out = join(root, "out");
   mkdirSync(home, { recursive: true });
   mkdirSync(bin, { recursive: true });
   mkdirSync(maestroBin, { recursive: true });
@@ -135,7 +158,7 @@ function makeSandbox() {
   writeFileSync(join(maestroBin, "maestro"), MAESTRO_STUB, { mode: 0o755 });
   const flowFile = join(root, "fixture-flow.yaml");
   writeFileSync(flowFile, FIXTURE_FLOW);
-  return { root, home, bin, maestroBin, flowFile };
+  return { root, home, bin, maestroBin, flowFile, out };
 }
 
 /** Run the real `scripts/e2e.sh` against a sandbox's stubbed toolchain. */
@@ -147,17 +170,11 @@ function runE2e(sandbox, args, envOverrides = {}) {
     PATH: [sandbox.maestroBin, sandbox.bin, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
     HOME: sandbox.home,
     STUB_UDID,
+    // See makeSandbox's comment — this sandbox's own scratch dir, never the
+    // repo's real `.tmp/e2e`.
+    GOGO_E2E_OUT_DIR: sandbox.out,
     ...envOverrides,
   };
-  // `$OUT_DIR` (the JUnit/artifact destination) is NOT sandboxed — it is
-  // always `<repoRoot>/.tmp/e2e`, fixed by the script itself — and `$STAMP`
-  // has only 1-SECOND resolution, so two fast back-to-back test cases can
-  // collide on the same `junit-<STAMP>.xml` path. Without this, a run that
-  // deliberately suppresses its own report (STUB_MAESTRO_WRITE_REPORT=0)
-  // could find a PRIOR test's stale file still sitting there and treat it as
-  // its own — purge before every invocation so each run starts from a truly
-  // empty OUT_DIR, never a timestamp-adjacent leftover.
-  rmSync(join(repoRoot, ".tmp", "e2e"), { recursive: true, force: true });
   return spawnSync("/bin/bash", [e2eScript, ...args], { env, encoding: "utf8" });
 }
 
@@ -181,6 +198,139 @@ test("default invocation (no --variant, no --tags) resolves the door lane's app.
     assert.match(result.stdout, /variant door/);
     const argv = readFileSync(argvDump, "utf8");
     assert.match(argv, /APP_ID=app\.gogotravel\.e2edoor/);
+    // S-4 round 1 finding 2: RUN_ID was computed but never passed to
+    // maestro at all (`-e RUN_ID=...` missing from ARGS) — every `${RUN_ID}`
+    // in every flow silently resolved to the literal string "undefined".
+    // Pin the actual `-e RUN_ID=<hex>` argv line, not just its absence: 8-11
+    // lowercase hex chars (`%x%03x` of epoch-seconds + a `$RANDOM` suffix,
+    // advisory 5), one full line so a stray "undefined" or empty value
+    // cannot slip past a substring match.
+    assert.match(argv, /^RUN_ID=[0-9a-f]{8,11}$/m);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// R-door-14 §5.4 — RUN_ID's USER_KEY budget (E2eUserKeySchema, 32-char cap)
+// ---------------------------------------------------------------------------
+
+test("R-door-14: every real `<prefix>-${RUN_ID}` USER_KEY template fits E2eUserKeySchema's 32-char cap", () => {
+  // Reads the REAL flow files this repo ships (not a synthetic stand-in) —
+  // exactly what `scripts/e2e.sh` interpolates RUN_ID into. Scans file
+  // CONTENT for the actual `<prefix>-${RUN_ID}` templates (both the
+  // `USER_KEY: "<name>-${RUN_ID}"` shape most door flows pass to
+  // `subflows/session-door.yaml`, and `session-door-absent.yaml`'s own
+  // inline `user_key=<name>-${RUN_ID}` in its cold-open LINK) rather than
+  // assuming every flow's bare FILENAME is used this way — a flow with no
+  // door dependency at all (e.g. `diagnostics-panel-dev.yaml`) never
+  // composes a USER_KEY and must not be budget-checked as if it did (that
+  // over-broad version of this pin was caught failing against this repo's
+  // own real flows while writing it — diagnostics-panel-dev's 21-char name
+  // alone doesn't fit the cap, but it never needs to). Budgets for RUN_ID's
+  // WORST case (11 hex chars: 8-char hex epoch-seconds + the `%03x`
+  // `$RANDOM` suffix, S-4 round 1 advisory 5) rather than today's actual
+  // value, so this pin does not silently rot as the wall clock advances
+  // toward hex epoch-seconds' 9th digit (~year 2106) or shrinks the margin
+  // in the meantime.
+  const flowsDir = join(repoRoot, ".maestro");
+  const flowFiles = readdirSync(flowsDir).filter((f) => f.endsWith(".yaml") && f !== "config.yaml");
+  assert.ok(flowFiles.length > 0, "expected at least one real flow file under .maestro/");
+  const RUN_ID_MAX_LEN = 11;
+  const USER_KEY_MAX_LEN = 32; // packages/shared/src/domains/e2e.ts E2eUserKeySchema
+  const TEMPLATE_RE = /([a-z0-9][a-z0-9-]*)-\$\{RUN_ID\}/g;
+  let templatesFound = 0;
+  for (const file of flowFiles) {
+    const content = readFileSync(join(flowsDir, file), "utf8");
+    for (const match of content.matchAll(TEMPLATE_RE)) {
+      templatesFound += 1;
+      const prefix = match[1];
+      const keyLen = prefix.length + 1 + RUN_ID_MAX_LEN; // "<prefix>-<RUN_ID>"
+      assert.ok(
+        keyLen <= USER_KEY_MAX_LEN,
+        `${file}: USER_KEY template "${prefix}-\${RUN_ID}" would be ${keyLen} ` +
+          `chars at RUN_ID's worst-case length (${RUN_ID_MAX_LEN}) — over ` +
+          `E2eUserKeySchema's ${USER_KEY_MAX_LEN}-char cap`,
+      );
+    }
+  }
+  assert.ok(
+    templatesFound > 0,
+    "expected at least one real `<prefix>-${RUN_ID}` USER_KEY template under .maestro/ — " +
+      "if this is legitimately zero, the door flows no longer use RUN_ID-based keys and this pin is stale",
+  );
+});
+
+test("S-4 round 1 advisory 5: the SCRIPT's own generated RUN_ID actually fits every real flow's USER_KEY budget", () => {
+  // The test above is a static, forward-looking budget check against an
+  // assumed worst-case RUN_ID length — it would NOT catch e2e.sh itself
+  // regressing to a longer RUN_ID (e.g. reverting to the full `$STAMP`,
+  // R-door-14/session-door spec §5.4's original bug). This test runs the
+  // REAL script once, captures the RUN_ID it actually generated from the
+  // stub's argv dump, and re-derives the budget against THAT length — a
+  // genuine regression pin against the script's own behavior, not an
+  // assumption about it.
+  const sandbox = makeSandbox();
+  try {
+    const argvDump = join(sandbox.root, "argv.txt");
+    const result = runE2e(sandbox, ["--flow", sandbox.flowFile], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+      STUB_ARGV_DUMP: argvDump,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const argv = readFileSync(argvDump, "utf8");
+    const runIdMatch = /^RUN_ID=([0-9a-z]+)$/m.exec(argv);
+    assert.ok(runIdMatch, `no RUN_ID=... line found in argv:\n${argv}`);
+    const actualRunIdLen = runIdMatch[1].length;
+
+    const flowsDir = join(repoRoot, ".maestro");
+    const flowFiles = readdirSync(flowsDir).filter(
+      (f) => f.endsWith(".yaml") && f !== "config.yaml",
+    );
+    const USER_KEY_MAX_LEN = 32;
+    const TEMPLATE_RE = /([a-z0-9][a-z0-9-]*)-\$\{RUN_ID\}/g;
+    for (const file of flowFiles) {
+      const content = readFileSync(join(flowsDir, file), "utf8");
+      for (const match of content.matchAll(TEMPLATE_RE)) {
+        const prefix = match[1];
+        const keyLen = prefix.length + 1 + actualRunIdLen;
+        assert.ok(
+          keyLen <= USER_KEY_MAX_LEN,
+          `${file}: USER_KEY template "${prefix}-\${RUN_ID}" would be ${keyLen} chars ` +
+            `against the SCRIPT'S ACTUAL RUN_ID ("${runIdMatch[1]}", ${actualRunIdLen} ` +
+            `chars) — over E2eUserKeySchema's ${USER_KEY_MAX_LEN}-char cap`,
+        );
+      }
+    }
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+test("S-4 round 1 advisory 5: two back-to-back invocations mint DIFFERENT RUN_IDs (no same-second collision)", () => {
+  // Before this fix, RUN_ID was hex epoch-SECONDS alone — two runs started
+  // within the same wall-clock second (plausible: a fast --include-wip
+  // re-run, or two operators racing the lane) minted the IDENTICAL RUN_ID,
+  // colliding on both their USER_KEY (R-door-8, a stale/duplicate fixture
+  // user) and their evidence directory (R-door-10, one run's report
+  // silently overwriting the other's). The `$RANDOM` suffix breaks the tie.
+  const sandbox = makeSandbox();
+  try {
+    const argvDumpA = join(sandbox.root, "argv-a.txt");
+    const resultA = runE2e(sandbox, ["--flow", sandbox.flowFile], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+      STUB_ARGV_DUMP: argvDumpA,
+    });
+    assert.equal(resultA.status, 0, resultA.stderr);
+    const argvDumpB = join(sandbox.root, "argv-b.txt");
+    const resultB = runE2e(sandbox, ["--flow", sandbox.flowFile], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+      STUB_ARGV_DUMP: argvDumpB,
+    });
+    assert.equal(resultB.status, 0, resultB.stderr);
+    const runIdA = /^RUN_ID=([0-9a-z]+)$/m.exec(readFileSync(argvDumpA, "utf8"))[1];
+    const runIdB = /^RUN_ID=([0-9a-z]+)$/m.exec(readFileSync(argvDumpB, "utf8"))[1];
+    assert.notEqual(runIdA, runIdB, "two back-to-back runs minted the same RUN_ID");
   } finally {
     cleanup(sandbox);
   }
@@ -239,7 +389,11 @@ test("R-door-15: --variant door excludes session-door-absent; --variant doorfree
       STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
     });
     assert.equal(doorResult.status, 0, doorResult.stderr);
-    assert.match(doorResult.stdout, /exclude=\[dev,doorfree\]/);
+    // `wip` joins the default exclusion set (S-4 round 1 finding 3) — every
+    // lane's exclusion is now three independent pieces (dev/lane/wip)
+    // combined unconditionally, never reset wholesale by --tags (advisory 6,
+    // pinned separately below).
+    assert.match(doorResult.stdout, /exclude=\[dev,doorfree,wip\]/);
     assert.match(doorResult.stdout, /session-door-entry\.yaml/);
     assert.doesNotMatch(doorResult.stdout, /session-door-absent\.yaml/);
 
@@ -247,9 +401,72 @@ test("R-door-15: --variant door excludes session-door-absent; --variant doorfree
       STUB_INSTALLED_APP_ID: "app.gogotravel",
     });
     assert.equal(doorfreeResult.status, 0, doorfreeResult.stderr);
-    assert.match(doorfreeResult.stdout, /exclude=\[dev,door\]/);
+    assert.match(doorfreeResult.stdout, /exclude=\[dev,door,wip\]/);
     assert.match(doorfreeResult.stdout, /session-door-absent\.yaml/);
     assert.doesNotMatch(doorfreeResult.stdout, /session-door-entry\.yaml/);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+test("S-4 round 1 finding 3: `wip`-tagged flows are excluded from the door lane by default and included via --include-wip", () => {
+  const sandbox = makeSandbox();
+  try {
+    const defaultResult = runE2e(sandbox, ["--variant", "door"], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+    });
+    assert.equal(defaultResult.status, 0, defaultResult.stderr);
+    assert.match(defaultResult.stdout, /exclude=\[dev,doorfree,wip\]/);
+    for (const wipFlow of [
+      "add-flight-dateline.yaml",
+      "ideas-to-schedule.yaml",
+      "cancel-visibility.yaml",
+    ]) {
+      assert.doesNotMatch(
+        defaultResult.stdout,
+        new RegExp(wipFlow.replace(".", "\\.")),
+        `${wipFlow} must not be selected by default (it is tagged wip)`,
+      );
+    }
+    // A non-wip door flow stays selected — proves the wip exclusion isn't
+    // accidentally swallowing the whole lane.
+    assert.match(defaultResult.stdout, /session-door-entry\.yaml/);
+
+    const includeWipResult = runE2e(sandbox, ["--variant", "door", "--include-wip"], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+    });
+    assert.equal(includeWipResult.status, 0, includeWipResult.stderr);
+    assert.match(includeWipResult.stdout, /exclude=\[dev,doorfree\]/);
+    for (const wipFlow of [
+      "add-flight-dateline.yaml",
+      "ideas-to-schedule.yaml",
+      "cancel-visibility.yaml",
+    ]) {
+      assert.match(includeWipResult.stdout, new RegExp(wipFlow.replace(".", "\\.")));
+    }
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+test("S-4 round 1 advisory 6: an explicit --tags selection cannot smuggle a doorfree-only flow into the door lane", () => {
+  const sandbox = makeSandbox();
+  try {
+    // Every flow in this suite carries `release` — before this fix,
+    // --tags release cleared EXCLUDE_TAGS wholesale, so it matched
+    // EVERYTHING including session-door-absent (doorfree-only) even while
+    // the active variant/app id is the DOOR build. The lane partition must
+    // survive an explicit --tags selection.
+    const result = runE2e(sandbox, ["--variant", "door", "--tags", "release"], {
+      STUB_INSTALLED_APP_ID: "app.gogotravel.e2edoor",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /session-door-absent\.yaml/);
+    // And the wip exclusion survives an explicit --tags selection too —
+    // add-flight-dateline is release+door+wip, so a bare "release" filter
+    // would otherwise let it straight back in.
+    assert.doesNotMatch(result.stdout, /add-flight-dateline\.yaml/);
+    assert.match(result.stdout, /session-door-entry\.yaml/);
   } finally {
     cleanup(sandbox);
   }
@@ -291,6 +508,33 @@ test("a wrong-variant install dies naming BOTH the resolved app id and the activ
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /app\.gogotravel\.e2edoor/);
     assert.match(result.stderr, /--variant door/);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+test("S-4 round 1 advisory 7: refuses to run when BOTH app.gogotravel and app.gogotravel.e2edoor are installed", () => {
+  const sandbox = makeSandbox();
+  try {
+    const result = runE2e(sandbox, ["--flow", sandbox.flowFile], {
+      STUB_INSTALLED_APP_IDS: "app.gogotravel.e2edoor app.gogotravel",
+    });
+    assert.notEqual(result.status, 0, "must refuse when both sibling app ids are installed");
+    assert.match(result.stderr, /app\.gogotravel\.e2edoor/);
+    assert.match(result.stderr, /app\.gogotravel\b/);
+    assert.match(result.stderr, /gogo:\/\//);
+  } finally {
+    cleanup(sandbox);
+  }
+});
+
+test("S-4 round 1 advisory 7: a single installed variant (not both) is unaffected by the sibling guard", () => {
+  const sandbox = makeSandbox();
+  try {
+    const result = runE2e(sandbox, ["--flow", sandbox.flowFile], {
+      STUB_INSTALLED_APP_IDS: "app.gogotravel.e2edoor",
+    });
+    assert.equal(result.status, 0, result.stderr);
   } finally {
     cleanup(sandbox);
   }

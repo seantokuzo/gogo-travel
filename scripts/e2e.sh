@@ -29,7 +29,13 @@ export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOW_TARGET="$REPO_ROOT/.maestro"
-OUT_DIR="$REPO_ROOT/.tmp/e2e"
+# GOGO_E2E_OUT_DIR (test-only override, S-4 round 1 advisory 8): the runner's
+# own self-test (scripts/e2e-runner.test.mjs) drives this REAL script as a
+# child process and must never touch the repo's actual `.tmp/e2e` — that
+# directory is shared with a human's concurrent real run, and `pnpm test`
+# invokes this suite 9 times, each of which used to `rm -rf` it outright.
+# Nothing outside the self-test should ever set this.
+OUT_DIR="${GOGO_E2E_OUT_DIR:-$REPO_ROOT/.tmp/e2e}"
 DEVICE=""
 INCLUDE_TAGS=""
 VARIANT=""         # resolved below (R-door-15) — door|dev|doorfree
