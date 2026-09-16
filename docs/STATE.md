@@ -193,7 +193,7 @@ door|dev|doorfree` lane defaults + `GOGO_E2E_APP_ID` (R-door-15),
   Results at head: door lane 6 green by default; `--include-wip` 10 with 4
   `wip`; doorfree 5/5 incl. `session-door-absent`. **S-4 wave 2 is DONE**
   (T3 #79, T4 #77, T5 #83) — flipped in QUEUE, with the `wip` residual
-  called out on the row rather than hidden. Filed **B-29** (P2 — booking
+  called out on the row rather than hidden. Filed **B-31** (P2 — booking
   form fields/Save unreachable behind the keyboard for the longer
   `flight`/`other` categories, blocks `add-flight-dateline` /
   `ideas-to-schedule` / `cancel-visibility`) and **B-30** (P1, `blocked`,
@@ -232,7 +232,7 @@ door|dev|doorfree` lane defaults + `GOGO_E2E_APP_ID` (R-door-15),
 **QUEUE sync:** "54 seeded destination-tier rows" flipped `done`
 (resolved by #84); "Authenticated E2E flows — S-4 wave 2" and the **S-4**
 row itself flipped `done` (wave 2 complete, `wip` residual called out
-in-row); 6 new Active rows filed: **B-29**, **B-30**, the sub-floor
+in-row); 6 new Active rows filed: **B-31**, **B-30**, the sub-floor
 `trip_id`/custom-place scope ruling, "B-7/#84 deferred follow-ups",
 the "wip guard" row, and "PR #85 hardening follow-ups (Sean)".
 "Reference-search E2E coverage" was deliberately left `queued` — see
@@ -939,7 +939,7 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 - **Device confirmations owed:** B-26 (#67, booking-form UX); B-7 (parts
   1–3 CLOSED — bootstrap tier + inline custom destination + nullable
   coords — plus #84's short-name search); B-28 (#74, migration-state
-  check); B-29 (repro — booking-form keyboard occlusion, Sean's device
+  check); B-31 (repro — booking-form keyboard occlusion, Sean's device
   needed to confirm the field-hierarchy claim before it's fixed). None yet
   run on Sean's device.
 - **Device QA still owed:** the F-0xx ledger flips, and the P-9
