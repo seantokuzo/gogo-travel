@@ -25,7 +25,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### SESSION 2026-09-13/14 — B-7 CLOSED, B-28 done, S-4 door server+mobile merged, teardown fix, spec-pass round 2, feature-batch spec
+### SESSION 2026-09-13/15 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
 
 Sean (director of product) ruled several parked spec questions in-session;
 PR #72 (S-4 wave 2 session-door contract) merged.
@@ -157,6 +157,86 @@ follow-ups, PG-teardown follow-ups, `apps/server/scripts/*` top-level-I/O
 landmine, B-26 residuals, S-4 mobile-door overlapping-opens flake, B-7/#80
 deferred follow-ups, `trips.destination_place_id` parked/deferred, B-7/#75
 spec gaps).
+
+#### 2026-09-15 close-out — S-4 wave 2 complete, B-7 short-name follow-up merged, PR #85 hardening findings filed
+
+Two more PRs closed the 2026-09-13/15 session: **#84** (`aa2adee`, B-7
+short-name follow-up) and **#83** (`0f34337`, S-4 T5 — session-door flows).
+Thirteen PRs merged in total this session: #72, #76, #67, #73, #78, #75,
+#74, #80, #79, #77, #82, #84, #83.
+
+- **#84 `aa2adee`** (B-7 follow-up, Sean ruling 2026-09-14) — sub-floor
+  (2–3 char) destination queries now take an exact, case-insensitive,
+  accent-folded match against tier rows only (`R-places-28`, migration
+  **0006**: partial expression index `places_tier_name_folded_idx`, fold
+  defined once in `tierNameFoldExpr`, EXPLAIN + byte-parity pins);
+  `coarse_category` honoured on the exact arm; mobile floor lowered to
+  `PLACES_SEARCH_MIN_CHARS = 2` at five call sites (`trips-mutations.ts`,
+  `(trips)/new.tsx`, `PlacePickerField.tsx`, `more/settings.tsx`,
+  `map-search.ts`/`MapSearch.tsx`) — the client gate was the operative
+  blocker; found independently by all three review lanes. **The 54
+  sub-4-char tier rows (`Fez`/`Van`/`Ufa`/`Qom` etc.) are now searchable —
+  QUEUE row flipped `done`.** Residual scope question (the exact arm has
+  no `trip_id` filter, so a member's own custom place is findable at 4
+  chars but not 3) filed as a new blocked/Sean-ruling QUEUE row; four P3
+  technical follow-ups filed as "B-7/#84 deferred follow-ups".
+- **#83 `0f34337`** (S-4 T5, wave 2 close) — `scripts/e2e.sh --variant
+door|dev|doorfree` lane defaults + `GOGO_E2E_APP_ID` (R-door-15),
+  installed-app self-check + sibling-variant refusal,
+  evidence copied outside the worktree to `~/.gogo/e2e/<stamp>/`
+  (R-door-10), 11-hex `RUN_ID`, `gen-test-env.mjs` emits the mobile door
+  secret (mode 600), runner self-test (18 pins, folded into root
+  `pnpm test`), `session-door-entry` subflow, flows 5–10,
+  `session-door-absent` door-free proof. Sean ruling: the lane runs
+  against his Neon dev DB (fixture users `e2e:`-prefixed; the operator
+  cleanup script's first real use removed 13 users / 10 trips, idempotent).
+  Results at head: door lane 6 green by default; `--include-wip` 10 with 4
+  `wip`; doorfree 5/5 incl. `session-door-absent`. **S-4 wave 2 is DONE**
+  (T3 #79, T4 #77, T5 #83) — flipped in QUEUE, with the `wip` residual
+  called out on the row rather than hidden. Filed **B-29** (P2 — booking
+  form fields/Save unreachable behind the keyboard for the longer
+  `flight`/`other` categories, blocks `add-flight-dateline` /
+  `ideas-to-schedule` / `cancel-visibility`) and **B-30** (P1, `blocked`,
+  Sean ruling — Autonomy #1 — server computes the trip-status day
+  boundary in UTC, client uses device-local time, `.specs/api/trips.spec.md`
+  requires agreement; blocks `cross-tab-state`). Filed a P3 "wip guard"
+  row — nothing today forces a `wip` tag to cite a bug or be re-run.
+  **Do NOT read this as "reference-search E2E coverage done"** — that row
+  stays `queued`; airport/airline search is only exercised inside the
+  still-`wip` `add-flight-dateline` flow, the green lane's real search
+  coverage is the places spine in `create-trip-golden`.
+- **#85 (OPEN, Sean's own)** — `chore/claude-permissions-hardening`. A
+  courtesy security lane found 4 blocking bypasses in the Claude Code
+  permission surface (glob/indirection past the Bash secrets scan;
+  command substitution inside a stripped `-m`/`-b` body runs and is
+  pre-approved by `gh *`; destructive git/gh has no ask-rule and `main` is
+  unprotected; the `.env` deny covers Read only, not content-mode Grep) —
+  filed as a `blocked`-on-Sean QUEUE row with the four bullets plus
+  advisories. Not built or reviewed by this session; it's Sean's own PR.
+
+**New landmines (don't re-walk):**
+
+1. **Masked-merge-failure recovery confirmed** (the incident recorded in
+   pass 2, PR #79) — the branch was fully restored from its SHA, reopened,
+   and merged clean; the check-MERGEABLE-first / never-pipe-the-merge /
+   gate-delete-on-MERGED rules from that incident are now also captured in
+   session memory (`review-pipeline-execution-guardrails`), not just here.
+2. **A subagent that waits on a Monitor/background-task notification for a
+   native (XcodeBuildMCP) build never resumes** — the notification doesn't
+   reach a subagent context. Poll in the foreground instead (or have the
+   orchestrator hold the wait, not a spawned worker).
+3. **The main working tree may be Sean's own live checkout of another
+   branch** — a post-merge doc sync must never `git checkout`/`pull` there.
+   Sync it with `git fetch origin main:main` only.
+
+**QUEUE sync:** "54 seeded destination-tier rows" flipped `done`
+(resolved by #84); "Authenticated E2E flows — S-4 wave 2" and the **S-4**
+row itself flipped `done` (wave 2 complete, `wip` residual called out
+in-row); 6 new Active rows filed: **B-29**, **B-30**, the sub-floor
+`trip_id`/custom-place scope ruling, "B-7/#84 deferred follow-ups",
+the "wip guard" row, and "PR #85 hardening follow-ups (Sean)".
+"Reference-search E2E coverage" was deliberately left `queued` — see
+above.
 
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
@@ -927,22 +1007,36 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 
 - **PR #70** (spec-pass round-2 consolidated decision doc, ~300 items) —
   awaiting Sean's rulings.
-- **PR #71** (itinerary-evolution spec batch) — awaiting Sean's sign-off;
-  both his questions already ruled (tz switcher = display-only; Month = true
-  month grid).
-- **Sub-floor destination-tier search names** (`Fez`/`Van`/`Ufa`/`Qom` etc. —
-  54 rows under the 4-char global text-search floor) — Sean to rule:
-  exact-match arm for sub-floor tier queries vs. lower the floor vs. accept.
-  QUEUE Active row.
+- **PR #71** (itinerary-evolution spec batch) — mergeable again after the
+  pass-2 resolve; still awaiting Sean's sign-off (both his questions already
+  ruled: tz switcher = display-only; Month = true month grid).
+- **Sub-floor destination-tier search names — RESOLVED 2026-09-15 via PR
+  #84** (exact-match, accent-folded arm shipped for tier rows; the 54
+  sub-4-char rows are searchable, QUEUE row flipped `done`). Residual: the
+  exact arm has no `trip_id` filter, so a member's own custom place is
+  findable at 4 chars but not 3 — widen it or accept the asymmetry is a
+  **new** Sean-ruling QUEUE row.
+- **B-30 ruling (Autonomy #1):** server computes the trip-status day
+  boundary in UTC, the client uses device-local time — three options on the
+  QUEUE row (per-trip destination tz / per-user local / keep UTC and change
+  the client); blocks the `cross-tab-state` E2E flow.
+- **PR #85** (Sean's own, `chore/claude-permissions-hardening`) — a
+  courtesy security lane found 4 blocking permission-hardening bypasses;
+  recorded as a `blocked`-on-Sean QUEUE row (his PR, not built or reviewed
+  by this session).
+- **`pnpm db:migrate` owed on Sean's dev DB:** #84 added migration 0006;
+  the DB was fully caught up (6/6) during S-4 T5 but is behind again as of
+  this pass. B-28's boot-time check will refuse the next `development` boot
+  until this runs.
 - **B-27 device confirmation still owed:** the doubled top safe-area inset
   fix shipped via PR #68 (`098b3e5`) but has not been confirmed on Sean's
   device.
-- **Device confirmation newly owed (2026-09-13/14 merges):** B-26 (#67,
-  booking-form UX); B-7 parts 1–3 (CLOSED — bootstrap tier + inline custom
-  destination + nullable coords); B-28 (migration-state check). None yet
+- **Device confirmations owed:** B-26 (#67, booking-form UX); B-7 (parts
+  1–3 CLOSED — bootstrap tier + inline custom destination + nullable
+  coords — plus #84's short-name search); B-28 (#74, migration-state
+  check); B-29 (repro — booking-form keyboard occlusion, Sean's device
+  needed to confirm the field-hierarchy claim before it's fixed). None yet
   run on Sean's device.
-- **S-4 T5 PR** — session-door flows 5–10 (branch
-  `S-4/session-door-flows`), in progress; will need review once opened.
 - **Device QA still owed:** the F-0xx ledger flips, and the P-9
   spec-pass batch (43+ interpretations) plus the other Sean-gated spec
   decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
