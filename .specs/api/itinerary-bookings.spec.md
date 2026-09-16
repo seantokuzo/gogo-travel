@@ -76,10 +76,14 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
 - **R-ib-8 (scheduling a timeless booking):** WHEN a booking with NULL
   `starts_at` is scheduled to a day THE SYSTEM SHALL create its `booking`-kind
   item with the given `day`/`start_time`/`end_time`, and SHALL advance status
-  `idea → planned` when it was `idea`; WHEN the booking already has items THE
-  SYSTEM SHALL reject `CONFLICT`; WHEN the booking has known times THE SYSTEM
-  SHALL reject `VALIDATION_FAILED` (its calendar presence is automatic,
-  R-ib-5).
+  `idea → planned` (default) or `idea → booked` (WHEN the caller passes
+  `status: 'booked'` — Sean QA feature batch 2026-09-06 feature ④, client
+  spec R-itin-40/41: additive, optional field, omitted ⇒ unchanged
+  `planned` behavior) in the same transaction; WHEN the booking already has
+  items THE SYSTEM SHALL reject `CONFLICT`; WHEN the booking has known times
+  THE SYSTEM SHALL reject `VALIDATION_FAILED` (its calendar presence is
+  automatic, R-ib-5) — for that case the client spec routes through a plain
+  status PATCH instead (R-itin-41), not this endpoint.
 - **R-ib-9 (unscheduling):** WHEN a `booking`-kind item is deleted and its
   parent booking is `planned` THE SYSTEM SHALL revert the booking to `idea`
   in the same transaction; WHEN the parent is `booked` THE SYSTEM SHALL
@@ -229,6 +233,13 @@ Side effects ride the transition in one transaction: `→ idea` and
 times creates items (I-2). Scheduling via `POST …/schedule` is the only
 transition path that also writes item position data.
 
+**UI-affordance note (B-17, QA-wave sync, PR #47):** `idea → cancelled`
+and `planned → cancelled` stay legal AT THIS WIRE LAYER — the table above
+is unchanged. The client's Cancel button (client spec R-itin-26/39) is
+gated `status === 'booked'` only; `idea`/`planned` bookings never render
+a Cancel affordance, though a direct API caller (a future capture or
+automation path) can still make those calls.
+
 ### 3.3 Time model (details → instants → calendar)
 
 Canonical facts (schema §3.4.1): detail-shape times are ISO-8601 **with UTC
@@ -242,16 +253,16 @@ schemas so server and client agree):
 - `starts_at` (UTC) = the instant of the category's **primary start** field;
   `ends_at` = primary end. Primary fields per category:
 
-| Category       | Primary start | Primary end  | Auto-item shape (R-ib-5)                                                                                                                                            |
-| -------------- | ------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `flight`       | `departs_at`  | `arrives_at` | 1 item on departure wall-date                                                                                                                                       |
-| `train`        | `departs_at`  | `arrives_at` | 1 item on departure wall-date                                                                                                                                       |
-| `lodging`      | `check_in`    | `check_out`  | 1 spanning item: `day` = check-in wall-date, `end_day` = check-out wall-date (§3.6 Branch A, resolved Gate 2)                                                       |
-| `car_rental`   | `pickup_at`   | `dropoff_at` | 2 point items: pickup event + dropoff event (each `booking`-kind; schema §3.3.9 "row(s)" anticipates plurality). Dropoff item exists only when `dropoff_at` is set. |
-| `moped_rental` | `pickup_at`   | `dropoff_at` | same as `car_rental`                                                                                                                                                |
-| `activity`     | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                              |
-| `restaurant`   | `reserved_at` | —            | 1 item, `end_time` NULL                                                                                                                                             |
-| `other`        | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                              |
+| Category       | Primary start | Primary end  | Auto-item shape (R-ib-5)                                                                                                                                                                                                                                                                           |
+| -------------- | ------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `flight`       | `departs_at`  | `arrives_at` | 1 item on departure wall-date; cross-midnight (`end_day` set) per the general rule below — already derived here today, no server/shared change owed. Client LIST-VIEW rendering of that spanning item now differs by category: client spec R-itin-36 (Sean QA feature batch 2026-09-06 feature ①). |
+| `train`        | `departs_at`  | `arrives_at` | 1 item on departure wall-date; same cross-midnight derivation as `flight` above, but client rendering is UNCHANGED this batch (client spec "what we deliberately did not spec").                                                                                                                   |
+| `lodging`      | `check_in`    | `check_out`  | 1 spanning item: `day` = check-in wall-date, `end_day` = check-out wall-date (§3.6 Branch A, resolved Gate 2)                                                                                                                                                                                      |
+| `car_rental`   | `pickup_at`   | `dropoff_at` | 2 point items: pickup event + dropoff event (each `booking`-kind; schema §3.3.9 "row(s)" anticipates plurality). Dropoff item exists only when `dropoff_at` is set.                                                                                                                                |
+| `moped_rental` | `pickup_at`   | `dropoff_at` | same as `car_rental`                                                                                                                                                                                                                                                                               |
+| `activity`     | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                                                                                                                                                             |
+| `restaurant`   | `reserved_at` | —            | 1 item, `end_time` NULL                                                                                                                                                                                                                                                                            |
+| `other`        | `starts_at`   | `ends_at`    | 1 item                                                                                                                                                                                                                                                                                             |
 
 - Item `day` = wall-date component of the primary-start ISO string (offset
   dropped — no tz database needed); `start_time`/`end_time` = wall-time
@@ -397,10 +408,12 @@ day" action).
 **Auth**: Required — editor/owner.
 
 **Request** (body): `day` (ISODate, required), `start_time?`/`end_time?`
-(ISOTime), `after_item_id?` (position; default append).
+(ISOTime), `after_item_id?` (position; default append), `status?`
+(`'planned' | 'booked'`, default `'planned'` — Sean QA feature batch
+2026-09-06 feature ④, additive).
 
 **Response 201**: `BookingWithItems` — item created, status advanced
-`idea → planned` when applicable (R-ib-8).
+`idea → planned` or `idea → booked` per the request (R-ib-8).
 
 **Errors**: 400 VALIDATION_FAILED (booking has known times; bad body) ·
 409 CONFLICT (already scheduled) · 401 · 403 · 404.
@@ -410,6 +423,8 @@ day" action).
 **Tests required**:
 
 - [ ] Idea scheduled → item exists, status planned, one transaction
+- [ ] Idea scheduled with `status: 'booked'` → item exists, status booked, one transaction (feature ④)
+- [ ] Omitted `status` behaves EXACTLY as before this field existed (backward-compat pin)
 - [ ] Timed booking 400; already-scheduled 409
 - [ ] Authz: viewer 403; non-member 404
 
@@ -632,6 +647,9 @@ unchanged):
   time-derivation helpers of §3.3 (used by server writes and client
   optimistic updates alike — they live beside the booking detail shapes
   they derive from; inventory corrected at T-7.1 round-1).
+  `ScheduleBookingInput` gains optional `status?: 'planned' | 'booked'`
+  (Sean QA feature batch 2026-09-06 feature ④, R-ib-8 amended above) —
+  additive, contracts spec §3.4 flagged for sync.
 - `domains/itinerary.ts` adds `ItineraryItemCreate`, `ItineraryItemUpdate`,
   `DayOrderInput`, `ItineraryRead` (`{ items, legs }`) + descriptors.
 - `scalars.ts` adds `ISOTime` (`HH:MM`, 24-hour) — `time` columns cross the

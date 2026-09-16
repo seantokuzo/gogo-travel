@@ -431,6 +431,103 @@ pnpm test && pnpm build`
 - **Linked specs:** `api/itinerary-bookings`, `client/itinerary`
 - **Ledger:** F-043..F-054
 
+#### P-7 extension — itinerary evolution batch (Sean QA feature batch 2026-09-06)
+
+- **ID rule applied:** ADR-001 defines a phase as "a ship-able,
+  user-observable capability"; P-7's own charter IS the plan/itinerary
+  surface, this batch's four features are enhancements to THAT surface
+  (list-view derivation, a calendar-header control, a grid density option,
+  an ideas-bucket flow fix) not a new capability domain, and P-7 is still
+  open (`in-progress`, ledger F-043..F-054 not yet phase-QA'd — see QUEUE).
+  A new `P-N` would mint a phase with no distinct "what can the user do
+  now that they couldn't before" beyond "the itinerary tab got better,"
+  which the ADR's own worked rejection of ordinal-insertion sprawl argues
+  against. **Extending P-7 with `T-7.10..T-7.16`** is the correct call;
+  stable IDs mean nothing renumbers if a later phase needs to insert
+  between P-7 and P-8.
+- **Status:** blocked — Sean spec sign-off (this PR). Flips to `queued`
+  the moment the four QUEUE rows below flip.
+- **Spec:** `.specs/client/itinerary.spec.md` R-itin-33..41,
+  `.specs/api/itinerary-bookings.spec.md` R-ib-8 (amended),
+  `.specs/shared/contracts.spec.md` §3.4 (booking.ts sync). Both spec
+  markers **Ruled 2026-09-13, Sean** (PR #71 Questions #1/#2): R-itin-35
+  month shape = true month-overview grid; R-itin-38 timezone-switcher
+  effect = display-only, no math. Zero markers remain — T-7.14 and T-7.12
+  are unblocked to their full specced scope, no longer answer-gated.
+- **Conflict analysis (file-ownership sets, so Wave 1 can run as 4
+  parallel worktrees with zero shared-file writes):**
+  - **T-7.10** (server+shared) — owns `apps/server/src/bookings/**`,
+    `packages/shared/src/domains/booking.ts`. Touches NOTHING any mobile
+    task below touches.
+  - **T-7.11** (mobile) — owns `apps/mobile/src/features/itinerary/model.ts`,
+    `apps/mobile/src/features/itinerary/ItineraryDayList.tsx` + their
+    `.test.ts(x)` files.
+  - **T-7.12** (mobile) — owns a NEW
+    `apps/mobile/src/features/itinerary/timezone/` directory
+    (`timezone-switcher-model.ts`, `TimezoneSwitcher.tsx` + tests). Does
+    NOT touch the itinerary index screen (T-7.16 owns that mount).
+  - **T-7.13** (mobile) — owns
+    `apps/mobile/src/features/itinerary/grid/constants.ts`,
+    `grid/model.ts`, `GridSurface.tsx` (density prop plumbing) + a NEW
+    `grid-density.ts` persistence file + a NEW `DensitySegment.tsx`
+    component + tests.
+  - **T-7.14** (mobile, Wave 2 — FIRM, R-itin-35 ruled true month-overview
+    grid) — owns a NEW `apps/mobile/src/features/itinerary/month/`
+    directory: `MonthSurface.tsx` (week × 7 day-cell render, no hour
+    axis), `model.ts` (week/day-cell layout — item-count dots + "+N"
+    overflow, multi-day spanning-bar segments per R-itin-31/36, tap → Day
+    density routing) + tests. `depends_on: [T-7.13]` (shares the
+    density-persistence type/key, not just convention).
+  - **T-7.15** (mobile, Wave 2) — owns
+    `apps/mobile/src/features/itinerary/ideas/IdeasBucket.tsx`,
+    `ideas/ScheduleSheet.tsx`, `ideas/ideas-model.ts`, plus whichever
+    `apps/mobile/src/data/` hook file wraps the schedule/status mutations
+    - tests. `depends_on: [T-7.10]` (needs the server's optional `status`
+      field to exist for real integration, not a mock).
+  - **T-7.16** (mobile, Wave 3, SOLE owner of the screen file — no other
+    task in this batch touches it) — owns
+    `apps/mobile/src/app/[tripId]/itinerary/index.tsx` (mounts
+    `TimezoneSwitcher` + `DensitySegment`, routes Month density to
+    `MonthSurface`) + its screen test. `depends_on: [T-7.12, T-7.13,
+T-7.14]`.
+- **Wave plan:** **Wave 1** (4× parallel worktrees) — T-7.10 ∥ T-7.11 ∥
+  T-7.12 ∥ T-7.13. **Wave 2** (2× parallel worktrees) — T-7.14 ∥ T-7.15.
+  **Wave 3** (serial) — T-7.16.
+- **Size:** T-7.10 S · T-7.11 S · T-7.12 M · T-7.13 M · T-7.14 L (final —
+  a genuinely new component class, week-grid + dot/overflow rendering +
+  spanning bars; no longer provisional now R-itin-35 is ruled) · T-7.15 M
+  · T-7.16 S.
+- **Test matrix owed (`.claude/rules/testing.md`), per task:**
+  - T-7.10: happy (schedule with `status: 'booked'`) · error (illegal
+    transition still 400s) · boundary (omitted `status` = byte-identical
+    to pre-change behavior, a regression pin) · mutation-verify (revert
+    the optional field, confirm the new test reds).
+  - T-7.11: happy (real cross-midnight flight fixture, both rows render)
+    · empty/boundary (same-day flight → no split, unchanged) · adversarial
+    (date-line-crossing fixture, B-9/B-8 precedent data) · a11y (both rows
+    reach VoiceOver distinctly, R-itin-30) · mutation-verify (revert the
+    category gate to lodging-only, confirm red).
+  - T-7.12: happy (2+ zone trip populates + labels correctly) · empty
+    (0-1 zone trips hide the control) · boundary (exactly 2 distinct
+    zones) · adversarial (a zone ICU can't resolve, B-9's `isKnownTimeZone`
+    filter precedent) · mutation-verify.
+  - T-7.13: happy (each density renders its column count) · boundary
+    (1-day trip in Trip-span; very long trip, no crash) · offline (n/a —
+    pure client state) · mutation-verify (revert `COLUMN_FRACTION`
+    branching, confirm red).
+  - T-7.14: happy · empty (no items in a month) · boundary (a booking
+    spanning a month boundary) · adversarial (30+ dot-count day) ·
+    mutation-verify.
+  - T-7.15: happy (both known-times and timeless idea paths) · error
+    (invalid day/time shows inline error, save blocked) · empty (idea
+    with no date stays untouched) · boundary (end time equals start time)
+    · adversarial (the exact B-16 known-times fixture that dead-ended
+    before) · mutation-verify (revert the routing branch, confirm the
+    known-times path reds with the pre-existing VALIDATION_FAILED banner).
+  - T-7.16: happy (both controls mounted, correct header order) ·
+    integration (pressing each control opens the right sheet/surface) ·
+    mutation-verify.
+
 ### P-8 — Maps, saved places & offline tile packs
 
 - **Status:** done — CODE-COMPLETE 2026-08-23, 8/8 PRs merged (#20–#27),
