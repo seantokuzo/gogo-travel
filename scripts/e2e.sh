@@ -3,9 +3,13 @@
 # Local E2E lane (ADR-007) — runs the Maestro flows in `.maestro/` against the
 # booted iOS simulator and writes JUnit to `.tmp/e2e/`.
 #
-#   bash scripts/e2e.sh                      # release lane (excludes `dev`)
-#   bash scripts/e2e.sh --tags dev           # dev-build-only flows
-#   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml
+#   bash scripts/e2e.sh                      # release lane (door build, excludes `dev`/`wip`)
+#   bash scripts/e2e.sh --variant doorfree    # door-free proof (session-door-absent)
+#   bash scripts/e2e.sh --tags dev           # dev-build-only flows (implies --variant dev)
+#   bash scripts/e2e.sh --include-wip         # also run flows tagged `wip` (known-red gaps)
+#   bash scripts/e2e.sh --flow .maestro/sign-in-renders.yaml   # runs exactly
+#                                            # this file — no tag filtering,
+#                                            # including a `wip`-tagged flow
 #   bash scripts/e2e.sh --device <udid>
 #   bash scripts/e2e.sh -- --debug-output .tmp/e2e/debug   # passthrough
 #
@@ -20,7 +24,6 @@ set -euo pipefail
 # pin it), so the pin is asserted here at run time. Override deliberately with
 # MAESTRO_EXPECTED_VERSION=x.y.z when testing an upgrade.
 MAESTRO_EXPECTED_VERSION="${MAESTRO_EXPECTED_VERSION:-2.10.0}"
-APP_ID="app.gogotravel"
 
 # Nothing about a test run leaves this machine (ADR-007 / Law #5).
 export MAESTRO_CLI_NO_ANALYTICS=1
@@ -28,10 +31,18 @@ export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FLOW_TARGET="$REPO_ROOT/.maestro"
-OUT_DIR="$REPO_ROOT/.tmp/e2e"
+# GOGO_E2E_OUT_DIR (test-only override, S-4 round 1 advisory 8): the runner's
+# own self-test (scripts/e2e-runner.test.mjs) drives this REAL script as a
+# child process and must never touch the repo's actual `.tmp/e2e` — that
+# directory is shared with a human's concurrent real run, and `pnpm test`
+# invokes this suite 9 times, each of which used to `rm -rf` it outright.
+# Nothing outside the self-test should ever set this.
+OUT_DIR="${GOGO_E2E_OUT_DIR:-$REPO_ROOT/.tmp/e2e}"
 DEVICE=""
 INCLUDE_TAGS=""
-EXCLUDE_TAGS="dev" # dev-build-only flows never run in the release lane
+VARIANT=""         # resolved below (R-door-15) — door|dev|doorfree
+TAGS_EXPLICIT=""   # raw --tags value, if any — feeds the --variant derivation
+INCLUDE_WIP=0       # --include-wip: also run flows tagged `wip` (off by default)
 PASSTHROUGH=()
 
 die() {
@@ -45,21 +56,30 @@ while [[ $# -gt 0 ]]; do
     --tags)
       [[ $# -ge 2 ]] || die "--tags needs a value"
       INCLUDE_TAGS="$2"
-      # An explicit tag selection owns the filter completely — otherwise
-      # `--tags dev` would ask for the dev flows and exclude them in the same
-      # breath, and silently run nothing.
-      EXCLUDE_TAGS=""
+      TAGS_EXPLICIT="$2"
       shift 2
       ;;
     --flow)
       [[ $# -ge 2 ]] || die "--flow needs a path"
       FLOW_TARGET="$2"
-      # Same failure class as --tags above: leaving the default `dev`-exclude
-      # filter active while naming one explicit flow can filter out the very
-      # flow you asked for and silently run nothing. An explicit --flow target
-      # owns the filter completely, just like an explicit --tags selection.
-      EXCLUDE_TAGS=""
+      # A literal FILE target (as opposed to the default directory) bypasses
+      # tag filtering entirely, below — that is the sanctioned way to run one
+      # wip/lane-mismatched flow deliberately for authoring, so no exclusion
+      # bookkeeping is needed here.
       shift 2
+      ;;
+    --variant)
+      [[ $# -ge 2 ]] || die "--variant needs a value (door|dev|doorfree)"
+      VARIANT="$2"
+      case "$VARIANT" in
+        door | dev | doorfree) ;;
+        *) die "--variant must be door, dev, or doorfree (got: $VARIANT)" ;;
+      esac
+      shift 2
+      ;;
+    --include-wip)
+      INCLUDE_WIP=1
+      shift
       ;;
     --device)
       [[ $# -ge 2 ]] || die "--device needs a UDID"
@@ -78,6 +98,77 @@ while [[ $# -gt 0 ]]; do
       ;;
     *) die "unknown argument: $1 (use -- to pass flags through to maestro)" ;;
   esac
+done
+
+# ── variant / app id resolution (R-door-15) ─────────────────────────────────
+# No single hard-coded bundle id for every lane — each lane resolves its OWN
+# default, and every lane's default is env-overridable via GOGO_E2E_APP_ID.
+# `--variant` wins outright when given; otherwise derive from `--tags`:
+# `--tags dev` (and ONLY that exact value) implies the `dev` lane; every other
+# invocation — including the default, no-flag run (today's default merge-gate
+# cadence) — implies `door`. `doorfree` is NEVER derived from --tags/--flow —
+# the periodic door-free proof must pass --variant doorfree explicitly, since
+# its default tag filter is otherwise identical to the door lane's.
+if [[ -z "$VARIANT" ]]; then
+  if [[ "$TAGS_EXPLICIT" == "dev" ]]; then
+    VARIANT="dev"
+  else
+    VARIANT="door"
+  fi
+fi
+
+case "$VARIANT" in
+  door) DEFAULT_APP_ID="app.gogotravel.e2edoor" ;;
+  dev) DEFAULT_APP_ID="app.gogotravel" ;;
+  doorfree) DEFAULT_APP_ID="app.gogotravel" ;;
+esac
+# GOGO_E2E_APP_ID (operator-settable, same override pattern as
+# MAESTRO_EXPECTED_VERSION/--device) overrides the variant-derived default
+# outright, for any variant.
+APP_ID="${GOGO_E2E_APP_ID:-$DEFAULT_APP_ID}"
+
+# ── exclusion sets (S-4 round 1 advisory 6) ─────────────────────────────────
+# Three INDEPENDENT pieces, always combined below — never reset wholesale by
+# --tags. Previously an explicit --tags selection cleared EXCLUDE_TAGS
+# completely (to let `--tags dev` actually select `dev`-tagged flows without
+# excluding them in the same breath), which had a real hole: `--tags release`
+# — a tag every flow in every lane carries — cleared the door/doorfree lane
+# partition too, so `session-door-absent` (release, doorfree) would match and
+# attempt to run against whatever build the active --variant/app id actually
+# is. Each piece below is derived from state --tags can't touch (the
+# resolved VARIANT, and --include-wip), so a --tags selection can only ever
+# narrow within a lane, never smuggle a flow across one.
+#
+#   DEV_EXCLUDE   — `dev`-tagged flows never run outside the `dev` variant.
+#   LANE_EXCLUDE  — `door` excludes `doorfree`-tagged flows and vice versa;
+#                   `dev` has no lane partition of its own.
+#   WIP_EXCLUDE   — `wip`-tagged flows (known app-gap failures, S-4 round 1
+#                   finding 3) are off by default in every lane; --include-wip
+#                   is the deliberate, explicit way to run them anyway.
+#
+# EXCLUDE_TAGS is still computed unconditionally below even for a literal
+# --flow FILE target — it is the *application* of it to the maestro
+# invocation that a FILE target skips (S-4 round 2 finding: commit d88d487
+# deleted the old `--flow` branch's `EXCLUDE_TAGS=""` reset without
+# replacing the bypass, so a wip-tagged flow like add-flight-dateline.yaml
+# got `--exclude-tags dev,doorfree,wip` smuggled onto a single-file maestro
+# invocation anyway — see the ARGS assembly below, which is the actual gate).
+DEV_EXCLUDE=""
+[[ "$VARIANT" == "dev" ]] || DEV_EXCLUDE="dev"
+
+LANE_EXCLUDE=""
+case "$VARIANT" in
+  door) LANE_EXCLUDE="doorfree" ;;
+  doorfree) LANE_EXCLUDE="door" ;;
+esac
+
+WIP_EXCLUDE=""
+[[ "$INCLUDE_WIP" -eq 1 ]] || WIP_EXCLUDE="wip"
+
+EXCLUDE_TAGS=""
+for _part in "$DEV_EXCLUDE" "$LANE_EXCLUDE" "$WIP_EXCLUDE"; do
+  [[ -n "$_part" ]] || continue
+  EXCLUDE_TAGS="${EXCLUDE_TAGS:+$EXCLUDE_TAGS,}$_part"
 done
 
 # ── maestro ───────────────────────────────────────────────────────────────────
@@ -163,14 +254,47 @@ fi
   xcrun simctl boot <udid> && open -a Simulator
   (xcrun simctl list devices available)"
 
-# A missing app is the single most common way this lane 'fails' — say so in one
-# line instead of letting every flow die on launchApp.
+# ── sibling-variant guard (S-4 round 1 advisory 7) ──────────────────────────
+# `app.gogotravel` (dev/doorfree) and `app.gogotravel.e2edoor` (door) both
+# register the SAME `gogo://` custom URL scheme (`.maestro/README.md`'s own
+# landmine, previously documented only for the pre-PR-#33 stale id). With
+# BOTH installed, a cold `openLink` can land on EITHER app nondeterministically
+# — every door/doorfree flow starts with one — so a run could silently
+# exercise the wrong build and still report a clean pass. Refuse outright
+# rather than let that ambiguity into a merge-gate run; this check is
+# unconditional (not scoped to the active --variant/APP_ID) because the
+# hazard exists the moment both ids are on the device, regardless of which
+# one this particular invocation happens to target.
+DOOR_APP_ID="app.gogotravel.e2edoor"
+DOORFREE_APP_ID="app.gogotravel"
+if xcrun simctl get_app_container "$DEVICE" "$DOOR_APP_ID" >/dev/null 2>&1 &&
+  xcrun simctl get_app_container "$DEVICE" "$DOORFREE_APP_ID" >/dev/null 2>&1; then
+  die "both $DOOR_APP_ID and $DOORFREE_APP_ID are installed on $DEVICE — they
+  share the gogo:// scheme (.maestro/README.md), so a cold openLink can land
+  on either one nondeterministically. Uninstall whichever this run does NOT
+  target before continuing:
+    xcrun simctl uninstall $DEVICE $DOOR_APP_ID       # keep doorfree/dev
+    xcrun simctl uninstall $DEVICE $DOORFREE_APP_ID   # keep door"
+fi
+
+# A missing/wrong app is the single most common way this lane 'fails' — say so
+# in one line instead of letting every flow die on launchApp. This doubles as
+# the runner's own lane self-check (R-door-15): an install of the wrong
+# variant fails this by construction (the resolved id is simply not what is
+# installed), and the message names both the resolved id and the active
+# --variant, not a fixed string, so a wrong-variant run is diagnosable from
+# the failure text alone.
 if ! xcrun simctl get_app_container "$DEVICE" "$APP_ID" >/dev/null 2>&1; then
-  die "$APP_ID is not installed on $DEVICE.
-  Build and install the Release configuration first (ADR-007 build lane):
-    LANG=en_US.UTF-8 npx expo prebuild --platform ios     # apps/mobile, CNG
-    LANG=en_US.UTF-8 npx expo run:ios --configuration Release
-  A Debug/dev build is for flow AUTHORING only — never the merge gate."
+  die "$APP_ID (--variant $VARIANT) is not installed on $DEVICE.
+  Build and install the matching configuration first:
+    door      → cd apps/mobile && set -a && . ../server/.env.test && set +a && \\
+                LANG=en_US.UTF-8 pnpm ios:door
+    dev       → cd apps/mobile && npx expo run:ios   (Debug — flow AUTHORING only)
+    doorfree  → cd apps/mobile && unset EXPO_PUBLIC_E2E_DOOR_SECRET && \\
+                LANG=en_US.UTF-8 pnpm ios:doorfree
+  See ADR-007 / .maestro/README.md / session-door.spec.md §5.2.
+  Wrong app installed for this --variant? Pass --variant explicitly, or set
+  GOGO_E2E_APP_ID to override the resolved id outright."
 fi
 
 # ── flow selection ───────────────────────────────────────────────────────────
@@ -245,19 +369,63 @@ done
 
 # ── run ───────────────────────────────────────────────────────────────────────
 mkdir -p "$OUT_DIR"
-STAMP="$(date +%Y%m%d-%H%M%S)"
+# R-door-14 / session-door spec §5.4: "the runner ... generates RUN_ID="$STAMP"
+# ... and passes -e RUN_ID="$RUN_ID" on every invocation" — this was written
+# but never wired to the actual `maestro` invocation below, so every
+# `${RUN_ID}` in every flow (USER_KEY, trip/item names) silently resolved to
+# the literal string "undefined" on every run (S-4 T5, found via a real
+# Neon-backed run: `ideas-to-schedule`'s title field rendered "E2E Idea
+# undefined"). Fixed by actually passing it, matching APP_ID's pattern.
+#
+# Deliberately NOT the full `$STAMP` (15 chars, "YYYYMMDD-HHMMSS") — every
+# door flow's USER_KEY is `<flow-name>-${RUN_ID}` and
+# `packages/shared/src/domains/e2e.ts`'s `E2eUserKeySchema` caps the WHOLE
+# key at 32 chars (`^[a-z0-9][a-z0-9-]{0,31}$`). `$STAMP` pushed 5 of 6 door
+# flows' keys over that cap (e.g. "add-flight-dateline-20260914-150312" = 35
+# chars) — a CLIENT-SIDE schema rejection with zero network call, which
+# looks identical to a door failure (`e2e-session-error`, no server log
+# entry) until you count characters (S-4 T5, caught via a real Neon-backed
+# re-run).
+#
+# Hex epoch SECONDS alone (8 chars today) still collides at 1-second
+# resolution — two runs started in the same wall-clock second (a fast
+# `--include-wip` re-run, or two operators racing the lane) mint the SAME
+# RUN_ID, so their USER_KEYs and evidence dirs (both derived from it, see
+# EVIDENCE_DIR below) collide too (S-4 round 1 advisory 5). A 3-hex-digit
+# (`%03x`, 0-4095) `$RANDOM` suffix breaks the tie without lengthening the
+# budget past what fits: the longest flow name, "add-flight-dateline" /
+# "session-door-absent" (19 chars each) + "-" + 11-char RUN_ID = 31, still
+# under the 32-char cap.
+RUN_ID="$(printf '%x%03x' "$(date +%s)" $((RANDOM % 4096)))"
+# Evidence-dir uniqueness (R-door-10) rides the SAME suffix as RUN_ID rather
+# than a second, independent random draw — one source of uniqueness, so the
+# report/artifacts/evidence paths for a single invocation can never disagree
+# about which run they belong to.
+STAMP="$(date +%Y%m%d-%H%M%S)-$RUN_ID"
 REPORT="$OUT_DIR/junit-$STAMP.xml"
 
 ARGS=(--device "$DEVICE" test "$FLOW_TARGET"
   --format JUNIT
   --output "$REPORT"
   --test-output-dir "$OUT_DIR/artifacts-$STAMP"
-  --test-suite-name "gogo-e2e")
-[[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
-[[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
+  --test-suite-name "gogo-e2e"
+  -e "APP_ID=$APP_ID"
+  -e "RUN_ID=$RUN_ID")
+# A literal --flow FILE target runs EXACTLY that file: no --include-tags/
+# --exclude-tags are passed to maestro at all, matching the enumeration
+# above (which already bypasses tag matching for a `-f` FLOW_TARGET) and the
+# `--flow` argument handler's own comment. Re-testing `-f` here (rather than
+# trusting a flag set earlier) keeps this gate co-located with the ARGS it
+# actually guards. Without this, a wip/dev/lane-mismatched flow named
+# explicitly via --flow would still get filtered out by the default
+# exclusion set and silently yield 0 testcases (S-4 round 2 finding).
+if [[ ! -f "$FLOW_TARGET" ]]; then
+  [[ -n "$INCLUDE_TAGS" ]] && ARGS+=(--include-tags "$INCLUDE_TAGS")
+  [[ -n "$EXCLUDE_TAGS" ]] && ARGS+=(--exclude-tags "$EXCLUDE_TAGS")
+fi
 [[ ${#PASSTHROUGH[@]} -gt 0 ]] && ARGS+=("${PASSTHROUGH[@]}")
 
-echo "e2e: maestro $ACTUAL_VERSION · device $DEVICE · $FLOW_TARGET"
+echo "e2e: maestro $ACTUAL_VERSION · device $DEVICE · variant $VARIANT · appId $APP_ID · $FLOW_TARGET"
 echo "e2e: junit → $REPORT"
 
 set +e
@@ -280,6 +448,48 @@ if [[ -f "$REPORT" ]]; then
     die "0 testcases ran (JUnit tests=\"0\") but maestro exited 0 — the tag/flow
   filter matched nothing. Check --tags/--exclude-tags against the --flow
   target, or the workspace's tag headers, before treating this as a pass."
+  fi
+
+  # ── evidence durability (R-door-10) ──────────────────────────────────────
+  # A completed run's JUnit + artifacts must survive outside this worktree —
+  # a `git clean`, a worktree teardown, or a later `--force` regen of
+  # apps/server/.env.test must never take the only copy of a run's evidence
+  # with it. Runs REGARDLESS of pass/fail (STATUS is untouched below): the
+  # failing run is exactly the one you most need durable evidence for. A
+  # failed copy fails the WHOLE run — an evidence-copy failure must never be
+  # swallowed behind a green `maestro` exit.
+  EVIDENCE_DIR="$HOME/.gogo/e2e/$STAMP"
+  if ! mkdir -p -m 700 "$EVIDENCE_DIR" 2>/dev/null; then
+    die "could not create the evidence directory $EVIDENCE_DIR (R-door-10) —
+  refusing to treat this run's report as durable. Check that
+  $(dirname "$EVIDENCE_DIR") is writable."
+  fi
+  # `mkdir -m` only applies to directories it actually CREATES — an already-
+  # existing (e.g. re-run in the same second) EVIDENCE_DIR keeps whatever mode
+  # it had, so pin the mode explicitly rather than trust the create-time flag.
+  chmod 700 "$EVIDENCE_DIR"
+  EVIDENCE_JUNIT="$EVIDENCE_DIR/$(basename "$REPORT")"
+  if ! cp "$REPORT" "$EVIDENCE_JUNIT" 2>/dev/null; then
+    die "failed to copy the JUnit report to $EVIDENCE_JUNIT (R-door-10) — this
+  run's evidence is not durable outside the worktree; treat it as unverified
+  even though maestro itself exited $STATUS."
+  fi
+  if [[ -d "$OUT_DIR/artifacts-$STAMP" ]]; then
+    EVIDENCE_ARTIFACTS="$EVIDENCE_DIR/artifacts-$STAMP"
+    if ! cp -R "$OUT_DIR/artifacts-$STAMP" "$EVIDENCE_ARTIFACTS" 2>/dev/null; then
+      die "failed to copy the artifact directory to $EVIDENCE_ARTIFACTS (R-door-10)."
+    fi
+  fi
+  # Maestro writes its OWN per-run log under a timestamp it picks itself
+  # (not $STAMP — a different clock read, a different format), so the only
+  # reliable way to name it is to ask for the newest entry after the run.
+  MAESTRO_LOG_DIR="$(ls -t "$HOME/.maestro/tests" 2>/dev/null | head -1)"
+  echo "e2e: evidence copied → $EVIDENCE_DIR (mode 700, outside the worktree)"
+  echo "e2e: junit copy → $EVIDENCE_JUNIT"
+  if [[ -n "$MAESTRO_LOG_DIR" ]]; then
+    echo "e2e: maestro log → $HOME/.maestro/tests/$MAESTRO_LOG_DIR/maestro.log"
+  else
+    echo "e2e: maestro log → (none found under $HOME/.maestro/tests)"
   fi
 else
   die "no JUnit report was written at $REPORT (maestro exited $STATUS before

@@ -6,7 +6,8 @@
  * presentation + itinerary landing) lives in trip-create-flow.test.tsx.
  *
  * Covers the §3 test bullets: validation (required name/destination/dates +
- * date order), destination structured search (4-char text-only floor,
+ * date order), destination structured search (ABSOLUTE 2-char floor, B-7
+ * review R1 — the server picks the trigram-vs-exact-tier arm above it,
  * pick-fills-lat/lng), pending-disable, success replace-navigation, failure
  * preserves input, dirty dismiss confirms; base_currency defaulting
  * (R-tripui-6) both ways.
@@ -254,15 +255,43 @@ describe("validation (R-tripui-6, TripCreateSchema client-mirrored)", () => {
 });
 
 describe("destination structured search (§2.3 — Overture spine, no free text)", () => {
-  it("stays quiet under the 4-char text-only floor, then searches and fills from a picked result", async () => {
+  it("stays quiet below the ABSOLUTE 2-char floor: helper text, zero requests", async () => {
     const request = mockApi();
     await renderScreen();
 
-    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyo");
-    expect(screen.getByText("Keep typing — search starts at 4 characters.")).toBeOnTheScreen();
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "F");
+    expect(screen.getByText("Keep typing — search starts at 2 characters.")).toBeOnTheScreen();
     expect(
       request.mock.calls.filter(([d]) => (d as { path: string }).path === "/places/search"),
     ).toHaveLength(0);
+  });
+
+  it("B-7 review R1 fix: a 3-char query issues exactly ONE request with q=Fez and NO bbox, and an empty result shows the normal empty state + custom-destination row (not a 'too short' notice) — falsification: restoring the old 4-char client gate here turns this red (zero requests, 'Keep typing' shown instead)", async () => {
+    const request = mockApi({
+      "GET /places/search": (input) => {
+        expect(input.query).toEqual({ q: "Fez" }); // no bbox key at all
+        return Promise.resolve({ items: [], nextCursor: null }); // no seeded "Fez" fixture here
+      },
+    });
+    await renderScreen();
+
+    await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Fez");
+    await waitFor(() =>
+      expect(
+        request.mock.calls.filter(([d]) => (d as { path: string }).path === "/places/search"),
+      ).toHaveLength(1),
+    );
+    expect(screen.queryByText("Keep typing — search starts at 2 characters.")).toBeNull();
+
+    expect(
+      await screen.findByText("No places matched — try a different spelling."),
+    ).toBeOnTheScreen();
+    expect(await screen.findByTestId("trip-new-list-item-custom")).toBeOnTheScreen();
+  });
+
+  it("unaffected at ≥4 chars: searches and fills from a picked result (trigram arm, regression control)", async () => {
+    const request = mockApi();
+    await renderScreen();
 
     await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "Kyoto");
     await fireEvent.press(await screen.findByTestId(`trip-new-list-item-${KYOTO.id}`));
@@ -342,7 +371,7 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
     expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull();
 
     // Blank/whitespace query: the whole results region (including the
-    // fallback row) closes — `searchActive` drops below the 4-char floor.
+    // fallback row) closes — `searchActive` drops below the absolute floor.
     await fireEvent.changeText(screen.getByTestId("trip-new-input-destination"), "   ");
     await waitFor(() => expect(screen.queryByTestId("trip-new-list-item-custom")).toBeNull());
   });

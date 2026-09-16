@@ -1,0 +1,122 @@
+# Flow 9 — cancel-visibility: create a BOOKED booking, cancel it from
+# booking-detail, and assert the R-itin-26 visibility move — off the
+# calendar/Ideas, under the itinerary screen's "Cancelled" bin
+# (`IdeasBucket.tsx`'s second `Bin`).
+#
+# STATUS = "booked" is load-bearing, not a flavor choice: B-17 (Sean
+# device-QA ruling, `apps/mobile/src/app/[tripId]/itinerary/booking/
+# [bookingId].tsx:408-425`) renders the Cancel affordance ONLY when
+# `booking.status === "booked"` — an idea/planned entry has no Cancel
+# button at all (discard-via-delete instead). The segmented control's
+# create-mode default is "idea" (`BookingForm.tsx`), so this flow taps the
+# "booked" segment explicitly (`itinerary-item-new-segment-status-booked`,
+# `SegmentedControl.tsx`'s `{testID}-{key}` derivation) — no date/time is
+# required to reach "booked" (only `title` is ever required on the wire,
+# `required-fields.ts`), so this flow never touches a datetime picker.
+#
+# A booked-but-timeless booking is still "unscheduled" (no calendar
+# placement) and therefore still appears in the Ideas bucket
+# (`unscheduledBookings`), with a "Needs a day" badge rather than "Idea" —
+# reached the same way `ideas-to-schedule.yaml` reaches its idea: by the
+# card's own title text (unambiguous — exactly one item exists on this
+# fresh trip).
+#
+# After cancel, `showIdeas` (`IdeasBucket.tsx`) becomes FALSE — the
+# now-cancelled booking is no longer counted in `unscheduled`, and nothing
+# else is idea/needs-a-day on this trip — so the Ideas bin itself stops
+# rendering; this flow asserts the CANCELLED bin instead
+# (`itinerary-cancelled`), never re-asserts `itinerary-ideas`.
+appId: ${APP_ID}
+name: cancel-visibility
+# S-4 round 1 finding 3: `wip` — a real app gap (not a flow bug), same root
+# cause as `ideas-to-schedule.yaml` (both build an "other"-category booking):
+# the trailing fields/Save button (`BookingForm.tsx:832-920`) sit below the
+# on-screen keyboard with no scroll-to-target. Confirmed against a live
+# Neon-backed door run 2026-09-14. Excluded from the default lane
+# (scripts/e2e.sh's `wip` exclusion); run deliberately with `--include-wip`.
+# See the QUEUE-row draft in the PR body (B-29) — remove this tag once the
+# booking form's keyboard/scroll handling fixes the underlying gap.
+tags:
+  - release
+  - door
+  - wip
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "cancel-visibility-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- runFlow:
+    file: subflows/create-minimal-trip.yaml
+    env:
+      TRIP_NAME: "Cancel Test ${RUN_ID}"
+      DESTINATION_QUERY: "Kyoto"
+- tapOn:
+    id: "tab-bar-itinerary"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-fab-add"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-add-sheet"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-add-option-other"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-item-new-input-title"
+- inputText: "E2E Cancel ${RUN_ID}"
+- tapOn:
+    id: "itinerary-item-new-segment-status-booked"
+- tapOn:
+    id: "itinerary-item-new-button-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "itinerary-item-new-screen"
+    timeout: 15000
+- assertVisible:
+    id: "itinerary-screen"
+- tapOn:
+    id: "itinerary-ideas-toggle"
+- tapOn: "E2E Cancel ${RUN_ID}"
+- extendedWaitUntil:
+    visible:
+      id: "booking-detail-screen"
+    timeout: 10000
+- assertVisible:
+    id: "booking-detail-button-cancel"
+- tapOn:
+    id: "booking-detail-button-cancel"
+- extendedWaitUntil:
+    visible:
+      id: "booking-detail-button-cancel-confirm"
+    timeout: 10000
+- tapOn:
+    id: "booking-detail-button-cancel-confirm"
+# B-17's own gate is the postcondition: cancel applied ⇒ status flips off
+# "booked" ⇒ the Cancel button's render condition no longer holds.
+- extendedWaitUntil:
+    notVisible:
+      id: "booking-detail-button-cancel"
+    timeout: 15000
+- tapOn:
+    id: "booking-detail-header-back"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-screen"
+    timeout: 10000
+- assertVisible:
+    id: "itinerary-cancelled"
+- tapOn:
+    id: "itinerary-cancelled-toggle"
+- assertVisible: "E2E Cancel ${RUN_ID}"

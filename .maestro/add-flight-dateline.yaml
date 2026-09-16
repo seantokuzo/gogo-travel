@@ -1,0 +1,236 @@
+# Flow 7 — add-flight-dateline: adds a FLIGHT booking whose wall times
+# reproduce the B-8 dateline shape — the REAL hostile fixture
+# (`@gogo/shared/testing`'s `DATE_LINE_EASTBOUND`, Sean's actual "Spring in
+# Kyoto" flight, device QA 2026-08-29): a legitimate multi-hour eastbound
+# flight whose ARRIVAL wall clock (10:00) precedes its DEPARTURE wall clock
+# (17:00) on the SAME wall date — the exact shape that inverts under the old
+# Z-stamp composition (B-8) and is why B-9's airport-zone capture exists at
+# all.
+#
+# DATE SUBSTITUTION (documented, not silent): the fixture's calendar date
+# (2027-04-24) is NOT reproduced here — this flow uses TODAY for both legs
+# instead. What makes `DATE_LINE_EASTBOUND` hostile is the WALL-CLOCK
+# relationship (arrival time < departure time, SAME calendar day), not the
+# specific year; TODAY reproduces that relationship exactly and needs ZERO
+# calendar-grid navigation (the departs_at DateField has no context yet on a
+# fresh form and seeds on `new Date()` — today; arrives_at's context becomes
+# departs_at's now-set date, i.e. also today) — the same "commit the
+# unmodified seed via the PickerCard's Done" shape used throughout this
+# suite, with no dependence on the native inline calendar's month-grid
+# accessibility layout. Only the TIME values (17:00 / 10:00) are genuinely
+# driven to non-default values — see the block below.
+#
+# REFERENCE SEARCH (Sean's explicit ask, 2026-09-11 — the row this flow
+# exists to close): a REAL `/airports/search` and `/airlines/search` call
+# against the seeded reference tables (migration 0002 — 4,133 airports,
+# 893 airlines) — the exact class of endpoint that 500'd on every call
+# against a migration-behind dev DB. Queries are 4+ chars ("Narita",
+# "Los Angeles", "United") so they clear the search floor
+# (`isSearchableReferenceQuery`) and hit the network, never the bare-3-letter
+# local-commit path (`AirportPickerField`'s `BARE_CODE_RE` shortcut) — a
+# flow using "NRT"/"LAX" literally would never touch the search endpoint at
+# all. Airline is "United" (a virtually-certain-seeded major carrier) rather
+# than the fixture's own "ZipAir" (a boutique JP carrier unlikely to be in
+# the seed) — the fixture's airline branding is flavor; its discriminating
+# shape is the airport/time relationship, reproduced exactly below.
+#
+# AIRPORT PICK auto-supplies the paired datetime field's IANA zone
+# (`tzFrom`, `BookingForm.tsx`) — this flow never touches the TimeZoneField
+# directly; picking NRT/LAX is what makes a correct instant composable at
+# all (B-9's whole point).
+appId: ${APP_ID}
+name: add-flight-dateline
+# S-4 round 1 finding 3: `wip` — a real app gap (not a flow bug), confirmed
+# against a live Neon-backed door run 2026-09-14. The `flight` category's
+# `itinerary-item-new-input-origin-iata` field sits below the fold once the
+# keyboard is up (`app/[tripId]/itinerary/item/new.tsx` ScrollView, ~330-341
+# has no scroll-to-target), so the tap+type meant for it lands in the
+# previous field instead. Excluded from the default lane (scripts/e2e.sh's
+# `wip` exclusion); run deliberately with `--include-wip`. See the QUEUE-row
+# draft in the PR body (B-29) — remove this tag once the booking form's
+# keyboard/scroll handling fixes the underlying reachability gap.
+tags:
+  - release
+  - door
+  - wip
+---
+- runFlow:
+    file: subflows/session-door.yaml
+    env:
+      USER_KEY: "add-flight-dateline-${RUN_ID}"
+      FIRST_RUN: "false"
+- extendedWaitUntil:
+    visible:
+      id: "trip-list-screen"
+    timeout: 20000
+- runFlow:
+    file: subflows/create-minimal-trip.yaml
+    env:
+      TRIP_NAME: "Dateline Test ${RUN_ID}"
+      DESTINATION_QUERY: "Kyoto"
+- tapOn:
+    id: "tab-bar-itinerary"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-fab-add"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-add-sheet"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-add-option-flight"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-screen"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-item-new-input-title"
+- inputText: "E2E Dateline ${RUN_ID}"
+
+# ── airline — REAL reference search, then pick ───────────────────────────
+- tapOn:
+    id: "itinerary-item-new-input-airline"
+- inputText: "United"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-airline-result-UA"
+    timeout: 15000
+- tapOn:
+    id: "itinerary-item-new-input-airline-result-UA"
+- tapOn:
+    id: "itinerary-item-new-input-flight-number"
+- inputText: "UA24"
+
+# ── origin airport — REAL reference search, then pick (supplies departs_at's
+# IANA zone automatically, B-9) ──────────────────────────────────────────────
+- tapOn:
+    id: "itinerary-item-new-input-origin-iata"
+- inputText: "Narita"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-origin-iata-result-NRT"
+    timeout: 15000
+- tapOn:
+    id: "itinerary-item-new-input-origin-iata-result-NRT"
+
+# ── destination airport — same shape, supplies arrives_at's zone ────────────
+- tapOn:
+    id: "itinerary-item-new-input-destination-iata"
+- inputText: "Los Angeles"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-destination-iata-result-LAX"
+    timeout: 15000
+- tapOn:
+    id: "itinerary-item-new-input-destination-iata-result-LAX"
+
+# ── departs_at: date commits on its unmodified today-seed (no context yet);
+# time is driven to 17:00 (5:00 PM) — the DATE_LINE_EASTBOUND departure wall
+# clock. The iOS spinner opens seeded at noon (12:00 PM, TimeField's own
+# fallback when no context time exists yet): minute and meridiem are ALREADY
+# correct (00, PM) at that seed, so only the HOUR column needs to move,
+# 12 → 5. Driven via `scrollUntilVisible` (retry-swipe-until-the-target-text-
+# is-in-frame) rather than a fixed swipe count — this is the one genuinely
+# UNVERIFIED interaction in this suite (no prior flow in this repo drives a
+# native spinner to a specific value; ADR-007 known-limit 3 parks picker
+# "feel" as human-only but says driving one to an asserted VALUE is in
+# scope) — if this cell is red, that is the finding to report, not a reason
+# to fake the value. ─────────────────────────────────────────────────────────
+- tapOn:
+    id: "itinerary-item-new-input-departs-at-date"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-departs-at-date-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-item-new-input-departs-at-date-sheet-done"
+- tapOn:
+    id: "itinerary-item-new-input-departs-at-time"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-departs-at-time-picker"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^5$"
+    direction: DOWN
+    timeout: 10000
+    speed: 20
+- tapOn:
+    id: "itinerary-item-new-input-departs-at-time-sheet-done"
+
+# ── arrives_at: date context-seeds from departs_at's now-set date (today),
+# so Done-on-seed commits the SAME day (R-door spec's same-wall-date shape).
+# Time context-seeds from departs_at's now-set time (5:00 PM) — target is
+# 10:00 AM: hour 5 → 10 AND meridiem PM → AM (minute stays 00). ─────────────
+- tapOn:
+    id: "itinerary-item-new-input-arrives-at-date"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-arrives-at-date-sheet-done"
+    timeout: 10000
+- tapOn:
+    id: "itinerary-item-new-input-arrives-at-date-sheet-done"
+- tapOn:
+    id: "itinerary-item-new-input-arrives-at-time"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-new-input-arrives-at-time-picker"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      text: "^10$"
+    direction: DOWN
+    timeout: 10000
+    speed: 20
+- scrollUntilVisible:
+    element:
+      text: "AM"
+    direction: UP
+    timeout: 10000
+    speed: 20
+- tapOn:
+    id: "itinerary-item-new-input-arrives-at-time-sheet-done"
+
+- tapOn:
+    id: "itinerary-item-new-button-save"
+- extendedWaitUntil:
+    notVisible:
+      id: "itinerary-item-new-screen"
+    timeout: 15000
+- assertVisible:
+    id: "itinerary-screen"
+- assertNotVisible:
+    id: "itinerary-refresh-error"
+# A timed flight auto-schedules onto the calendar (§2.4 "timed →
+# auto-scheduled server-side") rather than landing in Ideas — its title on
+# the day list is the positive proof the save actually reached the server
+# and composed a real instant (a silently-dropped save would leave the
+# itinerary showing nothing new).
+- assertVisible: "E2E Dateline ${RUN_ID}"
+
+# ── B-8 regression pin (S-4 round 1 advisory 4) ─────────────────────────────
+# The screen/title assertions above would stay green even if B-8's inverted-
+# instant composition reappeared — they never look at the composed times.
+# NRT 17:00 (08:00Z) → LAX 10:00 (17:00Z) is a real, same-UTC-day 9h flight,
+# but composed to the trip's own destination zone (Kyoto/Asia-Tokyo) the
+# arrival wall clock lands PAST MIDNIGHT the following day — so the item
+# detail's own derived "when" row (`itemWhenLabel`,
+# `features/itinerary/detail/detail-model.ts:167-174`, real testID
+# `itinerary-item-when`) must show the "through <next day>" clause it emits
+# whenever `end_day > day`. A reintroduced B-8 (naive wall-time-as-UTC/
+# zStamp composition) does not cross that boundary — it INVERTS the
+# interval instead — so this assertion discriminates the regression the
+# screen-level checks above cannot. Tapping the saved item's own title opens
+# its detail screen (the same day-list row jump R-itin-24 uses).
+- tapOn: "E2E Dateline ${RUN_ID}"
+- extendedWaitUntil:
+    visible:
+      id: "itinerary-item-screen"
+    timeout: 10000
+- assertVisible:
+    id: "itinerary-item-when"
+- assertVisible: ".*[Tt]hrough.*"

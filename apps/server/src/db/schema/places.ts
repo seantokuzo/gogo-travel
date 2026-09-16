@@ -6,7 +6,7 @@
  * photos) are fetch-fresh from the hosted API and never cached (licensing) —
  * do not add such columns.
  */
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import {
   check,
   index,
@@ -19,11 +19,35 @@ import {
   unique,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { placeSource } from "./enums.js";
 import { timestamps } from "./_shared.js";
 import { users } from "./identity.js";
 import { trips } from "./trips.js";
+
+/**
+ * B-7 follow-up (Sean's ruling, 2026-09-14; places spec R-places-28): the
+ * EXACT, case-insensitive, accent-folded, trimmed form of a place name —
+ * shared, byte-identical, between the partial index below
+ * (`places_tier_name_folded_idx`) and the sub-floor exact-match arm's
+ * predicate (`places/search-query.ts`'s `placesExactTierMatchQuery`), so
+ * the query's WHERE expression structurally matches the indexed expression
+ * and Postgres can actually use the index (verified live: `EXPLAIN`
+ * confirms a Bitmap Index Scan, never a seq scan, at 20k+-row scale).
+ *
+ * `normalize(…, NFD)` decomposes precomposed accented codepoints (e.g. "é"
+ * → "e" + U+0301 COMBINING ACUTE ACCENT); `regexp_replace(…, '[̀-ͯ]',
+ * '', 'g')` then strips every codepoint in the Combining Diacritical Marks
+ * block, leaving the bare base letters. `normalize()`/`regexp_replace()`/
+ * `lower()`/`trim()` are all Postgres built-ins marked IMMUTABLE (verified
+ * live against this project's Postgres 18) — required for use in an index
+ * expression. No `unaccent` extension needed (not installed; this stays
+ * self-contained, no new `CREATE EXTENSION`).
+ */
+export function tierNameFoldExpr(input: AnyPgColumn | SQL): SQL<string> {
+  return sql<string>`lower(regexp_replace(normalize(trim(${input}), NFD), '[̀-ͯ]', '', 'g'))`;
+}
 
 export const places = pgTable(
   "places",
@@ -57,6 +81,26 @@ export const places = pgTable(
     // GIN keeps a pending-list that churns badly under row-by-row writes. Never
     // drop-and-rebuild this index without coordinating with live search traffic.
     index("places_name_trgm_idx").using("gin", t.name.op("gin_trgm_ops")),
+    // B-7 follow-up (sub-floor exact-match arm, R-places-28): a small,
+    // partial index scoped to `source='overture' AND category='locality'`
+    // — the migration-0004 bootstrap seed today. The WHERE clause here must
+    // stay byte-identical to the predicate `placesExactTierMatchQuery`
+    // sends, or Postgres won't recognize the index applies.
+    // Review R1 correction (adversarial claim 15): an earlier version of
+    // this comment claimed the index "never grows with POI ingest" because
+    // "region-ingest.ts never writes category='locality' rows" — that was
+    // unsupported. `normalize.ts` stores whatever raw taxonomy string the
+    // source dataset carries with NO category filter, so an on-demand
+    // Overture region-ingest row that happens to carry `category='locality'`
+    // DOES enter this index's scope too. That's INTENDED, not a bug — a
+    // future ingested Overture locality is exactly the kind of row the
+    // sub-floor exact-match arm should be able to find by exact name — but
+    // it means this index's size is bounded by "how many locality rows any
+    // ingested source has produced," not fixed at the 0004 seed's 6,927
+    // rows forever.
+    index("places_tier_name_folded_idx")
+      .on(tierNameFoldExpr(t.name))
+      .where(sql`${t.source} = 'overture' and ${t.category} = 'locality'`),
     index("places_created_by_idx").on(t.createdBy),
     check("places_custom_source_id_ck", sql`(${t.source} = 'custom') = (${t.sourceId} IS NULL)`),
     check(

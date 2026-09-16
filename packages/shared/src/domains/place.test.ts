@@ -310,18 +310,29 @@ describe("PlaceSearchQuery (§3.3 GET /places/search)", () => {
     expect(wide.bbox).toEqual({ min_lng: 9, min_lat: 38, max_lng: 11, max_lat: 39 });
   });
 
-  it("text-only floor: q < 4 chars needs a geo bound; with one, the 2-char floor holds", () => {
-    // Rejected: 2- and 3-char q with NO geo bound (trgm candidate blowup —
-    // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS doc).
-    expect(PlaceSearchQuerySchema.safeParse({ q: "ab" }).success).toBe(false);
-    expect(PlaceSearchQuerySchema.safeParse({ q: "abc" }).success).toBe(false);
+  it("text-only floor: q < 4 chars no longer rejects (B-7 follow-up, 2026-09-14, R-places-28) — it selects the exact-match arm server-side, not a validation error; the 2-char absolute minimum still holds", () => {
+    // FALSIFICATION: reverting the B-7 follow-up (re-adding the removed
+    // superRefine branch) turns this red — these used to be
+    // `.success === false`. `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` itself is
+    // unchanged (still 4); it now selects a server-side ARM
+    // (`apps/server/src/places/routes.ts`) instead of gating validation.
     expect(PLACES_SEARCH_TEXT_ONLY_MIN_CHARS).toBe(4);
+    expect(PlaceSearchQuerySchema.safeParse({ q: "ab" }).success).toBe(true);
+    expect(PlaceSearchQuerySchema.parse({ q: "ab" }).q).toBe("ab");
+    expect(PlaceSearchQuerySchema.safeParse({ q: "abc" }).success).toBe(true);
+    expect(PlaceSearchQuerySchema.parse({ q: "abc" }).q).toBe("abc");
 
-    // Accepted: exactly the text-only floor, and exactly the 2-char spec
-    // floor when near/bbox bounds the scan.
+    // Still accepted: exactly the text-only floor, and 2-3 char q with a
+    // geo bound (unaffected by this change either way).
     expect(PlaceSearchQuerySchema.parse({ q: "abcd" }).q).toBe("abcd");
     expect(PlaceSearchQuerySchema.parse({ q: "ab", near: "38.7,-9.14" }).q).toBe("ab");
     expect(PlaceSearchQuerySchema.parse({ q: "abc", bbox: "-9.5,38.5,-9,39" }).q).toBe("abc");
+
+    // The ABSOLUTE floor (SearchTextSchema.min(2)) is untouched by this
+    // change: a 1-char or empty q is still 400, geo bound or not.
+    expect(PlaceSearchQuerySchema.safeParse({ q: "a" }).success).toBe(false);
+    expect(PlaceSearchQuerySchema.safeParse({ q: "" }).success).toBe(false);
+    expect(PlaceSearchQuerySchema.safeParse({ q: "a", near: "38.7,-9.14" }).success).toBe(false);
   });
 
   it("near parses lat,lng; radius_m is bounded and requires near", () => {

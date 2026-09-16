@@ -232,7 +232,7 @@ trip+place, offline-downloadable).
 | P-5  | Phase | Auth, profiles & entitlements                                                                                             | done ([archive](history/PHASE-005-auth-profiles-entitlements.md), ledger pends OAuth QA) | P0       | P-3, P-4        |
 | P-6  | Phase | Trips, collaboration & places spine                                                                                       | done ([archive](history/PHASE-006-trips-collab-places.md), ledger pends phase QA)        | P0       | P-5             |
 | P-7  | Phase | Itinerary & bookings (incl. deeplink-out)                                                                                 | in-progress since 2026-07-31                                                             | P0       | P-6             |
-| P-8  | Phase | Maps, saved places & offline tile packs                                                                                   | queued                                                                                   | P0       | P-7             |
+| P-8  | Phase | Maps, saved places & offline tile packs                                                                                   | done ([archive](history/PHASE-008-maps-places-offline.md), ledger pends phase QA)        | P0       | P-7             |
 | P-9  | Phase | Money: budgets, expenses, splits & settle-up                                                                              | queued                                                                                   | P0       | P-7             |
 | P-10 | Phase | AI layer: platform, recommendations, estimates, tour guide, packing, recap                                                | queued                                                                                   | P1       | P-8, P-9        |
 | P-11 | Phase | Booking capture: email + share pipeline                                                                                   | queued                                                                                   | P1       | P-7, P-10       |
@@ -530,7 +530,9 @@ T-7.14]`.
 
 ### P-8 — Maps, saved places & offline tile packs
 
-- **Status:** queued · **Priority:** P0 · **Depends on:** P-7 · **~5 PRs**
+- **Status:** done — CODE-COMPLETE 2026-08-23, 8/8 PRs merged (#20–#27),
+  [archive](history/PHASE-008-maps-places-offline.md); ledger F-055..F-062
+  pends phase QA · **Priority:** P0 · **Depends on:** P-7 · **~5 PRs**
 - **Goal:** The trip map: @rnmapbox/maps with themed styles, three pin
   families + clustering + day filter, place sheet/detail with spine data and
   the fetch-fresh non-persistence seam (premium details deferred), map

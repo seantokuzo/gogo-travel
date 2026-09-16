@@ -426,15 +426,20 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
     expect(walked.map((p) => p.id)).toEqual(full.items.map((p) => p.id));
   });
 
-  it("short q (2–3 chars) is accepted WITH a geo bound; rejected text-only (scale floor)", async () => {
+  it("short q (2–3 chars) is accepted WITH a geo bound (trigram/blend arm); text-only is ALSO accepted (B-7 follow-up, 2026-09-14, R-places-28) but runs the exact-match tier arm instead — 200 either way (falsification: reverting the routes.ts arm branch turns the text-only case back into 400)", async () => {
     const user = await seedUserWithToken();
-    // Map typeahead: 2-char q + near → valid request (spec's 2-char floor).
+    // Map typeahead: 2-char q + near → valid request (spec's 2-char floor),
+    // unaffected by the B-7 follow-up (still the geo-bounded arm).
     const withGeo = await search(user.accessToken, `q=be&near=${TOWER.lat},${TOWER.lng}`);
     expect(withGeo.status).toBe(200);
-    // The same q without any geo bound: 400 (trgm candidate blowup guard).
+    // The same q with NO geo bound: no longer 400 — the exact-match tier
+    // arm runs instead (this suite's fixtures don't seed a real "abc" tier
+    // row, so the honest expectation is 200 + empty, not a specific hit;
+    // `destination-tier.db.test.ts` pins the positive-match cases).
     const textOnly = await search(user.accessToken, "q=abc");
-    expect(textOnly.status).toBe(400);
-    expect(((await textOnly.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    expect(textOnly.status).toBe(200);
+    const page = PaginatedPlacesSchema.parse(await textOnly.json());
+    expect(page.items).toEqual([]);
   });
 
   it("oversized bbox CLAMPS to the centered max-span window instead of scanning the world", async () => {
@@ -481,8 +486,10 @@ describe.skipIf(!dockerAvailable)("T-6.5 places routes (integration)", () => {
       "near=38.7,-9.14&radius_m=50001", // oversized radius
       "q=belem&radius_m=100", // radius without near
       "q=belem&limit=51", // page-size cap
-      "q=a", // sub-minimum text
-      "q=abc", // sub-text-only-floor without a geo bound
+      "q=a", // sub-minimum text (below the ABSOLUTE 2-char floor)
+      // NOTE: "q=abc" (sub-text-only-floor, no geo bound) is DELIBERATELY
+      // absent here — B-7 follow-up (2026-09-14, R-places-28) moved it to
+      // 200 (exact-match tier arm), not 400. See the dedicated test above.
     ]) {
       const res = await search(user.accessToken, query);
       expect(res.status).toBe(400);

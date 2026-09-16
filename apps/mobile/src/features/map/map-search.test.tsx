@@ -1,11 +1,14 @@
 /**
  * Map search hook (T-8.3 / MAP-2 — R-map-25). Load-bearing:
- *  - the 2-char floor gates the QUERY, not just the UI (a sub-floor request
- *    fired past the gate is a live server 400 — CT-2 doc);
- *  - every fired request carries the bbox geo bound + trip_id (the floor's
- *    LEGALITY — text-only 2-char is a 400 by schema) AND forwards
- *    TanStack's abort signal (T-6.6 posture — cancel-on-clear/unmount must
- *    reach the transport; review A10);
+ *  - the ABSOLUTE 2-char floor (`PLACES_SEARCH_MIN_CHARS`) gates the QUERY,
+ *    not just the UI — a `q` shorter than it fired past the gate is still a
+ *    live server 400 (VALIDATION_FAILED — CT-2 doc). B-7 review R1
+ *    (BLOCKING × 3 lanes): this floor now applies UNBOUNDED too (no bbox) —
+ *    a 2-3-char text-only query is no longer a live 400 (R-places-28); the
+ *    server, not this gate, picks the arm;
+ *  - every fired request carries the bbox geo bound (when bounded) + trip_id
+ *    AND forwards TanStack's abort signal (T-6.6 posture —
+ *    cancel-on-clear/unmount must reach the transport; review A10);
  *  - the key extends the CT-2 `placeSearch` family with the map
  *    discriminator + tripId + the request's OWN bbox string, so map and
  *    destination caches never collide AND a moved destination can never
@@ -47,9 +50,9 @@ afterEach(() => {
 });
 
 describe("mapSearchMinChars / isSearchableMapQuery (R-map-25 floor, B-7 part 3 R-map-26)", () => {
-  it("is 2 with a geo bound, 4 (the shared text-only floor) without one", () => {
+  it("is 2 with a geo bound, and 2 (the shared ABSOLUTE floor) without one — B-7 review R1: this used to be 4 (PLACES_SEARCH_TEXT_ONLY_MIN_CHARS) without a bbox, which is what left a coordinate-less trip's map search unreachable below 4 chars (falsification: reverting mapSearchMinChars's null-destination branch to PLACES_SEARCH_TEXT_ONLY_MIN_CHARS turns this red)", () => {
     expect(mapSearchMinChars(DESTINATION)).toBe(2);
-    expect(mapSearchMinChars(null)).toBe(4);
+    expect(mapSearchMinChars(null)).toBe(2);
   });
 
   it.each([
@@ -64,13 +67,16 @@ describe("mapSearchMinChars / isSearchableMapQuery (R-map-25 floor, B-7 part 3 R
     expect(isSearchableMapQuery(raw, DESTINATION)).toBe(expected);
   });
 
-  // B-7 part 3: a coordinate-less trip needs the WIDER floor — a 2-3 char
-  // query that would be legal WITH a bbox is a live server 400 without one.
+  // B-7 review R1: a coordinate-less trip now gates at the SAME absolute
+  // floor as the bbox-bound case — the server, not this client, picks the
+  // arm for a sub-PLACES_SEARCH_TEXT_ONLY_MIN_CHARS text-only query
+  // (R-places-28). Falsification: reverting to the old wider floor turns
+  // "ky"/"kyo" back to false here.
   it.each([
     ["", false],
     ["k", false],
-    ["ky", false],
-    ["kyo", false],
+    ["ky", true],
+    ["kyo", true],
     ["kyot", true],
     ["  kyot  ", true],
     ["kyoto", true],
@@ -178,11 +184,11 @@ describe("useMapPlaceSearch", () => {
 describe("useMapPlaceSearch — coordinate-less trip (B-7 part 3, R-map-26)", () => {
   const NO_DEST_CONTEXT = { tripId: TEST_TRIP_ID, destination: null };
 
-  it("below the WIDER 4-char floor: no request fires, even at 2-3 chars (would be a live server 400)", async () => {
+  it("below the ABSOLUTE 2-char floor (1 char): no request fires", async () => {
     const request = spyRequest();
     const client = makeTestQueryClient();
 
-    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "ky"), {
+    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "k"), {
       wrapper: makeWrapper(client),
     });
 
@@ -190,7 +196,28 @@ describe("useMapPlaceSearch — coordinate-less trip (B-7 part 3, R-map-26)", ()
     expect(result.current.isPending).toBe(true);
   });
 
-  it("at the 4-char floor: fires with q + trip_id + limit and NO bbox key at all", async () => {
+  it("B-7 review R1 fix: fires at the ABSOLUTE 2-char floor with q + trip_id + limit and NO bbox key at all — this used to require 4 chars (falsification: reverting mapSearchMinChars's null-destination branch to PLACES_SEARCH_TEXT_ONLY_MIN_CHARS turns this back to zero requests)", async () => {
+    const page: Paginated<Place> = { items: [makePlace()], nextCursor: null };
+    const request = spyRequest().mockResolvedValue(page);
+    const client = makeTestQueryClient();
+
+    const { result } = await renderHook(() => useMapPlaceSearch(NO_DEST_CONTEXT, "  ky  "), {
+      wrapper: makeWrapper(client),
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(request).toHaveBeenCalledTimes(1);
+    const [, input] = request.mock.calls[0] as [unknown, { query: Record<string, unknown> }];
+    expect(input.query["q"]).toBe("ky");
+    expect(input.query["trip_id"]).toBe(TEST_TRIP_ID);
+    expect(input.query["limit"]).toBe(20);
+    // Falsification: sending a `bbox` key here (even `undefined`) would be a
+    // structural regression back toward the Null Island bbox this fixes —
+    // the request must carry NO bbox key at all, not just a falsy one.
+    expect("bbox" in input.query).toBe(false);
+  });
+
+  it("at 4+ chars (trigram arm): still fires with q + trip_id + limit and NO bbox key at all (unchanged)", async () => {
     const page: Paginated<Place> = { items: [makePlace()], nextCursor: null };
     const request = spyRequest().mockResolvedValue(page);
     const client = makeTestQueryClient();
@@ -205,9 +232,6 @@ describe("useMapPlaceSearch — coordinate-less trip (B-7 part 3, R-map-26)", ()
     expect(input.query["q"]).toBe("kyot");
     expect(input.query["trip_id"]).toBe(TEST_TRIP_ID);
     expect(input.query["limit"]).toBe(20);
-    // Falsification: sending a `bbox` key here (even `undefined`) would be a
-    // structural regression back toward the Null Island bbox this fixes —
-    // the request must carry NO bbox key at all, not just a falsy one.
     expect("bbox" in input.query).toBe(false);
   });
 

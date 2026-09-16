@@ -25,7 +25,7 @@
 # badge. Leg OUTCOMES are environment-dependent (`/health` needs a server, the
 # env leg reads whatever `EXPO_PUBLIC_*` the build inlined), so asserting them
 # here would make the flow a weather report.
-appId: app.gogotravel
+appId: ${APP_ID}
 name: diagnostics-panel-dev
 tags:
   - dev

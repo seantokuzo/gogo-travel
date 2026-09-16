@@ -223,3 +223,95 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
     .orderBy(sql`${rankExpr} desc, ${places.id} desc`)
     .limit(params.limit);
 }
+
+export interface PlacesExactTierMatchParams {
+  /** Trimmed, NFC-normalized query text (SearchTextSchema handles that). */
+  q: string;
+  /** Derived coarse-category filter (§3.2.3) — review R1 A1/ADVISORY-2:
+   * same AND-residual filter `placesSearchQuery` applies, so this arm can't
+   * leak a tier row through a mismatched `coarse_category`. */
+  coarse?: CoarseCategory | undefined;
+  /** Decoded page cursor (first component is the constant rank key below). */
+  cursor?: KeysetCursor | null | undefined;
+  /** Page size + 1 sentinel — the route owns the arithmetic (text/geo-arm precedent). */
+  limit: number;
+}
+
+/**
+ * B-7 follow-up (Sean's ruling, 2026-09-14; places spec R-places-28):
+ * sub-floor (`q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, trimmed)
+ * TEXT-ONLY destination queries no longer 400 (the floor moved from a
+ * validation reject to an arm SELECTION — `@gogo/shared`'s
+ * `PlaceSearchQuerySchema`, see that file's comment) — `routes.ts` sends
+ * them here instead of `placesSearchQuery`.
+ *
+ * Deliberately a SEPARATE, narrower query, not `placesSearchQuery` with
+ * different params:
+ *  - EXACT match only (`tierNameFoldExpr(name) = tierNameFoldExpr(q)`,
+ *    case-insensitive / accent-folded / trimmed via the shared schema
+ *    helper, `db/schema/places.ts`) — NEVER the `%` trigram operator. That
+ *    is the whole point: a 2-3 char `q` against the trgm GIN is the
+ *    O(10^5-10^6)-candidate scan `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`
+ *    exists to prevent (config/places.ts); this arm never touches that
+ *    index, and a widened `LIKE '<q>%'` prefix match would silently
+ *    reopen the same blowup (falsified by the "Fe" 2-char pin,
+ *    destination-tier.db.test.ts — a real tier row, "Fez", would leak
+ *    into a 2-char prefix query that must return empty).
+ *  - Bootstrap destination TIER rows only (`source = 'overture' AND
+ *    category = 'locality'`, the migration-0004 seed) — driven by the
+ *    partial index `places_tier_name_folded_idx` (EXPLAIN-pinned,
+ *    destination-tier.db.test.ts, mirroring the SARGABILITY CONTRACT
+ *    pins above).
+ *  - `custom`-source places are UNCONDITIONALLY excluded — not even the
+ *    caller's own. R-places-8 / Law #3 holds trivially (no visibility
+ *    predicate needed at all: the tier-only filter structurally can never
+ *    match a `source='custom'` row), and this doubles as the "no POI
+ *    scan" contract — a custom place is never read by this query,
+ *    regardless of who is asking (falsified by the creator-owned-"Fez"
+ *    pin, not just the stranger one).
+ *  - No bbox/near — `routes.ts` only reaches this arm when both geo bounds
+ *    are absent; a short `q` WITH a geo bound keeps using the existing
+ *    geo-bounded arm (`placesSearchQuery`), unaffected. `coarse_category`
+ *    IS applied here (review R1 A1/ADVISORY-2 fix — it was silently
+ *    dropped before): the same AND-residual `coarseCategorySqlExpr` filter
+ *    the trigram/geo arm uses, so `?q=Fez&coarse_category=food` correctly
+ *    excludes a locality (Fez's own `coarse_category` is `other`) instead
+ *    of leaking it through a mismatched category filter. The driving fold
+ *    predicate/index are unaffected — this is a residual AND, same posture
+ *    as `placesSearchQuery`'s coarse filter above.
+ *  - `rankKey` is a constant `0` — every match is equally "exact," nothing
+ *    to rank by — so page order is pure `id DESC`, still stable across
+ *    pages via the SAME keyset-cursor codec the text/geo arm uses
+ *    (`routes.ts` builds the cursor/envelope identically regardless of
+ *    which arm ran the query).
+ */
+export function placesExactTierMatchQuery(db: DbClient, params: PlacesExactTierMatchParams) {
+  const places = schema.places;
+  const rankExpr = sql<string>`0::bigint`;
+
+  const predicates: SQL[] = [
+    // Literal text, not bound params: matching the partial index's WHERE
+    // clause verbatim (byte-for-byte, `db/schema/places.ts`) is what lets
+    // Postgres apply it regardless of prepared-statement generic-plan mode
+    // (SARGABILITY CONTRACT precedent, this file's header comment).
+    sql`${places.source} = 'overture' and ${places.category} = 'locality'`,
+    sql`${schema.tierNameFoldExpr(places.name)} = ${schema.tierNameFoldExpr(sql`${params.q}`)}`,
+  ];
+
+  if (params.coarse !== undefined) {
+    predicates.push(sql`${coarseCategorySqlExpr(places.category)} = ${params.coarse}`);
+  }
+
+  if (params.cursor) {
+    predicates.push(
+      sql`(${rankExpr}, ${places.id}) < (${params.cursor.micros}::bigint, ${params.cursor.id}::uuid)`,
+    );
+  }
+
+  return db
+    .select({ place: places, rankKey: rankExpr })
+    .from(places)
+    .where(and(...predicates))
+    .orderBy(sql`${rankExpr} desc, ${places.id} desc`)
+    .limit(params.limit);
+}

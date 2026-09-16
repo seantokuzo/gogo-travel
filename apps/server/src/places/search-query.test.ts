@@ -2,7 +2,13 @@
  * Unit pins for the near-search prefilter box edges (T-6.5 round-1 #7):
  * the ±180 no-wrap clamp and the deliberate polar-sliver exclusion.
  */
+import { sql } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { tierNameFoldExpr } from "../db/schema/places.js";
 import { nearPrefilterBox } from "./search-query.js";
 
 describe("nearPrefilterBox", () => {
@@ -36,5 +42,37 @@ describe("nearPrefilterBox", () => {
     expect(box.maxLng - -9.14).toBeCloseTo(-9.14 - box.minLng, 12);
     // Lng half-width exceeds lat half-width by 1/cos(lat).
     expect(box.maxLng - -9.14).toBeGreaterThan(box.maxLat - 38.7);
+  });
+});
+
+/**
+ * Review R1 B1 (blocking) "cheaper belt, no DB" suggestion: a DB-free unit
+ * pin comparing `tierNameFoldExpr`'s EMITTED SQL text to migration 0006's
+ * index-expression text byte-for-byte, so a drift in the shared fold
+ * function is caught without a container. `dialect.sqlToQuery(expr,
+ * "indexes")` is the same rendering path drizzle-kit itself uses to emit a
+ * CREATE INDEX expression — verified live: passing the fold applied to a
+ * raw `"name"` SQL fragment and to the real `places.name` column produce
+ * IDENTICAL text via this invoke-source, matching the migration exactly.
+ *
+ * Falsification: drift the combining-mark range in `tierNameFoldExpr`
+ * (`db/schema/places.ts`) by one codepoint (U+036F → U+036E) — this test
+ * goes RED because the emitted text no longer appears in the migration
+ * file (the migration itself is untouched by the mutation, so the two
+ * sides diverge). Also reds if the fold's `normalize()`/combining-strip is
+ * dropped entirely (review R1 B2's mutation).
+ */
+describe("tierNameFoldExpr / migration 0006 parity (DB-free)", () => {
+  it("the fold expression's emitted SQL text is byte-identical to migration 0006's index expression", () => {
+    const dialect = new PgDialect();
+    const exprText = dialect.sqlToQuery(tierNameFoldExpr(sql`"name"`), "indexes").sql;
+
+    const migrationPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../drizzle/0006_destination_tier_name_fold_idx.sql",
+    );
+    const migrationSql = readFileSync(migrationPath, "utf8");
+
+    expect(migrationSql).toContain(exprText);
   });
 });
