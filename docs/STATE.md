@@ -25,7 +25,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### SESSION 2026-09-13/14 — B-7 CLOSED, B-28 done, S-4 door server+mobile merged, teardown fix, spec-pass round 2, feature-batch spec
+### SESSION 2026-09-13/15 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
 
 Sean (director of product) ruled several parked spec questions in-session;
 PR #72 (S-4 wave 2 session-door contract) merged.
@@ -157,6 +157,86 @@ follow-ups, PG-teardown follow-ups, `apps/server/scripts/*` top-level-I/O
 landmine, B-26 residuals, S-4 mobile-door overlapping-opens flake, B-7/#80
 deferred follow-ups, `trips.destination_place_id` parked/deferred, B-7/#75
 spec gaps).
+
+#### 2026-09-15 close-out — S-4 wave 2 complete, B-7 short-name follow-up merged, PR #85 hardening findings filed
+
+Two more PRs closed the 2026-09-13/15 session: **#84** (`aa2adee`, B-7
+short-name follow-up) and **#83** (`0f34337`, S-4 T5 — session-door flows).
+Thirteen PRs merged in total this session: #72, #76, #67, #73, #78, #75,
+#74, #80, #79, #77, #82, #84, #83.
+
+- **#84 `aa2adee`** (B-7 follow-up, Sean ruling 2026-09-14) — sub-floor
+  (2–3 char) destination queries now take an exact, case-insensitive,
+  accent-folded match against tier rows only (`R-places-28`, migration
+  **0006**: partial expression index `places_tier_name_folded_idx`, fold
+  defined once in `tierNameFoldExpr`, EXPLAIN + byte-parity pins);
+  `coarse_category` honoured on the exact arm; mobile floor lowered to
+  `PLACES_SEARCH_MIN_CHARS = 2` at five call sites (`trips-mutations.ts`,
+  `(trips)/new.tsx`, `PlacePickerField.tsx`, `more/settings.tsx`,
+  `map-search.ts`/`MapSearch.tsx`) — the client gate was the operative
+  blocker; found independently by all three review lanes. **The 54
+  sub-4-char tier rows (`Fez`/`Van`/`Ufa`/`Qom` etc.) are now searchable —
+  QUEUE row flipped `done`.** Residual scope question (the exact arm has
+  no `trip_id` filter, so a member's own custom place is findable at 4
+  chars but not 3) filed as a new blocked/Sean-ruling QUEUE row; four P3
+  technical follow-ups filed as "B-7/#84 deferred follow-ups".
+- **#83 `0f34337`** (S-4 T5, wave 2 close) — `scripts/e2e.sh --variant
+door|dev|doorfree` lane defaults + `GOGO_E2E_APP_ID` (R-door-15),
+  installed-app self-check + sibling-variant refusal,
+  evidence copied outside the worktree to `~/.gogo/e2e/<stamp>/`
+  (R-door-10), 11-hex `RUN_ID`, `gen-test-env.mjs` emits the mobile door
+  secret (mode 600), runner self-test (18 pins, folded into root
+  `pnpm test`), `session-door-entry` subflow, flows 5–10,
+  `session-door-absent` door-free proof. Sean ruling: the lane runs
+  against his Neon dev DB (fixture users `e2e:`-prefixed; the operator
+  cleanup script's first real use removed 13 users / 10 trips, idempotent).
+  Results at head: door lane 6 green by default; `--include-wip` 10 with 4
+  `wip`; doorfree 5/5 incl. `session-door-absent`. **S-4 wave 2 is DONE**
+  (T3 #79, T4 #77, T5 #83) — flipped in QUEUE, with the `wip` residual
+  called out on the row rather than hidden. Filed **B-31** (P2 — booking
+  form fields/Save unreachable behind the keyboard for the longer
+  `flight`/`other` categories, blocks `add-flight-dateline` /
+  `ideas-to-schedule` / `cancel-visibility`) and **B-30** (P1, `blocked`,
+  Sean ruling — Autonomy #1 — server computes the trip-status day
+  boundary in UTC, client uses device-local time, `.specs/api/trips.spec.md`
+  requires agreement; blocks `cross-tab-state`). Filed a P3 "wip guard"
+  row — nothing today forces a `wip` tag to cite a bug or be re-run.
+  **Do NOT read this as "reference-search E2E coverage done"** — that row
+  stays `queued`; airport/airline search is only exercised inside the
+  still-`wip` `add-flight-dateline` flow, the green lane's real search
+  coverage is the places spine in `create-trip-golden`.
+- **#85 (OPEN, Sean's own)** — `chore/claude-permissions-hardening`. A
+  courtesy security lane found 4 blocking bypasses in the Claude Code
+  permission surface (glob/indirection past the Bash secrets scan;
+  command substitution inside a stripped `-m`/`-b` body runs and is
+  pre-approved by `gh *`; destructive git/gh has no ask-rule and `main` is
+  unprotected; the `.env` deny covers Read only, not content-mode Grep) —
+  filed as a `blocked`-on-Sean QUEUE row with the four bullets plus
+  advisories. Not built or reviewed by this session; it's Sean's own PR.
+
+**New landmines (don't re-walk):**
+
+1. **Masked-merge-failure recovery confirmed** (the incident recorded in
+   pass 2, PR #79) — the branch was fully restored from its SHA, reopened,
+   and merged clean; the check-MERGEABLE-first / never-pipe-the-merge /
+   gate-delete-on-MERGED rules from that incident are now also captured in
+   session memory (`review-pipeline-execution-guardrails`), not just here.
+2. **A subagent that waits on a Monitor/background-task notification for a
+   native (XcodeBuildMCP) build never resumes** — the notification doesn't
+   reach a subagent context. Poll in the foreground instead (or have the
+   orchestrator hold the wait, not a spawned worker).
+3. **The main working tree may be Sean's own live checkout of another
+   branch** — a post-merge doc sync must never `git checkout`/`pull` there.
+   Sync it with `git fetch origin main:main` only.
+
+**QUEUE sync:** "54 seeded destination-tier rows" flipped `done`
+(resolved by #84); "Authenticated E2E flows — S-4 wave 2" and the **S-4**
+row itself flipped `done` (wave 2 complete, `wip` residual called out
+in-row); 6 new Active rows filed: **B-31**, **B-30**, the sub-floor
+`trip_id`/custom-place scope ruling, "B-7/#84 deferred follow-ups",
+the "wip guard" row, and "PR #85 hardening follow-ups (Sean)".
+"Reference-search E2E coverage" was deliberately left `queued` — see
+above.
 
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
@@ -646,115 +726,20 @@ features) ride the next device-QA run — the diagnostics panel + runsheet artif
   leaves no JS error). Also eyeball the ~200ms deferred transitions for
   jank.
 
-### P-8 — Maps, saved places & offline tile packs (CODE-COMPLETE 2026-08-23 — pk token LANDED 2026-08-29; PHASE QA + F-055..F-062 FLIPS now RUNNABLE, device-gated on Sean)
-
-- **Scope** (PLANNING § P-8): @rnmapbox/maps themed map, 3 pin families +
-  clustering + day filter, place sheet/detail w/ spine data + dormant fresh
-  seam, spine-backed search, foreground-only location, offline
-  StylePacks/TileRegions w/ hygiene, map↔itinerary cross-nav. Scoped
-  2026-08-15: 6 tasks T-8.1..T-8.6 (+T-8.7 integration rider, added at
-  W3 close), ledger F-055..F-062, ~5 PRs, **ALL
-  BUILDS TOKENLESS** (SDK download auth dead — pk token = Sean item at
-  phase QA).
-- **Wave plan:**
-  - **W1 ✅ DONE 2026-08-15 — T-8.1 MERGED a40ea7f (PR #21) ∥ T-8.6 MERGED
-    30caa40 (PR #20).** T-8.1: place detail + saved-places CRUD [PL-3,
-    PL-4] — FIRST all-5-lanes-ship round 1 on a functional PR (0 blocking/6
-    advisory, one fix leg a0fe8bb, verifier VERIFIED-CLEAN, judge
-    merge/high; server 717→720). T-8.6: maps/location/network deps + config
-    plugins w/ the foreground-only lock + `mapColors`/`mapDayColors` tokens
-    (1 blocking filing gap + 5 advisory, fixed 30300cd, verifier
-    VERIFIED-CLEAN, judge merge/high; tokens 322→323). Full narratives:
-    QUEUE rows.
-  - **W2 ✅ DONE 2026-08-18 — T-8.2 MERGED 08e656c (PR #23).** Map shell
-    [MAP-1]: themed MapView, 3 clustered pin families, span-aware day
-    filter, camera-fit w/ zero-span collapse, 3 frozen seams
-    (sheet+onPinSelect → T-8.3 · offline pill → T-8.5 · trip-scoped
-    pending-focus → T-8.4). 1 round + 1 fix leg + independent
-    verification + targeted conventions r2 + judge merge/high; mobile
-    1011→1097. Full narrative: QUEUE row. **Judge merge condition:** the
-    interp-#1 pin-coverage structural closure is a named QUEUE Blocked
-    row (P1, Sean spec pass) — rule BEFORE the phase closer.
-    (Hermes/dedup chore also done — PR #22, 293d0ef; QUEUE row folded.)
-  - **W3 ✅ DONE 2026-08-19 — T-8.3 MERGED c5e0b13 (PR #24) ∥ T-8.4
-    MERGED 510d06b (PR #25).** T-8.3 [MAP-2, MAP-4]: sheet slot filled +
-    geo-bound spine search + full R-map-16 lazy-permission machine +
-    consume-once camera intent — 2 blocking (both test-pin gaps) / 12
-    advisory, fix leg 429d84f+c25d4df, VERIFIED-CLEAN 7/7, judge
-    merge/high; 116→129 suites / 1184. T-8.4 [MAP-3, MAP-6]: place detail
-    screen (fresh seam STRUCTURAL) + saved-places mutations + per-kind
-    linked-item reroute (the round's one blocker) + the
-    place-fresh-persistence CI guard — 1 blocking / 9 advisory, fix leg
-    daddb60+8bc0f30+64da0e1, VERIFIED-CLEAN 7/8 exact, judge merge/high;
-    135 suites / 1243 tests. Full narratives: QUEUE rows. W3's
-    reported-not-taken escalations accumulate into **T-8.7 (integration
-    rider — QUEUE Active row); R-map-17's ledger row must NOT flip until
-    it lands (judge-recorded)**.
-  - **W4 ✅ DONE 2026-08-23 — T-8.7 MERGED 149b014 (PR #26) 2026-08-19 ∥
-    T-8.5 MERGED 2c43848 (PR #27) 2026-08-23.** T-8.7: the W3 escalation
-    accumulator delivered 9/9 (E1–E5 wiring, R-map-24 centering, telemetry
-    OFF prod-real, distance-on-detail, both copy fixes); the round survived
-    the session-limit interrupt (2 sentinels preserved, 3 lanes re-run
-    fresh); 135 suites / 1289. T-8.5: §2.5 pack machine (pure module) + the
-    ONE offlineManager/expo-network controller seam + MMKV annotation
-    hygiene + pill/settings surfaces; **142 suites / 1348 tests on the
-    fully-integrated tree**. Both 1-round + fix leg + VERIFIED-CLEAN +
-    judge merge/high. **The merged-tree gate caught a REAL #26/#27 test
-    contradiction** (#26's telemetry pins asserted the global mock omits
-    the method; #27 delivered exactly that mock line — green on both
-    branches, contradictory merged; the coordination tripwire fired exactly
-    as designed; repaired equivalent-or-stronger w/ per-file registries,
-    judge-affirmed). Full narratives: QUEUE rows.
-  - **PHASE-QA ATTEMPT 2026-08-15** (the rebuild leg of W2's plan): the ONE
-    dev-client rebuild ✅ **PASSED on main@293d0ef** — prebuild + CocoaPods
-    clean (the feared Mapbox-SDK pod failure did NOT occur); bake verified
-    in the built dylib (RNMBX ×244, RNDateTimePicker ×36, ExpoNetwork,
-    MapboxCommon/CoreMaps/Turf/ExpoLocation frameworks, hermes-engine
-    250829098.0.16); native smoke PASS (dtp real UIDatePicker · network ·
-    location get-not-request no-TCC · clipboard seam round-trip); tokenless
-    MapView = blank canvas + 401 MapLoad, documented expected state. BUT
-    **all P-6 ①–⑦ + all P-7 checklist legs BLOCKED(creds)** — T-6.6 retired
-    the "Open sample trip" dev door, no auth bypass exists (JWKS-verified
-    sign-in only, no session seeding, server boots health-only without auth
-    env), no tap automation. **ZERO ledger flips** (Law #7 — partial engine
-    evidence only for F-052 picker module + F-054 copy engine, below the
-    bar). **Sean ruling 2026-08-16: QA PARKED ("park QA, keep building")
-    — no pending decision**; both unblock options — **(a)** drop the
-    OAuth/server env → QA runs signed-in, or **(b)** approve a `__DEV__`
-    session door (Autonomy Contract trigger #4) — stand recorded (QUEUE
-    row) for whenever QA resumes. Evidence:
-    `.tmp/qa-2026-08-15/MANIFEST.md`. Metro left running; rebuilt app
-    installed on sim A6D3CE7C.
-- **P-8 CLOSE SUMMARY (2026-08-23):** 7 build tasks + the Hermes chore, 8
-  PRs (#20–#27), every review round-1-only (sole addendum: T-8.2's targeted
-  conventions r2). Mobile 1011→**1348 tests** / 107→**142 suites** across
-  the phase. **102 interpretations** recorded to the spec-pass batch (QUEUE
-  Blocked row, now W1–W4 / PHASE COMPLETE). Committed follow-up rows filed
-  (QUEUE Active): R-map-18 activation-mount ruling (P1, Sean) ·
-  deliberate-camera-writer fit-sweep · keystroke pin-strobe + typeahead
-  debounce · post-merge comment hygiene · remote-pack-deletion gap. Phase
-  QA = the pk-token-gated checklist row (QUEUE Active, blocked) —
-  F-055..F-062 flips pending; ledger verified byte-untouched through all 8
-  PRs. **NEXT: P-9 (money) per the frozen roadmap — roadmap-prep pending
-  Sean's go (P-9 is a SENSITIVE path: payments/splitting, auto-escalated
-  reviews, Law #2).**
-- **Key rulings** (six — PLANNING § P-8 Prep bullet; brief:
-  `.tmp/p8-readiness-brief.md`): focusPlaceId = pending-focus store;
-  warm-session offline bar — NO TQ persister; photo pins fixture-tested,
-  empty-in-prod till P-12; config-swap default Mapbox styles; token at
-  phase QA.
-- **File-ownership note:** T-8.1 owns `apps/server/src/places/**` +
-  `packages/shared` place domain + schema/migration; T-8.6 owns
-  `apps/mobile` package.json/app.json + `packages/tokens` + lockfile —
-  disjoint by construction.
-
-### Rotated phases — archived, pointers only (rotated 2026-09-13)
+### Rotated phases — archived, pointers only (rotated 2026-09-13, 2026-09-15)
 
 Closed/code-complete phases live in `docs/history/`, not here (doc-homes rule:
 STATE rotation is Claude's job). Their landmine digests, phase-QA checklists and
-port-source notes were appended to the archives on 2026-09-13 before this section
-was trimmed — nothing was dropped.
+port-source notes were appended to the archives before each trim — nothing was
+dropped.
 
+- **P-8 — Maps, saved places & offline tile packs** (code-complete
+  2026-08-23; pk token landed 2026-08-29; ledger F-055..F-062 still
+  `passes:false`, phase QA still un-run — unblocked by the S-4 session door
+  as of 2026-09-14, still device-gated on Sean) →
+  [PHASE-008](history/PHASE-008-maps-places-offline.md). Rotated 2026-09-15
+  (STATE was over the ~1000-line advisory cap). Live tracking row: QUEUE
+  "P-8 phase QA".
 - **P-7 — Itinerary & bookings** (code-complete 2026-08-10; ledger F-043..F-054
   still `passes:false`, phase QA still un-run — batched with the P-6 checklist) →
   [PHASE-007](history/PHASE-007-itinerary-bookings.md). Rotated 2026-09-13 (STATE
@@ -927,22 +912,36 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 
 - **PR #70** (spec-pass round-2 consolidated decision doc, ~300 items) —
   awaiting Sean's rulings.
-- **PR #71** (itinerary-evolution spec batch) — awaiting Sean's sign-off;
-  both his questions already ruled (tz switcher = display-only; Month = true
-  month grid).
-- **Sub-floor destination-tier search names** (`Fez`/`Van`/`Ufa`/`Qom` etc. —
-  54 rows under the 4-char global text-search floor) — Sean to rule:
-  exact-match arm for sub-floor tier queries vs. lower the floor vs. accept.
-  QUEUE Active row.
+- **PR #71** (itinerary-evolution spec batch) — mergeable again after the
+  pass-2 resolve; still awaiting Sean's sign-off (both his questions already
+  ruled: tz switcher = display-only; Month = true month grid).
+- **Sub-floor destination-tier search names — RESOLVED 2026-09-15 via PR
+  #84** (exact-match, accent-folded arm shipped for tier rows; the 54
+  sub-4-char rows are searchable, QUEUE row flipped `done`). Residual: the
+  exact arm has no `trip_id` filter, so a member's own custom place is
+  findable at 4 chars but not 3 — widen it or accept the asymmetry is a
+  **new** Sean-ruling QUEUE row.
+- **B-30 ruling (Autonomy #1):** server computes the trip-status day
+  boundary in UTC, the client uses device-local time — three options on the
+  QUEUE row (per-trip destination tz / per-user local / keep UTC and change
+  the client); blocks the `cross-tab-state` E2E flow.
+- **PR #85** (Sean's own, `chore/claude-permissions-hardening`) — a
+  courtesy security lane found 4 blocking permission-hardening bypasses;
+  recorded as a `blocked`-on-Sean QUEUE row (his PR, not built or reviewed
+  by this session).
+- **`pnpm db:migrate` owed on Sean's dev DB:** #84 added migration 0006;
+  the DB was fully caught up (6/6) during S-4 T5 but is behind again as of
+  this pass. B-28's boot-time check will refuse the next `development` boot
+  until this runs.
 - **B-27 device confirmation still owed:** the doubled top safe-area inset
   fix shipped via PR #68 (`098b3e5`) but has not been confirmed on Sean's
   device.
-- **Device confirmation newly owed (2026-09-13/14 merges):** B-26 (#67,
-  booking-form UX); B-7 parts 1–3 (CLOSED — bootstrap tier + inline custom
-  destination + nullable coords); B-28 (migration-state check). None yet
+- **Device confirmations owed:** B-26 (#67, booking-form UX); B-7 (parts
+  1–3 CLOSED — bootstrap tier + inline custom destination + nullable
+  coords — plus #84's short-name search); B-28 (#74, migration-state
+  check); B-31 (repro — booking-form keyboard occlusion, Sean's device
+  needed to confirm the field-hierarchy claim before it's fixed). None yet
   run on Sean's device.
-- **S-4 T5 PR** — session-door flows 5–10 (branch
-  `S-4/session-door-flows`), in progress; will need review once opened.
 - **Device QA still owed:** the F-0xx ledger flips, and the P-9
   spec-pass batch (43+ interpretations) plus the other Sean-gated spec
   decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
