@@ -15,7 +15,7 @@
 # the splash. It passes instantly when the splash never rendered.
 #
 # env: LINK — the URL to deliver.
-appId: app.gogotravel
+appId: ${APP_ID}
 ---
 - stopApp
 - openLink:

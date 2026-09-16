@@ -39,7 +39,7 @@
 #     screen, which is behind auth. Wave 2, via the session door.
 #   • the stashed `pendingDestination` post-auth target — not observable
 #     until the wave-2 session door; a signed-out-only matrix cannot assert it.
-appId: app.gogotravel
+appId: ${APP_ID}
 name: deeplink-matrix
 tags:
   - release
