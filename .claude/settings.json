@@ -1,15 +1,46 @@
 {
   "permissions": {
     "allow": [
-      "mcp__github__*",
-      "mcp__context7__*",
+      "Bash(git worktree remove *)",
       "Bash(pnpm *)",
       "Bash(npm view *)",
-      "Bash(node *)",
+      "Bash(node --version)",
+      "Bash(node scripts/*)",
+      "Bash(node .github/scripts/*)",
+      "Bash(node --test*)",
       "Bash(git *)",
-      "Bash(gh *)"
+      "Bash(gh *)",
+      "mcp__github__*",
+      "mcp__context7__*",
+      "mcp__claude_ai_Context7__*"
     ],
-    "deny": []
+    "deny": ["Read(**/.env)", "Read(**/.env.*)"],
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git clean *)",
+      "Bash(git worktree remove --force*)",
+      "Bash(git worktree remove -f*)",
+      "Bash(gh repo delete*)",
+      "Bash(gh api -X DELETE*)",
+      "Bash(gh api --method DELETE*)",
+      "Bash(gh api -XDELETE*)",
+      "Bash(gh auth token*)",
+      "Bash(gh secret*)",
+      "Bash(gh release delete*)",
+      "Bash(node -e*)",
+      "Bash(node -p*)",
+      "Bash(pnpm dlx*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push --delete*)",
+      "Bash(git push * --delete*)",
+      "Bash(git worktree remove * --force*)",
+      "Bash(git worktree remove * -f*)",
+      "Bash(gh api * -X DELETE*)",
+      "Bash(gh api * --method DELETE*)",
+      "Bash(gh api * -XDELETE*)"
+    ]
   },
   "hooks": {
     "PreToolUse": [
