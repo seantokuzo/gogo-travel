@@ -16,7 +16,9 @@ splitting, photos pinned to places, deeplink-first integrations.
 
 ## The Laws (violations = blocking review findings)
 
-1. **Secrets never in git.** `.env` is gitignored; the security hook blocks reads.
+1. **Secrets never in git.** `.env` is gitignored; the security hook blocks
+   Read-tool reads. **Bash is NOT covered** — `cat .env` reaches the model
+   (B-29). Do not treat the hook as the boundary.
 2. **Money is integer cents (or `Decimal`) — never float.** All budgets, splits,
    balances.
 3. **Privacy is a boundary.** Location, photos, and albums never cross a
