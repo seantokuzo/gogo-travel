@@ -445,8 +445,8 @@ pnpm test && pnpm build`
   against. **Extending P-7 with `T-7.10..T-7.16`** is the correct call;
   stable IDs mean nothing renumbers if a later phase needs to insert
   between P-7 and P-8.
-- **Status:** blocked — Sean spec sign-off (this PR). Flips to `queued`
-  the moment the four QUEUE rows below flip.
+- **Status:** signed off 2026-09-19 (Sean) — `queued`. `T-7.10..T-7.16`
+  are flipped in QUEUE.
 - **Spec:** `.specs/client/itinerary.spec.md` R-itin-33..41,
   `.specs/api/itinerary-bookings.spec.md` R-ib-8 (amended),
   `.specs/shared/contracts.spec.md` §3.4 (booking.ts sync). Both spec
