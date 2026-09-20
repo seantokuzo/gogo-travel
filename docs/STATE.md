@@ -25,7 +25,7 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### SESSION 2026-09-13/15 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
+### SESSION 2026-09-13/19 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
 
 Sean (director of product) ruled several parked spec questions in-session;
 PR #72 (S-4 wave 2 session-door contract) merged.
@@ -237,6 +237,30 @@ in-row); 6 new Active rows filed: **B-31**, **B-30**, the sub-floor
 the "wip guard" row, and "PR #85 hardening follow-ups (Sean)".
 "Reference-search E2E coverage" was deliberately left `queued` — see
 above.
+
+#### 2026-09-19 — rulings + device QA
+
+Three parked spec questions ruled by Sean in-session:
+
+- **B-30** — destination timezone, both sides: server and client both
+  derive the trip-status "today" boundary from the trip's stored
+  destination zone (B-9's IANA foundation); QUEUE row flipped
+  `blocked → queued`.
+- **Sub-floor exact-arm scope** — include the caller's own custom places
+  in the 2–3-char exact arm (creator-scoped, Law #3 intact); QUEUE row
+  flipped `blocked → queued`.
+- **Timezone-switcher UX enhancement** — new story recorded verbatim as
+  **T-7.17**, folding into PR #71's tz-switcher spec at build time;
+  SUPERSEDES the "display-only, no math" tz-switcher reading ruled
+  2026-09-13 for PR #71 (auto-switching on item focus + per-location day
+  views weren't covered by that reading) — amend the #71 spec at build
+  time.
+
+Sean is running device QA against main `a839de7` now; findings + triage
+go to a FRESH session. The dev DB was migrated to 0006 today. Stack
+state: server started by the orchestrator from `apps/server` with Sean's
+`.env`; Metro was already running; the simulator holds the door-free
+Release build — his phone uses the dev client.
 
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
@@ -915,16 +939,6 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 - **PR #71** (itinerary-evolution spec batch) — mergeable again after the
   pass-2 resolve; still awaiting Sean's sign-off (both his questions already
   ruled: tz switcher = display-only; Month = true month grid).
-- **Sub-floor destination-tier search names — RESOLVED 2026-09-15 via PR
-  #84** (exact-match, accent-folded arm shipped for tier rows; the 54
-  sub-4-char rows are searchable, QUEUE row flipped `done`). Residual: the
-  exact arm has no `trip_id` filter, so a member's own custom place is
-  findable at 4 chars but not 3 — widen it or accept the asymmetry is a
-  **new** Sean-ruling QUEUE row.
-- **B-30 ruling (Autonomy #1):** server computes the trip-status day
-  boundary in UTC, the client uses device-local time — three options on the
-  QUEUE row (per-trip destination tz / per-user local / keep UTC and change
-  the client); blocks the `cross-tab-state` E2E flow.
 - **PR #85** (Sean's own, `chore/claude-permissions-hardening`) — a
   courtesy security lane found 4 blocking permission-hardening bypasses;
   recorded as a `blocked`-on-Sean QUEUE row (his PR, not built or reviewed
