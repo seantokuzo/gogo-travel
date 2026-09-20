@@ -820,7 +820,10 @@
         "'Add to day' picker schedules the card into its day optimistically with the badge advancing to planned",
         "Timeless planned/booked bookings show the 'needs a day' flag; cancelled bookings hide behind the Show-cancelled toggle"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-046",
@@ -838,7 +841,10 @@
         "Booking items show category icon + status badge (planned=accent, booked=success)",
         "Toggle list<->grid: choice persists per trip across app relaunch; initial-load skeletons and the zero-content EmptyState render"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-047",
@@ -856,7 +862,10 @@
         "Forced server failure rolls the order back visibly with an ErrorBanner",
         "A timed booking's item refuses cross-day drop with the inline hint; same-day reorder still works"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-048",
@@ -879,7 +888,10 @@
         "Reorder the day: stale legs for broken adjacencies are cleaned, new pairs computed (DB matches the adjacency contract)",
         "Provider outage: itinerary mutations still succeed; chips degrade silently; refresh endpoint rate-limits"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-049",
@@ -895,7 +907,10 @@
         "Create two overlapping timed items: both save (legal), list shows warning chips on both, grid renders them side-by-side with overlap badges — never occluded",
         "Non-monotonic day ordering offers one-tap 'Sort day by time' which issues the day-order PUT; nothing auto-resorts"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-050",
@@ -913,7 +928,10 @@
         "Tapping an empty slot opens the add flow prefilled with that day + time rounded to 30 min",
         "Untimed items render as chips in the all-day lane; grid opens on day 1 (or today when active) with the 08:00-20:00 band visible"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-051",
@@ -955,7 +973,10 @@
         "Saving without times lands in the Ideas bucket; saving with times auto-schedules; overlapping choice shows a non-blocking inline notice and still saves",
         "Place-visit picker offers saved places first then spine search; direct item creation only allows place_visit/custom kinds (API check)"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-053",
@@ -975,7 +996,10 @@
         "Tapping records {partner, category, tripId, timestamp} then opens externally; foregrounding within 30 min shows 'Did you book it?' exactly once",
         "Prompt's add-manually reopens the add flow prefilled and the created booking carries source='deeplink_return'"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-054",
@@ -996,7 +1020,10 @@
         "The itinerary renders from the one-shot composite read (items + legs, single request per range — network log)",
         "Viewer role: all itinerary/booking mutations 403 server-side; edit affordances absent in UI"
       ],
-      "passes": false
+      "passes": true,
+      "verified_on": "2026-09-19",
+      "verified_by": "Sean device QA (iPhone, dev client + local server, main a839de7)",
+      "evidence": "device QA 2026-09-19 (Sean, iPhone, main a839de7): pass"
     },
     {
       "id": "F-055",
