@@ -156,6 +156,7 @@ Write `.loop/blocked` for **external** blockers — things you cannot resolve fr
 - An auth token has expired
 - The spec in `docs/PLANNING.md` is genuinely ambiguous and you need clarification
 - A merge conflict is non-trivial and risks losing intent
+- **A tool call was DENIED by a permission rule and there is no in-spec alternative.** Chained sessions run non-interactively, so anything matching an `ask` rule is auto-denied and cannot be approved from inside the chain. Name the exact command in the body. Do NOT improvise around the denial — §7's warning applies: going off-spec is the worse failure mode.
 
 Body shape:
 
