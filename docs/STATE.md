@@ -25,7 +25,23 @@ planner/spec-maker/QA. Human-in-the-loop ONLY at the escalation triggers in
 
 ## Active phase context
 
-### SESSION 2026-09-13/19 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
+## NEXT SESSION
+
+**Wave 1 (parallel worktrees):** B-30 destination-tz both sides (P1,
+un-wips `cross-tab-state`) · sub-floor custom-place scope (P2, server)
+· spec write-back — Q2-001..Q2-300 into their home specs (P2, docs).
+**Wave 2:** itinerary batch T-7.10..T-7.16 per PLANNING's P-7 extension
+block + `.specs/client/itinerary.spec.md` R-itin-33..41; T-7.17 amends
+the tz-switcher spec at build time. First step: read the P-7 extension
+block + R-itin-33..41, dispatch T-7.10 + T-7.11 first (check the
+block's dependency order).
+**Wave 3:** B-31 (E2E-lane keyboard reachability) + the 4 `wip` Maestro
+flows, #84/#80/#78/B-28 follow-up rows, the wip-guard row,
+`apps/server/scripts` top-level I/O.
+Full detail: 2026-09-20 close-out handoff note (this session's scratch
+dir) or the closing session's report.
+
+### SESSION 2026-09-13/20 — B-7 CLOSED, B-28 done, S-4 wave 2 COMPLETE, short-name search shipped, PR #85 hardening findings filed
 
 Sean (director of product) ruled several parked spec questions in-session;
 PR #72 (S-4 wave 2 session-door contract) merged.
@@ -261,6 +277,34 @@ go to a FRESH session. The dev DB was migrated to 0006 today. Stack
 state: server started by the orchestrator from `apps/server` with Sean's
 `.env`; Metro was already running; the simulator holds the door-free
 Release build — his phone uses the dev client.
+
+#### 2026-09-20 close-out
+
+Device QA 2026-09-19 (Sean, own iPhone, dev client + local server, main
+`a839de7` → `9a57aaa`): **ALL STEPS PASSED** — B-28 diagnostics leg
+(7/7 migrations), B-7 fresh-install path (tier search, 3-char search,
+inline custom destination, map world view + empty state, settings
+re-pick heals), B-26 booking form (required marker, scrollable zone
+modal, field-mapped save errors, scrim dismiss, edit-mode errors), B-27
+single safe area, and the B-31 reproduction attempt (fields and Save
+reachable on device for `flight`/`other`).
+
+- **Ledger (Law #8):** `passes` flipped to `true` for F-045, F-046,
+  F-047, F-048, F-049, F-050, F-052, F-053, F-054 — evidence "device QA
+  2026-09-19 (Sean, iPhone, main a839de7): pass". F-043/F-044/F-051 were
+  already `true`, untouched.
+- **PR #70** (spec-pass round-2, `5da4b3a`) and **PR #71**
+  (itinerary-evolution batch, `b5012f5`) **MERGED** — Sean approved all
+  round-2 recommendations wholesale. The 11 spec-pass `blocked` QUEUE
+  rows flipped `blocked → done`; T-7.10..T-7.16 already `queued` from
+  #71; T-7.17 queued.
+- **New QUEUE row (P2, queued):** write the round-2 rulings back into
+  their home specs (Q2-001..Q2-300); Q2-185 (map pin-coverage) and
+  Q2-186 (R-map-18) carry code obligations, not just doc edits.
+- **B-31 re-scoped:** NOT reproduced on a real iPhone — fields and Save
+  reachable; the gap is simulator/E2E-specific (the three `wip` Maestro
+  flows). Priority P2 → P3, status stays `queued`.
+- Session total: 18 PRs merged since 2026-09-13.
 
 ### DEVICE QA SESSION 2026-09-11/12 — PR #66 merged (trip-switcher exit); B-19 confirmed fixed on device; migration-gap incident filed; PR #67 open
 
@@ -934,32 +978,14 @@ refresh_tokens 1`. It took THREE stacked bugs, each hiding the next — the
 
 ## Blockers / Waiting on Sean
 
-- **PR #70** (spec-pass round-2 consolidated decision doc, ~300 items) —
-  awaiting Sean's rulings.
-- **PR #71** (itinerary-evolution spec batch) — mergeable again after the
-  pass-2 resolve; still awaiting Sean's sign-off (both his questions already
-  ruled: tz switcher = display-only; Month = true month grid).
 - **PR #85** (Sean's own, `chore/claude-permissions-hardening`) — a
   courtesy security lane found 4 blocking permission-hardening bypasses;
   recorded as a `blocked`-on-Sean QUEUE row (his PR, not built or reviewed
   by this session).
-- **`pnpm db:migrate` owed on Sean's dev DB:** #84 added migration 0006;
-  the DB was fully caught up (6/6) during S-4 T5 but is behind again as of
-  this pass. B-28's boot-time check will refuse the next `development` boot
-  until this runs.
-- **B-27 device confirmation still owed:** the doubled top safe-area inset
-  fix shipped via PR #68 (`098b3e5`) but has not been confirmed on Sean's
-  device.
-- **Device confirmations owed:** B-26 (#67, booking-form UX); B-7 (parts
-  1–3 CLOSED — bootstrap tier + inline custom destination + nullable
-  coords — plus #84's short-name search); B-28 (#74, migration-state
-  check); B-31 (repro — booking-form keyboard occlusion, Sean's device
-  needed to confirm the field-hierarchy claim before it's fixed). None yet
-  run on Sean's device.
-- **Device QA still owed:** the F-0xx ledger flips, and the P-9
-  spec-pass batch (43+ interpretations) plus the other Sean-gated spec
-  decisions already tracked in `docs/QUEUE.md`. **B-19's freeze check is
-  DONE** — confirmed fixed on a real device 2026-09-11 (see the
+- **Device QA still owed:** the remaining F-0xx ledger flips outside P-7
+  (P-8 F-055..F-062, P-6 F-030..F-042, P-5 F-018..F-029) plus other
+  Sean-gated spec decisions tracked in `docs/QUEUE.md`. **B-19's freeze
+  check is DONE** — confirmed fixed on a real device 2026-09-11 (see the
   2026-09-11/12 section above).
 - **Mapbox account + access token** (escalation #3, PARKED — does not block
   the P-7 build; adapters are fixture-driven behind ports). Needed for: live
