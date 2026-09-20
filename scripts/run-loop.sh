@@ -231,16 +231,34 @@ cmd_start() {
   # Manual and a chained session has no TTY, so anything that would prompt must
   # be DENIED and reported back rather than awaited. `--permission-prompts none`
   # additionally tells Claude not to retry a denied request, so a single `ask`
-  # rule can't burn an iteration in retry loops. Probe for the flag instead of
-  # parsing a version string: it needs CLI >= 2.1.259.
-  local perm_flags
+  # rule can't burn an iteration in retry loops.
+  #
+  # Capability is probed from --help, not a version string, and BEFORE any state
+  # is written: an unsupported choice is rejected at option-parse time, which
+  # would otherwise abort after `.loop/` exists and the operator's prompt has
+  # been truncated, leaving a stuck loop and a lost prompt. `auto` needs CLI
+  # >= 2.1.228, `--permission-prompts` >= 2.1.259.
+  local help_text perm_flags
+  help_text="$(claude --help 2>/dev/null || true)"
+  if ! printf '%s' "$help_text" | grep -q -- '--permission-mode'; then
+    echo "ERROR: this 'claude' CLI has no --permission-mode. A chained session" >&2
+    echo "       has no TTY, so it would start in Manual and deny every prompt." >&2
+    echo "       Upgrade to v2.1.259 or later." >&2
+    exit 1
+  fi
+  if ! printf '%s' "$help_text" | grep -q '"auto"'; then
+    echo "ERROR: this 'claude' CLI does not accept --permission-mode auto" >&2
+    echo "       (added in v2.1.228). Every iteration would abort at" >&2
+    echo "       option-parse time. Upgrade to v2.1.259 or later." >&2
+    exit 1
+  fi
   perm_flags=(--permission-mode auto)
-  if claude --help 2>/dev/null | grep -q -- '--permission-prompts'; then
+  if printf '%s' "$help_text" | grep -q -- '--permission-prompts'; then
     perm_flags+=(--permission-prompts none)
   else
-    echo "WARNING: this 'claude' CLI has no --permission-prompts; a denied" >&2
-    echo "         permission may be retried instead of reported. Upgrade to" >&2
-    echo "         v2.1.259 or later for clean unattended behaviour." >&2
+    echo "WARNING: this 'claude' CLI has no --permission-prompts (v2.1.259+)." >&2
+    echo "         A denied permission may be retried instead of reported." >&2
+    echo "         The chain will still run." >&2
   fi
 
   mkdir -p "$LOOP_DIR"
@@ -250,6 +268,7 @@ cmd_start() {
   printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
   : > "$LOG_FILE"
   log "started autonomous mode at $started_at"
+  log "permission posture: ${perm_flags[*]}"
 
   local max_chain
   max_chain="$(read_max_chain)"
