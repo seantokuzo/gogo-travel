@@ -67,10 +67,14 @@
   R-ib-10) THE SYSTEM SHALL show a pinned, collapsible "Ideas" entry above
   the day list with a count Badge; expanded, it lists idea cards grouped by
   category, ordered `updated_at DESC`.
-- **R-itin-11**: WHEN "Add to day" is tapped on a bucket card THE SYSTEM
-  SHALL present a day/time picker Sheet and schedule via the schedule
-  endpoint (API R-ib-8), optimistically moving the card into its day section
-  with the status badge advancing `idea → planned`.
+- **R-itin-11**: WHEN "Planned" or "Booked" is tapped on a bucket card
+  (replacing the single "Add to day" action — Sean QA feature batch
+  2026-09-06 feature ④, R-itin-40/41) THE SYSTEM SHALL present a
+  status-action Sheet and, on confirm, transition the booking's status to
+  the tapped target and ensure its calendar presence exists in the same
+  operation (routing detail: R-itin-41), optimistically moving the card
+  into its day section with the status badge advancing to the tapped
+  status.
 - **R-itin-12**: WHEN a `planned`/`booked` booking is timeless (in the
   bucket) THE SYSTEM SHALL flag it "needs a day" — visually distinct from
   `idea` cards; WHEN `cancelled` bookings exist THE SYSTEM SHALL render a
@@ -105,6 +109,39 @@
 - **R-itin-17**: WHEN grid mode opens THE SYSTEM SHALL land on the trip's
   first day (or today's column when the trip is active and today is in
   range) with the 08:00–20:00 band initially visible.
+
+### Calendar view density (3-day / month / trip-span)
+
+Sean QA feature batch 2026-09-06, feature ③. Orthogonal to R-itin-9
+(list ↔ grid): density applies **only** inside grid mode — list mode is
+unaffected and keeps its existing day-sectioned form.
+
+- **R-itin-33**: WHEN grid mode is active THE SYSTEM SHALL offer a density
+  selector with four options — **Day** (existing R-itin-13..17 behavior,
+  the default), **3-day**, **Month**, **Trip-span** — persisting the choice
+  locally per trip (independent MMKV key from the R-itin-9 list/grid
+  choice, same `view-mode.ts` pattern) and restoring it on next open.
+- **R-itin-34 (Day / 3-day / Trip-span — shared mechanism)**: WHEN density
+  is **Day**, **3-day**, or **Trip-span** THE SYSTEM SHALL render the SAME
+  hour-timeline `GridSurface` (R-itin-13..17 apply unchanged), varying only
+  the simultaneous day-column count: Day = 1 column (current
+  `COLUMN_FRACTION` peek); 3-day = 3 columns, no snap-peek; Trip-span = every
+  trip day simultaneously, columns sized to fit down to a floor width, then
+  continuous horizontal scroll (no page-snap) once the trip is long enough
+  to exceed it — no trip-length cap in v1. Paging/scroll position is
+  independent per density (switching density does not attempt to preserve
+  scroll offset beyond re-landing on the R-itin-17 rule).
+- **R-itin-35 (Month)** (Ruled 2026-09-13, Sean — PR #71 Question #2:
+  option (a), true month-overview grid, confirmed): WHEN density is
+  **Month** THE SYSTEM SHALL render a true month-overview grid (weeks × 7 day cells,
+  no hour axis) for the month containing the current landing day
+  (R-itin-17's rule); each cell SHALL show up to 3 compact item-count dots
+  plus a "+N" overflow marker, and multi-day bookings (lodging spans,
+  R-itin-31; overnight flights, R-itin-36) SHALL render as a thin
+  connecting bar across their covered cells within a week row (the month
+  analogue of the grid's all-day spanning lane, R-itin-16/31). Tapping a
+  day cell SHALL switch density to **Day**, landing on that date. Days
+  outside the trip's range render dimmed and inert (no add affordance).
 
 ### Add-item flows
 
@@ -155,7 +192,8 @@
   ConfirmDialog (R-ds-18), then set status `cancelled` (items disappear from
   the calendar per API R-ib-7); WHEN Delete is invoked THE SYSTEM SHALL
   ConfirmDialog with copy noting linked expenses are kept (they detach —
-  schema §3.6).
+  schema §3.6). Cancel's VISIBILITY is gated `status === 'booked'` only —
+  see R-itin-39 (B-17, amends this line).
 - **R-itin-27**: WHEN a `place_visit`/`custom` item is opened THE SYSTEM
   SHALL push the `itinerary-item` screen (navigation spec §2.4): title/place
   link, day + times, notes, edit (reopens the form modal) and delete
@@ -210,12 +248,99 @@
   the SAME single row, never persisted and never itinerary rows (ledger
   F-051 criterion 2: exactly one DB row per multi-night stay), exempt from
   the R-itin-15 overlap Badge, routing to the same `booking-detail` as the
-  lane. (Amended per QUEUE B-12, Sean-specified 2026-08-29)
+  lane. (Amended per QUEUE B-12, Sean-specified 2026-08-29) **Category
+  scope note:** despite the generic "or other spanning" wording, list-mode
+  point-row synthesis shipped LODGING-ONLY (`model.ts` `projectItem` gated
+  `base.category === "lodging"`); every other spanning item rendered as one
+  row + a `plusOne` "+1" chip instead (§2.6). R-itin-36 brings `flight` into
+  the point-row treatment (Sean QA feature batch 2026-09-06, feature ①);
+  the `plusOne` chip stays live for every category R-itin-36 does not name.
 - **R-itin-32 (deeplink party size):** WHEN a deeplink-out URL takes a
   traveler count THE SYSTEM SHALL default it to the trip's current member
   count and offer an inline, per-search editable adults field in the add
   flow; the edited value applies to that search's constructed URL.
   (Resolved 2026-07-09, Gate 2)
+
+### Overnight/multi-day flights — list view (Sean QA feature batch 2026-09-06, feature ①)
+
+- **R-itin-36**: WHEN a `flight` booking's derived auto-item spans two wall
+  dates (`end_day` set — API §3.3 "everything else" branch, already
+  computed server/shared-side, no derivation change) THE SYSTEM SHALL, in
+  **list mode only**, extend the R-itin-31 point-row mechanism to `flight`:
+  synthesize a "Departs" row on `day` and an "Arrives" row on `end_day`
+  from the SAME single spanning item (F-051-class single-row invariant —
+  zero extra `itinerary_items` rows, mirroring the lodging mechanism
+  exactly, not the car_rental/moped_rental two-DB-row mechanism); the
+  "Arrives" row is render-only (not draggable — reassigning its day would
+  misfile the item, R-itin-31 check-out precedent) and both rows route to
+  the same `booking-detail`. Grid mode is explicitly UNCHANGED by this
+  requirement — it keeps the existing clipped-block-with-"+1"-tail
+  rendering (§2.6); Sean's direction was scoped to list view. A same-day
+  flight (`end_day` null or equal to `day`) renders as today: one row, no
+  "+1" chip, no Departs/Arrives split. Scope is `flight` only per the QUEUE
+  row's literal wording — `train` shares the identical mechanical shape
+  (same `end_day` derivation branch) but is deliberately NOT included this
+  batch (see PR body "what we deliberately did not spec").
+
+### Calendar timezone switcher (Sean QA feature batch 2026-09-06, feature ②)
+
+- **R-itin-37 (population + labeling)**: WHEN the itinerary tab renders THE
+  SYSTEM SHALL offer a per-trip timezone switcher, populated from the
+  DISTINCT set of `departs_tz`/`arrives_tz` values across the trip's
+  `flight` and `train` bookings ONLY (B-9's IANA catalog — the only
+  categories carrying a stored IANA zone today; `lodging`/other categories
+  carry a UTC-offset instant with no named zone, and there is no `ferry`
+  booking category — see "what we deliberately did not spec"), each
+  city-labeled via the existing `zoneCityLabel`/`describeZoneAt` machinery
+  ("Athens — GMT+2", never a bare offset — same convention as
+  `TimeZoneField`). WHEN the derived set has fewer than 2 distinct zones
+  THE SYSTEM SHALL hide the switcher entirely (nothing to switch between).
+- **R-itin-38 (effect + default)** (Ruled 2026-09-13, Sean — PR #71
+  Question #1: option (a), display-only, no math, confirmed): WHEN a zone
+  is selected THE SYSTEM SHALL show it as an informational header label near the
+  R-itin-9 view toggle ("Times shown in {city} — GMT±X") with NO effect on
+  any rendered item time (itinerary items are trip-local wall-clock by
+  design, §3.3 — there is nothing to convert); selection persists locally
+  per trip (same pattern as R-itin-9/33) and is visible in both list and
+  grid mode. Default selection: the zone of the trip's current landing day
+  (R-itin-17's today-if-active-and-in-range rule) when it maps to a
+  derived zone, else the first (chronologically) travel item's departure
+  zone.
+
+### Ideas flow rework (Sean QA feature batch 2026-09-06, feature ④)
+
+- **R-itin-39**: WHEN a `booked` booking's status is being displayed on
+  the `booking-detail` screen THE SYSTEM SHALL offer a Cancel action only
+  for that status (B-17, Sean's device-QA ruling 2026-09-06, PR #47) —
+  `idea`/`planned` bookings expose NO Cancel affordance in this UI, even
+  though the API's §3.2 transition table still permits `idea → cancelled`
+  and `planned → cancelled` at the wire layer (unchanged; reachable only
+  through a direct API caller, never this UI). Amends R-itin-26.
+- **R-itin-40**: WHEN an idea card in the Ideas bin is acted on THE SYSTEM
+  SHALL offer two actions, "Planned" and "Booked" — replacing the single
+  "Add to day" action (R-itin-11, amended) — each opening a status-action
+  Sheet; ideas without a day stay legal and untouched (no action required),
+  but every transition OUT of `idea` through this bucket flow SHALL
+  require a valid day before it commits, per R-itin-41's routing.
+- **R-itin-41 (validation + routing)**: WHEN the status-action Sheet
+  (R-itin-40) opens for a booking with NO known primary times THE SYSTEM
+  SHALL require a valid day (times stay optional) before the confirm
+  button enables, with inline errors for an empty day or an end time
+  before its start time (mirroring today's schedule-picker validation); on
+  confirm THE SYSTEM SHALL call the schedule endpoint with the entered
+  day/times AND the tapped target status, transitioning `idea → planned`
+  or `idea → booked` and scheduling the item in one transaction (API
+  R-ib-8, extended — see itinerary-bookings.spec.md §3.4). WHEN the Sheet
+  opens for a booking that ALREADY carries known primary times (the
+  pre-existing gap the schedule endpoint's R-ib-8 always rejected —
+  `ScheduleSheet`'s module doc records it) THE SYSTEM SHALL render them
+  read-only with a "change the date on the booking itself" hint (R-ib-16
+  parity) and, on confirm, apply ONLY the status PATCH (API §3.2) — the
+  booking service's existing I-2 auto-item behavior supplies the calendar
+  row, no schedule call. Neither path can produce a `planned`/`booked`
+  booking with no day through this flow; the R-itin-12 "needs a day" flag
+  stays reachable only via other write paths (the booking-detail screen's
+  plain status buttons, R-itin-39; capture; direct API).
 
 ---
 
@@ -273,9 +398,10 @@ Two PEER collapsible bins pinned above day one, each rendered ONLY when it
 has contents — an empty bin hides entirely (QUEUE B-13, Sean's ruling
 2026-08-29). Ideas bin header: "Ideas" + unscheduled-count Badge + chevron.
 Cards grouped by category; each shows title, category icon, status
-Badge (`idea`, or "needs a day" flag per R-itin-12), price if known, and an
-"Add to day" button (R-itin-11 — the guaranteed scheduling path; drag from
-bucket into a day is an enhancement, not the contract). Cancelled bin
+Badge (`idea`, or "needs a day" flag per R-itin-12), price if known, and two
+buttons, "Planned" / "Booked" (R-itin-11/40 — replaces the single "Add to
+day" action; the guaranteed scheduling path; drag from bucket into a day is
+an enhancement, not the contract). Cancelled bin
 header: "Cancelled" + count Badge + chevron; expanding it is the
 show-cancelled affordance (R-itin-12) — flat cancelled cards (no group
 labels; the bin header names them), never schedulable. Card press →
@@ -304,6 +430,27 @@ currency, confirmation code. Save routes: timeless → bucket; timed →
 auto-scheduled (API I-2); day-picked timeless → schedule endpoint. Editing
 opens the same modal prefilled (`?bookingId=` / `?itemId=`).
 
+**Flight-number lookup gating (B-9 client half, QA-wave sync):** the
+flight-number field's in-form airline inference fires no request the
+SHARED `FlightNumberInputSchema` (+ `parseFlightNumber`) would reject —
+both gates live in one canonical key derivation
+(`flightLookupKeyOf`), so every spelling of one flight number collapses
+onto one cache entry and one request; the match is offered as a one-tap
+fill, never auto-applied (it would arm the dirty-guard discard-confirm on
+a booking the user only looked at).
+
+**`iata` field kind (B-20, QA-wave sync):** origin/destination IATA
+inputs (`flight` From/To) are their own field kind — auto-uppercase
+as-you-type, `characters` keyboard, autocorrect off, `maxLength` 3 —
+with a save-time gate `^[A-Z]{3}$` and a field-level error ("3-letter
+airport code, like NRT."). The gate is DIRTY-ONLY: an untouched prefill
+(e.g. a legacy stored value like "Narita") rides verbatim through an
+unrelated edit rather than blocking it; a stored lowercase code
+self-heals to uppercase on its own next edit. Wire narrowing is
+deliberately NOT part of this (B-20 decision item Q2, recommendation c)
+— it rides B-9's airport-picker work instead, which makes the field
+structurally valid by construction.
+
 ### 2.5 Calendar grid
 
 Layout per R-itin-13..17: shared hour gutter, day columns paged
@@ -317,6 +464,21 @@ Gap semantics: whitespace IS the feature — no artificial "free time" fills.
 The differentiator claim (competitors § call #4: "the calendar-grid view
 NOBODY has — HN users explicitly ask for gap/overlap exposure") is honored
 by rendering, not by nagging.
+
+### 2.5b Calendar view density (R-itin-33..35, feature ③)
+
+A segmented control sits beside the R-itin-9 list/grid toggle in the
+PageHeader trailing slot, visible only in grid mode: **Day · 3-day ·
+Month · Trip-span**. Day/3-day/Trip-span share ONE `GridSurface`
+component — the density prop changes `COLUMN_FRACTION`/simultaneous
+column count only (`grid/constants.ts`), everything else (hour gutter,
+block layout, all-day lane, gap-tap) is untouched. Month is a SEPARATE
+component (`MonthSurface`, new) — a 7-column week grid with no hour
+axis; each cell reuses the day-list's item-count/dot summary (not the
+timed block layout) plus a spanning bar for multi-day bookings (the
+month analogue of the all-day lane). Persistence: `gogo.itineraryGridDensity.{tripId}`
+MMKV key, independent of the `gogo.itineraryView.{tripId}` key —
+switching list↔grid never resets density, and vice versa.
 
 ### 2.6 Multi-day rendering (resolved — Gate 2, 2026-07-09)
 
@@ -340,9 +502,29 @@ schema §3.3.10):
   check-out row on the `end_day` date, each with time and category icon;
   nights between show nothing (lodging is ambient). Both rows route to the
   same `booking-detail`.
-- **Cross-midnight flights** (`end_day` = arrival wall-date): grid renders
-  one block clipped at midnight with a "+1" tail on the arrival day; list
-  renders on the departure day with a "+1" chip.
+- **Cross-midnight flights** (`end_day` = arrival wall-date, R-itin-36,
+  Sean QA feature batch 2026-09-06 feature ①): grid mode is UNCHANGED —
+  one block clipped at midnight with a "+1" tail on the arrival day. List
+  mode CHANGED — it no longer renders a single departure-day row with a
+  "+1" chip; instead it synthesizes "Departs"/"Arrives" point rows on
+  their respective days, the same mechanism as lodging's check-in/
+  check-out rows above (one spanning DB row, zero extra rows). Every
+  OTHER category whose auto-item spans days (`train`, `activity`,
+  `car_rental`/`moped_rental` two-point spans, `other`) keeps the
+  original one-row-plus-"+1"-chip treatment in both modes — R-itin-36
+  names `flight` only.
+
+### 2.6b Calendar timezone switcher (R-itin-37/38, feature ②)
+
+A button in the PageHeader trailing slot (beside the view toggle and the
+§2.5b density control), city-labeled with the currently-selected zone
+("Athens — GMT+2") or hidden entirely per R-itin-37's <2-zones rule.
+Tapping opens a Sheet listing every derived zone (same row shape as
+`TimeZoneField`'s picker — city + "GMT±X" computed at the zone's
+description-date, B-9 precedent) plus a static "Trip default" entry that
+re-applies R-itin-38's default rule. Selecting a row closes the Sheet and
+updates the header label only — R-itin-38's display-only effect, ruled
+2026-09-13.
 
 ### 2.7 Deeplink-out URL construction (exact — every row cites research)
 
@@ -394,41 +576,49 @@ the loop nobody else runs.
 Screens: `itinerary` (index, both view modes), `itinerary-item`,
 `itinerary-item-new`, `booking-detail`. Roots carry `<screen>-screen`.
 
-| Element                                                                 | testID                                                                                                                                                                                      |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| View toggle (header)                                                    | `itinerary-view-toggle`                                                                                                                                                                     |
-| FAB                                                                     | `itinerary-fab-add`                                                                                                                                                                         |
-| Add-sheet option                                                        | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                      |
-| Day add row (empty day)                                                 | `itinerary-day-add-{date}`                                                                                                                                                                  |
-| Day-header add button (every day, editors — B-11)                       | `itinerary-day-header-add-{date}`                                                                                                                                                           |
-| Day jump strip item                                                     | `itinerary-day-jump-{date}`                                                                                                                                                                 |
-| Item card                                                               | `itinerary-list-item-{itemId}` (nav §2.7 example)                                                                                                                                           |
-| Travel-time chip                                                        | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key)                                                                                                         |
-| Mode sheet row                                                          | `itinerary-leg-{fromItemId}-mode-{mode}`                                                                                                                                                    |
-| Directions handoff                                                      | `itinerary-leg-{fromItemId}-directions`                                                                                                                                                     |
-| Sort-by-time affordance                                                 | `itinerary-sort-by-time-{date}`                                                                                                                                                             |
-| Ideas section toggle                                                    | `itinerary-ideas-toggle`                                                                                                                                                                    |
-| Ideas card                                                              | `itinerary-ideas-item-{bookingId}`                                                                                                                                                          |
-| Ideas "Add to day"                                                      | `itinerary-ideas-schedule-{bookingId}`                                                                                                                                                      |
-| Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`) | `itinerary-cancelled-toggle`                                                                                                                                                                |
-| Cancelled bin list                                                      | `itinerary-cancelled-list`                                                                                                                                                                  |
-| Cancelled card                                                          | `itinerary-cancelled-item-{bookingId}`                                                                                                                                                      |
-| Grid item block                                                         | `itinerary-grid-item-{itemId}`                                                                                                                                                              |
-| Grid checkpoint indicator (B-12, derived)                               | `itinerary-grid-item-{itemId}-check-in` / `-check-out`                                                                                                                                      |
-| Grid empty slot                                                         | `itinerary-grid-slot-{date}-{HH}`                                                                                                                                                           |
-| Grid all-day chip                                                       | `itinerary-grid-allday-{itemId}`                                                                                                                                                            |
-| Form inputs                                                             | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …)                                                                                  |
-| Date/time field derivations (every DateField/TimeField, B-10)           | `{fieldTestID}-picker`, `-error`, `-clear` (time); iOS date-picker modal card `{fieldTestID}-sheet` with `-sheet-close` / `-sheet-scrim`                                                    |
-| Form status segment                                                     | `itinerary-item-new-segment-status-{status}`                                                                                                                                                |
-| Form place attach                                                       | `itinerary-item-new-button-place`                                                                                                                                                           |
-| Form save                                                               | `itinerary-item-new-button-save`                                                                                                                                                            |
-| Partner search (form)                                                   | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`) |
-| Booking detail actions                                                  | `booking-detail-button-{edit\|cancel\|delete}`                                                                                                                                              |
-| Confirmation copy                                                       | `booking-detail-button-copy-confirmation`                                                                                                                                                   |
-| Detail deeplink buttons                                                 | `booking-detail-button-deeplink-{partner}`                                                                                                                                                  |
-| Detail rows                                                             | `booking-detail-row-{place\|expenses\|schedule}`                                                                                                                                            |
-| Item detail actions                                                     | `itinerary-item-button-{edit\|delete}`                                                                                                                                                      |
-| Return prompt sheet                                                     | `booking-return-sheet`, `booking-return-button-{forward\|share\|manual\|dismiss}` (complements R-nav-18, which owns the prompt's behavior)                                                  |
+| Element                                                                                                                                                                                        | testID                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| View toggle (header)                                                                                                                                                                           | `itinerary-view-toggle`                                                                                                                                                                                                                |
+| FAB                                                                                                                                                                                            | `itinerary-fab-add`                                                                                                                                                                                                                    |
+| Add-sheet option                                                                                                                                                                               | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                                                                 |
+| Day add row (empty day)                                                                                                                                                                        | `itinerary-day-add-{date}`                                                                                                                                                                                                             |
+| Day-header add button (every day, editors — B-11)                                                                                                                                              | `itinerary-day-header-add-{date}`                                                                                                                                                                                                      |
+| Day jump strip item                                                                                                                                                                            | `itinerary-day-jump-{date}`                                                                                                                                                                                                            |
+| Item card                                                                                                                                                                                      | `itinerary-list-item-{itemId}` (nav §2.7 example)                                                                                                                                                                                      |
+| Item card rental subtext (B-18, QA-wave sync)                                                                                                                                                  | `itinerary-list-item-{itemId}-subtext` (list); `itinerary-grid-item-{key}-subtext` (grid — `key` = `itemId` or `itemId-checkpoint`)                                                                                                    |
+| Flight Departs/Arrives point row (R-itin-36, feature ①)                                                                                                                                        | `itinerary-list-item-{itemId}-departs` / `-arrives` (rule-4 derived shape, same family as `-check-in`/`-check-out`)                                                                                                                    |
+| Travel-time chip                                                                                                                                                                               | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key)                                                                                                                                                    |
+| Mode sheet row                                                                                                                                                                                 | `itinerary-leg-{fromItemId}-mode-{mode}`                                                                                                                                                                                               |
+| Directions handoff                                                                                                                                                                             | `itinerary-leg-{fromItemId}-directions`                                                                                                                                                                                                |
+| Sort-by-time affordance                                                                                                                                                                        | `itinerary-sort-by-time-{date}`                                                                                                                                                                                                        |
+| Ideas section toggle                                                                                                                                                                           | `itinerary-ideas-toggle`                                                                                                                                                                                                               |
+| Ideas card                                                                                                                                                                                     | `itinerary-ideas-item-{bookingId}`                                                                                                                                                                                                     |
+| Ideas "Planned" / "Booked" (R-itin-11/40 — replaces "Add to day")                                                                                                                              | `itinerary-ideas-planned-{bookingId}` / `itinerary-ideas-booked-{bookingId}`                                                                                                                                                           |
+| Status-action Sheet (R-itin-41; internals extend the pre-existing `itinerary-ideas-schedule-sheet` family — `-input-day`, `-input-start-time`, `-input-end-time`, `-button-confirm`, `-error`) | `itinerary-ideas-schedule-sheet`                                                                                                                                                                                                       |
+| Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`)                                                                                                                        | `itinerary-cancelled-toggle`                                                                                                                                                                                                           |
+| Cancelled bin list                                                                                                                                                                             | `itinerary-cancelled-list`                                                                                                                                                                                                             |
+| Cancelled card                                                                                                                                                                                 | `itinerary-cancelled-item-{bookingId}`                                                                                                                                                                                                 |
+| Grid item block                                                                                                                                                                                | `itinerary-grid-item-{itemId}`                                                                                                                                                                                                         |
+| Grid checkpoint indicator (B-12, derived)                                                                                                                                                      | `itinerary-grid-item-{itemId}-check-in` / `-check-out`                                                                                                                                                                                 |
+| Grid empty slot                                                                                                                                                                                | `itinerary-grid-slot-{date}-{HH}`                                                                                                                                                                                                      |
+| Grid all-day chip                                                                                                                                                                              | `itinerary-grid-allday-{itemId}`                                                                                                                                                                                                       |
+| Grid density segment (R-itin-33, feature ③)                                                                                                                                                    | `itinerary-density-segment-{day\|3-day\|month\|trip-span}`                                                                                                                                                                             |
+| Month view day cell (R-itin-35)                                                                                                                                                                | `itinerary-month-day-{date}`                                                                                                                                                                                                           |
+| Month view spanning bar (derived, same booking-detail routing)                                                                                                                                 | `itinerary-month-span-{bookingId}-{date}`                                                                                                                                                                                              |
+| Timezone switcher button (R-itin-37, feature ②; absent when hidden)                                                                                                                            | `itinerary-timezone-switcher`                                                                                                                                                                                                          |
+| Timezone switcher sheet + row                                                                                                                                                                  | `itinerary-timezone-switcher-sheet`, `itinerary-timezone-switcher-sheet-item-{tz}` (tz = `timeZoneSlug`, B-9 precedent)                                                                                                                |
+| Form inputs                                                                                                                                                                                    | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …)                                                                                                                             |
+| Date/time field derivations (every DateField/TimeField, B-10)                                                                                                                                  | `{fieldTestID}-picker`, `-error`, `-clear` (time); shared `PickerCard` modal card `{fieldTestID}-sheet` with `-sheet-done` / `-sheet-close` / `-sheet-scrim` (QA-wave sync — `-sheet-done` added post-B-15, was missing from this row) |
+| Form status segment                                                                                                                                                                            | `itinerary-item-new-segment-status-{status}`                                                                                                                                                                                           |
+| Form place attach                                                                                                                                                                              | `itinerary-item-new-button-place`                                                                                                                                                                                                      |
+| Form save                                                                                                                                                                                      | `itinerary-item-new-button-save`                                                                                                                                                                                                       |
+| Partner search (form)                                                                                                                                                                          | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`)                                            |
+| Booking detail actions                                                                                                                                                                         | `booking-detail-button-{edit\|cancel\|delete}`                                                                                                                                                                                         |
+| Confirmation copy                                                                                                                                                                              | `booking-detail-button-copy-confirmation`                                                                                                                                                                                              |
+| Detail deeplink buttons                                                                                                                                                                        | `booking-detail-button-deeplink-{partner}`                                                                                                                                                                                             |
+| Detail rows                                                                                                                                                                                    | `booking-detail-row-{place\|expenses\|schedule}`                                                                                                                                                                                       |
+| Item detail actions                                                                                                                                                                            | `itinerary-item-button-{edit\|delete}`                                                                                                                                                                                                 |
+| Return prompt sheet                                                                                                                                                                            | `booking-return-sheet`, `booking-return-button-{forward\|share\|manual\|dismiss}` (complements R-nav-18, which owns the prompt's behavior)                                                                                             |
 
 ConfirmDialogs derive `{testID}-confirm`/`-cancel` per design-system
 convention (tokens §2.9).
@@ -453,6 +643,22 @@ convention (tokens §2.9).
 - **Drag-drop library selection** — P-3/P-4 implementation choice via
   Context7 + `npm view` (CLAUDE.md § Before you code); this spec pins
   behavior, not the library.
+- **`train` Departs/Arrives point rows** — R-itin-36 names `flight` only
+  (the QUEUE row's literal scope); `train` shares the identical `end_day`
+  mechanism and is a natural follow-up (sleeper trains genuinely cross
+  midnight) but is deliberately not built this batch — a queued `T-N`/`B-N`
+  row if wanted, not silent scope.
+- **Lodging/ferry contribution to the timezone switcher** — R-itin-37 is
+  scoped to `flight`/`train`'s stored `departs_tz`/`arrives_tz` only.
+  `lodging` details carry a UTC-offset instant with no named IANA zone
+  (schema §3.4.1), and there is no `ferry` booking category — either gap
+  would need a schema change (a new `places.tz`-style column, or a new
+  category enum value + migration), which this spec deliberately does not
+  propose (Autonomy Contract #6 — scope/schema changes are Sean's call,
+  not an improvisation this batch).
+- **Live timezone conversion** — R-itin-38 is display-only (Ruled
+  2026-09-13, Sean — PR #71 Question #1); converting every item's time
+  into the selected zone (the rejected option (b)) is out of scope.
 
 ---
 
@@ -491,9 +697,12 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 ---
 
 _Trace: every R-itin-N cites its design section inline; §2.7 rows each trace
-to `.specs/research/booking-integrations.md` § Key deeplink formats. All
-four markers resolved at Gate 2 (2026-07-09): two at the schema spec
+to `.specs/research/booking-integrations.md` § Key deeplink formats. The
+original four Gate 2 (2026-07-09) markers resolved: two at the schema spec
 (multi-day → spanning item with lane/point-row rendering → R-itin-31;
 dates required), two owned here (party size → member-count default,
 inline-editable → R-itin-32; plan-mode mini-map → deferred to polish).
-Zero markers remain._
+Two markers opened by the Sean QA feature batch 2026-09-06 amendment —
+R-itin-35 (month view's exact shape) and R-itin-38 (timezone-switcher
+selection effect) — both **Ruled 2026-09-13, Sean** (PR #71 Questions
+#1/#2, both confirmed the recommended default). Zero markers remain._
