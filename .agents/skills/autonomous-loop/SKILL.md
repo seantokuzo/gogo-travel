@@ -37,18 +37,29 @@ If you, the assistant, ever notice that `.loop/state.json` does not exist, you a
 
 All sentinels live in `.loop/` at the repo root. The directory is gitignored — it is per-machine runtime state.
 
-| File                   | Type         | Meaning                                                                                     |
-| ---------------------- | ------------ | ------------------------------------------------------------------------------------------- |
-| `.loop/state.json`     | JSON         | Presence = autonomous mode ON. Updated every session.                                       |
-| `.loop/next-prompt.md` | Markdown     | Instructions for the NEXT session in the chain. Non-empty → wrapper runs another iteration. |
-| `.loop/done`           | Empty marker | All queued work complete. Chain exits cleanly and tears `.loop/` down.                      |
-| `.loop/pivot`          | Markdown     | Need human direction. Chain stops, `.loop/` preserved for inspection.                       |
-| `.loop/blocked`        | Markdown     | Stuck on an external blocker. Chain stops with non-zero exit, `.loop/` preserved.           |
-| `.loop/log.txt`        | Append-only  | Timestamped activity log. Written by the wrapper and the hook.                              |
+| File                   | Type         | Meaning                                                                                       |
+| ---------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `.loop/state.json`     | JSON         | Presence = autonomous mode ON. Updated every session.                                         |
+| `.loop/next-prompt.md` | Markdown     | Instructions for the NEXT session in the chain. Non-empty → wrapper runs another iteration.   |
+| `.loop/done`           | Empty marker | All queued work complete. Chain exits cleanly and tears `.loop/` down.                        |
+| `.loop/pivot`          | Markdown     | Need human direction. Chain stops, `.loop/` preserved for inspection.                         |
+| `.loop/blocked`        | Markdown     | Stuck on an external blocker. Chain stops with non-zero exit, `.loop/` preserved.             |
+| `.loop/log.txt`        | Append-only  | Timestamped activity log. Written by the wrapper and the hook.                                |
+| `.loop/archive/`       | Directory    | Where `resume` moves an answered `pivot`/`blocked` sentinel. Never re-checked by the wrapper. |
 
 ### Priority ordering
 
 The chain wrapper and the Stop hook check sentinels in this order: `done` → `pivot` → `blocked` → `next-prompt.md`. The first match wins. If you accidentally write both `done` and `pivot`, `done` is honored — so **only write one terminal sentinel per session**.
+
+### Answering a `pivot` or `blocked` sentinel
+
+`scripts/run-loop.sh status` reports which sentinel a halted chain is sitting on (and prints its body inline) without deleting anything. To answer it and continue the SAME chain — rather than `stop` (which deletes `.loop/`, destroying the sentinel you just read) followed by a hand-retyped `start`:
+
+```bash
+scripts/run-loop.sh resume --prompt "<answer to the pivot/blocked question>"
+```
+
+This archives the sentinel to `.loop/archive/<name>-<UTC timestamp>.md` (content preserved, no longer blocks the loop), queues the answer as the next prompt, and re-enters the chain loop. `session_count` and `started_at` are left alone — `max_chain` keeps bounding the whole run across resumes, it doesn't reset. `resume` refuses if autonomous mode is OFF or if no `pivot`/`blocked` sentinel is present; it never resumes from `done`.
 
 ---
 
@@ -83,19 +94,21 @@ Initial contents (written by `scripts/run-loop.sh start`):
   "session_count": 0,
   "started_at": "2026-05-10T00:00:00Z",
   "last_update": "2026-05-10T00:00:00Z",
-  "max_chain": 20
+  "max_chain": 20,
+  "wrapper_pid": 12345
 }
 ```
 
-| Field                    | Maintained by        | Notes                                                                                                                                   |
-| ------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `active_phase`           | You (each session)   | e.g. `"P-3"`. Set when picking up work, clear when phase done.                                                                          |
-| `active_task`            | You (each session)   | e.g. `"T-3.2"`. The single task currently in flight.                                                                                    |
-| `completed_this_session` | You (append)         | Array of task IDs completed in this chain run. Append, never replace.                                                                   |
-| `session_count`          | Wrapper              | Incremented automatically after each iteration.                                                                                         |
-| `started_at`             | Wrapper              | Written once at `start`. Never modify.                                                                                                  |
-| `last_update`            | Wrapper + you        | Wrapper bumps it; you may bump it too when you write meaningful state.                                                                  |
-| `max_chain`              | Wrapper (default 20) | Hard cap on chain iterations. You may edit this if a phase legitimately needs more — but consider whether the plan needs smaller tasks. |
+| Field                    | Maintained by        | Notes                                                                                                                                                                                                        |
+| ------------------------ | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `active_phase`           | You (each session)   | e.g. `"P-3"`. Set when picking up work, clear when phase done.                                                                                                                                               |
+| `active_task`            | You (each session)   | e.g. `"T-3.2"`. The single task currently in flight.                                                                                                                                                         |
+| `completed_this_session` | You (append)         | Array of task IDs completed in this chain run. Append, never replace.                                                                                                                                        |
+| `session_count`          | Wrapper              | Incremented automatically after each iteration.                                                                                                                                                              |
+| `started_at`             | Wrapper              | Written once at `start`. Never modify.                                                                                                                                                                       |
+| `last_update`            | Wrapper + you        | Wrapper bumps it; you may bump it too when you write meaningful state.                                                                                                                                       |
+| `max_chain`              | Wrapper (default 20) | Hard cap on chain iterations. You may edit this if a phase legitimately needs more — but consider whether the plan needs smaller tasks.                                                                      |
+| `wrapper_pid`            | Wrapper              | PID of the currently-running `run-loop.sh` process. Stamped by `start`; restamped by `resume` (a new process). `status` uses it to tell a live chain from one whose wrapper died without writing a sentinel. |
 
 **How to update without clobbering:** prefer `jq` if available; otherwise read the file, change only the fields you own, write the whole object back. Never delete fields you didn't add.
 
@@ -325,13 +338,14 @@ ls -l .claude/hooks/autonomous-handoff.sh   # should show -rwxr-xr-x
 
 ## 15. Failure modes and recovery
 
-| Symptom                                                                      | Likely cause                                                                | Recovery                                                                                                     |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Wrapper exits with `🚧 Blocked: Session ended without writing a sentinel...` | A session ended without sentinel discipline; the hook auto-wrote `blocked`. | Read `.loop/log.txt`, inspect recent commits, fix root cause, `scripts/run-loop.sh stop` then `start` again. |
-| Wrapper hits `⛔ Hit max chain (20)`                                         | Plan too big or chain stuck in a loop.                                      | Stop, inspect `state.json`, re-plan with smaller tasks, restart.                                             |
-| `next-prompt.md` empty and no sentinel                                       | Bug in a session — should have been caught by the hook.                     | Read `state.json` for last known task; manually write `next-prompt.md` or `pivot`, restart.                  |
-| Wrapper refuses to `start` ("already ON")                                    | `.loop/` exists from a previous run that didn't terminate cleanly.          | `scripts/run-loop.sh stop`, then `start`.                                                                    |
-| `claude` CLI exits non-zero with no sentinel                                 | Likely a transient error (rate limit, network).                             | Wrapper exits with that rc; check `.loop/log.txt`, restart manually if appropriate.                          |
+| Symptom                                                                      | Likely cause                                                                                | Recovery                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wrapper exits with `🚧 Blocked: Session ended without writing a sentinel...` | A session ended without sentinel discipline; the hook auto-wrote `blocked`.                 | Read `.loop/log.txt`, inspect recent commits, fix root cause, `scripts/run-loop.sh stop` then `start` again.                                                                                                                                                                                            |
+| Wrapper hits `⛔ Hit max chain (20)`                                         | Plan too big or chain stuck in a loop.                                                      | Stop, inspect `state.json`, re-plan with smaller tasks, restart.                                                                                                                                                                                                                                        |
+| `next-prompt.md` empty and no sentinel                                       | Bug in a session — should have been caught by the hook.                                     | Read `state.json` for last known task; manually write `next-prompt.md` or `pivot`, restart.                                                                                                                                                                                                             |
+| Wrapper refuses to `start` ("already ON")                                    | `.loop/` exists — either halted on a sentinel, or from a run that didn't terminate cleanly. | If halted on `pivot`/`blocked`: `scripts/run-loop.sh resume --prompt "<answer>"` to continue the same run. Otherwise: `scripts/run-loop.sh stop`, then `start`.                                                                                                                                         |
+| `status` reports `INTERRUPTED`                                               | Wrapper process died with no sentinel (machine slept, terminal closed, killed).             | `resume` needs a real `pivot`/`blocked` sentinel, so it won't fire here. Read `.loop/log.txt`/`state.json` for the last known task, then either hand-write a `pivot` describing where it stopped and `resume --prompt` from it, or `stop` then `start` fresh with a prompt describing where to pick up. |
+| `claude` CLI exits non-zero with no sentinel                                 | Likely a transient error (rate limit, network).                                             | Wrapper exits with that rc; check `.loop/log.txt`, restart manually if appropriate.                                                                                                                                                                                                                     |
 
 ---
 

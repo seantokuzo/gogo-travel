@@ -13,7 +13,7 @@
 #   .loop/pivot          — need human direction, stop chain (state preserved)
 #   .loop/blocked        — stuck, surface to human (state preserved)
 #
-# Commands: start [--prompt "..."] | stop | status | help
+# Commands: start [--prompt "..."] | resume --prompt "..." | stop | status | help
 #
 # Portability: bash 3.2+ (macOS default). `jq` is optional; we use it when
 # available and fall back to a portable rewrite otherwise.
@@ -24,8 +24,15 @@ LOOP_DIR=".loop"
 STATE_FILE="$LOOP_DIR/state.json"
 NEXT_PROMPT_FILE="$LOOP_DIR/next-prompt.md"
 LOG_FILE="$LOOP_DIR/log.txt"
+ARCHIVE_DIR="$LOOP_DIR/archive"
 HOOK_PATH=".claude/hooks/autonomous-handoff.sh"
 SETTINGS_FILE=".claude/settings.json"
+
+# Permission flags for the chained `claude -p` invocation. Populated by
+# probe_permission_flags() — never expand this before that has run; bash 3.2
+# treats "${PERM_FLAGS[@]}" on a still-empty array as an unbound variable
+# under `set -u`.
+PERM_FLAGS=()
 
 DEFAULT_PROMPT='Read .agents/skills/autonomous-loop/SKILL.md, then read docs/QUEUE.md and CLAUDE.md. You are running in autonomous mode. Execute the next available work item per the sentinel discipline. Honor opt-out signals.'
 
@@ -51,13 +58,25 @@ run-loop.sh — autonomous-mode chain wrapper
 
 USAGE
   scripts/run-loop.sh start [--prompt "<initial prompt>"]
-      Bootstrap `.loop/` state and begin the chain. Refuses if already ON.
+      Bootstrap `.loop/` state and begin the chain. Refuses if already ON —
+      if halted on pivot/blocked, use `resume` instead of `stop` + `start`.
+
+  scripts/run-loop.sh resume --prompt "<answer>"
+      Answer a `pivot` or `blocked` sentinel and continue the SAME chain.
+      Archives the sentinel to `.loop/archive/`, queues the answer as the
+      next prompt, and resumes — session_count and started_at are preserved,
+      so max_chain still bounds the whole run across resumes. Refuses if
+      autonomous mode is OFF, or if no pivot/blocked sentinel is present
+      (there is nothing to resume from; note `done` is never resumable).
 
   scripts/run-loop.sh stop
       Tear down `.loop/`. Confirms interactively if stdin is a TTY.
 
   scripts/run-loop.sh status
-      Print current loop state. Exits 0 either way.
+      Print current loop state: OFF (no state), HALTED (a sentinel is
+      present — body printed inline), RUNNING (wrapper pid + session count),
+      or INTERRUPTED (state exists but the wrapper process is gone and no
+      sentinel was written). Exits 0 either way.
 
   scripts/run-loop.sh help | -h | --help
       Show this message.
@@ -67,6 +86,8 @@ SENTINELS (Claude writes these from inside a session)
   .loop/pivot           need human direction — wrapper exits 0, state preserved
   .loop/blocked         stuck — wrapper exits 1, state preserved
   .loop/next-prompt.md  populated and non-empty → next iteration runs
+  .loop/archive/        pivot/blocked sentinels `resume` has answered — kept
+                         for the record, never re-checked by the wrapper
 
 SAFETY
   Hard cap: max_chain iterations (default 20). After that the wrapper stops
@@ -140,7 +161,8 @@ write_initial_state() {
   "session_count": 0,
   "started_at": "$started_at",
   "last_update": "$started_at",
-  "max_chain": 20
+  "max_chain": 20,
+  "wrapper_pid": $$
 }
 EOF
 }
@@ -193,52 +215,63 @@ increment_session_count() {
   fi
 }
 
-# ---------- commands ----------
-
-cmd_start() {
-  local prompt="$DEFAULT_PROMPT"
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --prompt)
-        if [ $# -lt 2 ]; then
-          echo "ERROR: --prompt requires a value." >&2
-          exit 1
-        fi
-        prompt="$2"
-        shift 2
-        ;;
-      *)
-        echo "ERROR: unknown start argument: $1" >&2
-        print_help >&2
-        exit 1
-        ;;
-    esac
-  done
-
-  if [ -f "$STATE_FILE" ]; then
-    echo "ERROR: Autonomous mode is already ON. Use 'stop' first." >&2
-    exit 1
+# Read an integer top-level field from state.json. Portable fallback when jq
+# isn't available (same grep+sed idiom as read_max_chain). Echoes an empty
+# string — never errors — if the field is absent or not a plain integer;
+# callers must check for that themselves.
+read_state_field() {
+  local field="$1"
+  local value
+  if have_jq; then
+    value="$(jq -r --arg f "$field" '.[$f] // empty' "$STATE_FILE" 2>/dev/null || true)"
+  else
+    value="$(grep -E "\"$field\"" "$STATE_FILE" 2>/dev/null | sed -E 's/.*: *([0-9]+).*/\1/' | head -n1)"
   fi
-
-  ensure_hook_installed
-
-  if ! command -v claude >/dev/null 2>&1; then
-    echo "ERROR: 'claude' CLI not found in PATH." >&2
-    exit 1
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    value=""
   fi
+  echo "$value"
+}
 
-  # Permission posture for unattended runs. `-p`'s built-in starting mode is
-  # Manual and a chained session has no TTY, so anything that would prompt must
-  # be DENIED and reported back rather than awaited. `--permission-prompts none`
-  # additionally tells Claude not to retry a denied request, so a single `ask`
-  # rule can't burn an iteration in retry loops.
-  #
-  # Capability is probed from --help, not a version string, and BEFORE any state
-  # is written: an unsupported choice is rejected at option-parse time, which
-  # would otherwise abort after `.loop/` exists and the operator's prompt has
-  # been truncated, leaving a stuck loop and a lost prompt. `auto` needs CLI
-  # >= 2.1.228, `--permission-prompts` >= 2.1.259.
-  local help_text perm_flags
+# Stamp the CURRENT process's pid into state.json as wrapper_pid, bumping
+# last_update. `start` doesn't need this — write_initial_state stamps its own
+# pid directly at creation. `resume` does: it runs as a brand-new process, so
+# the pid recorded by the run that halted on the sentinel is already dead and
+# must be replaced before `status` can tell the resumed chain is alive.
+update_wrapper_pid() {
+  local pid="$1"
+  local ts
+  ts="$(now_iso)"
+  if have_jq; then
+    local tmp
+    tmp="$(mktemp)"
+    jq --argjson pid "$pid" --arg ts "$ts" '.wrapper_pid = $pid | .last_update = $ts' "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
+  else
+    sed -i.bak -E "s/(\"wrapper_pid\"[[:space:]]*:[[:space:]]*)[0-9]+/\1$pid/" "$STATE_FILE"
+    sed -i.bak -E "s/(\"last_update\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"/\1\"$ts\"/" "$STATE_FILE"
+    rm -f "$STATE_FILE.bak"
+  fi
+}
+
+# ---------- permission capability probe ----------
+
+# Permission posture for unattended runs. `-p`'s built-in starting mode is
+# Manual and a chained session has no TTY, so anything that would prompt must
+# be DENIED and reported back rather than awaited. `--permission-prompts none`
+# additionally tells Claude not to retry a denied request, so a single `ask`
+# rule can't burn an iteration in retry loops.
+#
+# Capability is probed from --help, not a version string, and BEFORE any state
+# is written: an unsupported choice is rejected at option-parse time, which
+# would otherwise abort after `.loop/` exists and the operator's prompt has
+# been truncated, leaving a stuck loop and a lost prompt. `auto` needs CLI
+# >= 2.1.228, `--permission-prompts` >= 2.1.259.
+#
+# Sets the module-level PERM_FLAGS array (bash arrays don't survive being
+# returned from a function, so this is set-as-side-effect rather than echoed).
+probe_permission_flags() {
+  local help_text
   help_text="$(claude --help 2>/dev/null || true)"
   if ! printf '%s' "$help_text" | grep -q -- '--permission-mode'; then
     echo "ERROR: this 'claude' CLI has no --permission-mode. A chained session" >&2
@@ -252,29 +285,39 @@ cmd_start() {
     echo "       option-parse time. Upgrade to v2.1.259 or later." >&2
     exit 1
   fi
-  perm_flags=(--permission-mode auto)
+  PERM_FLAGS=(--permission-mode auto)
   if printf '%s' "$help_text" | grep -q -- '--permission-prompts'; then
-    perm_flags+=(--permission-prompts none)
+    PERM_FLAGS+=(--permission-prompts none)
   else
     echo "WARNING: this 'claude' CLI has no --permission-prompts (v2.1.259+)." >&2
     echo "         A denied permission may be retried instead of reported." >&2
     echo "         The chain will still run." >&2
   fi
+}
 
-  mkdir -p "$LOOP_DIR"
-  local started_at
-  started_at="$(now_iso)"
-  write_initial_state "$started_at"
-  printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
-  : > "$LOG_FILE"
-  log "started autonomous mode at $started_at"
-  log "permission posture: ${perm_flags[*]}"
+# ---------- chain loop ----------
 
+# Drive the chain: read next-prompt.md, invoke `claude -p`, check sentinels,
+# repeat until a terminal sentinel fires, max_chain is hit, or an unrecovered
+# error occurs. Requires PERM_FLAGS to already be populated (probe_permission_
+# flags) and next-prompt.md to already hold the first prompt to run.
+#
+# The iteration counter seeds from the CURRENT session_count in state.json
+# rather than 0, so that a resumed chain doesn't get a fresh max_chain budget
+# — the cap bounds the whole run (across `start` + any `resume`s), not each
+# process invocation. For a fresh `start` session_count is 0, so this is a
+# no-op behaviourally: iteration numbering is unchanged from before.
+run_chain() {
   local max_chain
   max_chain="$(read_max_chain)"
   log "max_chain=$max_chain"
 
-  local iteration=0
+  local iteration
+  iteration="$(read_state_field session_count)"
+  if [ -z "$iteration" ]; then
+    iteration=0
+  fi
+
   while :; do
     iteration=$((iteration + 1))
     if [ "$iteration" -gt "$max_chain" ]; then
@@ -301,7 +344,7 @@ cmd_start() {
     # Run claude. Don't let a non-zero exit kill the wrapper here — we want to
     # inspect sentinels and surface a meaningful message before exiting.
     set +e
-    claude -p "$current_prompt" --output-format text "${perm_flags[@]}"
+    claude -p "$current_prompt" --output-format text "${PERM_FLAGS[@]}"
     local rc=$?
     set -e
     log "iteration $iteration — claude exited rc=$rc"
@@ -351,6 +394,137 @@ cmd_start() {
   done
 }
 
+# ---------- commands ----------
+
+cmd_start() {
+  local prompt="$DEFAULT_PROMPT"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt)
+        if [ $# -lt 2 ]; then
+          echo "ERROR: --prompt requires a value." >&2
+          exit 1
+        fi
+        prompt="$2"
+        shift 2
+        ;;
+      *)
+        echo "ERROR: unknown start argument: $1" >&2
+        print_help >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [ -f "$STATE_FILE" ]; then
+    if [ -e "$LOOP_DIR/pivot" ] || [ -e "$LOOP_DIR/blocked" ]; then
+      echo "ERROR: Autonomous mode is already ON and halted on a sentinel." >&2
+      echo "       Use 'resume --prompt \"<answer>\"' to continue, or 'stop' to tear down." >&2
+    else
+      echo "ERROR: Autonomous mode is already ON. Use 'stop' first." >&2
+    fi
+    exit 1
+  fi
+
+  ensure_hook_installed
+
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "ERROR: 'claude' CLI not found in PATH." >&2
+    exit 1
+  fi
+
+  probe_permission_flags
+
+  mkdir -p "$LOOP_DIR"
+  local started_at
+  started_at="$(now_iso)"
+  write_initial_state "$started_at"
+  printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
+  : > "$LOG_FILE"
+  log "started autonomous mode at $started_at"
+  log "permission posture: ${PERM_FLAGS[*]}"
+
+  run_chain
+}
+
+cmd_resume() {
+  local prompt="" prompt_set=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prompt)
+        if [ $# -lt 2 ]; then
+          echo "ERROR: --prompt requires a value." >&2
+          exit 1
+        fi
+        prompt="$2"
+        prompt_set=1
+        shift 2
+        ;;
+      *)
+        echo "ERROR: unknown resume argument: $1" >&2
+        print_help >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [ ! -f "$STATE_FILE" ]; then
+    echo "ERROR: Autonomous mode is not ON. Use 'start' instead." >&2
+    exit 1
+  fi
+
+  # `done` outranks pivot/blocked in the sentinel priority order (see SKILL.md
+  # § "Priority ordering") — if it's present the chain is already finished,
+  # regardless of what other lower-priority sentinel also happens to exist.
+  # Never resumable; the wrapper would have torn `.loop/` down already on its
+  # next check.
+  if [ -e "$LOOP_DIR/done" ]; then
+    echo "ERROR: chain already completed ('done' sentinel present) — nothing to resume." >&2
+    echo "       Use 'stop' to clear state, or 'status' to inspect." >&2
+    exit 1
+  fi
+
+  local sentinel=""
+  if [ -e "$LOOP_DIR/pivot" ]; then
+    sentinel="pivot"
+  elif [ -e "$LOOP_DIR/blocked" ]; then
+    sentinel="blocked"
+  fi
+
+  if [ -z "$sentinel" ]; then
+    echo "ERROR: nothing to resume from — no 'pivot' or 'blocked' sentinel present." >&2
+    echo "       Use 'status' to see the current loop state." >&2
+    exit 1
+  fi
+
+  if [ "$prompt_set" -ne 1 ]; then
+    echo "ERROR: 'resume' requires --prompt \"<answer to the $sentinel>\"." >&2
+    exit 1
+  fi
+
+  ensure_hook_installed
+
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "ERROR: 'claude' CLI not found in PATH." >&2
+    exit 1
+  fi
+
+  probe_permission_flags
+
+  mkdir -p "$ARCHIVE_DIR"
+  local archive_ts archive_path
+  archive_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  archive_path="$ARCHIVE_DIR/${sentinel}-${archive_ts}.md"
+  mv "$LOOP_DIR/$sentinel" "$archive_path"
+
+  printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
+  update_wrapper_pid "$$"
+  log "resumed autonomous mode (was: $sentinel, archived to $archive_path)"
+  log "permission posture: ${PERM_FLAGS[*]}"
+
+  run_chain
+}
+
 cmd_stop() {
   if [ ! -d "$LOOP_DIR" ]; then
     echo "Autonomous mode is already OFF."
@@ -371,16 +545,47 @@ cmd_stop() {
 }
 
 cmd_status() {
-  if [ -f "$STATE_FILE" ]; then
-    echo "Autonomous mode: ON"
-    echo "--- $STATE_FILE ---"
-    if have_jq; then
-      jq . "$STATE_FILE"
-    else
-      cat "$STATE_FILE"
-    fi
-  else
+  if [ ! -f "$STATE_FILE" ]; then
     echo "Autonomous mode: OFF"
+    return 0
+  fi
+
+  # Sentinel priority order: done > pivot > blocked (see SKILL.md § "Priority
+  # ordering"). A halted chain reports the sentinel it halted on rather than
+  # trying to infer liveness — that's the whole point of this command.
+  local sentinel=""
+  if [ -e "$LOOP_DIR/done" ]; then
+    sentinel="done"
+  elif [ -e "$LOOP_DIR/pivot" ]; then
+    sentinel="pivot"
+  elif [ -e "$LOOP_DIR/blocked" ]; then
+    sentinel="blocked"
+  fi
+
+  if [ -n "$sentinel" ]; then
+    echo "HALTED — $sentinel"
+    cat "$LOOP_DIR/$sentinel"
+  else
+    # No sentinel — either the wrapper is still chained-looping, or it died
+    # (machine slept, terminal closed, process killed) without getting a
+    # chance to write one. Distinguish using the pid it stamped into
+    # state.json at start/resume.
+    local pid
+    pid="$(read_state_field wrapper_pid)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      local session_count
+      session_count="$(read_state_field session_count)"
+      echo "RUNNING — wrapper pid $pid, session_count=${session_count:-0}"
+    else
+      echo "INTERRUPTED — wrapper gone, no sentinel written"
+    fi
+  fi
+
+  echo "--- $STATE_FILE ---"
+  if have_jq; then
+    jq . "$STATE_FILE"
+  else
+    cat "$STATE_FILE"
   fi
 }
 
@@ -396,6 +601,7 @@ main() {
   shift
   case "$cmd" in
     start)  cmd_start "$@" ;;
+    resume) cmd_resume "$@" ;;
     stop)   cmd_stop "$@" ;;
     status) cmd_status "$@" ;;
     help|-h|--help) print_help ;;
