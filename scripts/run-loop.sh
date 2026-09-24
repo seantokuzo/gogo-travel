@@ -62,21 +62,27 @@ USAGE
       if halted on pivot/blocked, use `resume` instead of `stop` + `start`.
 
   scripts/run-loop.sh resume --prompt "<answer>"
-      Answer a `pivot` or `blocked` sentinel and continue the SAME chain.
-      Archives the sentinel to `.loop/archive/`, queues the answer as the
-      next prompt, and resumes — session_count and started_at are preserved,
-      so max_chain still bounds the whole run across resumes. Refuses if
-      autonomous mode is OFF, or if no pivot/blocked sentinel is present
-      (there is nothing to resume from; note `done` is never resumable).
+      Answer pivot/blocked sentinel(s) and continue the SAME chain. Archives
+      every resumable sentinel present (pivot AND blocked, if both) to
+      `.loop/archive/`, queues the answer as the next prompt, and resumes —
+      session_count and started_at are preserved, so max_chain still bounds
+      the whole run across resumes. All validation (state.json is parseable,
+      the prompt is non-whitespace, the budget isn't already exhausted, no
+      wrapper for this loop is still alive) happens before anything is
+      archived or overwritten. Refuses if autonomous mode is OFF, no
+      pivot/blocked sentinel is present (`done` is never resumable), or a
+      wrapper process for this `.loop/` is still alive (wait for it to exit).
 
   scripts/run-loop.sh stop
       Tear down `.loop/`. Confirms interactively if stdin is a TTY.
 
   scripts/run-loop.sh status
       Print current loop state: OFF (no state), HALTED (a sentinel is
-      present — body printed inline), RUNNING (wrapper pid + session count),
-      or INTERRUPTED (state exists but the wrapper process is gone and no
-      sentinel was written). Exits 0 either way.
+      present — body printed inline, annotated with whether the wrapper
+      process is still alive), RUNNING (wrapper pid + session count), or
+      INTERRUPTED (state exists but the wrapper process is gone and no
+      sentinel was written). Exits 0 either way, even if state.json is
+      malformed.
 
   scripts/run-loop.sh help | -h | --help
       Show this message.
@@ -179,7 +185,12 @@ read_max_chain() {
   if have_jq; then
     value="$(jq -r '.max_chain // 20' "$STATE_FILE")"
   else
-    value="$(grep -E '"max_chain"' "$STATE_FILE" | sed -E 's/.*: *([0-9]+).*/\1/' | head -n1)"
+    # Key-anchored extraction (D3): grep -o pulls out only the "max_chain": N
+    # span itself, so a compact single-line state.json (all fields on one
+    # line) can't make a greedy `.*` swallow past this key into a LATER
+    # field's number. The old `grep line | sed '.*: *(N).*'` idiom returned
+    # whichever field happened to be last on the matched line.
+    value="$(grep -oE '"max_chain"[[:space:]]*:[[:space:]]*[0-9]+' "$STATE_FILE" 2>/dev/null | head -n1 | grep -oE '[0-9]+' 2>/dev/null)" || value=""
   fi
   if [ -z "$value" ] || ! [[ "$value" =~ ^[0-9]+$ ]]; then
     value=20
@@ -225,7 +236,14 @@ read_state_field() {
   if have_jq; then
     value="$(jq -r --arg f "$field" '.[$f] // empty' "$STATE_FILE" 2>/dev/null || true)"
   else
-    value="$(grep -E "\"$field\"" "$STATE_FILE" 2>/dev/null | sed -E 's/.*: *([0-9]+).*/\1/' | head -n1)"
+    # Same key-anchored fix as read_max_chain (D3) — this fallback is now
+    # load-bearing for session_count and wrapper_pid too, not just max_chain.
+    # `|| value=""` (not `2>/dev/null` alone) guards against `set -o
+    # pipefail`: if the field is genuinely absent, grep's non-zero exit is
+    # the pipeline's exit status even though sed/head downstream succeed,
+    # which would otherwise trip `set -e` and contradict this function's
+    # documented "never errors, echoes empty" contract.
+    value="$(grep -oE "\"$field\"[[:space:]]*:[[:space:]]*[0-9]+" "$STATE_FILE" 2>/dev/null | head -n1 | grep -oE '[0-9]+' 2>/dev/null)" || value=""
   fi
   if ! [[ "$value" =~ ^[0-9]+$ ]]; then
     value=""
@@ -248,9 +266,98 @@ update_wrapper_pid() {
     jq --argjson pid "$pid" --arg ts "$ts" '.wrapper_pid = $pid | .last_update = $ts' "$STATE_FILE" > "$tmp"
     mv "$tmp" "$STATE_FILE"
   else
-    sed -i.bak -E "s/(\"wrapper_pid\"[[:space:]]*:[[:space:]]*)[0-9]+/\1$pid/" "$STATE_FILE"
+    if grep -q '"wrapper_pid"' "$STATE_FILE" 2>/dev/null; then
+      sed -i.bak -E "s/(\"wrapper_pid\"[[:space:]]*:[[:space:]]*)[0-9]+/\1$pid/" "$STATE_FILE"
+      rm -f "$STATE_FILE.bak"
+    else
+      # Key absent — a `sed` substitution is a no-op on a key that isn't
+      # there (D5). Reachable whenever a session hand-edits state.json per
+      # SKILL.md §5 ("write the whole object back") and drops the field:
+      # `status` then can't tell a live wrapper from a dead one and reports
+      # INTERRUPTED on a running chain. Add the key by inserting it before
+      # the object's closing brace (there is exactly one, this schema has no
+      # nested objects) instead of silently doing nothing — works for both
+      # pretty-printed and single-line state.json.
+      local tmp
+      tmp="$(mktemp)"
+      awk -v pid="$pid" '
+        /\}[[:space:]]*$/ && !done { sub(/\}[[:space:]]*$/, ",\"wrapper_pid\": " pid "}"); done=1 }
+        { print }
+      ' "$STATE_FILE" > "$tmp"
+      mv "$tmp" "$STATE_FILE"
+    fi
     sed -i.bak -E "s/(\"last_update\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"/\1\"$ts\"/" "$STATE_FILE"
     rm -f "$STATE_FILE.bak"
+  fi
+}
+
+# Return the wrapper_pid recorded in state.json IFF a process with that pid
+# is currently alive. Echoes nothing and returns 1 if the field is absent, or
+# if it names a pid that's no longer running.
+alive_wrapper_pid() {
+  local pid
+  pid="$(read_state_field wrapper_pid)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "$pid"
+    return 0
+  fi
+  return 1
+}
+
+# Refuse to resume while a wrapper process for this .loop/ is still alive
+# (D2). Without this, a sentinel written mid-run (the CLI invocation writes
+# `pivot`/`blocked` and then keeps doing housekeeping for a few more seconds
+# before actually exiting — exactly the shape of SKILL.md §10's "human says
+# stop" path) looks indistinguishable from a fully-halted chain. An operator
+# who resumes into that window starts a SECOND wrapper against the same
+# `.loop/`: both then loop concurrently, each independently bounding itself
+# to max_chain, so two wrappers can run up to 2x max_chain sessions between
+# them, and whichever resumes last archives the sentinel the other wrapper
+# was about to act on.
+ensure_wrapper_not_alive() {
+  local pid
+  if pid="$(alive_wrapper_pid)"; then
+    echo "ERROR: wrapper process (pid $pid) for this .loop/ is still alive." >&2
+    echo "       Wait for it to exit, then retry 'resume'. Do not run 'stop'" >&2
+    echo "       to force past this — that deletes .loop/ out from under a" >&2
+    echo "       live wrapper." >&2
+    exit 1
+  fi
+}
+
+# Refuse to resume if doing so would immediately exceed max_chain (D1). This
+# mirrors run_chain's own "iteration > max_chain" check so the failure mode
+# and exit code (2) are unchanged for the operator — the only difference is
+# WHEN it fires: before any sentinel is archived or next-prompt.md is
+# touched, instead of after.
+ensure_chain_budget_remaining() {
+  local session_count max_chain next_iteration
+  session_count="$(read_state_field session_count)"
+  if [ -z "$session_count" ]; then
+    session_count=0
+  fi
+  max_chain="$(read_max_chain)"
+  next_iteration=$((session_count + 1))
+  if [ "$next_iteration" -gt "$max_chain" ]; then
+    echo "⛔ Hit max chain ($max_chain). Stopping for safety." >&2
+    log "resume refused — would exceed max chain ($max_chain) at session_count=$session_count"
+    exit 2
+  fi
+}
+
+# Confirm state.json is at least syntactically valid JSON before `resume`
+# mutates anything (D1). Without this, a malformed hand-edit (SKILL.md §5
+# explicitly invites sessions to rewrite the whole object) only surfaces once
+# `update_wrapper_pid`'s `jq` call dies mid-resume — by which point the
+# sentinel has already been archived and next-prompt.md truncated, with no
+# log record of where the sentinel went.
+ensure_state_json_parseable() {
+  if have_jq; then
+    if ! jq empty "$STATE_FILE" >/dev/null 2>&1; then
+      echo "ERROR: $STATE_FILE is not valid JSON — refusing to touch .loop/ state." >&2
+      echo "       Fix it by hand (see SKILL.md § 5) and retry." >&2
+      exit 1
+    fi
   fi
 }
 
@@ -473,6 +580,14 @@ cmd_resume() {
     exit 1
   fi
 
+  # Every validation below that CAN fail must run before the first mutation
+  # (D1) — the first mutation is the `mv` that archives a sentinel, further
+  # down. Previously several of these checks lived downstream (inside
+  # run_chain, or inside update_wrapper_pid's jq call) and could fail AFTER
+  # the sentinel was already archived and next-prompt.md already truncated,
+  # leaving the chain unresumable with no record of where the sentinel went.
+  ensure_state_json_parseable
+
   # `done` outranks pivot/blocked in the sentinel priority order (see SKILL.md
   # § "Priority ordering") — if it's present the chain is already finished,
   # regardless of what other lower-priority sentinel also happens to exist.
@@ -484,23 +599,47 @@ cmd_resume() {
     exit 1
   fi
 
-  local sentinel=""
+  # Collect EVERY resumable sentinel present, not just the top-priority one
+  # (D4). A stale `blocked` can sit beside a fresh `pivot` (or vice versa);
+  # archiving only the winner left the loser to kill the very next iteration
+  # with a dead blocker attributed to a fresh session, and clobbered whatever
+  # next-prompt.md that session had legitimately queued.
+  local sentinels=()
   if [ -e "$LOOP_DIR/pivot" ]; then
-    sentinel="pivot"
-  elif [ -e "$LOOP_DIR/blocked" ]; then
-    sentinel="blocked"
+    sentinels+=("pivot")
+  fi
+  if [ -e "$LOOP_DIR/blocked" ]; then
+    sentinels+=("blocked")
   fi
 
-  if [ -z "$sentinel" ]; then
+  if [ ${#sentinels[@]} -eq 0 ]; then
     echo "ERROR: nothing to resume from — no 'pivot' or 'blocked' sentinel present." >&2
     echo "       Use 'status' to see the current loop state." >&2
     exit 1
   fi
 
   if [ "$prompt_set" -ne 1 ]; then
-    echo "ERROR: 'resume' requires --prompt \"<answer to the $sentinel>\"." >&2
+    echo "ERROR: 'resume' requires --prompt \"<answer to the ${sentinels[0]}>\"." >&2
     exit 1
   fi
+
+  # Whitespace-only content used to pass this gate, archive the sentinel
+  # inside run_chain's later check, then abort — leaving the chain
+  # unresumable (D1: `resume --prompt ""`).
+  if ! printf '%s' "$prompt" | grep -q '[^[:space:]]'; then
+    echo "ERROR: --prompt must contain non-whitespace content." >&2
+    exit 1
+  fi
+
+  # D2: refuse while a wrapper for this .loop/ is still alive — see
+  # ensure_wrapper_not_alive's comment for the race this closes.
+  ensure_wrapper_not_alive
+
+  # D1: refuse before mutating anything if resuming would immediately blow
+  # the max_chain budget, instead of archiving the sentinel and THEN hitting
+  # this same check (with the same exit code) inside run_chain having run
+  # zero sessions.
+  ensure_chain_budget_remaining
 
   ensure_hook_installed
 
@@ -511,15 +650,23 @@ cmd_resume() {
 
   probe_permission_flags
 
+  # ---- Nothing above this line may mutate .loop/. Everything below can. ----
+
   mkdir -p "$ARCHIVE_DIR"
-  local archive_ts archive_path
+  local archive_ts s archive_path
   archive_ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  archive_path="$ARCHIVE_DIR/${sentinel}-${archive_ts}.md"
-  mv "$LOOP_DIR/$sentinel" "$archive_path"
+  for s in "${sentinels[@]}"; do
+    archive_path="$ARCHIVE_DIR/${s}-${archive_ts}.md"
+    mv "$LOOP_DIR/$s" "$archive_path"
+    # Log the archive destination immediately — before anything downstream
+    # that could still fail (D1) — so the record of where the sentinel went
+    # exists even if something later goes wrong.
+    log "archived sentinel '$s' to $archive_path"
+  done
 
   printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
   update_wrapper_pid "$$"
-  log "resumed autonomous mode (was: $sentinel, archived to $archive_path)"
+  log "resumed autonomous mode (was: ${sentinels[*]})"
   log "permission posture: ${PERM_FLAGS[*]}"
 
   run_chain
@@ -551,8 +698,7 @@ cmd_status() {
   fi
 
   # Sentinel priority order: done > pivot > blocked (see SKILL.md § "Priority
-  # ordering"). A halted chain reports the sentinel it halted on rather than
-  # trying to infer liveness — that's the whole point of this command.
+  # ordering"). A halted chain reports the sentinel it halted on.
   local sentinel=""
   if [ -e "$LOOP_DIR/done" ]; then
     sentinel="done"
@@ -563,7 +709,17 @@ cmd_status() {
   fi
 
   if [ -n "$sentinel" ]; then
-    echo "HALTED — $sentinel"
+    # D2: a sentinel on disk doesn't mean the wrapper has actually exited —
+    # the CLI invocation can write it and then keep doing housekeeping for a
+    # few more seconds before returning. Annotate liveness so "halted" is
+    # distinguishable from "halted but the wrapper is still winding down",
+    # which is precisely the window `resume` now also refuses to run in.
+    local pid
+    if pid="$(alive_wrapper_pid)"; then
+      echo "HALTED — $sentinel (wrapper pid $pid still alive — do NOT resume yet; wait for it to exit)"
+    else
+      echo "HALTED — $sentinel (wrapper not running — safe to resume or stop)"
+    fi
     cat "$LOOP_DIR/$sentinel"
   else
     # No sentinel — either the wrapper is still chained-looping, or it died
@@ -571,8 +727,7 @@ cmd_status() {
     # chance to write one. Distinguish using the pid it stamped into
     # state.json at start/resume.
     local pid
-    pid="$(read_state_field wrapper_pid)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    if pid="$(alive_wrapper_pid)"; then
       local session_count
       session_count="$(read_state_field session_count)"
       echo "RUNNING — wrapper pid $pid, session_count=${session_count:-0}"
@@ -583,7 +738,14 @@ cmd_status() {
 
   echo "--- $STATE_FILE ---"
   if have_jq; then
-    jq . "$STATE_FILE"
+    # D6: --help promises status "exits 0 either way". Unguarded, a
+    # malformed state.json made jq's own non-zero exit propagate straight
+    # through main() under `set -e`, breaking that contract. Degrade to
+    # printing the raw (possibly invalid) file instead of dying.
+    if ! jq . "$STATE_FILE" 2>/dev/null; then
+      echo "(state.json is present but not valid JSON — showing raw contents)" >&2
+      cat "$STATE_FILE"
+    fi
   else
     cat "$STATE_FILE"
   fi
