@@ -142,7 +142,7 @@ anything behind sign-in.
 
 ## Autonomous loop ("spec and walk away")
 
-`bash scripts/run-loop.sh start|stop|status`. The escalation triggers above
+`bash scripts/run-loop.sh start|resume|stop|status`. The escalation triggers above
 still apply inside the loop — write `.loop/pivot` to stop and ask. Sentinels,
 Stop-hook contract, and discipline: `.agents/skills/autonomous-loop/SKILL.md`.
 
