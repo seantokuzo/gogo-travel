@@ -14,10 +14,11 @@ splitting, photos pinned to places, deeplink-first integrations.
 
 ## The Laws (violations = blocking review findings)
 
-1. **Secrets never in git, never in context.** Never read, diff, copy, `source`, or upload an
-   env file by any command. The `.env` deny rules and `pre-tool-security.sh` are a backstop,
-   not the boundary — they load only for sessions started at the repo root and miss programs
-   they don't recognize. Exact coverage + known gaps: `docs/SECURITY.md` (B-29).
+1. **Secrets never in git, never in context.** Never read, diff, copy, `source`, or upload a
+   real env file (not `.env.example`) by any command — including recursive search: use
+   `grep -r --exclude='.env*'`, never `rg -uu`. The `.env` deny rules and `pre-tool-security.sh`
+   are a backstop, not the boundary — they load only when the primary working directory is the
+   repo root and miss programs they don't recognize. Coverage + gaps: `docs/SECURITY.md` (B-29).
 2. **Money is integer cents (or `Decimal`) — never float.** All budgets, splits,
    balances.
 3. **Privacy is a boundary.** Location, photos, and albums never cross a
