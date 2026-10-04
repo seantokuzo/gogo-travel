@@ -16,9 +16,11 @@ splitting, photos pinned to places, deeplink-first integrations.
 
 ## The Laws (violations = blocking review findings)
 
-1. **Secrets never in git.** `.env` is gitignored; the security hook blocks
-   Read-tool reads. **Bash is NOT covered** — `cat .env` reaches the model
-   (B-29). Do not treat the hook as the boundary.
+1. **Secrets never in git.** `.env` is gitignored. The `.env` deny rules block the file
+   tools and recognized Bash file commands — `cat`/`head`/`tail`/`sed`/`tee`, `<`/`>`
+   redirects, `grep X .env` (B-29 canary, 2026-10-04). **Nothing blocks** unnamed reads
+   (`grep -r`/`rg` over a dir holding it), `source`, or scripts: exclude `.env*` from
+   recursive searches; never `source` env files. Loop OS sandbox: planned (B-29), not built.
 2. **Money is integer cents (or `Decimal`) — never float.** All budgets, splits,
    balances.
 3. **Privacy is a boundary.** Location, photos, and albums never cross a
