@@ -121,7 +121,8 @@ status enum, and the three-artifact spec shape all live in
 ## Local review pipeline
 
 Every functional PR gets one — **run `/review-loop`; the fix loop is
-`/address-comments`.** (`/review` is a deprecated alias that redirects here.)
+`/address-comments`.** (`/review` is Claude Code's built-in alias of `/code-review` —
+not part of this pipeline; use `/review-loop`.)
 Review records are **local-only** (ADR-003): no verdict sticky, nothing about a
 review posted to GitHub (CI stays; that's CI, not review). The panel is picked
 from the diff, not fixed. Project brief — priorities, path → specialist map,
