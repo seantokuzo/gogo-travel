@@ -24,6 +24,13 @@ LOOP_DIR=".loop"
 STATE_FILE="$LOOP_DIR/state.json"
 NEXT_PROMPT_FILE="$LOOP_DIR/next-prompt.md"
 LOG_FILE="$LOOP_DIR/log.txt"
+# Liveness lock. Owned by the WRAPPER, never by a session. Deliberately NOT a
+# field in state.json: SKILL.md section 5 invites sessions to rewrite that
+# object, and a session that drops the pid made `status` report a live chain as
+# safe to resume, which allowed two wrappers onto one .loop/ at a multiple of
+# max_chain. A session has no reason to touch this file.
+LOCK_FILE="$LOOP_DIR/wrapper.pid"
+MAX_CHAIN_CACHE=""
 ARCHIVE_DIR="$LOOP_DIR/archive"
 HOOK_PATH=".claude/hooks/autonomous-handoff.sh"
 SETTINGS_FILE=".claude/settings.json"
@@ -167,8 +174,7 @@ write_initial_state() {
   "session_count": 0,
   "started_at": "$started_at",
   "last_update": "$started_at",
-  "max_chain": 20,
-  "wrapper_pid": $$
+  "max_chain": 20
 }
 EOF
 }
@@ -182,6 +188,10 @@ MAX_CHAIN_CAP=100
 
 read_max_chain() {
   local value
+  if [ -n "$MAX_CHAIN_CACHE" ]; then
+    echo "$MAX_CHAIN_CACHE"
+    return 0
+  fi
   if have_jq; then
     value="$(jq -r '.max_chain // 20' "$STATE_FILE")"
   else
@@ -200,6 +210,7 @@ read_max_chain() {
     echo "⚠️  max_chain=$value clamped to $MAX_CHAIN_CAP (hard cap)." >&2
     value="$MAX_CHAIN_CAP"
   fi
+  MAX_CHAIN_CACHE="$value"
   echo "$value"
 }
 
@@ -237,7 +248,7 @@ read_state_field() {
     value="$(jq -r --arg f "$field" '.[$f] // empty' "$STATE_FILE" 2>/dev/null || true)"
   else
     # Same key-anchored fix as read_max_chain (D3) — this fallback is now
-    # load-bearing for session_count and wrapper_pid too, not just max_chain.
+    # load-bearing for session_count too, not just max_chain.
     # `|| value=""` (not `2>/dev/null` alone) guards against `set -o
     # pipefail`: if the field is genuinely absent, grep's non-zero exit is
     # the pipeline's exit status even though sed/head downstream succeed,
@@ -251,56 +262,29 @@ read_state_field() {
   echo "$value"
 }
 
-# Stamp the CURRENT process's pid into state.json as wrapper_pid, bumping
-# last_update. `start` doesn't need this — write_initial_state stamps its own
-# pid directly at creation. `resume` does: it runs as a brand-new process, so
-# the pid recorded by the run that halted on the sentinel is already dead and
-# must be replaced before `status` can tell the resumed chain is alive.
-update_wrapper_pid() {
-  local pid="$1"
-  local ts
-  ts="$(now_iso)"
-  if have_jq; then
-    local tmp
-    tmp="$(mktemp)"
-    jq --argjson pid "$pid" --arg ts "$ts" '.wrapper_pid = $pid | .last_update = $ts' "$STATE_FILE" > "$tmp"
-    mv "$tmp" "$STATE_FILE"
-  else
-    if grep -q '"wrapper_pid"' "$STATE_FILE" 2>/dev/null; then
-      sed -i.bak -E "s/(\"wrapper_pid\"[[:space:]]*:[[:space:]]*)[0-9]+/\1$pid/" "$STATE_FILE"
-      rm -f "$STATE_FILE.bak"
-    else
-      # Key absent — a `sed` substitution is a no-op on a key that isn't
-      # there (D5). Reachable whenever a session hand-edits state.json per
-      # SKILL.md §5 ("write the whole object back") and drops the field:
-      # `status` then can't tell a live wrapper from a dead one and reports
-      # INTERRUPTED on a running chain. Add the key by inserting it before
-      # the object's closing brace (there is exactly one, this schema has no
-      # nested objects) instead of silently doing nothing — works for both
-      # pretty-printed and single-line state.json.
-      local tmp
-      tmp="$(mktemp)"
-      awk -v pid="$pid" '
-        /\}[[:space:]]*$/ && !done { sub(/\}[[:space:]]*$/, ",\"wrapper_pid\": " pid "}"); done=1 }
-        { print }
-      ' "$STATE_FILE" > "$tmp"
-      mv "$tmp" "$STATE_FILE"
-    fi
-    sed -i.bak -E "s/(\"last_update\"[[:space:]]*:[[:space:]]*)\"[^\"]*\"/\1\"$ts\"/" "$STATE_FILE"
-    rm -f "$STATE_FILE.bak"
-  fi
+# Claim the liveness lock for THIS process and release it on exit, however the
+# wrapper exits. Called once by run_chain, so both `start` and `resume` are
+# covered on every path that actually runs sessions.
+claim_wrapper_lock() {
+  printf '%s\n' "$$" > "$LOCK_FILE"
+  trap 'rm -f "$LOCK_FILE"' EXIT
 }
 
-# Return the wrapper_pid recorded in state.json IFF a process with that pid
-# is currently alive. Echoes nothing and returns 1 if the field is absent, or
-# if it names a pid that's no longer running.
+# Echo the live wrapper pid, or return 1 when no wrapper owns this .loop/.
+# Reads the wrapper-owned lock file, not state.json.
 alive_wrapper_pid() {
-  local pid
-  pid="$(read_state_field wrapper_pid)"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    echo "$pid"
-    return 0
-  fi
+  local pid cmd
+  [ -f "$LOCK_FILE" ] || return 1
+  pid="$(head -n1 "$LOCK_FILE" 2>/dev/null | tr -dc '0-9')"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  # A chain can sit on a pivot for days while the OS issues thousands of pids,
+  # so `kill -0` alone can match an unrelated process that inherited the
+  # number. Require the process to actually be this script.
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  case "$cmd" in
+    *run-loop.sh*) echo "$pid"; return 0 ;;
+  esac
   return 1
 }
 
@@ -348,14 +332,37 @@ ensure_chain_budget_remaining() {
 # Confirm state.json is at least syntactically valid JSON before `resume`
 # mutates anything (D1). Without this, a malformed hand-edit (SKILL.md §5
 # explicitly invites sessions to rewrite the whole object) only surfaces once
-# `update_wrapper_pid`'s `jq` call dies mid-resume — by which point the
+# a later write dies mid-resume — by which point the
 # sentinel has already been archived and next-prompt.md truncated, with no
 # log record of where the sentinel went.
 ensure_state_json_parseable() {
+  # `jq empty` is not enough: it accepts 42, "str", [1,2], true and an empty
+  # file, all of which pass the old guard and then corrupt state AFTER the
+  # sentinel has been archived. Require the shape we actually read. Runs with
+  # or without jq -- the previous version was a no-op when jq was absent.
+  if [ ! -s "$STATE_FILE" ]; then
+    echo "ERROR: $STATE_FILE is empty — refusing to touch .loop/ state." >&2
+    echo "       Fix it by hand (see SKILL.md section 5) and retry." >&2
+    exit 1
+  fi
   if have_jq; then
-    if ! jq empty "$STATE_FILE" >/dev/null 2>&1; then
-      echo "ERROR: $STATE_FILE is not valid JSON — refusing to touch .loop/ state." >&2
-      echo "       Fix it by hand (see SKILL.md § 5) and retry." >&2
+    if ! jq -e 'type == "object"
+                and (.session_count | type) == "number"
+                and (.max_chain | type) == "number"' "$STATE_FILE" >/dev/null 2>&1; then
+      echo "ERROR: $STATE_FILE is not a state object with numeric" >&2
+      echo "       session_count and max_chain — refusing to touch .loop/." >&2
+      echo "       Fix it by hand (see SKILL.md section 5) and retry." >&2
+      exit 1
+    fi
+  else
+    if [ "$(tr -d '[:space:]' < "$STATE_FILE" | cut -c1)" != "{" ]; then
+      echo "ERROR: $STATE_FILE is not a JSON object — refusing to touch .loop/." >&2
+      exit 1
+    fi
+    if ! grep -qE '"session_count"[[:space:]]*:[[:space:]]*[0-9]+' "$STATE_FILE" \
+      || ! grep -qE '"max_chain"[[:space:]]*:[[:space:]]*[0-9]+' "$STATE_FILE"; then
+      echo "ERROR: $STATE_FILE lacks a numeric session_count or max_chain." >&2
+      echo "       Fix it by hand (see SKILL.md section 5) and retry." >&2
       exit 1
     fi
   fi
@@ -415,6 +422,8 @@ probe_permission_flags() {
 # process invocation. For a fresh `start` session_count is 0, so this is a
 # no-op behaviourally: iteration numbering is unchanged from before.
 run_chain() {
+  claim_wrapper_lock
+
   local max_chain
   max_chain="$(read_max_chain)"
   log "max_chain=$max_chain"
@@ -583,7 +592,7 @@ cmd_resume() {
   # Every validation below that CAN fail must run before the first mutation
   # (D1) — the first mutation is the `mv` that archives a sentinel, further
   # down. Previously several of these checks lived downstream (inside
-  # run_chain, or inside update_wrapper_pid's jq call) and could fail AFTER
+  # run_chain) and could fail AFTER
   # the sentinel was already archived and next-prompt.md already truncated,
   # leaving the chain unresumable with no record of where the sentinel went.
   ensure_state_json_parseable
@@ -665,7 +674,6 @@ cmd_resume() {
   done
 
   printf '%s\n' "$prompt" > "$NEXT_PROMPT_FILE"
-  update_wrapper_pid "$$"
   log "resumed autonomous mode (was: ${sentinels[*]})"
   log "permission posture: ${PERM_FLAGS[*]}"
 
