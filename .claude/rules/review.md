@@ -1,5 +1,5 @@
 ---
-paths: [".claude/commands/review.md", ".agents/agents/reviewer.md"]
+paths: [".agents/agents/reviewer.md"]
 ---
 
 # Review brief — GoGo Travel

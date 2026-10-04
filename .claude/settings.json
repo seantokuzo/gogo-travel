@@ -14,8 +14,9 @@
       "mcp__context7__*",
       "mcp__claude_ai_Context7__*"
     ],
-    "deny": ["Read(**/.env)", "Read(**/.env.*)"],
+    "deny": ["Read(**/.env)", "Read(**/.env.*)", "Read(!**/.env.example)"],
     "ask": [
+      "Edit(**/.env.example)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(git clean *)",

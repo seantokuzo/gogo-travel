@@ -1,10 +1,8 @@
 # GoGo Travel — Project Instructions
 
-> Extends global `~/.claude/CLAUDE.md`. Project-specific only; never contradicts
-> global — EXCEPT: the global "PR Review Workflow" section's GitHub-app transport
-> does not apply here. Reviews are **local in-session**
-> ([ADR-003](docs/decisions/ADR-003-local-in-session-reviews.md)); the global
-> section's decision logic (triage, skepticism, judge, caps, handoff) still governs.
+> Extends global `~/.claude/CLAUDE.md`; project-specific only. Reviews are local in-session via the
+> global `review-loop` skill ([ADR-003](docs/decisions/ADR-003-local-in-session-reviews.md)). The
+> Autonomy Contract is the standing instance of global Decision Making's already-planned exception.
 
 ## What this is
 
@@ -16,9 +14,11 @@ splitting, photos pinned to places, deeplink-first integrations.
 
 ## The Laws (violations = blocking review findings)
 
-1. **Secrets never in git.** `.env` is gitignored; the security hook blocks
-   Read-tool reads. **Bash is NOT covered** — `cat .env` reaches the model
-   (B-29). Do not treat the hook as the boundary.
+1. **Secrets never in git, never in context.** Never read, diff, copy, `source`, or upload a
+   real env file (not `.env.example`) by any command — including recursive search: use
+   `grep -r --exclude='.env*'`, never `rg -uu`. The `.env` deny rules and `pre-tool-security.sh`
+   are a backstop, not the boundary — they load only when the primary working directory is the
+   repo root and miss programs they don't recognize. Coverage + gaps: `docs/SECURITY.md` (B-29).
 2. **Money is integer cents (or `Decimal`) — never float.** All budgets, splits,
    balances.
 3. **Privacy is a boundary.** Location, photos, and albums never cross a
@@ -119,7 +119,8 @@ status enum, and the three-artifact spec shape all live in
 ## Local review pipeline
 
 Every functional PR gets one — **run `/review-loop`; the fix loop is
-`/address-comments`.** (`/review` is a deprecated alias that redirects here.)
+`/address-comments`.** (`/review` is Claude Code's built-in alias of `/code-review` —
+not part of this pipeline; use `/review-loop`.)
 Review records are **local-only** (ADR-003): no verdict sticky, nothing about a
 review posted to GitHub (CI stays; that's CI, not review). The panel is picked
 from the diff, not fixed. Project brief — priorities, path → specialist map,
