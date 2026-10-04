@@ -1,10 +1,8 @@
 # GoGo Travel — Project Instructions
 
-> Extends global `~/.claude/CLAUDE.md`. Project-specific only; never contradicts
-> global — EXCEPT: the global "PR Review Workflow" section's GitHub-app transport
-> does not apply here. Reviews are **local in-session**
-> ([ADR-003](docs/decisions/ADR-003-local-in-session-reviews.md)); the global
-> section's decision logic (triage, skepticism, judge, caps, handoff) still governs.
+> Extends global `~/.claude/CLAUDE.md`; project-specific only. Reviews are local in-session via the
+> global `review-loop` skill ([ADR-003](docs/decisions/ADR-003-local-in-session-reviews.md)). The
+> Autonomy Contract is the standing instance of global Decision Making's already-planned exception.
 
 ## What this is
 
