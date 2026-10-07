@@ -179,10 +179,11 @@ exp}` (§3.2), and (b) an opaque **256-bit** random refresh token, TTL
   `maxLength` is 31 so the typable `@`/`$` prefix fits SHALL still reject a
   prefix-less 31-char value pre-submit with a field-level error, never let
   it reach the 30-char write schema and surface as the generic save-failed
-  banner. **Code task** (low-cost, at the next touch of the profile
-  payment-handles section): the shipped client mirrors `maxLength` only, so
-  a 31-char prefix-less handle currently passes the client and fails the
-  server.
+  banner. **Code task** (low-cost, both screens that carry these fields —
+  the profile payment-handles section and the onboarding payment step —
+  ideally via one shared validator): the shipped client mirrors `maxLength`
+  only, so a 31-char prefix-less handle currently passes the client and
+  fails the server.
 - **R-user-6 (cashtag HEAD validation):** WHEN a `cashtag` is saved THE
   SYSTEM SHALL issue `HEAD https://cash.app/$<cashtag>`: 404 → reject 400
   `VALIDATION_FAILED` (`details.cashtag = 'not_found'`); 2xx/3xx → accept.
