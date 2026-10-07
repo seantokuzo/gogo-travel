@@ -80,6 +80,17 @@ jobs:
         # sink. Scanner + falsification suite: .github/scripts/.
         run: node .github/scripts/check-place-fresh-persistence.mjs
 
+      - name: Plan-doc byte budgets
+        # ADR-009: docs/STATE.md is injected at interactive session start
+        # (loop sessions read it explicitly) and docs/QUEUE.md is the live work
+        # index, so both have hard caps in BYTES (STATE 6144; QUEUE 20480,
+        # every line 400 at most) and required section headings. Bytes, not
+        # lines or chars: one very long line, or
+        # multibyte text, games either of those. Nothing else in the toolchain
+        # notices a plan doc growing back to 700 KB. Check + falsification
+        # suite: .github/scripts/ (the suite runs in the step below).
+        run: node .github/scripts/check-doc-budgets.mjs
+
       - name: Aggregator unit tests
         # The verdict aggregator (.github/scripts/) sits outside turbo's
         # package graph; run its zero-dep node:test suite here so it gates
