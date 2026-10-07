@@ -23,7 +23,6 @@ import { useSessionStore } from "@/auth";
 import { useTrips } from "@/data";
 import { resolveEntryTarget } from "@/navigation/entry-redirect";
 import { readLastViewedTrip } from "@/navigation/last-viewed-trip";
-import { localTodayISO } from "@/navigation/trip-defaults";
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -58,7 +57,7 @@ export default function Entry() {
   const target =
     tripsQuery.status === "error"
       ? "/(trips)"
-      : resolveEntryTarget(tripsQuery.data.items, readLastViewedTrip(), localTodayISO());
+      : resolveEntryTarget(tripsQuery.data.items, readLastViewedTrip(), new Date());
 
   // Dynamic trip targets aren't representable in the typed-route union —
   // same documented cast as the navigation-skeleton walkthrough.

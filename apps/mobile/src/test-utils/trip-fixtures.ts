@@ -4,10 +4,15 @@
  * `METHOD path` routing convention as profile-screen's mockApi. Lives
  * outside `__tests__/` so jest never treats it as a suite.
  *
- * Statuses are date-relative to the DEVICE-tz today (what §2.5 evaluates),
- * with the effective `status` field kept coherent with the dates — the
- * server derives it the same way (R-db-19).
+ * Statuses are date-relative to each fixture's DESTINATION-zone today (what
+ * §2.5 evaluates since B-30 — `todayInZone(now, trip.destination_tz)`), with
+ * the effective `status` field kept coherent with the dates — the server
+ * derives it the same way (R-db-19). Every fixture trip carries a real
+ * `destination_tz` for its city, so a suite's outcome never depends on the
+ * host machine's zone. (Invite/preview rows carry no zone; their day offsets
+ * stay on the device-local day, which is all they were ever for.)
  */
+import { todayInZone } from "@gogo/shared";
 import type {
   Airline,
   Airport,
@@ -45,14 +50,25 @@ export function addDays(iso: ISODate, days: number): ISODate {
   return `${yy}-${mm}-${dd}`;
 }
 
+/** The zone each fixture destination lives in (B-30). */
+export const KYOTO_TZ = "Asia/Tokyo";
+export const LISBON_TZ = "Europe/Lisbon";
+export const OAXACA_TZ = "America/Mexico_City";
+
+/** Today at a fixture trip's destination — the clock its dates are relative to. */
+function destinationToday(tz: string): ISODate {
+  return todayInZone(new Date(), tz);
+}
+
 /** Base trip — planning (starts in 30 days) unless overridden. */
 export function makeTrip(overrides: Partial<TripListItem> & { id: string }): TripListItem {
-  const today = localTodayISO();
+  const today = destinationToday(overrides.destination_tz ?? KYOTO_TZ);
   return {
     name: "Kyoto",
     destination_name: "Kyoto, Japan",
     destination_lat: 35.0116,
     destination_lng: 135.7681,
+    destination_tz: KYOTO_TZ,
     start_date: addDays(today, 30),
     end_date: addDays(today, 37),
     status: "planning",
@@ -71,11 +87,13 @@ export function makeTrip(overrides: Partial<TripListItem> & { id: string }): Tri
 
 /** Active: effective status active AND today inside the window (§2.5). */
 export function makeActiveTrip(id: string, overrides?: Partial<TripListItem>): TripListItem {
-  const today = localTodayISO();
+  const destination_tz = overrides?.destination_tz ?? LISBON_TZ;
+  const today = destinationToday(destination_tz);
   return makeTrip({
     id,
     name: "Lisbon",
     destination_name: "Lisbon, Portugal",
+    destination_tz,
     start_date: addDays(today, -1),
     end_date: addDays(today, 3),
     status: "active",
@@ -88,11 +106,13 @@ export function makePlanningTrip(id: string, overrides?: Partial<TripListItem>):
 }
 
 export function makePastTrip(id: string, overrides?: Partial<TripListItem>): TripListItem {
-  const today = localTodayISO();
+  const destination_tz = overrides?.destination_tz ?? OAXACA_TZ;
+  const today = destinationToday(destination_tz);
   return makeTrip({
     id,
     name: "Oaxaca",
     destination_name: "Oaxaca, Mexico",
+    destination_tz,
     start_date: addDays(today, -20),
     end_date: addDays(today, -14),
     status: "past",

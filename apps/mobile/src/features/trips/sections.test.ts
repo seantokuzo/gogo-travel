@@ -18,6 +18,7 @@ function trip(overrides: Partial<TripListItem> & { id: string }): TripListItem {
     destination_name: "Somewhere",
     destination_lat: 0,
     destination_lng: 0,
+    destination_tz: "UTC",
     start_date: "2027-05-01",
     end_date: "2027-05-08",
     status: "planning",

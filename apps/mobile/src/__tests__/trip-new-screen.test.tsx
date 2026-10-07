@@ -18,6 +18,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import TripNewScreen from "@/app/(trips)/new";
 import { apiClient, ApiRequestError } from "@/auth";
+import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { TEST_USER } from "@/test-utils/session-fixtures";
@@ -426,6 +427,9 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
           destination_name: "Nowhereville",
           destination_lat: null,
           destination_lng: null,
+          // B-30: nothing to derive a zone from → the creator's device zone
+          // rides as the explicit value (stored as the trip's destination_tz).
+          destination_tz: deviceTimeZone(),
           start_date: "2027-05-01",
           end_date: "2027-05-08",
         },

@@ -24,7 +24,6 @@ import { tripEndpoints, type Trip, type TripStatus, type TripUpdate } from "@gog
 import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
 
 import { apiClient, ApiRequestError } from "@/auth";
-import { localTodayISO } from "@/navigation/trip-defaults";
 
 import { applyOptimisticTripPatch, reconcileTripRow, rollbackTripPatch } from "./collab";
 import { invalidateTripLists, queryKeys } from "./query-client";
@@ -86,6 +85,14 @@ export interface TripSettingsEdits {
   destination_name?: string;
   destination_lat?: number | null;
   destination_lng?: number | null;
+  /**
+   * Explicit destination zone (B-30) — emitted ONLY alongside a destination
+   * pick that CLEARS the coordinates of a trip that had them (see
+   * `buildTripPatch`): the server clears the stored zone on a real→null move
+   * (the old zone described the old place), so the picker sends the device
+   * zone, exactly as the create form does for a coordinate-less destination.
+   */
+  destination_tz?: string;
   start_date?: string;
   end_date?: string;
   theme?: string | null;
@@ -131,6 +138,13 @@ export function buildTripPatch(current: Trip, edits: TripSettingsEdits): TripUpd
     ) {
       patch.destination_lat = edits.destination_lat;
       patch.destination_lng = edits.destination_lng;
+      if (
+        edits.destination_tz !== undefined &&
+        edits.destination_lat === null &&
+        current.destination_lat !== null
+      ) {
+        patch.destination_tz = edits.destination_tz;
+      }
       touched = true;
     }
   }
@@ -194,7 +208,7 @@ export function useUpdateTrip(
   return useMutation({
     mutationFn: (patch: TripUpdate) =>
       apiClient.request(tripEndpoints.updateTrip, { params: { tripId }, body: patch }),
-    onMutate: (patch) => applyOptimisticTripPatch(client, tripId, patch, localTodayISO()),
+    onMutate: (patch) => applyOptimisticTripPatch(client, tripId, patch, new Date()),
     onError: (error, _patch, snapshot) => {
       if (snapshot !== undefined) rollbackTripPatch(client, tripId, snapshot);
       if (isStaleUpdatedAt(error)) {

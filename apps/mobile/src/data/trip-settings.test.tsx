@@ -177,6 +177,51 @@ describe("buildTripPatch (diffField semantics on the trip row)", () => {
     });
   });
 
+  describe("B-30: destination_tz rides ONLY a real→null destination move", () => {
+    it("real→null with a zone edit: the explicit zone is emitted beside the cleared pair (the server clears its stored zone on this move)", () => {
+      const patch = buildTripPatch(current, {
+        destination_name: "Nowhereville",
+        destination_lat: null,
+        destination_lng: null,
+        destination_tz: "America/Los_Angeles",
+      });
+      expect(patch?.destination_tz).toBe("America/Los_Angeles");
+      expect(Object.keys(patch ?? {}).sort()).toEqual([
+        "destination_lat",
+        "destination_lng",
+        "destination_name",
+        "destination_tz",
+        "expect_updated_at",
+      ]);
+      // Falsification: drop the real→null guard's emission → destination_tz vanishes, red.
+    });
+
+    it("null→null (re-picking another custom place) never sends a zone — the stored one survives server-side", () => {
+      const coordless: Trip = { ...current, destination_lat: null, destination_lng: null };
+      const patch = buildTripPatch(coordless, {
+        destination_name: "Somewhere Else",
+        destination_lat: null,
+        destination_lng: null,
+        destination_tz: "America/Los_Angeles",
+      });
+      expect(patch?.destination_tz).toBeUndefined();
+    });
+
+    it("a pick WITH coordinates never sends a zone (it would override the server's derivation)", () => {
+      const patch = buildTripPatch(current, {
+        destination_name: "Osaka",
+        destination_lat: 34.6937,
+        destination_lng: 135.5023,
+        destination_tz: "America/Los_Angeles",
+      });
+      expect(patch?.destination_tz).toBeUndefined();
+    });
+
+    it("a zone edit with NO coordinate pair emits nothing (the zone is never a standalone settings edit)", () => {
+      expect(buildTripPatch(current, { destination_tz: "America/Los_Angeles" })).toBeNull();
+    });
+  });
+
   it("B-7 part 3: a NULL destination heals to real coordinates — the null-vs-number diff fires", () => {
     const coordless: Trip = { ...current, destination_lat: null, destination_lng: null };
     const patch = buildTripPatch(coordless, {

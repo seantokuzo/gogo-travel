@@ -27,6 +27,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 import TripSettingsScreen from "@/app/[tripId]/more/settings";
 import { apiClient, ApiRequestError } from "@/auth";
 import { queryKeys } from "@/data";
+import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
 import { TripProvider } from "@/navigation/trip-context";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
@@ -438,6 +439,9 @@ describe("B-7 part 3 — coordinate-less destination remediation (R-tripui-24)",
       destination_name: "Nowhereville",
       destination_lat: null,
       destination_lng: null,
+      // B-30: a real→null move clears the server's stored zone, so the device
+      // zone rides along (same value the create form ships for a custom place).
+      destination_tz: deviceTimeZone(),
       expect_updated_at: trip.updated_at,
     });
   });

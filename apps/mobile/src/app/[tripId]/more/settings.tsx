@@ -97,7 +97,7 @@ import {
   useOfflinePackController,
 } from "@/features/map";
 import { LEAVE_TRIP_CONFIRM, memberActionErrorMessage } from "@/features/members";
-import { DateField } from "@/features/trips";
+import { coordinateLessDestinationZone, DateField } from "@/features/trips";
 import { useTripContext } from "@/navigation/trip-context";
 
 const CONFLICT_NOTICE = "Updated by someone else — review and re-save.";
@@ -384,6 +384,15 @@ export default function TripSettingsScreen() {
             destination_name: selectedPlace.name,
             destination_lat: selectedPlace.lat,
             destination_lng: selectedPlace.lng,
+            // B-30: moving to a coordinate-less custom place clears the
+            // server's stored zone — `buildTripPatch` ships this device zone
+            // with it (only for a real→null move; a no-op otherwise).
+            ...(selectedPlace.lat === null
+              ? (() => {
+                  const zone = coordinateLessDestinationZone();
+                  return zone === undefined ? {} : { destination_tz: zone };
+                })()
+              : {}),
           }
         : {}),
     });

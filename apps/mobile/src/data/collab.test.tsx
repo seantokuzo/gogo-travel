@@ -281,11 +281,12 @@ describe("optimisticTripFields (unit grain — round-2: the branches need direct
     status: "planning",
     status_override: null,
   });
-  const TODAY = "2026-08-10";
+  // 12:00Z Aug 10: Aug 10 in the base trip's zone (Asia/Tokyo, UTC+9 → 21:00) and in UTC.
+  const NOW = new Date("2026-08-10T12:00:00.000Z");
 
   it("dates moved WITHOUT an override: derived status follows the merged window", () => {
     // Start pulled before today → today ∈ [start, end] → active (was planning).
-    const fields = optimisticTripFields(base, { start_date: "2026-08-01" }, TODAY);
+    const fields = optimisticTripFields(base, { start_date: "2026-08-01" }, NOW);
     expect(fields.start_date).toBe("2026-08-01");
     expect(fields.status).toBe("active");
     expect(fields.status_override).toBeUndefined();
@@ -293,7 +294,7 @@ describe("optimisticTripFields (unit grain — round-2: the branches need direct
 
   it("an existing override PINS the status even when dates move", () => {
     const overridden = { ...base, status: "past" as const, status_override: "past" as const };
-    const fields = optimisticTripFields(overridden, { start_date: "2026-08-01" }, TODAY);
+    const fields = optimisticTripFields(overridden, { start_date: "2026-08-01" }, NOW);
     expect(fields.status).toBe("past");
   });
 
@@ -302,9 +303,81 @@ describe("optimisticTripFields (unit grain — round-2: the branches need direct
     const fields = optimisticTripFields(
       overridden,
       { status: null, start_date: "2026-08-01" },
-      TODAY,
+      NOW,
     );
     expect(fields.status_override).toBeNull();
+    expect(fields.status).toBe("active");
+  });
+
+  // ---- B-30: the prediction runs at the DESTINATION day --------------------
+  // Each scenario mirrors a PATCH case in the server's
+  // `trips/destination-tz.db.test.ts` ("[patch] changing dates re-judges
+  // status at the destination's today"), so the client's prediction and the
+  // server's answer are pinned to the SAME literal truth on both sides.
+
+  it("[east] a boundary-day patch predicts 'active' at Tokyo's Aug 2 though UTC and the device are still Aug 1", () => {
+    const tokyoTrip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "Asia/Tokyo",
+      start_date: "2026-09-01",
+      end_date: "2026-09-05",
+      status: "planning",
+    });
+    const at = new Date("2026-08-01T20:00:00.000Z"); // Tokyo Aug 2 05:00 · UTC Aug 1
+    const fields = optimisticTripFields(
+      tokyoTrip,
+      { start_date: "2026-08-02", end_date: "2026-08-02" },
+      at,
+    );
+    expect(fields.status).toBe("active");
+    // Falsification: derive over the UTC/device day → 'planning', red.
+  });
+
+  it("[west] a boundary-day patch predicts 'active' at Los Angeles's Aug 1 though UTC has rolled to Aug 2", () => {
+    const laTrip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "America/Los_Angeles",
+      start_date: "2026-09-01",
+      end_date: "2026-09-05",
+      status: "planning",
+    });
+    const at = new Date("2026-08-02T03:00:00.000Z"); // LA Aug 1 20:00 · UTC Aug 2
+    const fields = optimisticTripFields(
+      laTrip,
+      { start_date: "2026-07-30", end_date: "2026-08-01" },
+      at,
+    );
+    expect(fields.status).toBe("active"); // UTC-day derivation would say 'past'
+  });
+
+  it("an explicit destination_tz in the patch is predicted onto the row AND is the zone the status is judged in", () => {
+    const tokyoTrip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "Asia/Tokyo",
+      start_date: "2026-08-02",
+      end_date: "2026-08-02",
+      status: "active",
+    });
+    const at = new Date("2026-08-02T03:00:00.000Z"); // Tokyo Aug 2 · LA Aug 1
+    // Re-pointing the trip at Los Angeles with the SAME dates: LA is still Aug 1 → planning.
+    const fields = optimisticTripFields(
+      tokyoTrip,
+      { destination_tz: "America/Los_Angeles", start_date: "2026-08-02" },
+      at,
+    );
+    expect(fields.destination_tz).toBe("America/Los_Angeles");
+    expect(fields.status).toBe("planning");
+  });
+
+  it("a patch without destination_tz never clobbers the row's zone (the key is absent from the predicted fields)", () => {
+    const fields = optimisticTripFields(base, { name: "Renamed" }, NOW);
+    expect("destination_tz" in fields).toBe(false);
+  });
+
+  it("an unknown stored zone degrades to the UTC day instead of throwing", () => {
+    const odd = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "Not/AZone",
+      start_date: "2026-08-20",
+      end_date: "2026-08-27",
+    });
+    const fields = optimisticTripFields(odd, { start_date: "2026-08-10" }, NOW); // UTC Aug 10
     expect(fields.status).toBe("active");
   });
 });

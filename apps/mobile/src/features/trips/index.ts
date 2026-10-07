@@ -1,6 +1,7 @@
 /** Trips feature module (T-6.7 / CT-1+CT-2). */
 export { DateField, isoToPickerDate, pickerDateToISO } from "./DateField";
 export type { DateFieldProps } from "./DateField";
+export { coordinateLessDestinationZone } from "./destination-zone";
 export { Fab } from "./Fab";
 export type { FabProps } from "./Fab";
 export { TripRow } from "./TripRow";
