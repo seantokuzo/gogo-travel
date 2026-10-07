@@ -97,7 +97,7 @@ import {
   useOfflinePackState,
 } from "@/features/map";
 import { LEAVE_TRIP_CONFIRM, memberActionErrorMessage } from "@/features/members";
-import { DateField } from "@/features/trips";
+import { DateField, deviceZoneHint } from "@/features/trips";
 import { useTripContext } from "@/navigation/trip-context";
 
 const CONFLICT_NOTICE = "Updated by someone else — review and re-save.";
@@ -383,6 +383,11 @@ export default function TripSettingsScreen() {
             destination_name: selectedPlace.name,
             destination_lat: selectedPlace.lat,
             destination_lng: selectedPlace.lng,
+            // B-30: moving to a coordinate-less custom place clears the
+            // server's derived zone — `buildTripPatch` ships the device zone
+            // as a 'device' HINT with it (only for a real→null move; a no-op
+            // otherwise; never a user's explicit choice).
+            ...(selectedPlace.lat === null ? (deviceZoneHint() ?? {}) : {}),
           }
         : {}),
     });

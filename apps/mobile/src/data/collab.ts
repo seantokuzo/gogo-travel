@@ -34,7 +34,7 @@
 import {
   PushInvalidationPayloadSchema,
   deriveTripStatus,
-  type ISODate,
+  todayInZone,
   type Paginated,
   type PushInvalidationPayload,
   type Trip,
@@ -302,13 +302,29 @@ export interface TripPatchSnapshot {
  * while the row's `status` is effective — override wins, else the shared
  * `deriveTripStatus` derivation over the merged dates (trips spec §3.4; the
  * server reconciles identically, so the returned row converges with this).
+ *
+ * B-30: the derivation runs at the trip's DESTINATION day — `now` is an
+ * instant and the zone is the one the PATCH leaves behind. Only a USER zone
+ * (`patch.destination_tz` string, source absent/'user') is predicted onto the
+ * row (zone + source 'user'): it wins the whole chain, so the prediction is
+ * exact. Everything else keeps the current effective zone for the prediction
+ * and the returned row corrects it on reconcile (a boundary-day flicker at
+ * worst): a 'device' hint ranks below coordinates and bookings the client
+ * cannot see; `destination_tz: null` (reset to automatic) and a coordinates
+ * move without a zone make the server re-derive from the coordinates
+ * (tz-lookup is server-only).
  */
-export function optimisticTripFields(
-  current: Trip,
-  patch: TripUpdate,
-  today: ISODate,
-): Partial<Trip> {
+export function optimisticTripFields(current: Trip, patch: TripUpdate, now: Date): Partial<Trip> {
   const fields: Partial<Trip> = {};
+  const userZone =
+    typeof patch.destination_tz === "string" && (patch.destination_tz_source ?? "user") === "user"
+      ? patch.destination_tz
+      : undefined;
+  if (userZone !== undefined) {
+    fields.destination_tz = userZone;
+    fields.destination_tz_source = "user";
+  }
+  const today = todayInZone(now, userZone ?? current.destination_tz);
   if (patch.name !== undefined) fields.name = patch.name;
   if (patch.destination_name !== undefined) fields.destination_name = patch.destination_name;
   if (patch.destination_lat !== undefined) fields.destination_lat = patch.destination_lat;
@@ -343,7 +359,7 @@ export async function applyOptimisticTripPatch(
   client: QueryClient,
   tripId: string,
   patch: TripUpdate,
-  today: ISODate,
+  now: Date,
 ): Promise<TripPatchSnapshot> {
   await Promise.all([
     client.cancelQueries({ queryKey: queryKeys.trip(tripId), exact: true }),
@@ -354,14 +370,14 @@ export async function applyOptimisticTripPatch(
   if (detail !== undefined) {
     client.setQueryData<TripWithRole>(queryKeys.trip(tripId), {
       ...detail,
-      ...optimisticTripFields(detail, patch, today),
+      ...optimisticTripFields(detail, patch, now),
     });
   }
   if (list !== undefined) {
     client.setQueryData<Paginated<TripListItem>>(queryKeys.trips, {
       ...list,
       items: list.items.map((item) =>
-        item.id === tripId ? { ...item, ...optimisticTripFields(item, patch, today) } : item,
+        item.id === tripId ? { ...item, ...optimisticTripFields(item, patch, now) } : item,
       ),
     });
   }

@@ -75,7 +75,7 @@ import { OfflinePackController } from "@/features/map";
 import { stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 import { TripProvider, useTripId } from "@/navigation/trip-context";
-import { initialTabFor, localTodayISO } from "@/navigation/trip-defaults";
+import { initialTabFor } from "@/navigation/trip-defaults";
 import { TRIP_TAB_ITEMS } from "@/navigation/trip-tabs";
 import { NoAccessState, TripErrorState, TripLoadingState } from "@/navigation/TripGuardStates";
 import { TripSwitcherBar } from "@/navigation/TripSwitcher";
@@ -111,7 +111,7 @@ function TripShell({ trip }: { trip: TripWithRole }) {
   // Mount-time resolution (§2.5): session memory (R-nav-9) beats the status
   // default (R-nav-7/8). Tabs reads initialRouteName once at mount, which is
   // exactly the spec's cold-open semantics — later status flips don't yank.
-  const initialRouteName = recallTab(trip.id) ?? initialTabFor(trip, localTodayISO());
+  const initialRouteName = recallTab(trip.id) ?? initialTabFor(trip, new Date());
 
   return (
     <TripProvider trip={trip}>

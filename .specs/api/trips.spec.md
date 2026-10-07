@@ -283,9 +283,26 @@ spec adds to those modules: `TripListItem`, `TripUpdate.expect_updated_at`,
 Create a trip; creator becomes owner in the same transaction. **Auth**: Required
 
 **Request** — `TripCreate`:
-`{ name, destination_name, destination_lat, destination_lng, start_date,
-end_date, base_currency?, theme? }`
-(`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
+`{ name, destination_name, destination_lat, destination_lng,
+destination_tz?, destination_tz_source?, start_date, end_date,
+base_currency?, theme? }`
+(**Amended B-30 (2026-10-06, zone provenance):** `destination_tz?` +
+`destination_tz_source?: 'user' | 'device'` carry an optional destination zone
+and its CLAIMED provenance. Source absent or `'user'` is a person's choice: the
+schema checks its shape (IANA-shaped, ≤ 64 chars) and the server checks it
+against its zone allow-list, storing the allow-list's canonical spelling
+(`asia/tokyo` → `Asia/Tokyo`; modern for every id the coordinate lookup can
+return, the engine's own spelling for an engine-only alias — `europe/kiev` →
+`Europe/Kiev`, never rewritten to `Europe/Kyiv`) — an unlisted id (`SystemV/*`, `Japan`, `EST`,
+`Zulu`, …) → 400 `VALIDATION_FAILED`, `details.destination_tz`. A user zone
+wins the whole chain and is durable. Source `'device'` is only a HINT (the
+mobile create form sends the device zone for a coordinate-less custom
+destination, never for a pick with coordinates): it is used solely when
+nothing better exists — ranked BELOW the zone derived from coordinates AND
+below booking zones — and an unusable hint is IGNORED, never a 400. A source
+without a zone is a 400. See §3.4 "Timezone note" for the effective-zone
+chain.
+`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
 from `UserPrefs.home_currency` — client spec. Dates are required at
 creation. **Amended B-7 part 3 (2026-09-13):** the destination is
 structured — picked from the Overture-backed place search OR a
@@ -300,10 +317,14 @@ about nullability); this is the corrected statement. Omitting either key
 entirely still 400s (R-trips-3 amendment) — see R-trips-23.)
 
 **Response 201** — `Trip & { role: 'owner' }` (`destination_lat`/`lng` may
-be `null`, B-7 part 3)
+be `null`, B-7 part 3; `destination_tz` is the EFFECTIVE zone, never null, and
+`destination_tz_source` (`'user' | 'derived' | 'booking' | 'device' |
+'default'`) says which rung of the §3.4 chain produced it, B-30)
 
 **Errors**: 400 `VALIDATION_FAILED` — bad shapes, `start_date > end_date`,
-exactly one of `destination_lat`/`destination_lng` present (B-7 part 3).
+exactly one of `destination_lat`/`destination_lng` present (B-7 part 3),
+a USER `destination_tz` that is not IANA-shaped or not on the allow-list, or a
+`destination_tz_source` without a `destination_tz` (B-30).
 
 **Requirements covered**: R-trips-3, R-trips-23
 
@@ -319,6 +340,19 @@ exactly one of `destination_lat`/`destination_lng` present (B-7 part 3).
       → 201 with `null` destination coordinates, never `(0, 0)` —
       `apps/server/src/trips/routes.db.test.ts`
 - [ ] B-7 part 3: exactly one of `destination_lat`/`destination_lng` present → 400
+- [ ] B-30: a Kyoto trip with `start_date = end_date` = the destination's
+      today, created at an instant where the UTC date lags Tokyo's, is born
+      `active` and the response carries `destination_tz: "Asia/Tokyo"`; a
+      Los Angeles trip ending "today" is still `active` after UTC rolls
+      over — `apps/server/src/trips/destination-tz.db.test.ts`
+- [ ] B-30: a user `destination_tz` wins over the derived zone and is stored
+      canonical as `'user'`; coordinate-less + user zone stores it;
+      coordinate-less with a `'device'` hint stores `'device'`, and a later
+      flight's `arrives_tz` OUTRANKS it on read (wire source `'booking'`);
+      an unusable device hint is ignored (201, nothing stored); a hint with
+      coordinates is ignored (derived is stored); coordinate-less with no zone
+      and no bookings → effective `UTC`/`'default'`, columns stay NULL/NULL; an
+      unlisted user zone → 400, no row
 
 ---
 
@@ -367,8 +401,25 @@ Update trip fields (partial). **Auth**: Required (per-field per §3.2)
 
 **Request** — `TripUpdate`:
 `{ name?, destination_name?, destination_lat?, destination_lng?,
-start_date?, end_date?, theme?, base_currency?, status?,
-expect_updated_at? }`
+destination_tz?, destination_tz_source?, start_date?, end_date?, theme?,
+base_currency?, status?, expect_updated_at? }`
+— `destination_tz` / `destination_tz_source?: 'user' | 'device'` (B-30,
+editor-writable) follow the same provenance rules as create. Precisely:
+a user zone (source absent/`'user'`) replaces any stored zone and is NEVER
+overwritten by a later coordinates edit; `destination_tz: null` RESETS to
+automatic — clears both stored columns (a user zone too) and re-derives from
+the post-patch coordinates (no source is allowed with `null`); a `'device'`
+hint is stored only when no coordinates derive, never over a stored user zone,
+and an unusable one is ignored. When the body moves the destination coordinates
+WITHOUT a zone, the server re-derives a stored `'derived'`/`'device'` zone from
+the new coordinates and leaves a `'user'` zone alone; a coordinates→`null` move
+clears a `'derived'` zone (the old zone described the old place — the client
+ships the device zone as a `'device'` hint beside it) and keeps a `'user'`
+one. An unrelated PATCH, or a resubmit of IDENTICAL coordinates, leaves the
+stored zone alone (value-diff, not key-presence). A body touching the
+destination takes the trip row `FOR UPDATE` (the "moved?" decision is a
+read-modify-write). Status is re-derived under the zone the patch leaves
+behind.
 — `base_currency` owner-only, rejected with 409 once the first expense
 exists (R-trips-22); `status` owner-only manual override (§3.4, resolved
 Gate 2); `expect_updated_at` is the optional §3.5 (rule 2) conflict
@@ -645,10 +696,51 @@ derived_status(today, start_date, end_date) =
   today >  end_date                     → 'past'
 ```
 
-Timezone note: the nav spec evaluates active-ness client-side in the
-user's tz (nav §2.5); the server MUST use the same `@gogo/shared` helper
-with an explicit `today` input so the two surfaces agree on the boundary
-day.
+Timezone note (**amended B-30, Sean ruling 2026-09-19**): a trip's "today"
+is the calendar day AT ITS DESTINATION — not the server's UTC day, not the
+viewing device's day. Server and client both compute it per trip with ONE
+`@gogo/shared` helper, `todayInZone(now, trip.destination_tz)`, and feed it
+to `derived_status` as the explicit `today`, so the two surfaces agree on the
+boundary day for every viewer in every zone. The wire `Trip.destination_tz`
+is the EFFECTIVE zone — never null — and `Trip.destination_tz_source` the
+rung that produced it, resolved server-side by ONE pure resolver, first hit
+wins (**zone provenance**, round-1 decision):
+
+1. USER — a zone a person chose (`destination_tz`, source absent/`'user'`;
+   allow-listed, stored in the allow-list's canonical spelling (modern for
+   tz-lookup ids, the engine's own for engine-only aliases such as
+   `Europe/Kiev`), durable — a coordinates edit never overwrites it; only
+   `destination_tz: null` clears it);
+2. DERIVED — from `destination_lat/lng` via `@photostructure/tz-lookup`
+   (stored at create; re-derived on PATCH when the coordinates move; derived
+   lazily at read for legacy rows with nothing stored);
+3. BOOKING — read time only: among NON-CANCELLED flight/train bookings, booked
+   before planned before idea, then earliest `starts_at`; that booking's
+   `arrives_tz` (else `departs_tz`), allow-listed. LIMIT: "earliest" can be a
+   CONNECTING leg (SFO→ORD→KIX picks Chicago) — the chain cannot tell a
+   connection from the destination, and a user zone (rank 1) is the override;
+4. DEVICE — the creator's device-zone HINT for a coordinate-less destination
+   (`destination_tz_source: 'device'`). Stored, but ranked BELOW a booking zone
+   so a later flight into the real destination corrects the trip's "today"
+   instead of the creator's home day sticking for life. An unusable hint is
+   ignored, never a 400;
+5. `UTC` (`'default'`).
+
+Only ranks 1, 2 and 4 are ever WRITTEN (`trips.destination_tz` +
+`trips.destination_tz_source`, NULL together); booking and default are
+resolved per read, so a booking edit is never remembered as a stale
+destination. `todayInZone` never throws — an unknown / non-IANA-shaped zone,
+or an engine answer more than a day from UTC's (a GROSS-shift guard only —
+it cannot catch an engine that ignores the zone and answers the UTC day),
+degrades to the UTC date. A client whose device cannot resolve the wire zone
+trusts the server's `status === 'active'` instead of re-checking on the
+degraded UTC day. Consequences:
+`reconcileStoredStatuses` evaluates each row at ITS OWN `today` (one list page
+can hold trips on different calendar days); the leg-staleness sweep widens its
+SQL prefilter by ±1 day (UTC−12…UTC+14) and re-decides each candidate at its
+own `today`. Accuracy: the zone derivation is gated against `geo-tz` on the
+UTC offset (`destination-tz.accuracy.test.ts`); a user overrides a wrong
+derivation with an explicit zone.
 
 Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
 2026-07-09): status is date-derived, with manual owner override allowed —

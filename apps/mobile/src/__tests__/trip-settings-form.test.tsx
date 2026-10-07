@@ -41,6 +41,14 @@ jest.mock("expo-router", () => ({
 }));
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
+// The device zone is pinned to a zone nothing else in the suite (or on CI's UTC
+// host) could produce, so the body pin below cannot pass by accident (round-1
+// mobile F6: with the real deviceTimeZone() on a UTC host the old pin was vacuous).
+jest.mock("@/features/itinerary/add-edit/zoned-time", () => ({
+  ...jest.requireActual("@/features/itinerary/add-edit/zoned-time"),
+  deviceTimeZone: () => "Pacific/Chatham",
+}));
+
 // Synchronous TanStack notify for THIS suite: the default scheduler batches
 // store notifications on setTimeout(0), and any batch firing inside a
 // waitFor SLEEP window (RNTL only act-wraps the checks) lands un-acted —
@@ -438,6 +446,11 @@ describe("B-7 part 3 — coordinate-less destination remediation (R-tripui-24)",
       destination_name: "Nowhereville",
       destination_lat: null,
       destination_lng: null,
+      // B-30: a real→null move clears the server's derived zone, so the device
+      // zone rides along as a 'device' HINT (same as the create form ships for
+      // a custom place; never 'user').
+      destination_tz: "Pacific/Chatham",
+      destination_tz_source: "device",
       expect_updated_at: trip.updated_at,
     });
   });

@@ -8,35 +8,39 @@
 # this flow on whichever tab it fired from, and the NEXT tab's assertion
 # goes red rather than the press silently no-op'ing unnoticed.
 #
-# Lands on `today-screen` immediately after trip creation: the minimal-trip
-# subflow's same-day start/end (see its header) makes the new trip ACTIVE
-# (`today ∈ [start_date, end_date]`), which the nav default-tab rule
-# (R-nav-7/8, `.specs/client/navigation.spec.md` §2.5) lands on Today —
-# itself a live assertion that a same-day trip really did land where the
-# rule says, not an assumption.
+# Lands on `today-screen` immediately after trip creation. The rule (B-30,
+# Sean ruling 2026-09-19; `.specs/client/navigation.spec.md` §2.5, trips spec
+# §3.4 timezone note): a trip is ACTIVE when the server's effective status
+# says `active` AND `todayInZone(now, trip.destination_tz)` — the calendar day
+# AT THE TRIP'S DESTINATION, computed by the one shared helper on both server
+# and client — falls inside [start_date, end_date]. The device's own day does
+# not enter into it. The Kyoto destination below resolves to Asia/Tokyo
+# (UTC+9), so "today" here is TOKYO's date K.
 #
-# `wip` (T5 fix-round, found via a live Neon-backed door run 2026-09-14,
-# ~18:00 PDT) — this is a GENUINE, spec-contradicting server bug, not a
-# flow bug: `.specs/api/trips.spec.md` §3.4's own "Timezone note" requires
-# "the server MUST use the same @gogo/shared helper with an explicit
-# `today` input so the two surfaces [client + server] agree on the boundary
-# day" — but `apps/server/src/trips/status.ts:43`'s `todayUtc()` derives
-# `today` from `now.toISOString()`, i.e. UTC, while the client's
-# `localTodayISO()` (`apps/mobile/src/navigation/trip-defaults.ts:17-22`)
-# uses the DEVICE's local date. These disagree for a multi-hour window
-# every day in any tz west of UTC (confirmed live: PDT is UTC-7, so from
-# ~17:00 PDT the UTC calendar date has already rolled to "tomorrow" while
-# PDT's local date has not — a same-day trip created with
-# start=end=<PDT today> gets `today_UTC > end_date` server-side, so the
-# server never sets `status: "active"`, and `isTripActive`
-# (`trip-defaults.ts:26-29`) ANDs the server's `status` with its own
-# local-tz check — the local half can never save it). Reproduced twice,
-# deterministic, not flaky (two isolated `--flow` runs, identical failure).
-# Filed as a QUEUE-row draft in the PR body (B-30, HIGH — this is a
-# real-user-facing default-tab bug during evening/night hours in any
-# tz behind UTC, not merely an e2e artifact). Out of this task's lane
-# (apps/server is off-limits here) — excluded via `wip`; --include-wip
-# still runs it so the gap stays visible, not silently dropped.
+# Why the minimal-trip subflow now commits start = D, end = D+1 (D = the
+# host's local today; see its DATES header): the old same-day window [D, D]
+# contained K only while Tokyo's date equalled the host's — for a PDT host
+# that is 00:00-07:59 local, red the other 16 hours. With [D, D+1] the
+# destination's today is inside the window from ANY host zone at or west of
+# Tokyo's offset: Tokyo's clock leads the host's by (9h - host offset) < 24h,
+# so K is either D (before the host's local time reaches 15:00 + its UTC
+# offset in hours — 08:00 for PDT) or D+1 (after), and both are inside
+# [D, D+1] (D+1 is the window's last day, inclusive). The trip is therefore
+# active, and the default tab is Today, at every hour. (A host EAST of Tokyo,
+# UTC+10..+14, can see K = D-1 — not a configuration this lane runs.) Landing
+# on `today-screen` is itself a live assertion that the client's
+# destination-day rule agrees with the server's status at whatever instant
+# this runs — not an assumption.
+#
+# `wip` STAYS until a green door run: the code fix (server + client both on
+# the destination day) and this flow's date change landed together in B-30,
+# but the un-wip needs one real run — `bash scripts/e2e.sh --flow
+# .maestro/cross-tab-state.yaml` against a door build and a server whose DB is
+# at migration 0007 (`trips.destination_tz`) — and that run sources a real env
+# file, so it is the operator's, not an agent's (Law #1). Run it twice at
+# different host times of day (e.g. 09:00 and 19:00 local) before removing
+# the tag — the failure mode this guards is time-of-day dependent. Until then
+# `--include-wip` still runs it so the gap stays visible.
 appId: ${APP_ID}
 name: cross-tab-state
 tags:
