@@ -131,21 +131,44 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   optimistically and reconcile; a 409 duplicate-save is treated as success
   (places spec R-places-16). Viewers see state, not the control (role from
   trip context).
+  **AMENDED (round-2, T-8.4 — each ruled 2026-09-19):**
+  - **409 seam (Q2-249):** WHEN the save POST answers 409 THE SYSTEM SHALL
+    keep the optimistic row and invalidate the list so the server's truth
+    lands; only non-409 errors reach the error handler.
+  - **Unsave (Q2-250):** unsave has no success-equivalent error status —
+    any failure rolls the optimistic removal back and invalidates the list.
+  - **Note edit (Q2-251):** the saved-place note PATCH is NOT optimistic —
+    "optimistically" above covers save/unsave only; every other mutation
+    follows the house non-optimistic precedent (trip-settings,
+    booking-update).
 - **R-map-12 (add to itinerary):** WHEN "Add to day" is tapped
   (`place-detail-button-add-to-day` / `map-sheet-place-button-add-to-day`)
   THE SYSTEM SHALL open the itinerary add-item modal
   (`/[tripId]/itinerary/item/new`) prefilled `kind='place_visit'` +
   `place_id` (navigation spec route; itinerary spec owns the form).
+  **AMENDED (round-2, T-8.4 — ruled 2026-09-19):** the prefill rides route
+  params (Q2-253): `item/new` accepts `?placeId=` (a UUID) and
+  `?placeName=` (display only, capped at 100 chars — the write path stays
+  id-truth). WHEN a param is malformed or repeated THE SYSTEM SHALL degrade
+  to the empty place picker, never an error.
 - **R-map-13 (tour-guide hook):** WHEN the trip has a `ready` tour-guide
   bundle for the place THE SYSTEM SHALL show the tour-guide entry point
   (`place-detail-button-tour-guide`) opening the bundle content surface
   (AI spec owns content + its screen); WHEN no bundle is `ready` the entry
   point is absent — never a broken tap.
+  **AMENDED (round-2, Q2-245, ruled 2026-09-19):** until P-10 supplies the
+  bundle read the entry point is not rendered at all (absent, not a broken
+  tap); it lands with P-10.
 - **R-map-14 (linked content):** WHEN the detail screen renders THE SYSTEM
   SHALL list the place's itinerary items and this-trip photos
   (viewer-visible only, R-map-5 rule) with taps cross-navigating to them;
   the saved-place note is editable inline for owner/editor
   (`place-detail-input-note`).
+  **AMENDED (round-2, T-8.4 — ruled 2026-09-19):** linked rows land on the
+  item's OWN detail, per kind (Q2-256): an item-kind row pushes
+  `item/[itemId]`; a booking-kind row pushes `booking/[bookingId]` DIRECTLY
+  — routed through `item/[itemId]` it would only replace itself (R-itin-27)
+  and leave a back-stack bounce.
 
 ### Location (foreground-only — PLANNING lock)
 
@@ -480,6 +503,25 @@ photos.
   photos/tips when present, with the Foursquare attribution row —
   R-map-9/10), linked itinerary items, this-trip photos strip, tour-guide
   entry (R-map-13), spine attribution footer (`place-detail-attribution`).
+  **Detail-screen rulings (T-8.4 — each ruled 2026-09-19):**
+  - **Module home (Q2-243):** the place-detail client lives in
+    `features/places/`, not `features/map/` — a disjoint file set from the
+    map shell and sheet, by construction.
+  - **Distance (Q2-244):** distance-from-user is part of the detail
+    composition (`place-detail-distance`, the R-map-17 label format): shown
+    WHEN the location seam holds a position (puck active), absent
+    otherwise.
+  - **Public-photos strip (Q2-246):** the PUBLIC photos-by-place strip (the
+    Gate-2 companion in the Related note under R-map-26) is a SEPARATE
+    surface from the this-trip photos strip, deferred WITH P-12 and unwired
+    until then. P-12 must land the public-by-place strip itself, not merely
+    feed the this-trip strip.
+  - **Premium imagery (Q2-247):** Foursquare premium photo URLs are not
+    rendered until the deferred integration's licensing/display pass
+    (R-map-9/10 — the fresh block's photos are absent, silently).
+  - **Attribution footer (Q2-248):** only spine places render the
+    attribution footer; a custom place renders none (the shared registry
+    keys spine sources only — places spec §3.2.4).
 - Sheet fetches spine data only (cheap, offline-capable); the detail
   screen requests `?fresh=true` (§2.4) — **in v1 it never does** (Q2-205,
   ruled 2026-09-19): the places spec's Gate-2 resolution ("`fresh` never
@@ -494,9 +536,24 @@ photos.
   `gcTime: 0`, `retry: false`; the TQ persister's `shouldDehydrateQuery`
   allowlist excludes the `place-fresh` prefix — belt (gcTime) and
   suspenders (persister filter).
+  **Two queries, keyed outside the trips subtree — RULED (Q2-241 and
+  Q2-242, ruled 2026-09-19):** "dedicated query" is read literally — place
+  detail issues TWO queries: `usePlace` (the cacheable spine read,
+  offline-capable per R-map-22) and `usePlaceFresh` (this section's
+  non-cacheable query; its response's spine half is discarded). The
+  `placeDetail` and `placeFresh` keys live OUTSIDE the trips query subtree:
+  they are global, auth-only reads, so losing trip access never evicts
+  them.
 - Fresh payload never enters Zustand, SQLite, MMKV, analytics, or console
   logging; render-only props. Enforced by review + a lint-level grep in
   CI (mirror of places spec PL-3 guard test).
+  **Guard scope — RULED (Q2-255, ruled 2026-09-19):** the CI grep guard
+  covers tracked `apps/mobile` RUNTIME source — test and test-utils files
+  are exempt (they don't ship and legitimately name both sides) — and
+  includes `package.json`, because a persister dependency is a violation
+  before its first import. No TanStack persister exists in the app today
+  (the P-8 offline posture is warm-session), so the guard fails the moment
+  one appears without the exclusion above landing in the same change.
 - Offline/error/absent ⇒ block simply not rendered (R-map-10).
 
 ### 2.5 Offline pack lifecycle
@@ -553,6 +610,11 @@ photos.
 - Map → itinerary (R-map-23): `router.push` into the itinerary tab's
   stack for `item/[itemId]` (per-tab stacks preserved, navigation spec
   R-nav-10).
+  **Two-step cross-tab jump — RULED (Q2-252, ruled 2026-09-19):**
+  navigation from a place into another tab is two steps — the tab switch
+  first (the tab-bar-equivalent jump), then the navigate/push inside the
+  now-active stack; a single cross-tab push is not relied on. The per-kind
+  landing rule for linked rows is the R-map-14 amendment (Q2-256).
 - Itinerary → map (R-map-24): navigate to map tab with
   `{ focusPlaceId }` param; map screen effect selects pin + opens sheet +
   centers camera; param consumed once (no re-trigger on tab revisit).
