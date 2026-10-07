@@ -91,7 +91,7 @@ enforced in CI.**
 - Cells are separated by a pipe with a single space of padding on each side; a literal pipe inside a
   cell is `\|`. Title ≤ 160 characters is the target; the **whole line ≤ 400 B is the hard cap**.
 - An ID is `P-N`, `T-N.M`, `B-N`, `S-N` (or a legacy compound such as `B-17/18`), or `—`. For a `—` row
-  (113 of them today) the Title must contain that row's **handle** verbatim: the text inside the first
+  (116 of them in the `4b0e5c4` snapshot) the Title must contain that row's **handle** verbatim: the text inside the first
   `**…**` of its original Title cell (or the whole Title cell if there is none), the first 40 characters
   of it, trailing whitespace trimmed. That is the grep key to its archived detail. Giving those rows IDs
   is an ADR-001-class question and is not decided here.
@@ -214,7 +214,7 @@ is the only edit to it.
 ### Neutral
 
 - `docs/PLANNING.md` (~54 KB) is not budgeted here. It is not injected; budgeting it is a separate call.
-- The 113 ID-less QUEUE rows stay ID-less, found by handle.
+- The 116 ID-less QUEUE rows (in the `4b0e5c4` snapshot) stay ID-less, found by handle.
 - Phase archives (`PHASE-NNN-<slug>.md`) are unchanged and may still be edited for broken links or factual
   errors; snapshot archives may not.
 
