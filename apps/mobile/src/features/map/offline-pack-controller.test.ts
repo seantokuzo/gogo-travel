@@ -24,6 +24,8 @@
  */
 import { ThemeProvider } from "@gogo/tokens/react";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import { AppState } from "react-native";
@@ -1119,5 +1121,58 @@ describe("native-SDK init order — the controller path never relies on the map 
     await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
     expect(mapbox.__mock.setAccessToken).not.toHaveBeenCalled();
     await unmount();
+  });
+
+  // PR #98 round-2 verifier Adv 1 (mutation V3): dropping the `sdk();` that sits
+  // BEFORE `await whenMapboxTokenSet()` in `startPackDownload` survived every
+  // test — they all reach the download through the hook, after hygiene already
+  // latched the token hand-off, so the await had something to wait on anyway.
+  // Call it DIRECTLY with fresh latches (the top-level `beforeEach` resets the
+  // store/latches, this describe's resets the token + telemetry latches), as
+  // the settings sheet or the retry pill could. Falsification: drop that
+  // `sdk();` -> no hand-off exists when the await runs, so it resolves at once
+  // and `createPack` fires while the token set is still held -> red. Released
+  // in `finally`.
+  it("startPackDownload called DIRECTLY with fresh latches still waits for the token hand-off (no prior hygiene touch)", async () => {
+    let release: (token: string) => void = () => undefined;
+    mapbox.__mock.setAccessToken.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+    expect(startPackDownload(target())).toBe(true);
+    try {
+      await flush();
+      expect(mapbox.__mock.setAccessToken).toHaveBeenCalledTimes(1);
+      expect(om.createPack).not.toHaveBeenCalled(); // the hand-off is still in flight
+      release(TOKEN);
+      await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    } finally {
+      release(TOKEN);
+    }
+  });
+});
+
+// PR #98 round-2 verifier Adv 2 (mutation V4): "every SDK call goes through
+// `sdk()`" was grep-enforced only — a bare `offlineManager.getPack` in
+// `reconcilePackState` survived every test, because the sweep's door call had
+// already latched the init. Make the door structural: in the comment-stripped
+// controller source the identifier `offlineManager` may appear only in the
+// import and inside `sdk()`. Falsification: write `offlineManager.<anything>`
+// outside `sdk()` -> red.
+describe("SDK door — the controller module reaches `offlineManager` only through sdk()", () => {
+  const source = readFileSync(join(__dirname, "offline-pack-controller.ts"), "utf8");
+  // Naive comment strip (block, then line) — the file has no `//` inside strings.
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  it("`offlineManager` is referenced only by its import and the sdk() door", () => {
+    const door = /function sdk\(\)[^{]*\{[\s\S]*?\n\}/.exec(code);
+    expect(door).not.toBeNull();
+    expect(door?.[0]).toMatch(/return offlineManager;/);
+    const rest = code
+      .replace(door?.[0] ?? "", "")
+      .replace(/import \{ offlineManager \} from "@rnmapbox\/maps";/, "");
+    expect(rest).not.toMatch(/\bofflineManager\b/);
   });
 });

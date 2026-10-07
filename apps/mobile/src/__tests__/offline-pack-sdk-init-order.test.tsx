@@ -42,10 +42,14 @@ import { makeActiveTrip, mockNavApi } from "@/test-utils/trip-fixtures";
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 
 // Sentinel for the map route: records a load, renders nothing. The Today tab
-// never needs it; if anything evaluates it, the premise below is gone.
-const mockMapRouteLoaded = jest.fn();
+// never needs it; if anything evaluates it, the premise below is gone. A plain
+// counter, NOT a `jest.fn()`: the `beforeEach` `clearAllMocks` would wipe a mock
+// while the module registry (and so a load that already happened — at import
+// time or in an earlier test) persists. The final test asserts it stayed 0
+// through the WHOLE file.
+const mockMapRouteLoads = { count: 0 };
 jest.mock("@/app/[tripId]/map/index", () => {
-  mockMapRouteLoaded();
+  mockMapRouteLoads.count += 1;
   return { __esModule: true, default: () => null };
 });
 
@@ -111,7 +115,7 @@ it("TODAY tab, wifi, map route never loaded: the token reaches the SDK BEFORE th
   expect(await screen.findByTestId("today-screen")).toBeOnTheScreen();
 
   await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
-  expect(mockMapRouteLoaded).not.toHaveBeenCalled(); // the premise, asserted
+  expect(mockMapRouteLoads.count).toBe(0); // the premise, asserted
   expect(screen.queryByTestId("map-screen")).toBeNull();
 
   expect(mapbox.__mock.setAccessToken).toHaveBeenCalledTimes(1);
@@ -129,10 +133,19 @@ it("TODAY tab, map route never loaded: the telemetry opt-out precedes the FIRST 
 
   await waitFor(() => expect(om.getPacks).toHaveBeenCalled());
   await waitFor(() => expect(om.getPack).toHaveBeenCalled());
-  expect(mockMapRouteLoaded).not.toHaveBeenCalled();
+  expect(mockMapRouteLoads.count).toBe(0);
 
   expect(mapbox.__mock.setTelemetryEnabled).toHaveBeenCalledWith(false);
   const optOut = firstCall(mapbox.__mock.setTelemetryEnabled);
   expect(optOut).toBeLessThan(firstCall(om.getPacks));
   expect(optOut).toBeLessThan(firstCall(om.getPack));
+});
+
+// PR #98 round-2 verifier Adv 3: the per-test checks above only see loads that
+// happen after `beforeEach`. This one reads the never-cleared counter after
+// EVERY test in the file, so an import-time load or an earlier test's load is
+// visible. Falsification: `import "@/app/[tripId]/map/index"` at the top of this
+// file (an import-time load) -> red.
+it("the map route module was never loaded anywhere in this file (import time included)", () => {
+  expect(mockMapRouteLoads.count).toBe(0);
 });
