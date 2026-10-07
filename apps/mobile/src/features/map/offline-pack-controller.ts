@@ -472,12 +472,7 @@ export function useOfflinePackController(trip: OfflinePackTrip): void {
     };
     let cancelled = false;
     let subscription: { remove: () => void } | undefined;
-    void Network.getNetworkStateAsync().then((state) => {
-      if (cancelled) return;
-      if (isWifiState(state)) {
-        startPackDownload(target);
-        return;
-      }
+    const deferUntilWifi = (): void => {
       subscription = Network.addNetworkStateListener((event) => {
         if (!isWifiState(event)) return;
         if (
@@ -488,7 +483,24 @@ export function useOfflinePackController(trip: OfflinePackTrip): void {
         subscription?.remove();
         subscription = undefined;
       });
-    });
+    };
+    void Network.getNetworkStateAsync().then(
+      (state) => {
+        if (cancelled) return;
+        if (isWifiState(state)) {
+          startPackDownload(target);
+          return;
+        }
+        deferUntilWifi();
+      },
+      () => {
+        // The controller now mounts for every trip shell, so a failed read
+        // (native module error) must not escape as an unhandled rejection.
+        // "Unknown" is treated like offline (R-map-18): defer to the next
+        // wifi event rather than guess.
+        if (!cancelled) deferUntilWifi();
+      },
+    );
     return () => {
       cancelled = true;
       subscription?.remove();

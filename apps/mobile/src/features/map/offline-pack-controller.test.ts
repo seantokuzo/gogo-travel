@@ -493,6 +493,30 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
+  // The controller now mounts for every trip shell, so a native-module
+  // failure on the connectivity read must degrade, not escape. Falsification:
+  // drop the rejection arm of the `.then(onOk, onErr)` -> no listener is ever
+  // armed (and the rejection goes unhandled) -> red.
+  it("a REJECTED network-state read defers like offline — no crash, no download, then resumes on the wifi event", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => {
+      throw new Error("native module unavailable");
+    });
+    const { result, unmount } = await renderHook(() => useScope(activeTrip()), { wrapper });
+    await act(flush);
+
+    expect(result.current).toEqual({ phase: "none" });
+    expect(om.createPack).not.toHaveBeenCalled();
+    await waitFor(() => expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1));
+
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(wifi));
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    await unmount();
+  });
+
   it("planning trips never auto-download (activation = effective status active)", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const { unmount } = await renderHook(
