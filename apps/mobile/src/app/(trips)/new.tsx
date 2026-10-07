@@ -108,7 +108,7 @@ import {
   useMe,
   usePlaceSearch,
 } from "@/data";
-import { coordinateLessDestinationZone, DateField } from "@/features/trips";
+import { DateField, deviceZoneHint } from "@/features/trips";
 
 /** Bounded result render (server page ≤ 50, default 20; typeahead wants few). */
 const MAX_RESULTS = 8;
@@ -280,16 +280,16 @@ export default function TripNewScreen() {
     }
 
     // B-30: a coordinate-less custom destination gives the server nothing to
-    // derive a zone from — ship the device zone as the explicit value (never
-    // for a pick WITH coordinates: that would override the derived zone).
-    const coordinateLessZone =
-      selectedPlace.lat === null ? coordinateLessDestinationZone() : undefined;
+    // derive a zone from — ship the device zone as a 'device' HINT (ranked
+    // below a booking zone; never a user's explicit choice). Not for a pick
+    // WITH coordinates: the server derives and ignores a hint there.
+    const zoneHint = selectedPlace.lat === null ? deviceZoneHint() : undefined;
     const candidate: TripCreate = {
       name,
       destination_name: selectedPlace.name,
       destination_lat: selectedPlace.lat,
       destination_lng: selectedPlace.lng,
-      ...(coordinateLessZone !== undefined ? { destination_tz: coordinateLessZone } : {}),
+      ...(zoneHint ?? {}),
       start_date: startDate,
       end_date: endDate,
       ...(homeCurrency !== undefined ? { base_currency: homeCurrency } : {}),

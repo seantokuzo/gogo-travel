@@ -363,7 +363,49 @@ describe("optimisticTripFields (unit grain — round-2: the branches need direct
       at,
     );
     expect(fields.destination_tz).toBe("America/Los_Angeles");
+    expect(fields.destination_tz_source).toBe("user");
     expect(fields.status).toBe("planning");
+  });
+
+  it("a 'device' hint is NOT predicted (it ranks below coordinates and bookings the client can't see): zone/source stay, status uses the CURRENT zone", () => {
+    const tokyoTrip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "Asia/Tokyo",
+      start_date: "2026-08-02",
+      end_date: "2026-08-02",
+      status: "active",
+    });
+    const at = new Date("2026-08-02T03:00:00.000Z"); // Tokyo Aug 2 · LA Aug 1
+    const fields = optimisticTripFields(
+      tokyoTrip,
+      {
+        destination_tz: "America/Los_Angeles",
+        destination_tz_source: "device",
+        start_date: "2026-08-02",
+      },
+      at,
+    );
+    expect("destination_tz" in fields).toBe(false);
+    expect("destination_tz_source" in fields).toBe(false);
+    expect(fields.status).toBe("active"); // judged in Tokyo, not the hint's LA
+    // Falsification: predict a device hint as a zone -> status 'planning' (LA Aug 1), red.
+  });
+
+  it("destination_tz: null (reset to automatic) is not predicted either — the server re-derives; the current zone judges the status", () => {
+    const tokyoTrip = makePlanningTrip(TEST_TRIP_ID, {
+      destination_tz: "Asia/Tokyo",
+      destination_tz_source: "user",
+      start_date: "2026-08-02",
+      end_date: "2026-08-02",
+      status: "active",
+    });
+    const fields = optimisticTripFields(
+      tokyoTrip,
+      { destination_tz: null, start_date: "2026-08-02" },
+      new Date("2026-08-02T03:00:00.000Z"),
+    );
+    expect("destination_tz" in fields).toBe(false);
+    expect("destination_tz_source" in fields).toBe(false);
+    expect(fields.status).toBe("active");
   });
 
   it("a patch without destination_tz never clobbers the row's zone (the key is absent from the predicted fields)", () => {

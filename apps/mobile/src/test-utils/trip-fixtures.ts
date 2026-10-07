@@ -69,6 +69,7 @@ export function makeTrip(overrides: Partial<TripListItem> & { id: string }): Tri
     destination_lat: 35.0116,
     destination_lng: 135.7681,
     destination_tz: KYOTO_TZ,
+    destination_tz_source: "derived",
     start_date: addDays(today, 30),
     end_date: addDays(today, 37),
     status: "planning",

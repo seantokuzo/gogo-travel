@@ -9,10 +9,16 @@
  * to `literal` (facebook/hermes#1172). `todayInZone` reads ONLY the `year`,
  * `month` and `day` parts — no hour cycle, no `NumberFormat` — so the classes
  * that matter are: (a) the faithful engine, (b) a part typed `literal` /
- * a throwing `formatToParts`, (c) tzdb backward links rejected pre-#1611, (d)
- * an engine that answers a believable-but-impossible day. The bar on every
- * arm: the SAME answer full ICU gives, or the documented UTC-day degrade —
- * never a plausible wrong day, never a throw.
+ * a throwing `formatToParts`, (c) tzdb backward links (or any zone) the
+ * engine rejects, (d) an engine that answers a day grossly away from UTC's.
+ * The bar on every arm: the SAME answer full ICU gives, or the documented
+ * UTC-day degrade for `tripTodayISO` — never a throw — and for
+ * `isTripActive` a zone the device cannot resolve trusts the SERVER's status
+ * instead of the degraded UTC re-check (round-1 mobile F4). SCOPE: the
+ * plausibility gate catches GROSS shifts only; an engine that silently
+ * ignores `timeZone` answers the UTC/device day (within ±1 of UTC's), which
+ * no gate can tell from a real answer — that shape is pinned by the
+ * known-truth rows against real ICU, not here.
  *
  * Each case loads `trip-defaults` (and with it `@gogo/shared`'s per-zone
  * formatter cache) into a FRESH module registry AFTER the stub is installed,
@@ -217,6 +223,40 @@ describe("[hermes] a diverging engine degrades to the UTC day — never a plausi
     expect(tripTodayISO({ destination_tz: "Asia/Calcutta" }, at)).toBe("2026-08-01");
     // The canonical id still resolves on the same engine:
     expect(tripTodayISO({ destination_tz: "Asia/Kolkata" }, at)).toBe("2026-08-02");
+  });
+
+  it("a zone the engine REJECTS: tripTodayISO degrades to the UTC day, but isTripActive trusts the server's 'active' (Honolulu last-day evening)", () => {
+    restore = installHermesIntl({ rejectsZone: (tz) => tz === "Pacific/Honolulu" });
+    const { isTripActive, initialTabFor, tripTodayISO } = loadTripDefaults();
+    // 00:30Z Aug 3 = 14:30 Aug 2 in Honolulu: the server (right day) says active; UTC says Aug 3.
+    const instant = new Date("2026-08-03T00:30:00Z");
+    const trip = {
+      status: "active",
+      start_date: "2026-08-01",
+      end_date: "2026-08-02",
+      destination_tz: "Pacific/Honolulu",
+    } as const;
+    jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(tripTodayISO(trip, instant)).toBe("2026-08-03"); // the degrade, unchanged
+    expect(isTripActive(trip, instant)).toBe(true); // …but the verdict follows the server
+    expect(initialTabFor(trip, instant)).toBe("today");
+    // The server's status still gates:
+    expect(isTripActive({ ...trip, status: "past" }, instant)).toBe(false);
+    expect(isTripActive({ ...trip, status: "planning" }, instant)).toBe(false);
+    // Falsification: drop the `!isValidTimeZone` branch in trip-defaults.ts -> false/"itinerary", red.
+  });
+
+  it("the same trip on a FAITHFUL engine is judged by the window (true here too) — the fallback is engine-specific, not a blanket", () => {
+    restore = installHermesIntl({});
+    const { isTripActive } = loadTripDefaults();
+    const trip = {
+      status: "active",
+      start_date: "2026-08-01",
+      end_date: "2026-08-01",
+      destination_tz: "Pacific/Honolulu",
+    } as const;
+    // Honolulu is Aug 2 at 00:30Z Aug 3: window [Aug 1, Aug 1] is over → false on a faithful engine.
+    expect(isTripActive(trip, new Date("2026-08-03T00:30:00Z"))).toBe(false);
   });
 
   it("isTripActive stays a boolean (never a throw) on every diverging engine", () => {

@@ -304,18 +304,27 @@ export interface TripPatchSnapshot {
  * server reconciles identically, so the returned row converges with this).
  *
  * B-30: the derivation runs at the trip's DESTINATION day — `now` is an
- * instant and the zone is the one the PATCH leaves behind: an explicit
- * `patch.destination_tz` (also predicted onto the row), else the row's
- * current effective zone. A patch that moves the coordinates WITHOUT an
- * explicit zone makes the server re-derive the zone from them (tz-lookup is
- * server-only); the client cannot, so it keeps the current zone for the
- * prediction and the returned row — which carries the re-derived zone —
- * corrects it on reconcile (a boundary-day flicker at worst).
+ * instant and the zone is the one the PATCH leaves behind. Only a USER zone
+ * (`patch.destination_tz` string, source absent/'user') is predicted onto the
+ * row (zone + source 'user'): it wins the whole chain, so the prediction is
+ * exact. Everything else keeps the current effective zone for the prediction
+ * and the returned row corrects it on reconcile (a boundary-day flicker at
+ * worst): a 'device' hint ranks below coordinates and bookings the client
+ * cannot see; `destination_tz: null` (reset to automatic) and a coordinates
+ * move without a zone make the server re-derive from the coordinates
+ * (tz-lookup is server-only).
  */
 export function optimisticTripFields(current: Trip, patch: TripUpdate, now: Date): Partial<Trip> {
   const fields: Partial<Trip> = {};
-  if (patch.destination_tz !== undefined) fields.destination_tz = patch.destination_tz;
-  const today = todayInZone(now, patch.destination_tz ?? current.destination_tz);
+  const userZone =
+    typeof patch.destination_tz === "string" && (patch.destination_tz_source ?? "user") === "user"
+      ? patch.destination_tz
+      : undefined;
+  if (userZone !== undefined) {
+    fields.destination_tz = userZone;
+    fields.destination_tz_source = "user";
+  }
+  const today = todayInZone(now, userZone ?? current.destination_tz);
   if (patch.name !== undefined) fields.name = patch.name;
   if (patch.destination_name !== undefined) fields.destination_name = patch.destination_name;
   if (patch.destination_lat !== undefined) fields.destination_lat = patch.destination_lat;

@@ -18,7 +18,6 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import TripNewScreen from "@/app/(trips)/new";
 import { apiClient, ApiRequestError } from "@/auth";
-import { deviceTimeZone } from "@/features/itinerary/add-edit/zoned-time";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import { makeTestQueryClient, renderWithProviders } from "@/test-utils/render";
 import { TEST_USER } from "@/test-utils/session-fixtures";
@@ -53,6 +52,15 @@ jest.mock("expo-router", () => ({
 }));
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
+
+// The device zone is pinned to a zone nothing else in the suite (or on CI's UTC
+// host) could produce, so the body pins below cannot pass by accident
+// (round-1 mobile F6: with the real deviceTimeZone() on a UTC host the old pin
+// was vacuous).
+jest.mock("@/features/itinerary/add-edit/zoned-time", () => ({
+  ...jest.requireActual("@/features/itinerary/add-edit/zoned-time"),
+  deviceTimeZone: () => "Pacific/Chatham",
+}));
 
 const KYOTO = makePlace();
 
@@ -428,8 +436,9 @@ describe("custom-destination fallback (B-7, R-tripui-23 — Sean ruling 2026-09-
           destination_lat: null,
           destination_lng: null,
           // B-30: nothing to derive a zone from → the creator's device zone
-          // rides as the explicit value (stored as the trip's destination_tz).
-          destination_tz: deviceTimeZone(),
+          // rides as a 'device' HINT (never 'user': a booking zone outranks it).
+          destination_tz: "Pacific/Chatham",
+          destination_tz_source: "device",
           start_date: "2027-05-01",
           end_date: "2027-05-08",
         },

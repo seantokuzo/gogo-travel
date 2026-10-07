@@ -200,22 +200,25 @@ const BOUNDARY_ROWS: readonly {
     end: "2026-08-02",
     inWindow: false,
   },
-  // ---- adversarial: an unusable zone degrades to UTC, never a throw
+  // ---- adversarial: a zone THIS device cannot resolve -> trust the server's status
+  // (round-1 mobile F4: the old UTC-day re-check disagreed with the server for
+  // the last hours of a Pacific trip's final day; the server judged the right day)
   {
-    label: "an unknown zone id degrades to the UTC day (Aug 1 here)",
+    label:
+      "a zone the device cannot resolve trusts the server's 'active' — even where the UTC day would say the window is over",
     tz: "Not/AZone",
-    now: "2026-08-01T20:00:00.000Z",
+    now: "2026-08-03T00:30:00.000Z",
     start: "2026-08-01",
-    end: "2026-08-01",
+    end: "2026-08-02",
     inWindow: true,
   },
   {
-    label: "…so a window that is only true at Tokyo's Aug 2 is false for it",
+    label: "…and where the UTC day would say it has not opened yet",
     tz: "Not/AZone",
     now: "2026-08-01T20:00:00.000Z",
     start: "2026-08-02",
     end: "2026-08-02",
-    inWindow: false,
+    inWindow: true,
   },
 ];
 
@@ -233,6 +236,55 @@ describe("isTripActive / initialTabFor — the window holds at the DESTINATION d
     expect(isTripActive(tokyo, now)).toBe(true); // Aug 2 in Tokyo
     expect(isTripActive(losAngeles, now)).toBe(false); // Aug 1 in LA
     // Falsification: evaluate one `today` for both (device-local or UTC) → one of these flips.
+  });
+});
+
+describe("isTripActive — a zone the DEVICE cannot resolve (round-1 mobile F4)", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("the server's status still gates: planning / past stay inactive however the dates fall", () => {
+    const instant = new Date("2026-08-01T20:00:00.000Z");
+    expect(isTripActive(fields("planning", "2026-08-01", "2026-08-03", "Not/AZone"), instant)).toBe(
+      false,
+    );
+    expect(isTripActive(fields("past", "2026-08-01", "2026-08-03", "Not/AZone"), instant)).toBe(
+      false,
+    );
+    expect(
+      initialTabFor(fields("planning", "2026-08-01", "2026-08-03", "Not/AZone"), instant),
+    ).toBe("itinerary");
+  });
+
+  it("an active trip in an unresolvable zone opens on TODAY (initialTabFor) instead of the wrong-day Itinerary", () => {
+    // The Pacific last-day shape: 00:30Z Aug 3 is still Aug 2 in Honolulu, so the server says
+    // active; a device on the UTC day (Aug 3) would call the window over.
+    const instant = new Date("2026-08-03T00:30:00.000Z");
+    expect(initialTabFor(fields("active", "2026-08-01", "2026-08-02", "Not/AZone"), instant)).toBe(
+      "today",
+    );
+    // Falsification: drop the `!isValidTimeZone` branch -> UTC day Aug 3 > end -> "itinerary", red.
+  });
+
+  it("a RESOLVABLE zone is still re-checked client-side (the fallback is not a blanket trust)", () => {
+    const instant = new Date("2026-08-03T00:30:00.000Z");
+    expect(
+      isTripActive(fields("active", "2026-08-01", "2026-08-01", "Pacific/Honolulu"), instant),
+    ).toBe(
+      false, // Honolulu is Aug 2 here: the window [Aug 1, Aug 1] is over
+    );
+  });
+
+  it("warns once per zone in DEV, naming it, and never on a resolvable zone", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const instant = new Date("2026-08-01T20:00:00.000Z");
+    const trip = fields("active", "2026-08-01", "2026-08-03", "Test/WarnOnceZone");
+    isTripActive(trip, instant);
+    isTripActive(trip, instant);
+    isTripActive(fields("active", "2026-08-01", "2026-08-03", "Asia/Tokyo"), instant);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain("Test/WarnOnceZone");
   });
 });
 
