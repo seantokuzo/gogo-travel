@@ -203,12 +203,15 @@ Conventions inherited wholesale (not restated per endpoint):
   base-currency change (R-trips-22) and a request is never born carrying a
   stale base currency. (Q2-020, ruled 2026-09-19)
 - **R-money-32 (open-requests read — proposed, unbuilt; Sean ruling
-  pending):** WHEN the balances segment needs the caller's outstanding
-  settle-requests (the client money spec §2.7 step 5 annotations) THE SYSTEM
-  SHALL provide a trip-scoped, membership-gated LIST read of settle-requests,
-  so the annotation can go live. (Q2-030 — as shipped; Sean ruling pending:
-  the Rec flags a settle-request LIST endpoint as needing a wire ruling
-  before the annotation can go live.) **Its wire shape (path, filters,
+  pending):** **Conditional on Q2-030 resolving to "add a LIST endpoint":**
+  WHEN the balances segment needs the caller's outstanding settle-requests
+  (the client money spec §2.7 step 5 annotations) THE SYSTEM SHALL provide a
+  trip-scoped, membership-gated LIST read of settle-requests, so the
+  annotation can go live; if Q2-030 instead resolves to leaving the seam
+  empty, no LIST read is added and this requirement is void. (Q2-030 — as
+  shipped; Sean ruling pending: the Rec flags a settle-request LIST endpoint
+  as needing a wire ruling before the annotation can go live.) **Its wire
+  shape (path, filters,
   pagination, descriptor) is not yet pinned** — a spec amendment to this
   section pins it before MON-8 builds it (Autonomy Contract §6: not
   improvised). Until a LIST read ships, Q1–Q3 remain the only request
