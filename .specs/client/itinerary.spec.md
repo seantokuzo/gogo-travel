@@ -39,10 +39,9 @@
 - **R-itin-4**: WHEN two consecutive items in a day are both located THE
   SYSTEM SHALL render a travel-time chip between them (duration + mode
   icon); tapping the chip SHALL open a Sheet listing every computed mode for
-  that pair plus a "Directions" handoff to Google Maps — Google-only in v1,
-  an Apple Maps variant being deferred pending a device-verified URL format
-  (R-itin-67, Q2-125, ruled 2026-09-19) — never replacing the nav app
-  (competitors § feature-matrix).
+  that pair plus a "Directions" handoff to Google Maps — as shipped (Q2-125;
+  Sean pick pending on an Apple Maps variant, see R-itin-67) — never
+  replacing the nav app (competitors § feature-matrix).
 - **R-itin-5**: WHEN choosing the chip's displayed mode THE SYSTEM SHALL
   show walking when the walking leg is ≤ 15 minutes, else driving; transit
   and cycling appear in the mode Sheet when their legs exist (transit rows
@@ -355,9 +354,12 @@ unaffected and keeps its existing day-sectioned form.
 
 Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
 (`.specs/OPEN-QUESTIONS.md` § Round 2; the `Q2-NNN` rows stay as the decision
-record). Each rule below is the as-shipped interpretation made normative — or
-the named alternative where the batch recommended one — and cites its id.
-Grouped by source task. R-itin-33..41 above are the separately signed-off P-7
+record). Each rule below is the as-shipped interpretation made normative and
+cites its id. Four items whose Rec named a real alternative — which approve-all
+did NOT decide (Q2-056, Q2-064, Q2-125, Q2-181) — are written as shipped,
+labelled "Sean pick pending", and carry a `[NEEDS CLARIFICATION]` marker (the
+API-side ones live in `.specs/api/itinerary-bookings.spec.md`). Grouped by
+source task. R-itin-33..41 above are the separately signed-off P-7
 extension; this batch does not touch them.
 
 #### Deeplink-out builders (T-7.8)
@@ -589,13 +591,17 @@ extension; this batch does not touch them.
   wraps no mutation to gate) and mounts EAGERLY like every other Sheet on the
   screen — a lazy mount put mounting and `visible → true` in one commit and
   gave Reduce Motion users a spring slide-up then a teleport (R-ds-11).
-- **R-itin-67 (Directions handoff; Q2-125, Q2-126, Q2-127, Q2-128, Q2-129,
-  ruled 2026-09-19):** WHEN the Directions row is tapped THE SYSTEM SHALL
-  open Google Maps via the §2.7 "Directions handoff" URL — Google-only for
-  v1. An Apple Maps variant (`maps.apple.com` `saddr`/`daddr`/`dirflg`) is
-  deferred until a device-verify pass proves the format (the Airbnb/Turo
-  posture); this one ruling also closes T-8.3's cite of the same decision.
-  Directions taps SHALL NOT be recorded for the return prompt (R-itin-22) — a
+- **R-itin-67 (Directions handoff; Q2-126, Q2-127, Q2-128, Q2-129, ruled
+  2026-09-19; Q2-125 — as shipped, Sean pick pending, below):** WHEN the
+  Directions row is tapped THE SYSTEM SHALL open Google Maps via the §2.7
+  "Directions handoff" URL (Q2-125 — as shipped; Sean pick pending: (a) bless
+  Google-only for v1 / (b) spend a device-verify pass on an Apple Maps
+  variant (`maps.apple.com` `saddr`/`daddr`/`dirflg`). Rec: "Bless Google-only
+  for v1, or spend a device-verify pass on an Apple Maps variant — real
+  alternative, deliberately not shipped." T-8.3's nav handoff (Q2-232) rides
+  the same pick.) [NEEDS CLARIFICATION: Q2-125 — Google-only Directions for
+  v1, or device-verify an Apple Maps variant?] Directions taps SHALL NOT be
+  recorded for the return prompt (R-itin-22) — a
   navigation handoff books nothing. WHEN an endpoint has no usable free-text
   label (an unnamed `place_visit`; API R-ib-30) THE SYSTEM SHALL render
   Directions disabled with a "Needs …" hint — never a junk-text query for the
@@ -727,14 +733,19 @@ extension; this batch does not touch them.
 
 #### Booking-form validation UX (PR #67)
 
-- **R-itin-76 (required floor + indicator; Q2-181, Q2-182, ruled
-  2026-09-19):** the booking form's required fields are DERIVED from the
-  shared Zod schemas, never hand-listed (the form probes
+- **R-itin-76 (required floor + indicator; Q2-182 ruled 2026-09-19; Q2-181
+  — as shipped, Sean pick pending, below):** the booking form's required
+  fields are DERIVED from the shared Zod schemas, never hand-listed (the form
+  probes
   `BookingCreateSchema.shape` and the category's `BookingDetails` member with
   `undefined` — Zod's own answer cannot disagree with the parse a save runs).
   Today only `title` is required (`category` is route-supplied); every other
   field stays optional BY DESIGN — a flight with no departure time is savable
-  (API R-ib-32). What the schema cannot express is not marked: conditional
+  (API R-ib-32; Q2-181 — as shipped; Sean pick pending: (a) keep as shipped /
+  (b) a real floor such as flight ⇒ departure date+time, a shared-schema
+  change everyone inherits) [NEEDS CLARIFICATION: Q2-181 — keep `title` as
+  the only required field, or add a floor (e.g. flight ⇒ departure
+  date+time)?]. What the schema cannot express is not marked: conditional
   pairs (price requires currency, API R-ib-12) and client composition rules
   (R-itin-55's both-halves rule, the zone requirement) surface as field-level
   errors at save. The indicator is a danger-colored `*` beside the label, a
@@ -976,8 +987,8 @@ Not deeplinked in v1 (buttons absent, manual entry only): `moped_rental`
 (no verified format exists in research). Google Flights is deliberately
 excluded (research: unofficial param only — "can break; don't depend").
 
-**Directions handoff (not a partner link — R-itin-4/67; Q2-125, ruled
-2026-09-19).** The leg Sheet's "Directions" row opens the Google Maps URLs API:
+**Directions handoff (not a partner link — R-itin-4/67; as shipped — Q2-125
+Sean pick pending, see R-itin-67).** The leg Sheet's "Directions" row opens the Google Maps URLs API:
 `https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode={mode}`.
 Every interpolation is URL-encoded; `{origin}`/`{destination}` are the
 free-text endpoint labels of R-itin-67 (trip destination appended as context),
@@ -989,10 +1000,11 @@ documentation, § Directions
 bicycling, two-wheeler, transit; "You don't need a Google API key to use Maps
 URLs". `.specs/research/` covers Mapbox/Transitous leg COMPUTATION only, never
 an outbound maps URL, so this paragraph is the spec's citation of record for
-the format. **Apple Maps is not shipped in v1** (a `maps.apple.com`
-`saddr`/`daddr`/`dirflg` variant is deferred until a device-verify pass proves
-it — Q2-125) and the builder never records a return-prompt tap (R-itin-67).
-Both T-7.5's and T-8.3's directions handoffs cite this ruling.
+the format. **Apple Maps is not shipped** (as shipped; whether to bless
+Google-only for v1 or device-verify a `maps.apple.com`
+`saddr`/`daddr`/`dirflg` variant is Sean's pick — Q2-125, R-itin-67), and the
+builder never records a return-prompt tap (R-itin-67). T-7.5's and T-8.3's
+(Q2-232) directions handoffs share that pick.
 
 ### 2.8 Deeplink-out → return prompt loop
 
