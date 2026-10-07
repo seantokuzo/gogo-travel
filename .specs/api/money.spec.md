@@ -315,7 +315,9 @@ Conventions inherited wholesale (not restated per endpoint):
   lists soft-deleted rows and carries no include-deleted param. (Q2-046 —
   as shipped; Sean pick pending: the history lists deletions, which needs a
   wire param, or never does.) [NEEDS CLARIFICATION: Q2-046 — should the
-  expense history list deleted entries (needs a wire param), or never?]
+  expense history list deleted entries (needs a wire param), or never?
+  Choosing "never" would narrow the Gate-2 rule above — "visible audit-trail
+  entry … in the expense history" — i.e. reinterpret a locked decision.]
 - **R-money-28 (member removal):** WHEN a member with a nonzero balance is
   removed or leaves THE SYSTEM SHALL allow it — removal is never blocked on
   balances; their expense/share/settlement rows survive (R-db-16 posture,

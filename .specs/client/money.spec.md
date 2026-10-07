@@ -180,12 +180,15 @@
   deletions, because E2 always excludes soft-deleted rows and the list query
   has no include-deleted switch. Delete success routes back
   (`router.back()`) and E2 excludes the deleted row, so today the audit
-  entry is reachable only by a direct deep link to the deleted expense.
-  Listing deleted entries in the history needs a wire change (an
-  include-deleted param or a dedicated history read). (Q2-046 — as shipped;
-  Sean pick pending: the history lists deletions (needs a wire param) / it
-  never does.) [NEEDS CLARIFICATION: Q2-046 — should the expense history
-  list deleted entries (needs a wire param), or never?]
+  entry is in practice reachable only by id — a deep link, or a stale cached
+  list row (lists stay fresh for 5 minutes). Listing deleted entries in the
+  history needs a wire change (an include-deleted param or a dedicated
+  history read). (Q2-046 — as shipped; Sean pick pending: the history lists
+  deletions (needs a wire param) / it never does.) [NEEDS CLARIFICATION:
+  Q2-046 — should the expense history list deleted entries (needs a wire
+  param), or never? Choosing "never" would narrow the Gate-2 rule above —
+  "visible audit-trail entry … in the expense history" — i.e. reinterpret a
+  locked decision.]
 
 ### Settle-up screen (`settle` — push, per research §Recommended v1 #3)
 
