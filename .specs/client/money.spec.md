@@ -163,7 +163,11 @@
   `LSApplicationQueriesSchemes: [venmo]`; Android 11+ `<queries>` element or
   catch `ActivityNotFoundException` — research) and open the app scheme when
   available, else the probed web fallback URL — the button shows either way
-  when the handle exists.
+  when the handle exists. A **throwing** `canOpenURL` (Android 11+ without
+  the venmo `<queries>` entry) is treated exactly like a false probe and
+  folds into the web-fallback arm — never a crash; the manifest entry itself
+  rides the Android pre-launch pass (iOS declares `LSApplicationQueriesSchemes`
+  now). (Q2-038, ruled 2026-09-19)
 - **R-cmoney-17 (link formats):** WHEN a rail button fires THE SYSTEM SHALL
   build the URL exactly per the live-probed formats table §2.5 — usernames
   without `@`, cashtags with `$` prefixed at render (stored bare), amounts
@@ -173,24 +177,38 @@
   THE SYSTEM SHALL hide the Venmo, Cash App, and Zelle buttons (USD-only
   rails) — PayPal (multi-currency) and mark-as-settled remain.
 - **R-cmoney-19 (Zelle):** WHEN the counterparty has a Zelle handle THE
-  SYSTEM SHALL render it as a copyable handle (tap = clipboard + toast +
-  haptic) beside their `zelle_display_name` and the amount for manual entry
-  — no deeplink exists (research: no link, no API, no scheme; the unofficial
-  QR format is LOW-stability and out of scope v1).
+  SYSTEM SHALL render it as a copyable handle (tap = clipboard + inline
+  "Copied" confirmation + success haptic — the design system has no toast
+  component, so every copy/record confirmation in settle-up renders as inline
+  state plus a haptic; Q2-034, ruled 2026-09-19) beside their
+  `zelle_display_name` — falling back to the raw handle when
+  `zelle_display_name` is null (legacy rows; Q2-037, ruled 2026-09-19) — and
+  the amount for manual entry — no deeplink exists (research: no link, no
+  API, no scheme; the unofficial QR format is LOW-stability and out of scope
+  v1).
 - **R-cmoney-20 (mark as settled — unconditional):** WHEN the settle screen
   renders THE SYSTEM SHALL ALWAYS present "Mark as settled" — regardless of
   handles, rails, or how payment happened (research red line: every deeplink
   is best-effort UX sugar, killable without notice; this action must always
   work standalone) — opening a Sheet with amount (prefilled), method picker
   (default `cash`), and optional note, recording via
-  `POST /settlements` on confirm.
+  `POST /settlements` on confirm. At a net-zero balance the sheet records
+  caller → counterparty by default (pay framing; a wrong direction is
+  reversible through api money spec R-money-15's 24 h delete +
+  counter-entry — Q2-036, ruled 2026-09-19). A settled net-zero pair keeps
+  Mark as settled reachable through the debtor-arm handoff sheet, with the
+  amount field empty until typed (Q2-044, ruled 2026-09-19).
 - **R-cmoney-21 (return prompt):** WHEN the app returns to foreground within
   30 minutes of a rail deeplink-out THE SYSTEM SHALL present exactly once a
   "Did you complete the payment?" Sheet prefilled with that rail's method
   and amount — confirm records the settlement, decline/dismiss clears the
   pending record (same mechanics as the R-nav-18 booking-return pattern:
   stash `{counterparty, method, amount_cents, timestamp}` on tap, check on
-  `AppState → active`, clear after prompting).
+  `AppState → active`, clear after prompting). The prompt host mounts on the
+  **settle and request screens only** — the deeplink-out origins, where a
+  foreground return lands — not on global chrome; if the app is killed and
+  returns onto another surface, the record simply expires inside its
+  30-minute window without prompting. (Q2-035, ruled 2026-09-19)
 - **R-cmoney-22 (rail failure never blocks):** WHEN a rail link fails to
   open (app missing, URL rejected, OS error) THE SYSTEM SHALL show a
   non-blocking error and leave the screen fully usable — mark-as-settled is
@@ -207,7 +225,10 @@
 
 - **R-cmoney-25 (create + share):** WHEN the caller requests payment THE
   SYSTEM SHALL create the request via `POST /settle-requests` (amount
-  prefilled from the displayed balance, editable) and open the iOS share
+  prefilled from the displayed balance, editable; the sheet **always POSTs
+  an explicit `amount_cents`** — the API's defaulting arm is reachable only
+  by a race, and its 409 still maps to specific copy; Q2-040, ruled
+  2026-09-19) and open the iOS share
   sheet with the returned GoGo universal link
   (`https://<domain>/t/<tripId>/request/<requestId>`, per navigation spec
   §2.3) plus message text carrying amount + trip name. Universal-link
@@ -220,11 +241,25 @@
   trip's money context with: requester + trip name, amount owed, the same
   rail machinery as the settle screen (R-cmoney-15..22, built from the
   requester's handles), and mark-as-settled; WHEN the request is `settled`,
-  `cancelled`, or `resolved` THE SYSTEM SHALL render a resolved state (who
-  settled, when — no pay buttons); WHEN the id is unknown THE SYSTEM SHALL
-  render an EmptyState with a path back to the money tab (navigation
-  registry: "missing/settled request → request screen's resolved/empty
-  state").
+  `cancelled`, or `resolved` THE SYSTEM SHALL render a resolved state (no
+  pay buttons; who settled and when — see below); WHEN the id is unknown THE
+  SYSTEM SHALL render an EmptyState with a path back to the money tab
+  (navigation registry: "missing/settled request → request screen's
+  resolved/empty state"). Rulings (2026-09-19): the on-screen amount is
+  **fixed at the request amount** — this requirement imports R-cmoney-15..22,
+  not R-cmoney-14, so the editable amount field is settle-screen-only, while
+  the mark-as-settled sheet's amount stays editable (partial pay-through is
+  legal) (Q2-033); an **uninvolved member** (neither requester nor debtor)
+  gets a read-only summary with no action affordances, since the settlement
+  party rule (api money spec R-money-12) would reject any action they took
+  (Q2-041); the request's creator sees the status and a cancel action via
+  ConfirmDialog (Q2-002); the unknown-id EmptyState's path back is a
+  **same-tab `router.replace`** onto the money tab (Q2-042); and "who
+  settled, when" is a best-effort lookup of the linked settlement in the S2
+  first page — because the request wire carries no `settled_by` /
+  `settled_at`, anything beyond the first page degrades to a generic
+  resolved line until the wire gains those fields (api money spec R-money-33;
+  Q2-031). (Each ruled 2026-09-19.)
 - **R-cmoney-27 (non-member recipients):** Resolved at
   `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09): settle-up
   request links require app install + an account in v1 (no web surface
@@ -264,7 +299,11 @@
   interaction-continuity cases such as drag, and the PUT response is itself
   the recomputed budgets document, which replaces the cached one. A cap edit
   changes no expense or balance row, so it is not a trio site. (Q2-011,
-  ruled 2026-09-19)
+  ruled 2026-09-19) Settle-up success goes **beyond the trio**: a recorded
+  settlement also invalidates the settlements list and, when it was posted
+  with a `request_id`, that request's detail; cancelling a request
+  invalidates that request's detail; creating a request changes no balance
+  and invalidates nothing. (Q2-043, ruled 2026-09-19)
 - **R-cmoney-33 (display shape):** WHEN a money amount renders on any money
   surface THE SYSTEM SHALL use the display shape currency-code, space,
   amount — `USD 25.50`, `JPY 2550` — produced only by the shared ISO-4217
@@ -411,8 +450,9 @@ test D3 validates this exact behavior).
 4. Rail tap → stash pending record → deeplink out.
 5. Return within 30 min → **return-prompt Sheet** once (R-cmoney-21):
    "Did you complete the payment?" → [Yes, record it] posts the settlement
-   (method = rail, amount = stashed) → success toast + R-cmoney-32
-   invalidation; [Not yet] clears the stash.
+   (method = rail, amount = stashed) → inline success state + success
+   haptic (no toast — Q2-034) + R-cmoney-32 invalidation; [Not yet] clears
+   the stash.
 6. "Mark as settled" (any time) → method/amount/note Sheet → post → same
    invalidation. Works with zero handles, zero rails, zero deeplinks.
 
@@ -426,9 +466,11 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
    `request/[requestId]` is the recipient screen only).
 2. Amount Sheet (prefilled from displayed balance, editable) + optional note
    → `POST /settle-requests`.
-3. iOS share sheet opens with the returned `link` + message text
-   ("<Requester> requests $25.50 for <trip name> — settle up in GoGo:
-   <link>"). Copy affordance as fallback.
+3. iOS share sheet opens with message text in exactly this shape
+   (Q2-039, ruled 2026-09-19) — the `gogo://` deep link first, the returned
+   https `link` as the web fallback:
+   `<requester> requests <amount> for <trip> — settle up in GoGo: <gogo://…> (web: <https://…>)`.
+   Copy affordance as fallback.
 4. Recipient opens link → R-nav-13 routing (auth stash-resume per R-nav-14)
    → `request/[requestId]` renders per R-cmoney-26; paying through it links
    the settlement to the request (`request_id` on the POST — api money spec
@@ -440,7 +482,8 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
    annotations, but nothing feeds it, because no settle-request LIST
    endpoint exists on the wire (api money spec Q1–Q3 are create / read /
    cancel by id). The approved path to make it live is that LIST read
-   (Q2-030); until it ships the seam stays empty in production. Cancel does
+   (api money spec R-money-32, Q2-030); until it ships the seam stays empty
+   in production. Cancel does
    not wait on the annotation: the request's creator cancels from the
    request screen's creditor view via ConfirmDialog
    (→ `DELETE /settle-requests/:id`).
@@ -460,6 +503,12 @@ Screen roots: `money-screen`, `expense-new-screen`, `expense-detail-screen`,
 
 (`settle-button-venmo` matches the worked example already in the navigation
 spec §2.7 — kept identical.)
+
+`settle-input-amount` is the **screen** field (R-cmoney-14). Sheet-internal
+ids derive from each sheet's base per navigation spec §2.7 rule 4 — e.g.
+`settle-sheet-mark-settled-*` and `settle-sheet-request-*` — and the pinned
+`settle-picker-method` lives on the mark-as-settled sheet's method segments
+(per-segment `-{method}` derivation). (Q2-032, ruled 2026-09-19)
 
 ### 2.9 Empty / edge / error states
 
