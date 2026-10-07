@@ -65,8 +65,8 @@ Everything reversible AND in-spec runs without asking.
 
 ## Before you code
 
-1. Read the relevant `.specs/` contract and `.agents/skills/` for the domain.
-2. Read the role file in `.agents/agents/` for the work you're doing.
+1. Read the relevant `.specs/` contract and any project skill in `.claude/skills/` for the domain.
+2. Engineers: your charter is your agent definition (`.claude/agents/<role>.md`) — it is already your system prompt.
 
 ## Tech stack
 
@@ -98,8 +98,9 @@ workspace manifests say what's installed. What they DON'T tell you:
 decomposes, dispatches, tracks, and verifies wave gates; everything else
 (research, specs, code, review lanes, fixes, judging, doc updates, merges,
 handoffs) is delegated to subagents. Full directive + parallelism doctrine
-(its canonical home): `.agents/agents/orchestrator.md`; the per-role files sit
-beside it in `.agents/agents/`.
+(its canonical home): the `orchestrator` skill
+(`.claude/skills/orchestrator/SKILL.md`). Spawnable roles are registered
+agents: engineers in `.claude/agents/`, the rest in `~/.claude/agents/`.
 
 **Shared-worktree rule** (learned 2026-07-10, P-3): background agents share
 the session's working tree — a checkout by either side moves HEAD for both.
@@ -107,7 +108,7 @@ While an engineer agent owns the tree on a feature branch, the orchestrator
 FREEZES all git writes (no commits, no checkouts); doc updates queue until
 the branch merges. Parallel review lanes: only ONE lane (correctness, which
 runs the CI gate) may checkout; the rest review via `git diff`/`git show`.
-Agents that mutate files in parallel get `isolation: "worktree"`.
+Agents that mutate files in parallel get `isolation: "worktree"` — the engineer agents in `.claude/agents/` carry it in their frontmatter.
 
 ## Planning convention
 
@@ -145,7 +146,7 @@ anything behind sign-in.
 
 `bash scripts/run-loop.sh start|resume|stop|status`. The escalation triggers above
 still apply inside the loop — write `.loop/pivot` to stop and ask. Sentinels,
-Stop-hook contract, and discipline: `.agents/skills/autonomous-loop/SKILL.md`.
+Stop-hook contract, and discipline: `.claude/skills/autonomous-loop/SKILL.md`.
 
 ## What NOT to do
 
