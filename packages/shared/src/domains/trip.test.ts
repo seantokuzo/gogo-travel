@@ -184,7 +184,7 @@ describe("B-7 part 3 — nullable destination coordinates", () => {
   });
 });
 
-describe("B-30 — destination_tz on the wire", () => {
+describe("B-30 — destination_tz + provenance on the wire", () => {
   const createBase = {
     name: "Kyoto",
     destination_name: "Kyoto, Japan",
@@ -210,54 +210,165 @@ describe("B-30 — destination_tz on the wire", () => {
     created_at: "2026-07-25T00:00:00.000Z",
     updated_at: "2026-07-25T00:00:00.000Z",
   };
+  const withZone = {
+    ...tripBase,
+    destination_tz: "Asia/Tokyo",
+    destination_tz_source: "derived",
+  };
 
-  it("TripSchema: the EFFECTIVE zone is required and never null", () => {
-    expect(TripSchema.parse({ ...tripBase, destination_tz: "Asia/Tokyo" }).destination_tz).toBe(
-      "Asia/Tokyo",
+  it("TripSchema: the EFFECTIVE zone and its source are required; the zone is never null", () => {
+    expect(TripSchema.parse(withZone).destination_tz).toBe("Asia/Tokyo");
+    expect(TripSchema.parse(withZone).destination_tz_source).toBe("derived");
+    expect(TripSchema.safeParse(tripBase).success).toBe(false); // both missing
+    expect(TripSchema.safeParse({ ...withZone, destination_tz: undefined }).success).toBe(false);
+    expect(TripSchema.safeParse({ ...withZone, destination_tz: null }).success).toBe(false);
+    expect(TripSchema.safeParse({ ...withZone, destination_tz: "" }).success).toBe(false);
+    expect(TripSchema.safeParse({ ...withZone, destination_tz_source: undefined }).success).toBe(
+      false,
     );
-    expect(TripSchema.safeParse(tripBase).success).toBe(false); // missing
-    expect(TripSchema.safeParse({ ...tripBase, destination_tz: null }).success).toBe(false);
-    expect(TripSchema.safeParse({ ...tripBase, destination_tz: "" }).success).toBe(false);
     // Falsification: make `destination_tz` `.nullable()` / `.optional()` on TripSchema → the null/missing cases go green.
   });
 
-  it("TripCreate: destination_tz is optional; when sent it must be an IANA-shaped id ≤ 64 chars", () => {
+  it("TripSchema: destination_tz_source is exactly user | derived | booking | device | default", () => {
+    for (const source of ["user", "derived", "booking", "device", "default"]) {
+      expect(TripSchema.safeParse({ ...withZone, destination_tz_source: source }).success).toBe(
+        true,
+      );
+    }
+    for (const bad of ["explicit", "stored", "", "USER", null, 1]) {
+      expect(TripSchema.safeParse({ ...withZone, destination_tz_source: bad }).success).toBe(false);
+    }
+  });
+
+  it("TripCreate: zone optional; with source absent/'user' it must be an IANA-shaped id ≤ 64 chars", () => {
     expect(TripCreateSchema.parse(createBase).destination_tz).toBeUndefined();
     expect(
       TripCreateSchema.parse({ ...createBase, destination_tz: "Asia/Tokyo" }).destination_tz,
     ).toBe("Asia/Tokyo");
     expect(
-      TripCreateSchema.parse({ ...createBase, destination_tz: "Etc/GMT+12" }).destination_tz,
+      TripCreateSchema.parse({
+        ...createBase,
+        destination_tz: "Etc/GMT+12",
+        destination_tz_source: "user",
+      }).destination_tz,
     ).toBe("Etc/GMT+12");
     for (const bad of ["", "+09:00", "Asia/Tokyo; x", "Asia//Tokyo", `A${"b".repeat(64)}`]) {
-      expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: bad }).success, bad).toBe(
-        false,
-      );
+      for (const source of [undefined, "user"] as const) {
+        const body = {
+          ...createBase,
+          destination_tz: bad,
+          ...(source === undefined ? {} : { destination_tz_source: source }),
+        };
+        expect([bad, source, TripCreateSchema.safeParse(body).success]).toEqual([
+          bad,
+          source,
+          false,
+        ]);
+      }
     }
-    // null is not "unset" on the wire — omit the key instead.
+    // null is not "unset" on create — omit the key instead.
     expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: null }).success).toBe(false);
   });
 
-  it("TripCreate: the 64-char cap boundary (64 passes, 65 fails)", () => {
+  it("TripCreate: the 64-char cap boundary for a user zone (64 passes, 65 fails)", () => {
     const sixtyFour = `A${"b".repeat(63)}`;
     expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: sixtyFour }).success).toBe(
       true,
     );
     expect(
-      TripCreateSchema.safeParse({ ...createBase, destination_tz: `${sixtyFour}b` }).success,
+      TripCreateSchema.safeParse({
+        ...createBase,
+        destination_tz: `${sixtyFour}b`,
+      }).success,
     ).toBe(false);
   });
 
-  it("TripUpdate: destination_tz alone is a valid patch (no coordinate pair required) and is shape-checked", () => {
+  it("TripCreate: a 'device' hint is NOT shape-checked (the server ignores an unusable one instead of 400ing), only length-bounded", () => {
+    for (const hint of ["America/Los_Angeles", "GMT+05:30", "Not A Zone", "SystemV/AST4", ""]) {
+      const parsed = TripCreateSchema.safeParse({
+        ...createBase,
+        destination_tz: hint,
+        destination_tz_source: "device",
+      });
+      expect([hint, parsed.success]).toEqual([hint, true]);
+    }
+    expect(
+      TripCreateSchema.safeParse({
+        ...createBase,
+        destination_tz: "x".repeat(257),
+        destination_tz_source: "device",
+      }).success,
+    ).toBe(false);
+    // Falsification: apply the user-shape rule to every source → the exotic-hint rows go red.
+  });
+
+  it("TripCreate: the source is a claim of 'user' or 'device' only; it requires a zone", () => {
+    for (const bad of ["derived", "booking", "default", "explicit", ""]) {
+      expect(
+        TripCreateSchema.safeParse({
+          ...createBase,
+          destination_tz: "Asia/Tokyo",
+          destination_tz_source: bad,
+        }).success,
+        bad,
+      ).toBe(false);
+    }
+    expect(
+      TripCreateSchema.safeParse({
+        ...createBase,
+        destination_tz_source: "device",
+      }).success,
+    ).toBe(false); // source without a zone
+  });
+
+  it("TripUpdate: a zone alone is a valid patch (no coordinate pair required); user zones are shape-checked", () => {
     expect(TripUpdateSchema.parse({ destination_tz: "Europe/Paris" }).destination_tz).toBe(
       "Europe/Paris",
     );
     expect(TripUpdateSchema.safeParse({ destination_tz: "not a zone" }).success).toBe(false);
-    expect(TripUpdateSchema.safeParse({ destination_tz: null }).success).toBe(false);
+    expect(
+      TripUpdateSchema.safeParse({
+        destination_tz: "not a zone",
+        destination_tz_source: "user",
+      }).success,
+    ).toBe(false);
     expect(TripUpdateSchema.parse({ name: "x" }).destination_tz).toBeUndefined();
   });
-});
 
+  it("TripUpdate: null RESETS to automatic — allowed alone, forbidden with a source", () => {
+    expect(TripUpdateSchema.parse({ destination_tz: null }).destination_tz).toBeNull();
+    expect(
+      TripUpdateSchema.safeParse({
+        destination_tz: null,
+        destination_tz_source: "user",
+      }).success,
+    ).toBe(false);
+    expect(
+      TripUpdateSchema.safeParse({
+        destination_tz: null,
+        destination_tz_source: "device",
+      }).success,
+    ).toBe(false);
+    // Falsification: drop `.nullable()` from TripUpdateSchema.destination_tz → the first row goes red.
+  });
+
+  it("TripUpdate: a source without a zone is a 400; a device hint is length-bounded, not shape-checked", () => {
+    expect(TripUpdateSchema.safeParse({ destination_tz_source: "user" }).success).toBe(false);
+    expect(TripUpdateSchema.safeParse({ destination_tz_source: "device" }).success).toBe(false);
+    expect(
+      TripUpdateSchema.safeParse({
+        destination_tz: "GMT+05:30",
+        destination_tz_source: "device",
+      }).success,
+    ).toBe(true);
+    expect(
+      TripUpdateSchema.safeParse({
+        destination_tz: "x".repeat(257),
+        destination_tz_source: "device",
+      }).success,
+    ).toBe(false);
+  });
+});
 describe("TripListItem (trips spec §3.3 GET /trips)", () => {
   const trip = {
     id: "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7d",
@@ -266,6 +377,7 @@ describe("TripListItem (trips spec §3.3 GET /trips)", () => {
     destination_lat: 35.6812,
     destination_lng: 139.7671,
     destination_tz: "Asia/Tokyo",
+    destination_tz_source: "derived",
     start_date: "2026-09-01",
     end_date: "2026-09-10",
     status: "planning",

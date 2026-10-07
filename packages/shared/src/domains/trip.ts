@@ -20,9 +20,9 @@ import { IANA_TIME_ZONE_ID_RE, TIME_ZONE_ID_MAX_CHARS } from "../time.js";
 /**
  * IANA zone id for a trip's destination (B-30). Shape-only here (length +
  * IANA-shaped — the same gate `isValidTimeZone` applies first); whether the
- * platform's `Intl` actually RESOLVES the id is the server's check at write
- * time (`apps/server/src/trips/destination-tz.ts` → 400), kept out of the
- * schema so a client-side `Intl` gap can never block a create.
+ * id is on the server's zone allow-list is the server's check at write time
+ * (`apps/server/src/trips/zone-canon.ts` → 400 for a user-entered zone),
+ * kept out of the schema so a client-side `Intl` gap can never block a create.
  */
 export const DestinationTzSchema = z
   .string()
@@ -30,6 +30,67 @@ export const DestinationTzSchema = z
   .max(TIME_ZONE_ID_MAX_CHARS)
   .regex(IANA_TIME_ZONE_ID_RE);
 export type DestinationTz = z.infer<typeof DestinationTzSchema>;
+
+/**
+ * Where a trip's EFFECTIVE destination zone came from (B-30 round-1 zone
+ * provenance), best rank first — the resolver's chain on the server:
+ *  - `user`     — entered by a person (T-7.17's picker); never auto-overwritten
+ *  - `derived`  — computed from `destination_lat/lng` (tz-lookup)
+ *  - `booking`  — read-time: the earliest non-cancelled flight/train's
+ *                 `arrives_tz` (else `departs_tz`); never stored
+ *  - `device`   — the creator's device zone, sent as a HINT for a
+ *                 coordinate-less destination; ranks BELOW a booking zone
+ *  - `default`  — `UTC`; nothing else was available; never stored
+ * The wire field is the EFFECTIVE source so a picker can say "set
+ * automatically" vs "set by you". Stored sources are the first/second/fourth
+ * only (`trips.destination_tz_source`).
+ */
+export const DESTINATION_TZ_SOURCES = ["user", "derived", "booking", "device", "default"] as const;
+export const DestinationTzSourceSchema = z.enum(DESTINATION_TZ_SOURCES);
+export type DestinationTzSource = z.infer<typeof DestinationTzSourceSchema>;
+
+/** The two provenances a CLIENT may claim on write (`derived` is server-only). */
+export const DESTINATION_TZ_INPUT_SOURCES = ["user", "device"] as const;
+export const DestinationTzInputSourceSchema = z.enum(DESTINATION_TZ_INPUT_SOURCES);
+export type DestinationTzInputSource = z.infer<typeof DestinationTzInputSourceSchema>;
+
+/**
+ * Write-side `destination_tz`: a bounded string, NOT yet shape-checked — the
+ * shape rule depends on the claimed source (`destinationTzWriteRule`): a
+ * `'user'` zone (the default) must be IANA-shaped and allow-listed (a bad one
+ * is a 400), while a `'device'` hint that the server can't use is simply
+ * IGNORED (treated as absent), so a device on exotic tzdata can never block
+ * a create or a settings save.
+ */
+const DestinationTzWriteSchema = z.string().max(256);
+
+const destinationTzWriteRule = (
+  val: {
+    destination_tz?: string | null | undefined;
+    destination_tz_source?: DestinationTzInputSource | undefined;
+  },
+  ctx: z.core.$RefinementCtx,
+): void => {
+  const zone = val.destination_tz;
+  const source = val.destination_tz_source;
+  if (source !== undefined && (zone === undefined || zone === null)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "destination_tz_source requires a destination_tz string",
+      path: ["destination_tz_source"],
+    });
+    return;
+  }
+  if (typeof zone === "string" && (source ?? "user") === "user") {
+    if (!DestinationTzSchema.safeParse(zone).success) {
+      ctx.addIssue({
+        code: "custom",
+        message: "destination_tz must be an IANA zone id (<= 64 chars)",
+        path: ["destination_tz"],
+      });
+    }
+  }
+};
 
 /** The `trips` row as the API returns it. */
 export const TripSchema = z.object({
@@ -44,11 +105,14 @@ export const TripSchema = z.object({
   /**
    * The EFFECTIVE destination zone (B-30) — NEVER null on the wire. A trip's
    * "today" is the calendar day in this zone (`todayInZone`), evaluated
-   * identically by server and client. Resolved server-side: explicit user
-   * value → derived from `destination_lat/lng` → (NULL stored only) the
-   * earliest flight/train booking's `arrives_tz`/`departs_tz` → `"UTC"`.
+   * identically by server and client. Resolved server-side, best first:
+   * user-entered → derived from `destination_lat/lng` → the earliest
+   * non-cancelled flight/train booking's `arrives_tz`/`departs_tz` → the
+   * creator's device-zone hint → `"UTC"`. `destination_tz_source` says which.
    */
   destination_tz: DestinationTzSchema,
+  /** Which rung of the chain produced `destination_tz` (see `DESTINATION_TZ_SOURCES`). */
+  destination_tz_source: DestinationTzSourceSchema,
   start_date: ISODateSchema,
   end_date: ISODateSchema,
   /** Effective status; date-derived unless overridden (R-db-19). */
@@ -152,18 +216,25 @@ export const TripCreateSchema = z
     destination_lat: LatSchema.nullable(),
     destination_lng: LngSchema.nullable(),
     /**
-     * Optional explicit destination zone (B-30). Wins over the zone derived
-     * from the coordinates. The mobile create form sends the device zone for
-     * a coordinate-less custom destination (no other source exists).
+     * Optional destination zone (B-30) and its claimed provenance. With
+     * `destination_tz_source` absent or `'user'` it is a person's choice: it
+     * must be IANA-shaped and on the server's allow-list (else 400), wins the
+     * whole chain and is never auto-overwritten. With `'device'` it is only a
+     * HINT (the mobile create form sends the device zone for a
+     * coordinate-less pick): used solely when nothing better exists — ranked
+     * below coordinates AND booking zones — and silently ignored if the
+     * server can't use it. `destination_tz_source` without a zone is a 400.
      */
-    destination_tz: DestinationTzSchema.optional(),
+    destination_tz: DestinationTzWriteSchema.optional(),
+    destination_tz_source: DestinationTzInputSourceSchema.optional(),
     start_date: ISODateSchema,
     end_date: ISODateSchema,
     base_currency: CurrencyCodeSchema.optional(),
     theme: ThemeKeySchema.optional(),
   })
   .superRefine(dateOrderRule)
-  .superRefine(destinationCoordsPairRule);
+  .superRefine(destinationCoordsPairRule)
+  .superRefine(destinationTzWriteRule);
 export type TripCreate = z.infer<typeof TripCreateSchema>;
 
 /**
@@ -182,11 +253,17 @@ export const TripUpdateSchema = z
     destination_lat: LatSchema.nullable().optional(),
     destination_lng: LngSchema.nullable().optional(),
     /**
-     * Explicit destination zone (B-30). When the body moves the coordinates
-     * WITHOUT this, the server re-derives the zone from the new coordinates;
-     * with it, the explicit value wins (and is stored as given).
+     * Destination zone write (B-30), same provenance semantics as create:
+     * a string with source absent/`'user'` is a person's choice (400 if not
+     * IANA-shaped/allow-listed) and is never overwritten by a later
+     * coordinates edit; `'device'` is a low-rank hint the server may ignore.
+     * `null` RESETS to automatic — clears the stored zone and re-derives
+     * from the coordinates (no source allowed with `null`). When the body
+     * moves the coordinates WITHOUT a zone, the server re-derives a
+     * `derived`/`device` zone and leaves a `user` zone alone.
      */
-    destination_tz: DestinationTzSchema.optional(),
+    destination_tz: DestinationTzWriteSchema.nullable().optional(),
+    destination_tz_source: DestinationTzInputSourceSchema.optional(),
     start_date: ISODateSchema.optional(),
     end_date: ISODateSchema.optional(),
     theme: ThemeKeySchema.nullable().optional(),
@@ -195,7 +272,8 @@ export const TripUpdateSchema = z
     expect_updated_at: ISODateTimeSchema.optional(),
   })
   .superRefine(dateOrderRule)
-  .superRefine(destinationCoordsPairRule);
+  .superRefine(destinationCoordsPairRule)
+  .superRefine(destinationTzWriteRule);
 export type TripUpdate = z.infer<typeof TripUpdateSchema>;
 
 /**

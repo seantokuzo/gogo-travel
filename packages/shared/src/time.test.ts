@@ -113,7 +113,7 @@ describe("todayInZone — never throws; unknown zone degrades to the UTC date", 
   });
 });
 
-describe("todayInZone — a misbehaving engine degrades to UTC, never to a believable wrong day", () => {
+describe("todayInZone — a grossly misbehaving engine degrades to the UTC day (gate scope: see time.ts)", () => {
   const RealDateTimeFormat = Intl.DateTimeFormat;
   afterEach(() => {
     (Intl as { DateTimeFormat: unknown }).DateTimeFormat = RealDateTimeFormat;

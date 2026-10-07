@@ -20,10 +20,14 @@
  *
  * NEVER THROWS. A null/empty/unknown/over-long/non-IANA-shaped zone resolves to the UTC date
  * (the documented last-resort zone of the destination-zone chain). A
- * formatter that answers implausibly (any real zone is within −12h…+14h of
- * UTC, so its calendar day is within ±1 of the UTC day) is treated as an
- * unknown zone too — wrong-by-a-day from a misbehaving engine must degrade
- * to UTC, never to a believable wrong day.
+ * formatter whose answer is more than a day from the UTC day (any real zone
+ * is within −12h…+14h of UTC, so its calendar day is within ±1 of UTC's) is
+ * treated as an unknown zone too. SCOPE OF THAT GATE: it stops GROSS engine
+ * shifts (a misread day/month part), nothing finer. It cannot catch an
+ * engine that ignores `timeZone` and answers the UTC/device day — that day
+ * is within ±1 of UTC's too, and is exactly the pre-B-30 bug shape. Real
+ * zone answers are pinned by known-truth tests against explicit instants
+ * (time.test.ts) and the Hermes-shaped run on the mobile side, not by this gate.
  */
 import type { ISODate } from "./scalars.js";
 
@@ -132,10 +136,12 @@ export function todayInZone(now: Date, tz: string | null | undefined): ISODate {
     return utc;
   }
 
-  // Plausibility gate: the zone's calendar day is within one day of the UTC
-  // day for every real zone (UTC−12 … UTC+14). Years below 100 are excluded
-  // above because `Date.UTC` maps them to 1900+ (and the engine answer for a
-  // modern instant would be implausible anyway).
+  // Plausibility gate (gross-shift guard ONLY — see the module doc: it passes
+  // any answer within ±1 day of UTC's, including a zone-ignoring engine's):
+  // the zone's calendar day is within one day of the UTC day for every real
+  // zone (UTC−12 … UTC+14). Years below 100 are excluded above because
+  // `Date.UTC` maps them to 1900+ (and the engine answer for a modern instant
+  // would be implausible anyway).
   const zoneDayMs = Date.UTC(year, month - 1, day);
   const utcDayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   if (Math.abs(zoneDayMs - utcDayMs) > DAY_MS) return utc;

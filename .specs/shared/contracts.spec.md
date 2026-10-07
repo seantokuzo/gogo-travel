@@ -114,7 +114,10 @@ packages/shared/src/
 │   ├── auth.ts           # AppleSignInRequest, GoogleSignInRequest, RefreshRequest,
 │   │                     #   SignInResponse, AuthTokens, LogoutRequest, AuthSessionInfo
 │   ├── entitlement.ts    # Entitlement, EntitlementOverrides, EffectiveEntitlements
-│   ├── trip.ts           # Trip (+ non-null EFFECTIVE `destination_tz`, B-30), TripCreate/Update (+ optional `destination_tz`);
+│   ├── trip.ts           # Trip (+ non-null EFFECTIVE `destination_tz` and its `destination_tz_source`
+│   │                     #   'user'|'derived'|'booking'|'device'|'default', B-30), TripCreate/Update (+ optional
+│   │                     #   `destination_tz` and `destination_tz_source?: 'user'|'device'`; Update's `destination_tz`
+│   │                     #   is nullable — `null` resets to automatic; 'device' is a low-rank hint the server may ignore);
 │   │                     #   a trip's "today" = `todayInZone(now, trip.destination_tz)` (`time.ts`, one helper both sides)
 │   ├── member.ts         # TripMember, Invite, InviteCreate/Accept
 │   ├── place.ts          # Place, SavedPlace
