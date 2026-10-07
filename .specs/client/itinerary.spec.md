@@ -292,7 +292,12 @@ unaffected and keeps its existing day-sectioned form.
   "+1" chip, no Departs/Arrives split. Scope is `flight` only per the QUEUE
   row's literal wording — `train` shares the identical mechanical shape
   (same `end_day` derivation branch) but is deliberately NOT included this
-  batch (see PR body "what we deliberately did not spec").
+  batch (see PR body "what we deliberately did not spec"). The "Arrives" row,
+  like a lodging check-out row (R-itin-46), has no `sort_order` on its day, so
+  THE SYSTEM SHALL render it FIRST in its `end_day` section ahead of that
+  day's own items, and SHALL NOT carry the R-itin-7 "Overlap" chip on it — the
+  R-itin-7 overlap analysis runs on the departure day only (clipped at
+  midnight); arrival-day collisions are not analysed in either mode (T-7.11).
 
 ### Calendar timezone switcher (Sean QA feature batch 2026-09-06, feature ②)
 

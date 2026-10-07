@@ -238,8 +238,9 @@ Partial<Record<NotificationCategory, boolean>> }` — an absent
   value (the next itinerary touch MAY wire a server enum, but nothing is
   blocked on it).
   `ScheduleBookingInput` (itinerary-bookings spec §3.4) gains an optional
-  `status?: 'planned' | 'booked'` field (default `'planned'`, backward
-  compatible) — Sean QA feature batch 2026-09-06 feature ④; see
+  `status?: 'planned' | 'booked'` field (omitted ⇒ the pre-change behaviour —
+  `idea → planned`; `planned`/`booked` unchanged; no schema default —
+  backward compatible) — Sean QA feature batch 2026-09-06 feature ④; see
   itinerary-bookings spec §3.4/R-ib-8.
 - **`money.ts`** — `ExpenseCreate` carries its shares inline
   (`shares: Array<{ user_id, share_cents }>`) — the atomic-write contract
