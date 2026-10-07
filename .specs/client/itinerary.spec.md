@@ -342,6 +342,44 @@ unaffected and keeps its existing day-sectioned form.
   stays reachable only via other write paths (the booking-detail screen's
   plain status buttons, R-itin-39; capture; direct API).
 
+### Round-2 spec-pass rulings (ruled 2026-09-19)
+
+Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
+(`.specs/OPEN-QUESTIONS.md` § Round 2; the `Q2-NNN` rows stay as the decision
+record). Each rule below is the as-shipped interpretation made normative — or
+the named alternative where the batch recommended one — and cites its id.
+Grouped by source task. R-itin-33..41 above are the separately signed-off P-7
+extension; this batch does not touch them.
+
+#### Deeplink-out builders (T-7.8)
+
+- **R-itin-42 (party size surface; Q2-065, ruled 2026-09-19):** the editable
+  `adults` field exists on the FORM surface only (R-itin-32 scopes the inline
+  edit to the add flow); the booking-detail deeplink panel (R-itin-25) builds
+  with the member-count default and no editor. `adults` reaches a partner URL
+  only where that partner's §2.7 format carries a traveler count (Skyscanner,
+  Airbnb, Booking.com, Expedia, Vrbo); every other partner link carries no
+  party-size param.
+- **R-itin-43 (builder degradation; Q2-066, Q2-067, Q2-070, ruled
+  2026-09-19):** WHEN the Trainline station lookup fails OR succeeds with zero
+  URNs THE SYSTEM SHALL fall back to the plain `https://www.thetrainline.com/`
+  link — never a broken deep link, never an error surface. WHEN
+  `details.external_url` has a scheme other than http(s) THE SYSTEM SHALL
+  treat it as a MISSING field (button disabled with its hint) and never hand
+  it to `Linking.openURL` (stored data must not reach `javascript:`/`tel:`
+  handoffs). WHEN the Skyscanner cabin class is absent or unrecognized THE
+  SYSTEM SHALL emit `cabinclass=economy` (the documented param set is always
+  emitted).
+- **R-itin-44 (manual-add fallback; Q2-068, ruled 2026-09-19):** the return
+  host's built-in "add manually" landing (`ManualAddBookingSheet`: one title
+  field → `POST …/bookings` with the recorded category and
+  `source: 'deeplink_return'`, status defaulting to `idea`) is the HOST'S
+  FALLBACK only — the itinerary stack passes `onAddManually`, which routes to
+  `item/new?category=…` per R-itin-22, so the fallback never mounts there.
+  Its testIDs (`booking-manual-add-sheet`, `-error`, `-input-title`) sit
+  outside the §2.9 screen inventory by design and are recorded there as
+  fallback-only.
+
 ---
 
 ## 2. Design
@@ -542,18 +580,18 @@ is the documented shape when it activates).
 | Partner       | Category        | Constructed URL                                                                                                                                                                                | Field mapping / caveats                                                                                                                                                                               |
 | ------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Kayak Flights | flight          | `https://www.kayak.com/flights/{ORIG}-{DEST}/{YYYY-MM-DD}[/{YYYY-MM-DD}]` + optional `?fs=stops=0`                                                                                             | ORIG/DEST = form origin/destination IATA; second date only for round trips; `fs=stops=0` when a "non-stop only" form toggle is set. Enabled when both IATAs + depart date present (R-itin-21).        |
-| Skyscanner    | flight          | `https://www.skyscanner.net/transport/flights/{orig}/{dest}/{yymmdd}/[{yymmdd}/]?adultsv2={adults}&cabinclass={cabin}&preferDirects={bool}`                                                    | Lowercase IATA; **`yymmdd`** dates (not ISO); `cabin` mapped from cabin-class field (economy/premiumeconomy/business/first); params are the officially documented set.                                |
+| Skyscanner    | flight          | `https://www.skyscanner.net/transport/flights/{orig}/{dest}/{yymmdd}/[{yymmdd}/]?adultsv2={adults}&cabinclass={cabin}&preferDirects={bool}`                                                    | Lowercase IATA; **`yymmdd`** dates (not ISO); `cabin` mapped from cabin-class field (economy/premiumeconomy/business/first; absent → economy, Q2-070); params are the officially documented set.      |
 | Airbnb        | lodging         | `https://www.airbnb.com/s/{location}/homes?checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&adults={adults}`                                                                                         | `location` = place/address field, else `trips.destination_name`. Research caveat repeated: app honoring params after universal-link is **UNTESTED — device-verify** before this button ships enabled. |
 | Booking.com   | lodging         | `https://www.booking.com/searchresults.html?ss={q}&checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&group_adults={adults}`                                                                           | `ss` = location query as Airbnb.                                                                                                                                                                      |
 | Expedia       | lodging         | `https://www.expedia.com/Hotel-Search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                             | Officially documented format.                                                                                                                                                                         |
 | Vrbo          | lodging         | `https://www.vrbo.com/search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                                      |                                                                                                                                                                                                       |
-| Trainline     | train           | Lookup: `https://www.thetrainline.com/api/locations-search/v2/search?searchTerm={q}` → pick URN → `https://www.thetrainline.com/book/results?origin={urn}&destination={urn}&outwardDate={ISO}` | Two-step: station fields drive debounced client-direct URN lookup (open API, verified live); on lookup failure degrade to plain `thetrainline.com`.                                                   |
+| Trainline     | train           | Lookup: `https://www.thetrainline.com/api/locations-search/v2/search?searchTerm={q}` → pick URN → `https://www.thetrainline.com/book/results?origin={urn}&destination={urn}&outwardDate={ISO}` | Two-step: station fields drive debounced client-direct URN lookup (open API, verified live); on lookup failure OR zero URNs degrade to plain `thetrainline.com` (Q2-066).                             |
 | Omio          | train           | `https://www.omio.com/` (plain)                                                                                                                                                                | No parameterized format in research — plain link only.                                                                                                                                                |
 | Amtrak        | train           | `https://www.amtrak.com/` (plain)                                                                                                                                                              | Research: no API, SPA, no prefill.                                                                                                                                                                    |
 | Kayak Cars    | car_rental      | `https://www.kayak.com/cars/{location}/{YYYY-MM-DD}/{YYYY-MM-DD}`                                                                                                                              | Pickup location + pickup/dropoff dates.                                                                                                                                                               |
 | Turo          | car_rental      | `https://turo.com/us/en/search?location={q}&startDate={MM/DD/YYYY}`                                                                                                                            | **`MM/DD/YYYY`** date format; research shows further params exist but unverified (`&…`) — ship location+startDate only, device-verify before adding more.                                             |
 | Eventbrite    | activity        | `https://www.eventbrite.com/d/{state--city}/events/`                                                                                                                                           | Browse-only (discovery API dead since 2020). Constructible only when the destination maps to a US `state--city` slug; otherwise omit the button.                                                      |
-| External URL  | activity, other | `details.external_url` verbatim                                                                                                                                                                | Shown as "Open {host}".                                                                                                                                                                               |
+| External URL  | activity, other | `details.external_url` verbatim                                                                                                                                                                | Shown as "Open {host}"; a non-http(s) URL is a missing field, never opened (Q2-067).                                                                                                                  |
 
 Not deeplinked in v1 (buttons absent, manual entry only): `moped_rental`
 (BikesBooking is a v2 affiliate — research § verdict table), `restaurant`
