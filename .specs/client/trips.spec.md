@@ -4,6 +4,11 @@
 > DRAFT — pending Sean approval. Not approvable until zero
 > `[NEEDS CLARIFICATION]` markers remain (own + repeated upstream).
 >
+> **Round-2 write-back (2026-09-19 rulings, PR #93):** R-tripui-25..28 added
+> and §2.1/§2.5/§2.7/§2.8 amended. **Q2-288 still open** — one
+> `[NEEDS CLARIFICATION]` marker remains (R-tripui-27, status-override client
+> surface; Sean pick pending).
+>
 > **Sources:** `.specs/api/trips.spec.md` (CANONICAL for authz — §3.2
 > matrix — and endpoint shapes), `.specs/client/navigation.spec.md`
 > (CANONICAL for routes, deep links, modal conventions §2.6, testID grammar
@@ -45,6 +50,19 @@
 - **R-tripui-5 (empty state):** WHEN the user has zero trips THE SYSTEM
   SHALL render an EmptyState with create-trip and join-by-link guidance —
   never a blank region (design-system R-ds-16).
+- **R-tripui-25 (join entry — Q2-287, ruled 2026-09-19):** WHEN the trip
+  list renders THE SYSTEM SHALL offer a "Join with an invite link" entry
+  (`trip-list-button-join`) in the EmptyState (zero trips) AND as a ghost
+  Button in the list footer (one or more trips); WHEN pressed THE SYSTEM
+  SHALL open a guidance Sheet (`trip-list-sheet-join`) explaining that trips
+  are joined by invite link — ask a member to send one; opening the link
+  shows the trip and inviter and the user chooses whether to accept — and
+  SHALL NOT render a token-typing field (§2.8). There is NO header-overflow
+  entry in v1: PageHeader caps trailing actions at two, both slots are
+  nav-owned (profile avatar — §2.2; capture inbox — nav R-nav-24), and the
+  design system ships no overflow menu. A true overflow affordance would be
+  a design-system task and is not scheduled; footer + Sheet IS the v1
+  contract.
 
 ### Create trip (`trip-new`, modal)
 
@@ -131,6 +149,14 @@
   owner" on a member THE SYSTEM SHALL present a ConfirmDialog explaining
   the demotion to editor, then call the transfer endpoint (transfer
   confirmed — §2.2, resolved Gate 2).
+- **R-tripui-26 (no leave entry on members — Q2-286, ruled 2026-09-19):**
+  THE SYSTEM SHALL NOT render a leave-trip entry on the members screen —
+  §2.5 enumerates that screen's sections exhaustively, and leave lives on
+  trip settings (R-tripui-18/20; the owner's transfer-first hint row there
+  deep-links to the members screen). The leave capability is fully wired
+  (`useRemoveMember`, `LEAVE_TRIP_CONFIRM`, the owner-leave 409 mappings),
+  so a second entry on the members screen would be a small additive change
+  — but it is NOT part of the v1 contract; adding it is a spec amendment.
 
 ### Trip settings (`trip-settings`)
 
@@ -174,6 +200,27 @@
   gains coordinates via a map-drop — there is no `trips.destination_
 place_id` link (part-2 review finding, parked); see the P-8 follow-up
   QUEUE-row draft in this task's PR body.
+- **R-tripui-27 (status-override client surface — Q2-288 — as shipped; Sean
+  pick pending: (a) surface an owner-only archive/status-override control on
+  the client / (b) leave it API-only):** AS SHIPPED, THE SYSTEM renders NO
+  manual status-override ("archive") control on any trip screen. The owner
+  capability exists API-side (`PATCH /trips/:tripId` `status`, API spec §3.2
+  "Manual status override", §3.4, R-trips-7; `TripUpdate.status` is on the
+  shared wire), but trip settings carries no archive row (§2.5 table).
+  **[NEEDS CLARIFICATION: Q2-288 — surface an archive/status-override
+  control on the client (and where), or leave it API-only?]** Until Sean
+  picks, builders SHALL NOT add a surface: choosing where it lives is a
+  scope change, not an implementation detail. The round-2 Rec for this item
+  was "Choose: …", so the batch's keep-as-shipped default does not apply and
+  this is NOT a ruling.
+- **R-tripui-28 (settings interaction model — Q2-289, ruled 2026-09-19):**
+  WHEN trip settings renders THE SYSTEM SHALL present the trip-details form
+  INLINE as a card at the top of the screen (name, destination, dates, Save —
+  `trip-settings-list-item-details`), and the theme and base-currency rows
+  SHALL open in-screen Sheets (`trip-settings-sheet-theme`,
+  `trip-settings-sheet-currency` — nav §2.6 "Modal — sheet"; the members
+  role-change Sheet is the precedent) rather than pushing separate
+  form/picker screens. No `[tripId]/more/*` route exists for them.
 
 ### Collab behavior (all screens in this spec)
 
@@ -203,9 +250,11 @@ member_count).
 - Header: PageHeader (large) + profile avatar entry — avatar button on the
   trip-list header is the confirmed profile surface (§2.2, resolved
   Gate 2).
-- Actions: FAB → create modal; "Join a trip" affordance appears in the
-  EmptyState and header overflow (invite links are the primary join path —
-  deep link, not manual entry; no token-typing UI in v1).
+- Actions: FAB → create modal; "Join with an invite link" appears in the
+  EmptyState and the list footer and opens a guidance Sheet — NOT a header
+  overflow (R-tripui-25, Q2-287 ruled 2026-09-19: PageHeader's two trailing
+  slots are nav-owned and the DS has no overflow menu). Invite links are the
+  primary join path — deep link, not manual entry; no token-typing UI in v1.
 - States: loading (Skeleton rows), empty (R-tripui-5), error (ErrorBanner +
   retry — design-system R-ds-17).
 - Launch behavior (which screen the app lands on, incl. the 2+ active-trips
@@ -305,19 +354,23 @@ back to trip list, no server call.
    expiry, uses; revoke action (Confirm) per matrix (owner any / editor
    own).
 
+These three sections are the screen's complete content: leave-trip is NOT
+here (it lives on trip settings — R-tripui-26, Q2-286).
+
 **Trip settings** — ListItem rows (R-tripui-18), role-gated per API §3.2:
 
-| Row                                     | Roles shown    | Behavior                                                                                                                             |
-| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Trip details (name, destination, dates) | owner, editor  | Push → form; save sends `expect_updated_at` (R-tripui-19)                                                                            |
-| Theme                                   | owner, editor  | Push → theme picker (tokens spec themes); optimistic apply                                                                           |
-| Base currency                           | owner          | Push → currency picker; locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
-| Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                                 |
-| Offline pack                            | all            | Status pill + download/refresh (offline spec owns content)                                                                           |
-| Members                                 | all            | Shortcut → members screen                                                                                                            |
-| Leave trip                              | editor, viewer | ConfirmDialog → `DELETE /trips/:tripId/members/:me` → trip list                                                                      |
-| Leave trip (owner)                      | owner          | Disabled row + "Transfer ownership first" hint → members screen (resolved Gate 2)                                                    |
-| Delete trip                             | owner          | ConfirmDialog (permanent, all members) → `DELETE /trips/:tripId` → trip list                                                         |
+| Row                                     | Roles shown    | Behavior                                                                                                                          |
+| --------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Trip details (name, destination, dates) | owner, editor  | Inline card, no push (R-tripui-28); save sends `expect_updated_at` (R-tripui-19)                                                  |
+| Theme                                   | owner, editor  | Sheet picker (tokens spec themes; R-tripui-28); optimistic apply                                                                  |
+| Base currency                           | owner          | Sheet (R-tripui-28); locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
+| Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                              |
+| Status override ("archive")             | —              | NOT RENDERED as shipped — API-only; pick pending (R-tripui-27, Q2-288)                                                            |
+| Offline pack                            | all            | Status pill + download/refresh (offline spec owns content)                                                                        |
+| Members                                 | all            | Shortcut → members screen                                                                                                         |
+| Leave trip                              | editor, viewer | ConfirmDialog → `DELETE /trips/:tripId/members/:me` → trip list                                                                   |
+| Leave trip (owner)                      | owner          | Disabled row + "Transfer ownership first" hint → members screen (resolved Gate 2)                                                 |
+| Delete trip                             | owner          | ConfirmDialog (permanent, all members) → `DELETE /trips/:tripId` → trip list                                                      |
 
 ### 2.6 Collab client rules (optimistic · refetch-on-focus · push)
 
@@ -353,7 +406,8 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 | trip-list     | `trip-list-fab-create`                   | create FAB                                                                      |
 |               | `trip-list-list-item-{tripId}`           | trip row                                                                        |
 |               | `trip-list-button-profile`               | header avatar (profile surface confirmed — resolved Gate 2)                     |
-|               | `trip-list-button-join`                  | join entry (EmptyState/overflow)                                                |
+|               | `trip-list-button-join`                  | join entry (EmptyState + list footer — R-tripui-25)                             |
+|               | `trip-list-sheet-join`                   | join-guidance Sheet (R-tripui-25)                                               |
 |               | `trip-list-retry`                        | error retry                                                                     |
 | trip-new      | `trip-new-input-name`                    | name input                                                                      |
 |               | `trip-new-input-destination`             | destination search input                                                        |
@@ -372,9 +426,11 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 |               | `members-button-transfer-{userId}`       | make-owner action                                                               |
 |               | `members-list-item-invite-{inviteId}`    | active invite row                                                               |
 |               | `members-button-revoke-{inviteId}`       | revoke invite                                                                   |
-| trip-settings | `trip-settings-list-item-details`        | details row                                                                     |
+| trip-settings | `trip-settings-list-item-details`        | inline details card (R-tripui-28)                                               |
 |               | `trip-settings-list-item-theme`          | theme row                                                                       |
+|               | `trip-settings-sheet-theme`              | theme Sheet (R-tripui-28)                                                       |
 |               | `trip-settings-list-item-currency`       | base currency row                                                               |
+|               | `trip-settings-sheet-currency`           | base-currency Sheet (R-tripui-28)                                               |
 |               | `trip-settings-list-item-offline`        | offline pack row                                                                |
 |               | `trip-settings-list-item-members`        | members shortcut                                                                |
 |               | `trip-settings-button-leave`             | leave trip                                                                      |
@@ -400,6 +456,11 @@ rule; ConfirmDialog children derive `-confirm`/`-cancel` per rule 4).
 - Push transport/registration (notifications spec) — only the
   event → query-key mapping is here.
 - Manual invite-code entry UI (not v1; links only).
+- Header overflow menu on the trip list (R-tripui-25 — the DS has none; not
+  scheduled).
+- A manual status-override ("archive") surface (R-tripui-27 — as shipped
+  API-only; Q2-288 Sean pick pending) and a leave-trip entry on the members
+  screen (R-tripui-26).
 
 ---
 
@@ -443,4 +504,5 @@ city/locality subset), 6 inherited (§2.2 — dates required; structured
 destination; ownership transfer; multi-use invites; universal-link domain;
 profile = trip-list header avatar); the API spec's 3 markers (viewer
 participation, base-currency lock, trip visibility dropped) resolved
-there. Zero markers remain._
+there. One marker remains (round-2 write-back): Q2-288 — status-override
+client surface, Sean pick pending (R-tripui-27)._
