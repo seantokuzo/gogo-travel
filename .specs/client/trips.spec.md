@@ -9,6 +9,11 @@
 > `[NEEDS CLARIFICATION]` marker remains (R-tripui-27, status-override client
 > surface; Sean pick pending).
 >
+> **T-7.17 amendment (2026-10-06):** R-tripui-29 added (coordinate-less
+> destination time zone — B-30 follow-up). It opens **NC-7** (a second
+> `[NEEDS CLARIFICATION]` marker, Sean pick pending), so **two** markers now
+> remain: Q2-288 (R-tripui-27) and NC-7 (R-tripui-29).
+>
 > **Sources:** `.specs/api/trips.spec.md` (CANONICAL for authz — §3.2
 > matrix — and endpoint shapes), `.specs/client/navigation.spec.md`
 > (CANONICAL for routes, deep links, modal conventions §2.6, testID grammar
@@ -200,6 +205,23 @@
   gains coordinates via a map-drop — there is no `trips.destination_
 place_id` link (part-2 review finding, parked); see the P-8 follow-up
   QUEUE-row draft in this task's PR body.
+- **R-tripui-29 (destination time zone — B-30 follow-up, T-7.17)** (NEW 2026-10-06): WHEN the
+  trip-create form's selected destination (R-tripui-23) or the trip-settings effective
+  destination (R-tripui-24) has no coordinates THE SYSTEM SHALL render a "Time zone" field
+  (B-9 `TimeZoneField`; `trip-new-input-timezone` / `trip-settings-input-timezone`) beneath
+  the destination. The create form SHALL prefill it with the device zone
+  (`coordinateLessDestinationZone()` — B-30's silent value made visible) and send the field's
+  value as `destination_tz`. Settings SHALL show the trip's current effective `destination_tz`
+  and list the trip's flight/train zones ("On this trip" — R-itin-37's zone set minus the
+  destination) above the full catalog; a changed value SHALL ride `buildTripPatch` as
+  `destination_tz`, with or without a destination change. A destination WITH coordinates SHALL
+  show no field — the server derives its zone (B-30). [NEEDS CLARIFICATION: NC-7 — (a) as
+  above: field only for coordinate-less destinations, device-zone prefill; (b) an
+  always-visible "Time zone" row for every destination (derived zone shown, overridable);
+  (c) as (a) but no prefill — the user must pick before Save enables. Rec (a). Privacy note
+  (Law 3-adjacent): the device-zone prefill — already sent silently by B-30 (PR #99
+  `features/trips/destination-zone.ts`) — shares the creator's home zone with every trip
+  member; (a) makes it visible and editable, (c) avoids it.]
 - **R-tripui-27 (status-override client surface — Q2-288 — as shipped; Sean
   pick pending: (a) surface an owner-only archive/status-override control on
   the client / (b) leave it API-only):** AS SHIPPED, THE SYSTEM renders NO
@@ -504,5 +526,8 @@ city/locality subset), 6 inherited (§2.2 — dates required; structured
 destination; ownership transfer; multi-use invites; universal-link domain;
 profile = trip-list header avatar); the API spec's 3 markers (viewer
 participation, base-currency lock, trip visibility dropped) resolved
-there. One marker remains (round-2 write-back): Q2-288 — status-override
-client surface, Sean pick pending (R-tripui-27)._
+there. One marker remained after the round-2 write-back: Q2-288 —
+status-override client surface, Sean pick pending (R-tripui-27). The
+2026-10-06 T-7.17 amendment adds NC-7 (R-tripui-29, destination time zone
+entry for coordinate-less destinations, Sean pick pending), so two markers
+remain._
