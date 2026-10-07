@@ -16,7 +16,7 @@
  *  - the deferred wait (PR #98 round 1): ONE never-removed native network
  *    listener fanned out to waiting controllers (iOS cancels its NWPathMonitor
  *    when the last JS listener goes), an AppState -> active re-read while
- *    waiting, and the unmount withdrawal;
+ *    waiting, the unmount withdrawal, and both `cancelled` guards;
  *  - Q2-186 single-controller scope: ONE `useOfflinePackController` per trip
  *    (surfaces read `useOfflinePackState`, effect-free), `liveOfflinePackControllers`
  *    pins the count, two racing instances still start ONE download, and a
@@ -28,7 +28,7 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 import { AppState } from "react-native";
 
-import { TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
+import { TEST_TRIP_ID, TRIP_B_ID, TRIP_C_ID } from "@/test-utils/ids";
 import { makeActiveTrip, makePlanningTrip } from "@/test-utils/trip-fixtures";
 
 import {
@@ -804,6 +804,66 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     expect(om.createPack).not.toHaveBeenCalled();
   });
 
+  // PR #98 round 1 advisory: both `cancelled` guards on the connectivity read
+  // were untested. Hold the read in a deferred promise, unmount, THEN settle
+  // it — a late result must join no wait and start nothing. Falsification:
+  // drop the `if (cancelled) return` in the resolve arm -> the late CELLULAR
+  // joins a wait (native listener + AppState subscription) and the late WIFI
+  // starts a download for an unmounted controller; drop `!cancelled` in the
+  // reject arm -> the late rejection arms a wait. Released in `finally`.
+  it.each([
+    ["cellular", cellular],
+    ["wifi", wifi],
+  ])(
+    "a read that settles %s AFTER unmount joins no wait and starts nothing (resolve-arm cancelled guard)",
+    async (_label, late) => {
+      let release: (state: unknown) => void = () => undefined;
+      network.getNetworkStateAsync.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+        wrapper,
+      });
+      await act(flush); // the effect ran; the read is in flight
+      try {
+        await unmount();
+        release(late);
+        await act(flush);
+        expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+        expect(appStateSubs).toHaveLength(0);
+        expect(om.createPack).not.toHaveBeenCalled();
+      } finally {
+        release(late);
+      }
+    },
+  );
+
+  it("a read that REJECTS after unmount arms no wait (reject-arm cancelled guard)", async () => {
+    let fail: (reason: Error) => void = () => undefined;
+    network.getNetworkStateAsync.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+      wrapper,
+    });
+    await act(flush);
+    try {
+      await unmount();
+      fail(new Error("native module unavailable"));
+      await act(flush);
+      expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+      expect(appStateSubs).toHaveLength(0);
+    } finally {
+      fail(new Error("native module unavailable"));
+    }
+  });
+
   // Q2-186 adversarial: switching trips (the trip switcher REPLACES the
   // `[tripId]` route, so the shell — and its controller — remounts on the new
   // trip) must neither cancel the in-flight download of the trip being left
@@ -818,6 +878,15 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     );
     await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
     expect(offlinePackStateFor(TEST_TRIP_ID)).toEqual({ phase: "downloading", progress: 0 });
+
+    // Own-trip keying (PR #98 round 1): a reader for a DIFFERENT (planning)
+    // trip never inherits another trip's entry. Falsification: have
+    // `useOfflinePackState` fall back to `Object.values(state.packs)[0]` ->
+    // this reader reports A's download -> red.
+    const bystander = await renderHook(() => useOfflinePackState(makePlanningTrip(TRIP_C_ID)), {
+      wrapper,
+    });
+    expect(bystander.result.current).toEqual({ phase: "none" });
 
     await rerender(makeActiveTrip(TRIP_B_ID));
     await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(2));
@@ -843,6 +912,8 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     expect(readPackAnnotation(TEST_TRIP_ID)).toBeDefined();
     expect(offlinePackStateFor(TRIP_B_ID)).toEqual({ phase: "downloading", progress: 0 });
     expect(readPackAnnotation(TRIP_B_ID)).toBeUndefined();
+    expect(bystander.result.current).toEqual({ phase: "none" }); // still nobody's download
+    await bystander.unmount();
     await unmount();
   });
 });
