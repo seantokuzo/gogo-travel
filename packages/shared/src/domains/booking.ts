@@ -521,9 +521,23 @@ export const BookingWithItemsSchema = BookingSchema.safeExtend({
 export type BookingWithItems = z.infer<typeof BookingWithItemsSchema>;
 
 /**
+ * R-ib-8 (T-7.10): the statuses a schedule call may land a booking in.
+ * Scheduling puts a booking ON the calendar, so `idea` (I-1: zero items) and
+ * `cancelled` (terminal, I-4) are unrepresentable here; whether the
+ * transition from the booking's CURRENT status is legal stays the service's
+ * §3.2 concern.
+ */
+export const SCHEDULABLE_BOOKING_STATUSES = ["planned", "booked"] as const;
+export const SchedulableBookingStatusSchema = z.enum(SCHEDULABLE_BOOKING_STATUSES);
+export type SchedulableBookingStatus = z.infer<typeof SchedulableBookingStatusSchema>;
+
+/**
  * `POST /trips/:tripId/bookings/:bookingId/schedule` body (R-ib-8) — place a
  * TIMELESS booking onto a day. `after_item_id` positions within the day
  * (default: append). The single-day structural time rule (R-ib-17) applies.
+ * `status` (T-7.10, additive) is the target status: omitted keeps the
+ * pre-existing behavior (`idea → planned`, other statuses unchanged);
+ * `'booked'` lands the booking `booked` in the same transaction.
  */
 export const ScheduleBookingInputSchema = z
   .object({
@@ -531,6 +545,7 @@ export const ScheduleBookingInputSchema = z
     start_time: ISOTimeSchema.optional(),
     end_time: ISOTimeSchema.optional(),
     after_item_id: UuidSchema.optional(),
+    status: SchedulableBookingStatusSchema.optional(),
   })
   .superRefine((val, ctx) => {
     if (
@@ -619,7 +634,7 @@ export const bookingEndpoints = {
     params: bookingParams,
     response: NoContentSchema,
   },
-  /** R-ib-8: schedule a timeless booking; advances `idea → planned`. 201. */
+  /** R-ib-8: schedule a timeless booking; advances `idea → planned` (or `booked` per `status`). 201. */
   scheduleBooking: {
     method: "POST",
     path: "/trips/:tripId/bookings/:bookingId/schedule",
