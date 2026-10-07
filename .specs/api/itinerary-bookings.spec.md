@@ -118,9 +118,20 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   schema §3.3.10); WHEN a day's order is PUT THE SYSTEM SHALL atomically
   reassign the listed items to that day with `sort_order = 1024 × position`;
   ids in the list that no longer exist SHALL be ignored (last-write-wins),
-  ids belonging to another trip SHALL be rejected `VALIDATION_FAILED`.
+  ids belonging to another trip SHALL be rejected `VALIDATION_FAILED`
+  (Q2-064 — as shipped; Sean pick pending: (a) fold foreign ids into the
+  dead-id LWW-ignore, or (b) reject unknown ids too — Rec: "Fold foreign ids
+  into the dead-id LWW-ignore, or reject unknown ids too — both close the
+  oracle; pick one and reword R-ib-15. Real alternative, security-flavored."
+  As shipped, a foreign id 400s while a dead id is ignored — a cross-trip
+  existence oracle on item UUIDs: an ex-member can probe whether an item
+  survived.) [NEEDS CLARIFICATION: Q2-064 — fold foreign ids into the
+  dead-id LWW-ignore, or reject unknown ids too?] Duplicate ids in the list
+  SHALL be rejected `VALIDATION_FAILED` (R-ib-28).
 - **R-ib-16 (booking-item field protection):** WHEN a `booking`-kind item's
-  `day`/`start_time`/`end_time` are edited THE SYSTEM SHALL accept the edit
+  `day`/`end_day`/`start_time`/`end_time` are edited (`end_day` rides the
+  protected set — it is booking-derived exactly as `day` is for a spanning
+  lodging; Q2-059, ruled 2026-09-19) THE SYSTEM SHALL accept the edit
   only while the parent booking's `starts_at` IS NULL (the item owns its
   times, R-ib-8); otherwise reject `VALIDATION_FAILED` directing the caller
   to edit the booking (R-ib-5). `notes` and `sort_order` are always editable.
@@ -173,6 +184,90 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   THE SYSTEM SHALL require authentication and trip membership (non-member →
   `404 NOT_FOUND`, indistinguishable from absent); write endpoints SHALL
   additionally require role `editor` or `owner` (`viewer` → `403 FORBIDDEN`).
+
+### Round-2 spec-pass rulings (ruled 2026-09-19)
+
+Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
+(`.specs/OPEN-QUESTIONS.md` § Round 2): each `Q2-NNN` rule below is the
+as-shipped interpretation made normative. Items whose Rec named a real
+alternative — which approve-all did NOT decide (Q2-056, Q2-064, Q2-181) — are
+written as shipped, labelled "as shipped; Sean pick pending", and carry a
+`[NEEDS CLARIFICATION]` marker — this spec's 3 open markers (Q2-056 at
+R-ib-25, Q2-064 at R-ib-15, Q2-181 at R-ib-32); it is approvable once they
+are ruled. Rules stamped "ruled 2026-09-19" are ruled as shipped. The
+OPEN-QUESTIONS rows stay as the decision record.
+
+- **R-ib-25 (`unscheduled=false`; Q2-056 — as shipped; Sean pick pending:
+  (a) bless as-is / (b) spec the complement "false = scheduled-only"):** WHEN
+  the bookings list is queried with `unscheduled=false` THE SYSTEM SHALL
+  treat it as no filter — identical to the parameter being absent. R-ib-10
+  defines only `true`. Rec: "Bless as-is, or spec the complement ("false =
+  scheduled-only") — real alternative, low urgency until a client wants it."
+  [NEEDS CLARIFICATION: Q2-056 — bless `unscheduled=false` as no-filter, or
+  spec "false = scheduled-only"?]
+- **R-ib-26 (direct-create field legality; Q2-057, Q2-058, ruled 2026-09-19):**
+  WHEN an item is created directly THE SYSTEM SHALL reject `title` on a
+  `place_visit` as a kind/field mismatch (`VALIDATION_FAILED` — a
+  `place_visit`'s display title derives from its place, symmetric with the
+  PATCH rule that `title` is `custom`-only). `place_id` is accepted at create
+  on BOTH kinds (required iff `place_visit`; optional on `custom`, because
+  R-ib-20 resolves ANY item's location via its `place_id`; visibility-gated
+  either way, R-places-8) but PATCH accepts `place_id` for `place_visit`
+  only — a deliberate asymmetry: a `custom` item's place cannot be set or
+  changed after create (`VALIDATION_FAILED`); the correction path is delete +
+  recreate.
+- **R-ib-27 (multi-item unschedule; Q2-060, ruled 2026-09-19):** WHEN a
+  `booking`-kind item is deleted under R-ib-9 and its parent is `planned`
+  THE SYSTEM SHALL delete ALL of that booking's items in the same
+  transaction, not just the one named — I-1/R-ib-6 pin zero items on an
+  `idea` booking, so a car/moped rental's pickup and dropoff leave the
+  calendar together as the booking reverts to `idea`.
+- **R-ib-28 (reorder payload semantics; Q2-061, Q2-062, ruled 2026-09-19):**
+  WHEN a day's order is PUT THE SYSTEM SHALL (a) leave items that are on
+  `:day` but absent from `item_ids` untouched — never destroyed (LWW: a
+  concurrent creator's row survives; its relative position resolves at the
+  next reorder) — while the listed survivors take the gapped values of
+  R-ib-15 (1-based over the SURVIVING list: ignored ids count as never
+  listed); (b) reject a payload with duplicate ids `VALIDATION_FAILED` (a
+  "full intended order" with a duplicate is self-contradictory); (c) keep a
+  pulled spanning item's `end_day` intact on a cross-day pull — a pull whose
+  result is structurally invalid under R-ib-17 (`end_day < :day`, or a span
+  collapsed to a single day with `end_time` before `start_time`) is
+  `VALIDATION_FAILED`.
+- **R-ib-29 (malformed `:day`; Q2-063, ruled 2026-09-19):** WHEN an
+  AUTHORIZED caller (R-ib-24: a trip member with role `editor`/`owner`) sends
+  a day-order PUT whose `:day` path parameter is not an `ISODate` THE SYSTEM
+  SHALL respond `400 VALIDATION_FAILED`, never `404` — the
+  404-indistinguishable posture (R-ib-24) protects the existence of RESOURCES
+  (trip, booking, item); a day string carries no existence to protect.
+  R-ib-24's outcomes take precedence: the membership/role gate runs before
+  the `:day` check, so a non-member still gets `404` and a `viewer` `403`.
+- **R-ib-30 (place names on the wire; Q2-074, ruled 2026-09-19):** v1
+  carries `place_id` only — on the composite itinerary read (R-ib-13) and on
+  booking/item rows — and no place name. Adding names (e.g. a maps-spine join
+  on the composite read) is additive and un-ruled; until then clients label
+  an unnamed place with their documented placeholders (client spec R-itin-47,
+  R-itin-59) and never invent a name.
+- **R-ib-31 (no per-item GET; Q2-174, ruled 2026-09-19):** no
+  `GET …/itinerary/items/:itemId` endpoint exists in v1 — an item's detail
+  resolves from the composite itinerary read (R-ib-13), whose default range
+  covers every item by construction (§3.4), so an id absent from it is
+  genuinely not found (a booking's detail has its own GET, §3.4). Adding a
+  per-item GET later is additive.
+- **R-ib-32 (the required floor; Q2-181 — as shipped; Sean pick pending:
+  (a) keep as shipped / (b) a real floor):** WHEN a booking is created THE
+  SYSTEM SHALL require only `category` and `title` — every `details` field is
+  optional BY DESIGN (an `idea` may know nothing; capture fills what it
+  finds; the UI prompts for gaps), so a flight with no departure time or a
+  lodging with no check-in is savable. Rec: "Keep as shipped unless a real
+  floor is wanted (e.g. flight ⇒ departure date+time). If so, it's a
+  shared-schema change everyone inherits — a real alternative." Any further
+  floor is a `@gogo/shared` schema change every writer inherits (the capture
+  pipeline included); cross-field ordering rules (`end ≥ start`) stay
+  server-side refiners, never on the `BookingDetails` shapes that double as
+  Claude structured output (contracts R-shared-7).
+  [NEEDS CLARIFICATION: Q2-181 — keep `title` as the only required field, or
+  add a floor (e.g. flight ⇒ departure date+time)?]
 
 ### Upstream resolutions (formerly blocking)
 
@@ -285,7 +380,8 @@ List a trip's bookings for the bookings/ideas surfaces.
 
 **Request** (query): `status?` (repeatable `booking_status`; default: all
 except `cancelled`), `category?` (`booking_category`), `unscheduled?`
-(boolean — R-ib-10), `cursor?`, `limit?`.
+(boolean — R-ib-10; `false` ≡ absent — as shipped, Q2-056 pick pending at
+R-ib-25), `cursor?`, `limit?`.
 
 **Response 200**: `Paginated<Booking>` — ordered `starts_at ASC NULLS LAST,
 updated_at DESC` (timeless ideas trail, freshest first; uses schema
@@ -294,12 +390,13 @@ updated_at DESC` (timeless ideas trail, freshest first; uses schema
 **Errors**: 401 UNAUTHENTICATED · 404 NOT_FOUND (no such trip / non-member) ·
 400 VALIDATION_FAILED (bad query).
 
-**Requirements covered**: R-ib-10, R-ib-24
+**Requirements covered**: R-ib-10, R-ib-24, R-ib-25
 
 **Tests required**:
 
 - [ ] Happy path: filters by status/category; pagination cursor round-trip
 - [ ] `unscheduled=true` returns exactly zero-item bookings; excludes cancelled by default
+- [ ] `unscheduled=false` returns exactly what the absent param returns (as shipped — Q2-056 pick pending at R-ib-25)
 - [ ] Authz: non-member gets 404 with zero data; viewer can read
 
 ---
@@ -466,21 +563,23 @@ Create a `place_visit` or `custom` item (R-ib-14).
 **Auth**: Required — editor/owner.
 
 **Request** (body `ItineraryItemCreate`): `kind` (`place_visit` | `custom`),
-`place_id` (required iff `place_visit`), `title` (required iff `custom`),
-`notes?`, `day` (required), `end_day?`, `start_time?`, `end_time?`,
-`after_item_id?` (position; default append with +1024 gap, R-ib-15).
+`place_id` (required iff `place_visit`; optional on `custom`, R-ib-26), `title`
+(required iff `custom`; forbidden on `place_visit`, R-ib-26), `notes?`, `day`
+(required), `end_day?`, `start_time?`, `end_time?`, `after_item_id?` (position;
+default append with +1024 gap, R-ib-15).
 
 **Response 201**: `ItineraryItem`. Side effect: legs dirty for `day`.
 
 **Errors**: 400 VALIDATION_FAILED (kind `booking`; kind/field mismatch per
 schema §3.3.10 checks; structural time violations per R-ib-17) · 401 · 403 · 404.
 
-**Requirements covered**: R-ib-14, R-ib-15, R-ib-17, R-ib-19, R-ib-24
+**Requirements covered**: R-ib-14, R-ib-15, R-ib-17, R-ib-19, R-ib-24, R-ib-26
 
 **Tests required**:
 
 - [ ] Happy path both kinds; server-assigned gapped sort_order appends
 - [ ] kind=booking rejected; place_visit without place_id rejected
+- [ ] `title` on a `place_visit` rejected; `place_id` on a `custom` accepted (R-ib-26)
 - [ ] Overlapping times accepted (R-ib-17)
 - [ ] Authz: viewer 403; non-member 404
 
@@ -488,8 +587,9 @@ schema §3.3.10 checks; structural time violations per R-ib-17) · 401 · 403 ·
 
 #### PATCH /trips/:tripId/itinerary/items/:itemId
 
-Edit an item: `title` (custom only), `notes`, `place_id` (place_visit only),
-`day`, `end_day`, `start_time`, `end_time`, `sort_order`.
+Edit an item: `title` (custom only), `notes`, `place_id` (place_visit only —
+a `custom` item's place is create-only, R-ib-26), `day`, `end_day`,
+`start_time`, `end_time`, `sort_order`.
 **Auth**: Required — editor/owner.
 
 **Response 200**: `ItineraryItem` (post-state). Booking-kind items: field
@@ -498,11 +598,12 @@ protection per R-ib-16. Side effect: legs dirty for source/target day(s).
 **Errors**: 400 VALIDATION_FAILED (protected booking-item fields; kind/field
 mismatch) · 401 · 403 · 404.
 
-**Requirements covered**: R-ib-16, R-ib-17, R-ib-18, R-ib-19, R-ib-24
+**Requirements covered**: R-ib-16, R-ib-17, R-ib-18, R-ib-19, R-ib-24, R-ib-26
 
 **Tests required**:
 
-- [ ] Time/day edit on item of timed booking 400s; on timeless-booking item succeeds
+- [ ] Time/day/`end_day` edit on item of timed booking 400s; on timeless-booking item succeeds
+- [ ] `place_id` PATCH on a `custom` item 400s (R-ib-26)
 - [ ] notes/sort_order editable on any kind
 - [ ] Day move marks both days' legs dirty
 - [ ] Authz: viewer 403; non-member 404
@@ -515,16 +616,18 @@ Delete an item. For `booking`-kind: unschedule semantics (R-ib-9).
 **Auth**: Required — editor/owner.
 
 **Response 204** (`place_visit`/`custom`, and `booking`-kind when parent is
-`planned` — parent reverts to `idea` atomically).
+`planned` — parent reverts to `idea` atomically, deleting ALL of the
+booking's items, R-ib-27).
 
 **Errors**: 409 CONFLICT (`booking`-kind with `booked` parent — cancel or
 demote the booking instead) · 401 · 403 · 404.
 
-**Requirements covered**: R-ib-9, R-ib-19, R-ib-24
+**Requirements covered**: R-ib-9, R-ib-19, R-ib-24, R-ib-27
 
 **Tests required**:
 
 - [ ] planned-booking item delete reverts status to idea in one transaction
+- [ ] deleting one item of a planned multi-item booking (car rental) removes ALL its items (R-ib-27)
 - [ ] booked-booking item delete 409s; custom/place_visit deletes cleanly
 - [ ] Legs recomputed for the day
 - [ ] Authz: viewer 403; non-member 404
@@ -544,18 +647,23 @@ booking-derived days, which are rejected (R-ib-16).
 
 **Response 200**: `{ items: ItineraryItem[] }` — the day's resulting ordered
 items (`sort_order = 1024 × position`, R-ib-15). Missing ids ignored (LWW,
-R-ib-15); side effect: legs dirty for `:day` and any source days.
+R-ib-15); unlisted items on the day are untouched (R-ib-28); side effect: legs
+dirty for `:day` and any source days.
 
-**Errors**: 400 VALIDATION_FAILED (id from another trip; derived-day booking
-item pulled across days) · 401 · 403 · 404.
+**Errors**: 400 VALIDATION_FAILED (id from another trip — as shipped, Q2-064
+pick pending at R-ib-15; duplicate ids; derived-day booking item pulled across
+days; a pulled spanning item whose result is structurally invalid, R-ib-28;
+malformed `:day`, R-ib-29) · 401 · 403 · 404.
 
-**Requirements covered**: R-ib-15, R-ib-16, R-ib-18, R-ib-19, R-ib-24
+**Requirements covered**: R-ib-15, R-ib-16, R-ib-18, R-ib-19, R-ib-24, R-ib-28, R-ib-29
 
 **Tests required**:
 
 - [ ] Reorder assigns 1024-gapped values; response reflects post-state
 - [ ] Cross-day pull works for custom/place_visit/timeless-booking items; rejected for timed-booking items
-- [ ] Deleted-elsewhere ids silently ignored; foreign-trip ids 400
+- [ ] Deleted-elsewhere ids silently ignored; foreign-trip ids 400 (as shipped — Q2-064 pick pending at R-ib-15)
+- [ ] Unlisted items on the day survive; duplicate ids 400; spanning pull keeps `end_day`, inverted span 400 (R-ib-28)
+- [ ] Malformed `:day` 400 `VALIDATION_FAILED`, not 404 (R-ib-29)
 - [ ] Concurrent PUTs: last write wins, no partial interleave (transaction)
 - [ ] Authz: viewer 403; non-member 404
 
@@ -715,4 +823,6 @@ Sized one agent session each; queued as `T-N.M` rows at build time.
 _Trace: every R-ib-N cites its enforcing section/endpoint inline. Both
 repeated markers resolved at their canonical home (schema spec) at Gate 2,
 2026-07-09 — multi-day bookings → one spanning item (Branch A); trip dates
-→ required at creation. Zero markers remain._
+→ required at creation. Gate-2 markers all resolved; round 2 (2026-09-19)
+leaves 3 open — Q2-056, Q2-064, Q2-181, Sean picks pending (R-ib-25, R-ib-15,
+R-ib-32) — approvable once ruled._

@@ -496,6 +496,15 @@ calls. (Synced 2026-07-17, post-T-4.1)
 Rules: never on scroll; never on push/pop navigation; max one per user
 action; ghost/secondary buttons default to none.
 
+**Tap-vocabulary rule (Q2-149, ruled 2026-09-19):** a tap that commits the
+same result a gesture also produces fires the TAP vocabulary (`actionLight`),
+not the gesture's (`dragLift`/`dragDrop`) — e.g. the itinerary "Sort by time"
+button (client itinerary spec R-itin-68), whose gesture twin is the drag
+reorder. `actionLight` and `dragDrop` map to the same `impactAsync(Light)`
+(the gesture's `dragLift` is `impactAsync(Medium)`), so the feel at commit is
+the same; the tap vocabulary is just the correct one for a tap. The
+max-one-per-action rule still holds.
+
 ### 2.9 Core component inventory
 
 All components: consume tokens only; interactive ones require `testID`
@@ -555,9 +564,16 @@ interface InputProps {
   keyboardType?: KeyboardTypeOptions;
   autoComplete?: string;
   returnKeyType?: string;
+  required?: boolean; // marker beside the label + ", required" in the a11y name
   testID: string;
 }
 ```
+
+`required` (Q2-182, ruled 2026-09-19) renders a danger-colored `*` beside the
+label (`{testID}-required`) and appends `", required"` to the field's
+accessibility name. Callers pass a DERIVED flag (the itinerary forms derive it
+from the shared Zod schemas, client itinerary spec R-itin-76); the component
+is a renderer, never a policy. The `* Required` legend is the screen's.
 
 Label always visible (no placeholder-as-label). Error text is announced via
 `accessibilityLiveRegion`/AT focus.
