@@ -330,9 +330,12 @@
   **spend-agnostic** and still shows when expenses exist. For editor+ the
   EmptyState carries a set-caps action that reveals the row editor in
   place, so nothing is hidden after one tap; a **viewer** (who cannot edit
-  caps — R-cmoney-2) sees the same EmptyState without that action, plus the
-  visible disabled AI-estimate CTA, until an editor sets a cap or an
-  estimate exists. (Q2-003, ruled 2026-09-19)
+  caps — R-cmoney-2) sees the same EmptyState without that action, until an
+  editor sets a cap or an estimate exists. The disabled "Estimate with AI"
+  button that renders alongside it today is a placeholder (MON-7 is
+  unbuilt, so it is disabled for every role) — not a viewer rule;
+  R-cmoney-3 governs its visibility and states once the estimate flow is
+  wired. (Q2-003, ruled 2026-09-19)
 - **R-cmoney-30 (testIDs):** WHEN any money screen renders THE SYSTEM SHALL
   carry testIDs on its root and every interactive element per the navigation
   spec §2.7 grammar (mirror of R-nav-22); the money inventory is §2.8 —
