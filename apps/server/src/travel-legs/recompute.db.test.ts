@@ -112,7 +112,15 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
 
   // ---- seeding helpers ------------------------------------------------------
 
-  async function seedTrip(dates?: { start: string; end: string }) {
+  /**
+   * `tz` pins `trips.destination_tz` (B-30). Defaults to `"UTC"` on purpose:
+   * the sweep fixtures below shift dates off the REAL clock's UTC day, and a
+   * Tokyo-derived zone would make every boundary assertion wall-clock
+   * dependent (Tokyo's day runs ahead of UTC's for 9 h each day — the
+   * `horizon boundary` pin would flip red after 15:00 UTC). The zone-aware
+   * boundaries are pinned separately with a frozen clock (`B-30 sweep` tests).
+   */
+  async function seedTrip(dates?: { start: string; end: string }, tz: string | null = "UTC") {
     const [trip] = await db
       .insert(schema.trips)
       .values({
@@ -120,6 +128,7 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
         destinationName: "Tokyo",
         destinationLat: "35.689500",
         destinationLng: "139.691700",
+        destinationTz: tz,
         startDate: dates?.start ?? "2026-09-01",
         endDate: dates?.end ?? "2026-09-10",
         createdBy: userId,
@@ -862,8 +871,12 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
   };
 
   /** Trip + one located pair + one driving leg stamped `computedAt`. */
-  async function seedTripWithLeg(dates: { start: string; end: string }, computedAt: Date) {
-    const trip = await seedTrip(dates);
+  async function seedTripWithLeg(
+    dates: { start: string; end: string },
+    computedAt: Date,
+    tz?: string | null,
+  ) {
+    const trip = await seedTrip(dates, tz);
     const p1 = await seedPlace("35.689500", "139.691700");
     const p2 = await seedPlace("35.659500", "139.700500");
     const a = await seedItem(trip.id, { day: dates.start, sortOrder: 1024, placeId: p1.id });
@@ -1002,5 +1015,100 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
     const markedTrips = new Set(marked.map((m) => m.tripId));
     expect(markedTrips.has(edgeTrip.id)).toBe(false); // `<` cutoff, not `<=`
     expect(markedTrips.has(staleTrip.id)).toBe(true);
+  });
+
+  // ---- B-30: eligibility at each trip's OWN destination-zone today ----------
+  // Frozen clocks + explicit zones — nothing here reads the real clock or the
+  // process zone. Every assertion is on the ids THIS test seeded (the shared
+  // template DB also holds other tests' trips).
+
+  const sweepAt = async (now: Date, horizonDays?: number) => {
+    const marked: DirtyDayMark[] = [];
+    await sweepStaleLegs({
+      db,
+      marker: { markDaysDirty: (marks) => void marked.push(...marks) },
+      now: () => now,
+      ...(horizonDays === undefined ? {} : { horizonDays }),
+    });
+    return new Set(marked.map((m) => m.tripId));
+  };
+  const staleBefore = (now: Date) => new Date(now.getTime() - 25 * HOUR_MS); // past the 24 h TTL
+
+  it("[B-30 sweep] east of UTC: a trip that ENDED yesterday in Tokyo is past (not swept) while the same dates in UTC are still active", async () => {
+    const now = new Date("2026-08-01T20:00:00.000Z"); // Tokyo is already Aug 2; UTC is Aug 1
+    const dates = { start: "2026-07-25", end: "2026-08-01" };
+    const tokyo = await seedTripWithLeg(dates, staleBefore(now), "Asia/Tokyo");
+    const utc = await seedTripWithLeg(dates, staleBefore(now), "UTC");
+
+    const swept = await sweepAt(now);
+    expect(swept.has(utc.id)).toBe(true); // control: UTC today Aug 1 ∈ [Jul 25, Aug 1]
+    expect(swept.has(tokyo.id)).toBe(false); // Tokyo today Aug 2 > end
+    // Falsification: evaluate the JS pass at the UTC day (or default a NULL/known
+    // zone to UTC) → the Tokyo trip is swept and this goes red.
+  });
+
+  it("[B-30 sweep] west of UTC: a trip ending 'today' in Los Angeles is still active (swept) while the same dates in UTC are past", async () => {
+    const now = new Date("2026-08-02T03:00:00.000Z"); // LA is still Aug 1 (20:00 PDT); UTC is Aug 2
+    const dates = { start: "2026-07-25", end: "2026-08-01" };
+    const la = await seedTripWithLeg(dates, staleBefore(now), "America/Los_Angeles");
+    const utc = await seedTripWithLeg(dates, staleBefore(now), "UTC");
+
+    const swept = await sweepAt(now);
+    expect(swept.has(la.id)).toBe(true);
+    expect(swept.has(utc.id)).toBe(false); // control: UTC today Aug 2 > end
+  });
+
+  it("[B-30 sweep] prefilter widened +1 day: a UTC+14 trip starting at ITS horizon edge is swept; one day past is not", async () => {
+    // 10:00Z Aug 1 = Aug 2 00:00 in Kiritimati. horizon = Aug 2 + 5 = Aug 7,
+    // but the UTC-day prefilter alone would cut at Aug 6 and never fetch it.
+    const now = new Date("2026-08-01T10:00:00.000Z");
+    const edge = await seedTripWithLeg(
+      { start: "2026-08-07", end: "2026-08-10" },
+      staleBefore(now),
+      "Pacific/Kiritimati",
+    );
+    const beyond = await seedTripWithLeg(
+      { start: "2026-08-08", end: "2026-08-10" },
+      staleBefore(now),
+      "Pacific/Kiritimati",
+    );
+
+    const swept = await sweepAt(now, 5);
+    expect(swept.has(edge.id)).toBe(true);
+    expect(swept.has(beyond.id)).toBe(false);
+    // Falsification: drop the `+1` widening (latestToday/latestHorizon → UTC day)
+    // → `edge` is never a candidate and this goes red.
+  });
+
+  it("[B-30 sweep] prefilter widened -1 day: a UTC-12 trip ending on ITS today is swept even though that date is before the UTC day", async () => {
+    // 11:00Z Aug 1 = Jul 31 23:00 in Etc/GMT+12. `end_date >= UTC today (Aug 1)`
+    // would exclude a trip whose last day is Jul 31 — but it is active there.
+    const now = new Date("2026-08-01T11:00:00.000Z");
+    const active = await seedTripWithLeg(
+      { start: "2026-07-25", end: "2026-07-31" },
+      staleBefore(now),
+      "Etc/GMT+12",
+    );
+    const past = await seedTripWithLeg(
+      { start: "2026-07-25", end: "2026-07-30" },
+      staleBefore(now),
+      "Etc/GMT+12",
+    );
+
+    const swept = await sweepAt(now);
+    expect(swept.has(active.id)).toBe(true);
+    expect(swept.has(past.id)).toBe(false);
+    // Falsification: drop the `-1` widening (earliestToday → UTC day) → `active` goes unswept.
+  });
+
+  it("[B-30 sweep] a legacy NULL-stored zone resolves lazily from the coordinates (Tokyo), not to UTC", async () => {
+    const now = new Date("2026-08-01T20:00:00.000Z");
+    const legacy = await seedTripWithLeg(
+      { start: "2026-07-25", end: "2026-08-01" },
+      staleBefore(now),
+      null, // seedTrip's coordinates are Tokyo (35.6895, 139.6917)
+    );
+    const swept = await sweepAt(now);
+    expect(swept.has(legacy.id)).toBe(false); // Tokyo today Aug 2 > end; a UTC default would sweep it
   });
 });

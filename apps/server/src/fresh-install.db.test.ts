@@ -252,6 +252,39 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(Number(journal?.n)).toBeGreaterThanOrEqual(4);
   });
 
+  it("[B-30] pristine clone carries migration 0007: trips.destination_tz exists (nullable text) with its 1..64 CHECK, and the journal records it", async () => {
+    // Environment/migration-state arm (testing.md §5): a template that stopped
+    // at 0006 has no column and every trip read/write 500s. Asserted against the
+    // CATALOG of the freshly-migrated template, not against code.
+    const [column] = await suiteDb.client<
+      { data_type: string; is_nullable: string }[]
+    >`select data_type, is_nullable from information_schema.columns
+        where table_name = 'trips' and column_name = 'destination_tz'`;
+    expect(column).toEqual({ data_type: "text", is_nullable: "YES" });
+
+    const [constraint] = await suiteDb.client<
+      { def: string; convalidated: boolean }[]
+    >`select pg_get_constraintdef(oid) as def, convalidated
+        from pg_constraint where conname = 'trips_destination_tz_ck'`;
+    expect(constraint?.convalidated).toBe(true);
+    expect(constraint?.def).toContain("length(destination_tz) >= 1");
+    expect(constraint?.def).toContain("length(destination_tz) <= 64");
+
+    // No backfill: a pristine template has no trips at all, so nothing was
+    // invented — the lazy-resolve contract starts from NULL, never a default.
+    const [stored] = await suiteDb.client<
+      { n: string }[]
+    >`select count(*) as n from trips where destination_tz is not null`;
+    expect(Number(stored?.n)).toBe(0);
+
+    const [journal] = await suiteDb.client<
+      { n: string }[]
+    >`select count(*) as n from drizzle.__drizzle_migrations`;
+    expect(Number(journal?.n)).toBeGreaterThanOrEqual(8); // 0000..0007
+    // Falsification: delete drizzle/0007_trips_destination_tz.sql + its journal
+    // entry (or revert the schema column) → the column row is undefined, red.
+  });
+
   it("a fresh install has zero users and zero ingest regions; `places` carries ONLY the B-7 bootstrap tier", async () => {
     // The zero-FIXTURE contract, pinned (R-test-3) — `places` is no longer
     // zero-ROWS (B-7 fix, migration 0004 seeds real reference data before
@@ -433,6 +466,13 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     });
     expect(created.status).toBe(201);
     const trip = TripWithRoleSchema.parse(await created.json());
+    // B-30: the zone is derived from the pick's coordinates at create and
+    // STORED — a migrated database carries it end to end, not just in memory.
+    expect(trip.destination_tz).toBe("Europe/Lisbon");
+    const [storedZone] = await suiteDb.client<
+      { destination_tz: string | null }[]
+    >`select destination_tz from trips where id = ${trip.id}`;
+    expect(storedZone?.destination_tz).toBe("Europe/Lisbon");
     await settleIngest(); // destination trigger — same failed-record path
 
     const bookings = await request(`/api/trips/${trip.id}/bookings`);

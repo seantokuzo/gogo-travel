@@ -24,6 +24,14 @@
  * inserts, which take the same lock; expenses/service.ts module doc owns
  * the lock-order story).
  *
+ * DESTINATION ZONE (B-30, Sean ruling 2026-09-19): a trip's "today" is the
+ * calendar day AT ITS DESTINATION. `trips.destination_tz` is written only by
+ * the explicit body value or the coordinate derivation (create; PATCH when
+ * the coordinates move and no explicit zone rides along); reads resolve the
+ * EFFECTIVE zone (`destination-tz.ts`: stored → derived → booking → UTC) and
+ * the wire's `destination_tz` is always that effective zone, the same one
+ * the status rule evaluated. An explicit zone `Intl` can't resolve → 400.
+ *
  * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): every committed
  * mutation emits its §3.5 event post-commit via the `tripEvents` seam
  * (push-invalidation.ts) — trip.updated on PATCH writes, trip.status_changed
@@ -40,6 +48,7 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
+import { isValidTimeZone } from "@gogo/shared/time";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
 import { rethrowCoordsCkMapped } from "../db/coords-ck.js";
 import type { DbClient } from "../db/create-user.js";
@@ -64,7 +73,13 @@ import { createRequireTripMember, tripContextOf } from "../http/require-trip-mem
 import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "../places/ingest-queue.js";
 import { emitTripEvent, type TripEventEmitter } from "./push-invalidation.js";
-import { effectiveTripStatus, reconcileStoredStatuses, todayUtc } from "./status.js";
+import {
+  DEFAULT_DESTINATION_TZ,
+  deriveZoneFromCoords,
+  resolveEffectiveZones,
+  storedDestinationTz,
+} from "./destination-tz.js";
+import { effectiveTripStatus, reconcileStoredStatuses, tripToday } from "./status.js";
 import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.js";
 
 export interface TripsRouterDeps {
@@ -211,7 +226,26 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     async (c) => {
       const { userId } = authContextOf(c);
       const body = c.req.valid("json");
-      const today = todayUtc(nowOf());
+
+      // B-30: an explicit zone must be one this runtime's `Intl` resolves —
+      // the shared schema only checks its SHAPE (a client-side Intl gap must
+      // never block a create), so the write-time gate lives here → 400.
+      if (body.destination_tz !== undefined && !isValidTimeZone(body.destination_tz)) {
+        throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
+          destination_tz: "unknown time zone",
+        });
+      }
+      // Chain steps 1–2 (destination-tz.ts): explicit, else derived from the
+      // coordinates, else nothing stored (NULL). A brand-new trip has no
+      // bookings, so its effective zone is the stored one or UTC (step 4).
+      const storedTz = storedDestinationTz({
+        explicit: body.destination_tz,
+        lat: body.destination_lat,
+        lng: body.destination_lng,
+      });
+      const zone = storedTz ?? DEFAULT_DESTINATION_TZ;
+      // The trip's own `today` — the calendar day AT ITS DESTINATION (B-30).
+      const today = tripToday(nowOf(), zone);
 
       // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
       // not the primary guard — `TripCreateSchema`'s pair refine already
@@ -243,6 +277,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             // never a placeholder.
             destinationLat: body.destination_lat === null ? null : String(body.destination_lat),
             destinationLng: body.destination_lng === null ? null : String(body.destination_lng),
+            destinationTz: storedTz,
             startDate: body.start_date,
             endDate: body.end_date,
             status: effectiveTripStatus(
@@ -276,7 +311,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // Deliberately swallowed: enqueue is best-effort (R-places-1).
       }
 
-      return c.json(toTripWithRoleWire(trip, "owner"), 201);
+      return c.json(toTripWithRoleWire(trip, "owner", zone), 201);
     },
   );
 
@@ -322,10 +357,12 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         .limit(pageSize + 1);
 
       const page = rows.slice(0, pageSize);
+      // Each row is evaluated at ITS OWN destination-zone `today` (B-30) — one
+      // page can hold trips whose calendar days differ.
       const effective = await reconcileStoredStatuses(
         deps.db,
         page.map((row) => row.trip),
-        todayUtc(nowOf()),
+        nowOf(),
       );
 
       // §3.5 trip.status_changed fires on DERIVED RECONCILIATION too ("stored
@@ -334,7 +371,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       // reader is the actor — their device just fetched the fresh value; the
       // other members' caches are the stale ones.
       for (const row of page) {
-        if ((effective.get(row.trip.id) ?? row.trip.status) !== row.trip.status) {
+        if ((effective.get(row.trip.id)?.status ?? row.trip.status) !== row.trip.status) {
           emitTripEvent(deps.tripEvents, {
             event: "trip.status_changed",
             tripId: row.trip.id,
@@ -343,13 +380,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         }
       }
 
-      const items = page.map((row) =>
-        toTripListItemWire(
-          { ...row.trip, status: effective.get(row.trip.id) ?? row.trip.status },
+      const items = page.map((row) => {
+        const reconciled = effective.get(row.trip.id);
+        return toTripListItemWire(
+          { ...row.trip, status: reconciled?.status ?? row.trip.status },
           row.role,
           row.memberCount,
-        ),
-      );
+          reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
+        );
+      });
 
       const last = page[page.length - 1];
       const nextCursor =
@@ -374,14 +413,21 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
     // Gate raced a concurrent delete — the row is gone; converge (§3.5 rule 3).
     if (!trip) return apiError(c, "NOT_FOUND", NOT_FOUND_MESSAGE);
 
-    const effective = await reconcileStoredStatuses(deps.db, [trip], todayUtc(nowOf()));
-    const status = effective.get(trip.id) ?? trip.status;
+    const effective = await reconcileStoredStatuses(deps.db, [trip], nowOf());
+    const reconciled = effective.get(trip.id);
+    const status = reconciled?.status ?? trip.status;
     // Derived reconciliation moved the STORED status → §3.5 trip.status_changed
     // (post-commit: the reconcile write is auto-commit). Reader = actor.
     if (status !== trip.status) {
       emitTripEvent(deps.tripEvents, { event: "trip.status_changed", tripId, actorId: userId });
     }
-    return c.json(toTripWithRoleWire({ ...trip, status }, role));
+    return c.json(
+      toTripWithRoleWire(
+        { ...trip, status },
+        role,
+        reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
+      ),
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -404,7 +450,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { tripId, role } = tripContextOf(c);
       const { userId } = authContextOf(c);
       const body = c.req.valid("json");
-      const today = todayUtc(nowOf());
+      const now = nowOf();
+
+      // B-30: an explicit zone must resolve in this runtime's `Intl` (the
+      // shared schema is shape-only) — checked before any DB work → 400.
+      if (body.destination_tz !== undefined && !isValidTimeZone(body.destination_tz)) {
+        throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
+          destination_tz: "unknown time zone",
+        });
+      }
 
       // Set inside the transaction iff the committed write moved the
       // destination — drives the post-commit ingest trigger (R-places-1).
@@ -495,6 +549,61 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           }
         }
 
+        // NULL (B-7 part 3: the newly-picked place has no coordinates)
+        // passes through — never `String(null)` (a numeric-column write
+        // that would throw at the driver). Null-safe numeric compare for the
+        // destination-moved decision: `Number(null) === 0` would diff a
+        // null→null resubmit against a phantom Null Island, so nulls compare
+        // by identity, not by coercion.
+        const numOrNull = (value: string | null): number | null =>
+          value === null ? null : Number(value);
+        const nextLatText =
+          body.destination_lat === undefined
+            ? current.destinationLat
+            : body.destination_lat === null
+              ? null
+              : String(body.destination_lat);
+        const nextLngText =
+          body.destination_lng === undefined
+            ? current.destinationLng
+            : body.destination_lng === null
+              ? null
+              : String(body.destination_lng);
+        // VALUE-diff, not key-presence: resubmitting identical coords is not
+        // a change (numeric columns are strings; compare numerically).
+        const coordsMoved =
+          (body.destination_lat !== undefined &&
+            numOrNull(current.destinationLat) !== body.destination_lat) ||
+          (body.destination_lng !== undefined &&
+            numOrNull(current.destinationLng) !== body.destination_lng);
+
+        // B-30 destination zone (destination-tz.ts chain steps 1–2): an
+        // explicit `destination_tz` in the body wins; otherwise a MOVED
+        // destination re-derives from the new coordinates (NULL when the new
+        // place is coordinate-less — the old zone described the old place);
+        // otherwise the column is left alone. `undefined` = don't touch.
+        const storedTzWrite: string | null | undefined =
+          body.destination_tz !== undefined
+            ? body.destination_tz
+            : coordsMoved
+              ? deriveZoneFromCoords(numOrNull(nextLatText), numOrNull(nextLngText))
+              : undefined;
+        const nextStoredTz = storedTzWrite === undefined ? current.destinationTz : storedTzWrite;
+        // The POST-patch effective zone (booking fallback when nothing is
+        // stored) — the status below is evaluated at the destination's `today`
+        // under the zone this very patch leaves behind.
+        const nextZone =
+          (
+            await resolveEffectiveZones(tx, [
+              {
+                id: tripId,
+                destinationTz: nextStoredTz,
+                destinationLat: nextLatText,
+                destinationLng: nextLngText,
+              },
+            ])
+          ).get(tripId) ?? DEFAULT_DESTINATION_TZ;
+
         // Status seam (§3.4): the override (post-patch) wins; null clears it
         // and derivation resumes against the MERGED dates.
         const nextOverride = touchesStatus ? (body.status ?? null) : current.statusOverride;
@@ -502,21 +611,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           nextOverride ??
           effectiveTripStatus(
             { statusOverride: null, startDate: mergedStart, endDate: mergedEnd },
-            today,
+            tripToday(now, nextZone),
           );
 
         const set: Partial<typeof schema.trips.$inferInsert> = { status: nextStatus };
         if (body.name !== undefined) set.name = body.name;
         if (body.destination_name !== undefined) set.destinationName = body.destination_name;
-        // NULL (B-7 part 3: the newly-picked place has no coordinates)
-        // passes through — never `String(null)` (a numeric-column write
-        // that would throw at the driver).
-        if (body.destination_lat !== undefined) {
-          set.destinationLat = body.destination_lat === null ? null : String(body.destination_lat);
-        }
-        if (body.destination_lng !== undefined) {
-          set.destinationLng = body.destination_lng === null ? null : String(body.destination_lng);
-        }
+        if (body.destination_lat !== undefined) set.destinationLat = nextLatText;
+        if (body.destination_lng !== undefined) set.destinationLng = nextLngText;
+        if (storedTzWrite !== undefined) set.destinationTz = storedTzWrite;
         if (body.start_date !== undefined) set.startDate = body.start_date;
         if (body.end_date !== undefined) set.endDate = body.end_date;
         if (body.theme !== undefined) set.theme = body.theme;
@@ -536,10 +639,14 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           ) {
             throwGuardedUpdateMiss(true);
           }
-          const effective = await reconcileStoredStatuses(tx, [current], today);
-          const reconciled = effective.get(current.id) ?? current.status;
-          storedStatusChanged = reconciled !== current.status;
-          return { ...current, status: reconciled };
+          const effective = await reconcileStoredStatuses(tx, [current], now);
+          const reconciled = effective.get(current.id);
+          const reconciledStatus = reconciled?.status ?? current.status;
+          storedStatusChanged = reconciledStatus !== current.status;
+          return {
+            trip: { ...current, status: reconciledStatus },
+            zone: reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
+          };
         }
 
         // Guarded LWW write: the precondition rides in the WHERE itself —
@@ -578,23 +685,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         }
 
         // Destination change (R-places-1: "…or its destination changes") —
-        // VALUE-diff, not key-presence: resubmitting identical coords is not
-        // a change (numeric columns are strings; compare numerically). The
-        // flag only escapes if this transaction commits. Null-safe (B-7
-        // part 3): `Number(null) === 0` would diff a null→null resubmit
-        // against a phantom Null Island, so nulls compare by identity, not
-        // by coercion.
-        const numOrNull = (value: string | null): number | null =>
-          value === null ? null : Number(value);
-        destinationChanged =
-          (body.destination_lat !== undefined &&
-            numOrNull(current.destinationLat) !== body.destination_lat) ||
-          (body.destination_lng !== undefined &&
-            numOrNull(current.destinationLng) !== body.destination_lng);
+        // the VALUE-diff computed above (`coordsMoved`; null-safe, B-7 part
+        // 3). The flag only escapes if this transaction commits.
+        destinationChanged = coordsMoved;
 
-        return row;
+        return { trip: row, zone: nextZone };
       };
-      const updated = await deps.db.transaction(updateTripTx).catch(rethrowCoordsCkMapped);
+      const { trip: updated, zone: updatedZone } = await deps.db
+        .transaction(updateTripTx)
+        .catch(rethrowCoordsCkMapped);
 
       // POST-COMMIT ingest trigger for the moved destination — same
       // fire-and-forget contract as the create hook (R-places-1). B-7 part
@@ -629,7 +728,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         emitTripEvent(deps.tripEvents, { event: "trip.status_changed", tripId, actorId: userId });
       }
 
-      return c.json(toTripWire(updated) satisfies Trip);
+      return c.json(toTripWire(updated, updatedZone) satisfies Trip);
     },
   );
 

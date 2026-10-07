@@ -8,8 +8,9 @@
  * is left alone).
  *
  * Eligibility uses the trips status seam (`trips/status.ts`): the EFFECTIVE
- * status (owner override wins, else date derivation at UTC-today) — never
- * the stored column, which converges lazily. Day-of traffic-aware cadence is
+ * status (owner override wins, else date derivation at the trip's OWN
+ * destination-zone today — B-30) — never the stored column, which converges
+ * lazily. Day-of traffic-aware cadence is
  * explicitly out of scope (§3.5 step 7 — today bundle).
  *
  * QUERY SHAPE (bounded, sargable): the stale set of finished trips grows
@@ -17,8 +18,10 @@
  * so the sweep NEVER scans `travel_legs` by `computed_at` alone. It selects
  * the ELIGIBLE trips first — a bounded set (`status_override = 'active'`,
  * date-window active, or starting inside the horizon; the SQL predicate
- * mirrors `effectiveTripStatus` + the starts-soon rule and the JS filter
- * below stays the authoritative seam arbiter) — then fetches only THOSE
+ * mirrors `effectiveTripStatus` + the starts-soon rule, WIDENED by one day
+ * each way because a trip's today is its destination's (UTC-12…UTC+14 puts
+ * it within ±1 of the UTC day) — the JS filter below stays the
+ * authoritative per-trip arbiter) — then fetches only THOSE
  * trips' stale legs via `travel_legs_trip_id_idx` + the `computed_at`
  * cutoff. Historical legs of past/archived trips are never materialized.
  *
@@ -33,7 +36,8 @@ import { TRAVEL_LEGS_REFRESH_HORIZON_DAYS, TRAVEL_LEGS_TTL_MS } from "../config.
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { markDaysDirty, type DirtyDayMark, type DirtyDayMarker } from "../bookings/dirty-days.js";
-import { effectiveTripStatus, todayUtc } from "../trips/status.js";
+import { resolveEffectiveZones } from "../trips/destination-tz.js";
+import { effectiveTripStatus, tripToday } from "../trips/status.js";
 import { itemChainDays } from "./adjacency.js";
 
 /** `iso + n days` on the UTC calendar (wall-date arithmetic, no tz math). */
@@ -64,8 +68,15 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
   const horizonDays = deps.horizonDays ?? TRAVEL_LEGS_REFRESH_HORIZON_DAYS;
   const now = deps.now ? deps.now() : new Date();
   const cutoff = new Date(now.getTime() - ttlMs);
-  const today = todayUtc(now);
-  const horizon = addDaysIso(today, horizonDays);
+  // B-30: there is no single "today" any more — each trip has its own, the
+  // calendar day at its destination (UTC-12…UTC+14 ⇒ always within ±1 of the
+  // UTC day). The SQL pre-filter therefore runs over the UTC day WIDENED by
+  // one day each way (a strict superset of every trip's own window); the JS
+  // pass below re-decides each candidate at its own `tripToday`.
+  const utcToday = tripToday(now, "UTC");
+  const earliestToday = addDaysIso(utcToday, -1);
+  const latestToday = addDaysIso(utcToday, 1);
+  const latestHorizon = addDaysIso(latestToday, horizonDays);
 
   // ---- step 1: the bounded eligible-trip set (see the QUERY SHAPE doc).
   // SQL mirror of the JS predicate below — a candidate pre-filter that keeps
@@ -76,6 +87,9 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
       statusOverride: schema.trips.statusOverride,
       startDate: schema.trips.startDate,
       endDate: schema.trips.endDate,
+      destinationTz: schema.trips.destinationTz,
+      destinationLat: schema.trips.destinationLat,
+      destinationLng: schema.trips.destinationLng,
     })
     .from(schema.trips)
     .where(
@@ -83,17 +97,21 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
         eq(schema.trips.statusOverride, "active"),
         and(
           isNull(schema.trips.statusOverride),
-          lte(schema.trips.startDate, today),
-          gte(schema.trips.endDate, today),
+          lte(schema.trips.startDate, latestToday),
+          gte(schema.trips.endDate, earliestToday),
         ),
-        and(gte(schema.trips.startDate, today), lte(schema.trips.startDate, horizon)),
+        and(gte(schema.trips.startDate, earliestToday), lte(schema.trips.startDate, latestHorizon)),
       ),
     );
 
+  const zones = await resolveEffectiveZones(deps.db, candidateTrips);
   const eligibleTripIds: string[] = [];
   for (const trip of candidateTrips) {
     // R-ib-23 eligibility: `active` now, or starting inside the horizon —
-    // decided through the effective-status seam (override wins).
+    // decided through the effective-status seam (override wins), at THIS
+    // trip's destination-zone today.
+    const today = tripToday(now, zones.get(trip.id));
+    const horizon = addDaysIso(today, horizonDays);
     const status = effectiveTripStatus(trip, today);
     const startsSoon = trip.startDate >= today && trip.startDate <= horizon;
     if (status === "active" || startsSoon) eligibleTripIds.push(trip.id);

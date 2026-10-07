@@ -32,6 +32,15 @@ export const trips = pgTable(
     // place (B-7 part 3) — the pair moves together (trips_destination_coords_pair_ck).
     destinationLat: numeric("destination_lat", { precision: 9, scale: 6 }),
     destinationLng: numeric("destination_lng", { precision: 9, scale: 6 }),
+    /**
+     * IANA zone of the destination (B-30) — the zone a trip's "today" is
+     * evaluated in. Written ONLY by the explicit user value or the
+     * coordinate derivation (`trips/destination-tz.ts`). NULL = nothing
+     * stored yet (legacy rows, or a coordinate-less destination with no
+     * explicit zone): reads resolve the EFFECTIVE zone lazily (booking
+     * `arrives_tz`/`departs_tz` fallback, then UTC) and never write it back.
+     */
+    destinationTz: text("destination_tz"),
     startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     status: tripStatus("status").notNull().default("planning"),
@@ -56,6 +65,11 @@ export const trips = pgTable(
     check(
       "trips_destination_coords_pair_ck",
       sql`(${t.destinationLat} IS NULL) = (${t.destinationLng} IS NULL)`,
+    ),
+    // B-30: the cap mirrors `TIME_ZONE_ID_MAX_CHARS` (wire schema max).
+    check(
+      "trips_destination_tz_ck",
+      sql`${t.destinationTz} IS NULL OR length(${t.destinationTz}) BETWEEN 1 AND 64`,
     ),
   ],
 );
