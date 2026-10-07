@@ -54,6 +54,7 @@ import {
   knownTimesSummary,
   schedulePrefill,
   STATUS_ACTION_LABELS,
+  statusActionCopy,
   statusActionFailure,
   statusActionRoute,
   validateScheduleForm,
@@ -124,7 +125,7 @@ function StatusActionForm({
   // day/times are the booking's own and read-only).
   const errors = route === "schedule" ? validateScheduleForm(form) : {};
   const blocked = Object.keys(errors).length > 0;
-  const advancing = target !== booking.status;
+  const copy = statusActionCopy(booking, target);
 
   const confirm = (): void => {
     if (pending) return;
@@ -235,7 +236,7 @@ function StatusActionForm({
         ) : null}
       </View>
       <Button
-        title={advancing ? `Mark as ${STATUS_ACTION_LABELS[target]}` : "Add to day"}
+        title={copy.confirmLabel}
         onPress={confirm}
         loading={pending}
         disabled={blocked}
@@ -308,12 +309,7 @@ export function ScheduleSheet({ tripId, action, contextDay, onClose }: ScheduleS
       onDismiss={dismiss}
       dismissDisabled={pending}
       {...(action !== null
-        ? {
-            title:
-              action.target === action.booking.status
-                ? `Add "${action.booking.title}" to a day`
-                : `Mark "${action.booking.title}" as ${STATUS_ACTION_LABELS[action.target]}`,
-          }
+        ? { title: statusActionCopy(action.booking, action.target).title }
         : null)}
       testID="itinerary-ideas-schedule-sheet"
     >

@@ -233,6 +233,38 @@ export function isStatusActionOffered(status: BookingStatus, target: StatusActio
   return STATUS_RANK[target] >= STATUS_RANK[status];
 }
 
+/**
+ * The ONE home of the same-status rule: tapping the status a booking already
+ * holds ("Booked" on a booked card, "Planned" on a planned one) gives it a day
+ * without changing its status. The request builder and the sheet's copy
+ * (`statusActionCopy`) both read it here, so the label can never say "Add to
+ * day" while the request carries a status, or the reverse.
+ */
+export function isSameStatusAction(booking: Booking, target: StatusActionTarget): boolean {
+  return target === booking.status;
+}
+
+/** The sheet's title + confirm label for a tapped action. */
+export interface StatusActionCopy {
+  title: string;
+  confirmLabel: string;
+}
+
+/**
+ * Same-status ⇒ it only adds the booking to a day; otherwise it advances it.
+ * Pass the booking AS TAPPED (the snapshot), not the live cache row: the
+ * optimistic write flips the cached status mid-flight and the copy must not
+ * flip with it.
+ */
+export function statusActionCopy(booking: Booking, target: StatusActionTarget): StatusActionCopy {
+  return isSameStatusAction(booking, target)
+    ? { title: `Add "${booking.title}" to a day`, confirmLabel: "Add to day" }
+    : {
+        title: `Mark "${booking.title}" as ${STATUS_ACTION_LABELS[target]}`,
+        confirmLabel: `Mark as ${STATUS_ACTION_LABELS[target]}`,
+      };
+}
+
 /** The actions a card renders, in display order (Planned, Booked). */
 export function offeredStatusActions(status: BookingStatus): StatusActionTarget[] {
   return SCHEDULABLE_BOOKING_STATUSES.filter((target) => isStatusActionOffered(status, target));
@@ -315,7 +347,7 @@ export function buildStatusActionRequest(
     day: form.day,
     ...(form.startTime === "" ? {} : { start_time: form.startTime }),
     ...(form.endTime === "" ? {} : { end_time: form.endTime }),
-    ...(target === booking.status ? {} : { status: target }),
+    ...(isSameStatusAction(booking, target) ? {} : { status: target }),
   };
   // Client mirror of the wire schema (trip-new precedent): the schema stays
   // the single source of truth for what is sendable.

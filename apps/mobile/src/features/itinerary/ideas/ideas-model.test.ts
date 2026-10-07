@@ -17,11 +17,13 @@ import {
   DAY_REQUIRED_ERROR,
   END_BEFORE_START_ERROR,
   formatIdeaPrice,
+  isSameStatusAction,
   isStatusActionOffered,
   knownTimesSummary,
   offeredStatusActions,
   schedulePrefill,
   STATUS_ACTION_FAILED_BANNER,
+  statusActionCopy,
   statusActionFailure,
   statusActionRoute,
   unscheduledBookings,
@@ -272,6 +274,43 @@ describe("offeredStatusActions (R-itin-11/40, conservative reading)", () => {
   it("cancelled is terminal (§3.2): neither action is offered", () => {
     expect(isStatusActionOffered("cancelled", "planned")).toBe(false);
     expect(isStatusActionOffered("cancelled", "booked")).toBe(false);
+  });
+});
+
+describe("isSameStatusAction / statusActionCopy (architecture r1 Adv 2 — one home for the rule)", () => {
+  // Falsify: invert `isSameStatusAction` (or re-derive the rule in the sheet
+  // with a different comparison) ⇒ an advancing tap reads "Add to day" and a
+  // same-status tap reads "Mark as …" ⇒ RED.
+  it("same-status ⇒ 'Add to day' copy; an advancing tap ⇒ 'Mark as …' copy — for every offered (status, target) pair", () => {
+    const base = { ...timeless("idea"), title: "TeamLab Planets" };
+    const cases = [
+      ["idea", "planned", false],
+      ["idea", "booked", false],
+      ["planned", "planned", true],
+      ["planned", "booked", false],
+      ["booked", "booked", true],
+    ] as const;
+    for (const [status, target, same] of cases) {
+      const booking = { ...base, status };
+      expect(isSameStatusAction(booking, target)).toBe(same);
+      const label = target === "planned" ? "Planned" : "Booked";
+      expect(statusActionCopy(booking, target)).toEqual(
+        same
+          ? { title: 'Add "TeamLab Planets" to a day', confirmLabel: "Add to day" }
+          : {
+              title: `Mark "TeamLab Planets" as ${label}`,
+              confirmLabel: `Mark as ${label}`,
+            },
+      );
+    }
+  });
+
+  it("copy reads the booking it is GIVEN: the tap-time snapshot keeps its copy while the live row's optimistic status flips", () => {
+    const snapshot = { ...timeless("idea"), title: "TeamLab Planets" };
+    const liveMidFlight = { ...snapshot, status: "planned" as const };
+    expect(statusActionCopy(snapshot, "planned").confirmLabel).toBe("Mark as Planned");
+    // The hazard the sheet avoids by passing the snapshot, not the live row:
+    expect(statusActionCopy(liveMidFlight, "planned").confirmLabel).toBe("Add to day");
   });
 });
 
