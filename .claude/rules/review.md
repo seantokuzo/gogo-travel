@@ -9,14 +9,14 @@ paths: [".claude/rules/review.md.by-path-only"]
 The project half of the `review-loop` skill (its canonical home). Extends that
 skill, never contradicts it. Reviewers get this file as a **path**, not contents.
 
-## Records are LOCAL — nothing is posted to GitHub
+## Reviews run LOCALLY — no stickies, no review comments; the record is the PR body
 
 **As of 2026-08-01 ([ADR-003](../../docs/decisions/ADR-003-local-in-session-reviews.md)):
-no verdict sticky, no `gh api …/comments` posting, no required PR-comment replies.**
-PR #13's sticky was the last one. The aggregator's output lives ONLY in
+no verdict sticky, no `gh api …/comments` posting, no required PR-comment replies,
+no GitHub App.** PR #13's sticky was the last one. The aggregator's output lives ONLY in
 `.tmp/review*/round-<N>/VERDICT.md` for the run's duration; the durable record is
 the PR body's "Review record" section (a section of the description, not a comment
-or a sticky), and the QUEUE row keeps a one-line outcome
+or a sticky; Sean, 2026-10-06), and the QUEUE row keeps a one-line outcome
 ([ADR-009](../../docs/decisions/ADR-009-plan-doc-byte-budgets.md)). CI (Guard/Verify)
 stays on GitHub — that's CI, not review.
 
