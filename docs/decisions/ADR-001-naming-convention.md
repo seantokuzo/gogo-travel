@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-05-04
 **Supersedes:** none
-**Superseded by:** none
+**Superseded by:** ADR-009 (in part — STATE cap, plan-doc rotation, history snapshot archives)
 
 ## Context
 

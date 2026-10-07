@@ -34,3 +34,14 @@ apps/mobile/assets/expo.icon/icon.json
 apps/mobile/ios/
 apps/mobile/android/
 apps/mobile/expo-env.d.ts
+
+# Plan-doc byte budgets (ADR-009). Prettier pads every markdown table cell to the
+# widest cell in its column, which inflated docs/QUEUE.md several-fold (757 KB padded
+# vs ~202 KB collapsed on 2026-10-06) — far past its 20,480-byte cap — and the
+# pre-commit `prettier --check` gate forces that padding back on every commit.
+# The QUEUE index is written unpadded on purpose. The snapshot archives
+# (QUEUE-<date>[-N].md rotated rows, STATE-<date>[-N].md retired narrative) must
+# stay byte-verbatim: rotation's losslessness check compares them to the source.
+docs/QUEUE.md
+docs/history/QUEUE-*.md
+docs/history/STATE-*.md
