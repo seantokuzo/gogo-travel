@@ -10,6 +10,10 @@
  * - the settings row mirrors pack state and opens the management sheet
  *   (R-map-19's entry, `trip-settings-list-item-offline` →
  *   `trip-settings-sheet-offline`);
+ * - Q2-186: the row + sheet are READERS — mounting the settings screen on an
+ *   active trip over wifi starts no download (the activation controller
+ *   lives once at the `[tripId]` layout; real-tree pin in
+ *   `offline-pack-root-mount.test.tsx`);
  * - download entry arms (R-map-19 + R-map-22): NO connection → degrade
  *   notice and NOTHING registered (pinned on the handler's effect —
  *   createPack never invoked — per the ungated-CONTROL rule); CELLULAR →
@@ -29,6 +33,7 @@ import TripSettingsScreen from "@/app/[tripId]/more/settings";
 import { queryKeys } from "@/data";
 import {
   clearPackAnnotationsForTests,
+  liveOfflinePackControllers,
   packNameFor,
   packRegionKeyFor,
   readPackAnnotation,
@@ -112,6 +117,20 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// Q2-186. Falsification: call `useOfflinePackController(trip)` from the
+// settings row again (the pre-ruling shape) and an ACTIVE trip on wifi
+// auto-starts the moment the row mounts -> createPack fires -> red.
+it("READER only (Q2-186): the settings row on an active trip over wifi starts no download and mounts no controller", async () => {
+  network.getNetworkStateAsync.mockImplementation(async () => WIFI);
+  await renderSettings(makeActiveTrip(TEST_TRIP_ID));
+  await drain();
+
+  expect(screen.getByText("Not downloaded")).toBeOnTheScreen();
+  expect(om.createPack).not.toHaveBeenCalled();
+  expect(network.getNetworkStateAsync).not.toHaveBeenCalled();
+  expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
 });
 
 it("R-map-19/22: row → sheet → offline degrade → cellular ConfirmDialog → confirm starts the download", async () => {

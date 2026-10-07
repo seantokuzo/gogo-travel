@@ -15,8 +15,10 @@
  *    connectivity source) → whether a saved map is in play (R-map-22),
  *  - otherwise hidden.
  *
- * Mounting the slot also mounts the pack CONTROLLER — this surface is one of
- * the two R-map-18 activation-trigger mount points (controller doc).
+ * The pill is a READER (Q2-186): it renders `useOfflinePackState` and mounts
+ * NO controller — the R-map-18 activation trigger lives once at the trip root
+ * (`<OfflinePackController />` in the `[tripId]` layout), so the pill showing
+ * progress for a download that started on another tab is the normal case.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import { Pressable, StyleSheet, View } from "react-native";
@@ -27,7 +29,7 @@ import { useTripContext } from "@/navigation/trip-context";
 
 import { mapStyleUrlForScheme } from "./map-style";
 import { offlinePillModel } from "./offline-packs";
-import { startPackDownload, useOfflinePackController } from "./offline-pack-controller";
+import { startPackDownload, useOfflinePackState } from "./offline-pack-controller";
 
 export interface MapOfflinePillSlotProps {
   tripId: string;
@@ -54,7 +56,7 @@ export function MapOfflinePillSlot({ tripId }: MapOfflinePillSlotProps) {
   const s = useStyles();
   const { scheme } = useTheme();
   const trip = useTripContext();
-  const state = useOfflinePackController(trip);
+  const state = useOfflinePackState(trip);
   const offline = useTripOffline(tripId);
   const model = offlinePillModel(state, offline);
 
