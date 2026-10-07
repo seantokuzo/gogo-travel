@@ -88,6 +88,7 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
       startDate: schema.trips.startDate,
       endDate: schema.trips.endDate,
       destinationTz: schema.trips.destinationTz,
+      destinationTzSource: schema.trips.destinationTzSource,
       destinationLat: schema.trips.destinationLat,
       destinationLng: schema.trips.destinationLng,
     })
@@ -110,7 +111,7 @@ export async function sweepStaleLegs(deps: StalenessSweepDeps): Promise<Stalenes
     // R-ib-23 eligibility: `active` now, or starting inside the horizon —
     // decided through the effective-status seam (override wins), at THIS
     // trip's destination-zone today.
-    const today = tripToday(now, zones.get(trip.id));
+    const today = tripToday(now, zones.get(trip.id)?.zone);
     const horizon = addDaysIso(today, horizonDays);
     const status = effectiveTripStatus(trip, today);
     const startsSoon = trip.startDate >= today && trip.startDate <= horizon;

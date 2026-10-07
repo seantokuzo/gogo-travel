@@ -129,6 +129,8 @@ describe.skipIf(!dockerAvailable)("T-7.3 leg recompute (integration)", () => {
         destinationLat: "35.689500",
         destinationLng: "139.691700",
         destinationTz: tz,
+        // The pair CHECK: a stored zone always has a source (a pinned test zone = 'user').
+        destinationTzSource: tz === null ? null : "user",
         startDate: dates?.start ?? "2026-09-01",
         endDate: dates?.end ?? "2026-09-10",
         createdBy: userId,

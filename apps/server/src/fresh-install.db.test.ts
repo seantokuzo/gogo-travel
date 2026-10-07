@@ -252,7 +252,7 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     expect(Number(journal?.n)).toBeGreaterThanOrEqual(4);
   });
 
-  it("[B-30] pristine clone carries migration 0007: trips.destination_tz exists (nullable text) with its 1..64 CHECK, and the journal records it", async () => {
+  it("[B-30] pristine clone carries migration 0007: trips.destination_tz + destination_tz_source exist (nullable text) with their CHECKs, and the journal records it", async () => {
     // Environment/migration-state arm (testing.md §5): a template that stopped
     // at 0006 has no column and every trip read/write 500s. Asserted against the
     // CATALOG of the freshly-migrated template, not against code.
@@ -261,6 +261,21 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
     >`select data_type, is_nullable from information_schema.columns
         where table_name = 'trips' and column_name = 'destination_tz'`;
     expect(column).toEqual({ data_type: "text", is_nullable: "YES" });
+    // Zone provenance rides the SAME migration (amended before merge — no 0008).
+    const [sourceColumn] = await suiteDb.client<
+      { data_type: string; is_nullable: string }[]
+    >`select data_type, is_nullable from information_schema.columns
+        where table_name = 'trips' and column_name = 'destination_tz_source'`;
+    expect(sourceColumn).toEqual({ data_type: "text", is_nullable: "YES" });
+    const sourceChecks = await suiteDb.client<
+      { conname: string; convalidated: boolean }[]
+    >`select conname, convalidated from pg_constraint
+        where conname in ('trips_destination_tz_source_ck', 'trips_destination_tz_source_pair_ck')
+        order by conname`;
+    expect(sourceChecks).toEqual([
+      { conname: "trips_destination_tz_source_ck", convalidated: true },
+      { conname: "trips_destination_tz_source_pair_ck", convalidated: true },
+    ]);
 
     const [constraint] = await suiteDb.client<
       { def: string; convalidated: boolean }[]
@@ -473,6 +488,7 @@ describe.skipIf(!dockerAvailable)("T-S3.3 fresh install (empty DB, zero fixtures
       { destination_tz: string | null }[]
     >`select destination_tz from trips where id = ${trip.id}`;
     expect(storedZone?.destination_tz).toBe("Europe/Lisbon");
+    expect(trip.destination_tz_source).toBe("derived");
     await settleIngest(); // destination trigger — same failed-record path
 
     const bookings = await request(`/api/trips/${trip.id}/bookings`);

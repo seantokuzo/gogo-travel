@@ -25,12 +25,14 @@
  * the lock-order story).
  *
  * DESTINATION ZONE (B-30, Sean ruling 2026-09-19): a trip's "today" is the
- * calendar day AT ITS DESTINATION. `trips.destination_tz` is written only by
- * the explicit body value or the coordinate derivation (create; PATCH when
- * the coordinates move and no explicit zone rides along); reads resolve the
- * EFFECTIVE zone (`destination-tz.ts`: stored → derived → booking → UTC) and
- * the wire's `destination_tz` is always that effective zone, the same one
- * the status rule evaluated. An explicit zone `Intl` can't resolve → 400.
+ * calendar day AT ITS DESTINATION. `trips.destination_tz` (+ its
+ * `destination_tz_source` provenance) is written only through
+ * `destination-tz.ts`'s ONE pure write resolver — a person's zone ('user',
+ * durable), the coordinate derivation ('derived') or the creator's device
+ * hint ('device', low rank); reads resolve the EFFECTIVE zone (user → derived
+ * → booking → device → UTC) and the wire's `destination_tz{,_source}` is that
+ * effective pair, the same one the status rule evaluated. An unlisted USER
+ * zone → 400; an unusable device hint is ignored.
  *
  * PUSH INVALIDATION (T-6.3, §3.5 rule 6 / R-trips-18): every committed
  * mutation emits its §3.5 event post-commit via the `tripEvents` seam
@@ -73,13 +75,14 @@ import { rejectInvalidBody } from "../http/validation.js";
 import type { PlacesIngestTrigger } from "../places/ingest-queue.js";
 import { emitTripEvent, type TripEventEmitter } from "./push-invalidation.js";
 import {
-  DEFAULT_DESTINATION_TZ,
-  deriveZoneFromCoords,
+  applyZoneWrite,
+  DEFAULT_EFFECTIVE_ZONE,
+  resolveDestinationTz,
   resolveEffectiveZones,
-  storedDestinationTz,
+  resolveZoneWrite,
+  storedZoneOf,
 } from "./destination-tz.js";
 import { effectiveTripStatus, reconcileStoredStatuses, tripToday } from "./status.js";
-import { canonicalizeZone } from "./zone-canon.js";
 import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.js";
 
 export interface TripsRouterDeps {
@@ -227,28 +230,33 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { userId } = authContextOf(c);
       const body = c.req.valid("json");
 
-      // B-30: an explicit zone must be on the zone allow-list (zone-canon.ts;
-      // the shared schema only checks its SHAPE, so a client-side Intl gap can
-      // never block a create) and is STORED in its canonical modern spelling
-      // (lowercase asia/tokyo is stored as Asia/Tokyo) → 400 otherwise.
-      const explicitZone =
-        body.destination_tz === undefined ? undefined : canonicalizeZone(body.destination_tz);
-      if (explicitZone === null) {
+      // B-30 zone provenance (destination-tz.ts — the ONE write resolver, shared
+      // with PATCH): a user-chosen zone must be on the allow-list
+      // (zone-canon.ts) and is stored in its canonical modern spelling → 400
+      // otherwise; a 'device' hint is only a low-rank fallback and an
+      // unusable one is ignored; coordinates derive; nothing storable → NULL.
+      const zoneWrite = resolveZoneWrite({
+        current: null,
+        body: { zone: body.destination_tz, source: body.destination_tz_source },
+        lat: body.destination_lat,
+        lng: body.destination_lng,
+        coordsMoved: true,
+      });
+      if (!zoneWrite.ok) {
         throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
           destination_tz: "unknown time zone",
         });
       }
-      // Chain steps 1–2 (destination-tz.ts): explicit, else derived from the
-      // coordinates, else nothing stored (NULL). A brand-new trip has no
-      // bookings, so its effective zone is the stored one or UTC (step 4).
-      const storedTz = storedDestinationTz({
-        explicit: explicitZone,
+      const storedZone = applyZoneWrite(null, zoneWrite.write);
+      // A brand-new trip has no bookings, so its effective zone is whatever
+      // the read chain makes of the stored pair + coordinates (else UTC).
+      const effectiveZone = resolveDestinationTz({
+        stored: storedZone,
         lat: body.destination_lat,
         lng: body.destination_lng,
       });
-      const zone = storedTz ?? DEFAULT_DESTINATION_TZ;
       // The trip's own `today` — the calendar day AT ITS DESTINATION (B-30).
-      const today = tripToday(nowOf(), zone);
+      const today = tripToday(nowOf(), effectiveZone.zone);
 
       // B-7 part 3 round-1 fix (db/coords-ck.ts): `.catch` below is a belt,
       // not the primary guard — `TripCreateSchema`'s pair refine already
@@ -280,7 +288,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
             // never a placeholder.
             destinationLat: body.destination_lat === null ? null : String(body.destination_lat),
             destinationLng: body.destination_lng === null ? null : String(body.destination_lng),
-            destinationTz: storedTz,
+            destinationTz: storedZone?.zone ?? null,
+            destinationTzSource: storedZone?.source ?? null,
             startDate: body.start_date,
             endDate: body.end_date,
             status: effectiveTripStatus(
@@ -314,7 +323,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // Deliberately swallowed: enqueue is best-effort (R-places-1).
       }
 
-      return c.json(toTripWithRoleWire(trip, "owner", zone), 201);
+      return c.json(toTripWithRoleWire(trip, "owner", effectiveZone), 201);
     },
   );
 
@@ -389,7 +398,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           { ...row.trip, status: reconciled?.status ?? row.trip.status },
           row.role,
           row.memberCount,
-          reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
+          reconciled?.zone ?? DEFAULT_EFFECTIVE_ZONE,
         );
       });
 
@@ -425,11 +434,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       emitTripEvent(deps.tripEvents, { event: "trip.status_changed", tripId, actorId: userId });
     }
     return c.json(
-      toTripWithRoleWire(
-        { ...trip, status },
-        role,
-        reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
-      ),
+      toTripWithRoleWire({ ...trip, status }, role, reconciled?.zone ?? DEFAULT_EFFECTIVE_ZONE),
     );
   });
 
@@ -455,17 +460,6 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const body = c.req.valid("json");
       const now = nowOf();
 
-      // B-30: an explicit zone must be on the zone allow-list and is stored in
-      // its canonical spelling (zone-canon.ts; the shared schema is
-      // shape-only) — checked before any DB work → 400.
-      const explicitZone =
-        body.destination_tz === undefined ? undefined : canonicalizeZone(body.destination_tz);
-      if (explicitZone === null) {
-        throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
-          destination_tz: "unknown time zone",
-        });
-      }
-
       // Set inside the transaction iff the committed write moved the
       // destination — drives the post-commit ingest trigger (R-places-1).
       let destinationChanged = false;
@@ -486,6 +480,15 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // before the load so the base-currency arm can lock it.
         const touchesBaseCurrency = body.base_currency !== undefined;
         const touchesStatus = body.status !== undefined;
+        // B-30 round-1 (server F6): the destination decision is a
+        // read-modify-write over the stored coordinates AND zone pair —
+        // `coordsMoved` is a VALUE diff against `current`, and a 'user' zone
+        // must survive a coordinates edit — so a stale snapshot would write
+        // coordinates from one PATCH beside a zone derived from another.
+        const touchesDestination =
+          body.destination_lat !== undefined ||
+          body.destination_lng !== undefined ||
+          body.destination_tz !== undefined;
 
         // T-6.1 TOCTOU fix (T-9.2 rider — the deferred QUEUE row): a body
         // touching base_currency takes the trip row FOR UPDATE, so the
@@ -498,11 +501,13 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // (key presence, value-blind): the lock must be held BEFORE the
         // change/no-change decision reads the row, or the decision itself
         // races. Lock order: trips leads the global chain (expenses/
-        // service.ts module doc).
+        // service.ts module doc). The same lock covers a body touching the
+        // destination (`touchesDestination` above — B-30 server F6).
         const currentQuery = tx.select().from(schema.trips).where(eq(schema.trips.id, tripId));
-        const [current] = touchesBaseCurrency
-          ? await currentQuery.for("update")
-          : await currentQuery;
+        const [current] =
+          touchesBaseCurrency || touchesDestination
+            ? await currentQuery.for("update")
+            : await currentQuery;
         if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
         // Owner-only FIELDS (R-trips-20): touching base_currency or the
@@ -583,32 +588,42 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           (body.destination_lng !== undefined &&
             numOrNull(current.destinationLng) !== body.destination_lng);
 
-        // B-30 destination zone (destination-tz.ts chain steps 1–2): an
-        // explicit `destination_tz` in the body wins; otherwise a MOVED
-        // destination re-derives from the new coordinates (NULL when the new
-        // place is coordinate-less — the old zone described the old place);
-        // otherwise the column is left alone. `undefined` = don't touch.
-        const storedTzWrite: string | null | undefined =
-          explicitZone !== undefined
-            ? explicitZone
-            : coordsMoved
-              ? deriveZoneFromCoords(numOrNull(nextLatText), numOrNull(nextLngText))
-              : undefined;
-        const nextStoredTz = storedTzWrite === undefined ? current.destinationTz : storedTzWrite;
-        // The POST-patch effective zone (booking fallback when nothing is
-        // stored) — the status below is evaluated at the destination's `today`
-        // under the zone this very patch leaves behind.
+        // B-30 destination zone (destination-tz.ts — the SAME pure write
+        // resolver create uses): a user zone in the body wins and is durable;
+        // `destination_tz: null` resets to automatic; a 'device' hint is a
+        // low-rank fallback (an unusable one is ignored); a MOVED destination
+        // re-derives a 'derived'/'device' zone but never overwrites a 'user'
+        // one; a coordinates→coordless move clears a 'derived' zone. An
+        // unlisted USER zone is a 400 (the tx rolls back, the row is untouched).
+        const currentStored = storedZoneOf(current);
+        const zoneWrite = resolveZoneWrite({
+          current: currentStored,
+          body: { zone: body.destination_tz, source: body.destination_tz_source },
+          lat: numOrNull(nextLatText),
+          lng: numOrNull(nextLngText),
+          coordsMoved,
+        });
+        if (!zoneWrite.ok) {
+          throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
+            destination_tz: "unknown time zone",
+          });
+        }
+        const nextStored = applyZoneWrite(currentStored, zoneWrite.write);
+        // The POST-patch effective zone (booking fallback when nothing better
+        // is stored) — the status below is evaluated at the destination's
+        // `today` under the zone this very patch leaves behind.
         const nextZone =
           (
             await resolveEffectiveZones(tx, [
               {
                 id: tripId,
-                destinationTz: nextStoredTz,
+                destinationTz: nextStored?.zone ?? null,
+                destinationTzSource: nextStored?.source ?? null,
                 destinationLat: nextLatText,
                 destinationLng: nextLngText,
               },
             ])
-          ).get(tripId) ?? DEFAULT_DESTINATION_TZ;
+          ).get(tripId) ?? DEFAULT_EFFECTIVE_ZONE;
 
         // Status seam (§3.4): the override (post-patch) wins; null clears it
         // and derivation resumes against the MERGED dates.
@@ -617,7 +632,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           nextOverride ??
           effectiveTripStatus(
             { statusOverride: null, startDate: mergedStart, endDate: mergedEnd },
-            tripToday(now, nextZone),
+            tripToday(now, nextZone.zone),
           );
 
         const set: Partial<typeof schema.trips.$inferInsert> = { status: nextStatus };
@@ -625,7 +640,10 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         if (body.destination_name !== undefined) set.destinationName = body.destination_name;
         if (body.destination_lat !== undefined) set.destinationLat = nextLatText;
         if (body.destination_lng !== undefined) set.destinationLng = nextLngText;
-        if (storedTzWrite !== undefined) set.destinationTz = storedTzWrite;
+        if (zoneWrite.write.kind !== "untouched") {
+          set.destinationTz = nextStored?.zone ?? null;
+          set.destinationTzSource = nextStored?.source ?? null;
+        }
         if (body.start_date !== undefined) set.startDate = body.start_date;
         if (body.end_date !== undefined) set.endDate = body.end_date;
         if (body.theme !== undefined) set.theme = body.theme;
@@ -651,7 +669,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
           storedStatusChanged = reconciledStatus !== current.status;
           return {
             trip: { ...current, status: reconciledStatus },
-            zone: reconciled?.destinationTz ?? DEFAULT_DESTINATION_TZ,
+            zone: reconciled?.zone ?? DEFAULT_EFFECTIVE_ZONE,
           };
         }
 

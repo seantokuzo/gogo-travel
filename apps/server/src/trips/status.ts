@@ -31,8 +31,9 @@ import { todayInZone } from "@gogo/shared/time";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import {
-  DEFAULT_DESTINATION_TZ,
+  DEFAULT_EFFECTIVE_ZONE,
   resolveEffectiveZones,
+  type EffectiveZone,
   type ZoneSourceRow,
 } from "./destination-tz.js";
 
@@ -63,8 +64,8 @@ export function effectiveTripStatus(trip: StatusFields, today: ISODate): TripSta
 /** What a reconcile pass answers for one trip: its effective status + effective zone. */
 export interface ReconciledTrip {
   status: TripStatus;
-  /** The EFFECTIVE zone the status was evaluated in — what the wire's `destination_tz` carries. */
-  destinationTz: string;
+  /** The EFFECTIVE zone (+ source) the status was evaluated in — what the wire's `destination_tz{,_source}` carry. */
+  zone: EffectiveZone;
 }
 
 /**
@@ -90,9 +91,9 @@ export async function reconcileStoredStatuses(
   const drifted = new Map<TripStatus, string[]>();
 
   for (const row of rows) {
-    const destinationTz = zones.get(row.id) ?? DEFAULT_DESTINATION_TZ;
-    const status = effectiveTripStatus(row, tripToday(now, destinationTz));
-    effective.set(row.id, { status, destinationTz });
+    const zone = zones.get(row.id) ?? DEFAULT_EFFECTIVE_ZONE;
+    const status = effectiveTripStatus(row, tripToday(now, zone.zone));
+    effective.set(row.id, { status, zone });
     if (status !== row.status) {
       const ids = drifted.get(status) ?? [];
       ids.push(row.id);

@@ -185,12 +185,14 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
       arrivesTz?: string;
       departsTz?: string;
       category?: "flight" | "train" | "lodging";
+      status?: "idea" | "planned" | "booked" | "cancelled";
     },
   ) {
     await db.insert(schema.bookings).values({
       tripId,
       createdBy: userId,
       category: opts.category ?? "flight",
+      ...(opts.status === undefined ? {} : { status: opts.status }),
       title: `Booking ${uniq()}`,
       details: {
         category: opts.category ?? "flight",
@@ -262,33 +264,57 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
   // Per-trip reconcile (one clock, several zones)
   // ===========================================================================
 
-  it("[list] one page, one clock, three zones: each row is reconciled at ITS OWN today — and no updated_at moves", async () => {
+  it("[list] one page, one clock, five rows: stored zones of each source, a LEGACY NULL row (derived lazily) and a coordless-with-flight row (booking) — each reconciled at ITS OWN today, wire zone + source per row, no updated_at moves", async () => {
     clock = new Date("2026-08-02T03:00:00.000Z"); // Tokyo Aug 2 12:00 · UTC Aug 2 · LA Aug 1 20:00
     const owner = await seedUser();
     const dates = { startDate: "2026-08-02", endDate: "2026-08-02" };
-    const seed = (tz: string) => seedTripRow(owner.userId, { ...dates, destinationTz: tz });
+    const seed = (tz: string, source: "user" | "derived" | "device" = "user") =>
+      seedTripRow(owner.userId, { ...dates, destinationTz: tz, destinationTzSource: source });
     const tokyo = await seed("Asia/Tokyo");
     const utc = await seed("UTC");
-    const la = await seed("America/Los_Angeles"); // all three stored 'planning' (the column default)
+    const la = await seed("America/Los_Angeles", "derived"); // all stored 'planning' (the column default)
+    // The rows P3 ("LIST serializes the stored column") would have gotten wrong:
+    const legacy = await seedTripRow(owner.userId, {
+      ...dates,
+      destinationName: KYOTO.name,
+      destinationLat: String(KYOTO.lat),
+      destinationLng: String(KYOTO.lng),
+      destinationTz: null,
+      destinationTzSource: null,
+    }); // pre-0007 shape: NULL/NULL with coordinates -> Tokyo, derived lazily
+    const flightOnly = await seedTripRow(owner.userId, { ...dates }); // coordless, NULL/NULL
+    await seedFlight(flightOnly.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+    });
 
     const page = PaginatedTripList.parse(await (await listTrips(owner.token)).json());
     const byId = new Map(page.items.map((item) => [item.id, item]));
-    expect(byId.get(tokyo.id)?.status).toBe("active");
-    expect(byId.get(utc.id)?.status).toBe("active");
-    expect(byId.get(la.id)?.status).toBe("planning"); // LA is still Aug 1
-    expect(byId.get(tokyo.id)?.destination_tz).toBe("Asia/Tokyo");
-    expect(byId.get(la.id)?.destination_tz).toBe("America/Los_Angeles");
+    const wire = (id: string) => {
+      const item = byId.get(id);
+      return [item?.destination_tz, item?.destination_tz_source, item?.status];
+    };
+    expect(wire(tokyo.id)).toEqual(["Asia/Tokyo", "user", "active"]);
+    expect(wire(utc.id)).toEqual(["UTC", "user", "active"]);
+    expect(wire(la.id)).toEqual(["America/Los_Angeles", "derived", "planning"]); // LA is still Aug 1
+    expect(wire(legacy.id)).toEqual(["Asia/Tokyo", "derived", "active"]); // lazily derived, NOT "UTC"
+    expect(wire(flightOnly.id)).toEqual(["Asia/Tokyo", "booking", "active"]); // booking zone, NOT "UTC"
 
     expect((await dbTrip(tokyo.id)).status).toBe("active");
     expect((await dbTrip(utc.id)).status).toBe("active");
     expect((await dbTrip(la.id)).status).toBe("planning");
-    for (const seeded of [tokyo, utc, la]) {
+    expect((await dbTrip(legacy.id)).status).toBe("active"); // stored status converged under the lazy zone
+    expect((await dbTrip(flightOnly.id)).status).toBe("active");
+    for (const seeded of [tokyo, utc, la, legacy, flightOnly]) {
       expect((await dbTrip(seeded.id)).updatedAt.toISOString()).toBe(
         seeded.updatedAt.toISOString(),
       );
     }
-    // Falsification: evaluate the whole page at one `today` (the first row's, or UTC) → the
-    // three expectations cannot all hold; reds on Tokyo or LA.
+    // The lazy zones are never written back:
+    expect((await dbTrip(legacy.id)).destinationTz).toBeNull();
+    expect((await dbTrip(flightOnly.id)).destinationTz).toBeNull();
+    // Falsification: evaluate the whole page at one `today` → the rows cannot all hold;
+    // serialize the STORED column (P3) → legacy / flightOnly read "UTC"/"default", red.
   });
 
   it("[get] a legacy NULL-stored zone with coordinates resolves lazily from them (Tokyo) — and is never written back", async () => {
@@ -322,24 +348,41 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
       { destination_tz: "Pacific/Auckland" },
     );
     expect(trip.destination_tz).toBe("Pacific/Auckland");
+    expect(trip.destination_tz_source).toBe("user");
     // Auckland says Aug 2 → active; the Kyoto-derived Tokyo zone (Aug 1) and UTC (Aug 1) both say planning.
     expect(trip.status).toBe("active");
-    expect((await dbTrip(trip.id)).destinationTz).toBe("Pacific/Auckland");
+    const row = await dbTrip(trip.id);
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["Pacific/Auckland", "user"]);
   });
 
-  it("[create] a coordinate-less custom destination with an explicit zone (the mobile form's device zone) stores it and judges status in it", async () => {
+  it("[create] a coordinate-less custom destination with a 'device' hint (what the mobile form sends) stores it as 'device' and judges status in it", async () => {
     clock = new Date("2026-08-01T20:00:00.000Z");
     const owner = await seedUser();
     const trip = await createTrip(
       owner.token,
       { name: "Grandma's cabin", lat: null, lng: null },
       { start: "2026-08-02", end: "2026-08-02" },
-      { destination_tz: "Asia/Tokyo" },
+      { destination_tz: "Asia/Tokyo", destination_tz_source: "device" },
     );
     expect(trip.destination_lat).toBeNull();
-    expect(trip.destination_tz).toBe("Asia/Tokyo");
+    expect([trip.destination_tz, trip.destination_tz_source]).toEqual(["Asia/Tokyo", "device"]);
     expect(trip.status).toBe("active");
-    expect((await dbTrip(trip.id)).destinationTz).toBe("Asia/Tokyo");
+    const row = await dbTrip(trip.id);
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["Asia/Tokyo", "device"]);
+  });
+
+  it("[create] a coordinate-less custom destination with a USER zone stores it as 'user'", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      { name: "Grandma's cabin", lat: null, lng: null },
+      { start: "2026-08-02", end: "2026-08-02" },
+      { destination_tz: "asia/tokyo", destination_tz_source: "user" },
+    );
+    expect([trip.destination_tz, trip.destination_tz_source]).toEqual(["Asia/Tokyo", "user"]);
+    const row = await dbTrip(trip.id);
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["Asia/Tokyo", "user"]);
   });
 
   it("[create] coordless + no explicit zone + no bookings → effective UTC; the column stays NULL (a default is never persisted)", async () => {
@@ -350,9 +393,10 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
       { name: "Somewhere", lat: null, lng: null },
       { start: "2026-08-02", end: "2026-08-02" },
     );
-    expect(trip.destination_tz).toBe("UTC");
+    expect([trip.destination_tz, trip.destination_tz_source]).toEqual(["UTC", "default"]);
     expect(trip.status).toBe("planning"); // UTC today Aug 1
-    expect((await dbTrip(trip.id)).destinationTz).toBeNull();
+    const row = await dbTrip(trip.id);
+    expect([row.destinationTz, row.destinationTzSource]).toEqual([null, null]);
   });
 
   // ===========================================================================
@@ -598,18 +642,66 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     expect((await dbTrip(trip.id)).destinationTz).toBeNull();
   });
 
-  it("[patch] a write-less body answers the effective zone too (and still converges drift)", async () => {
+  it("[patch] a write-less body answers the effective zone + source too (and still converges drift)", async () => {
     clock = new Date("2026-08-01T20:00:00.000Z");
     const owner = await seedUser();
     const seeded = await seedTripRow(owner.userId, {
       destinationTz: "Asia/Tokyo",
+      destinationTzSource: "user",
       startDate: "2026-08-02",
       endDate: "2026-08-02",
     }); // stored 'planning', effective 'active'
     const patched = TripSchema.parse(await (await patchTrip(seeded.id, owner.token, {})).json());
-    expect(patched.destination_tz).toBe("Asia/Tokyo");
+    expect([patched.destination_tz, patched.destination_tz_source]).toEqual(["Asia/Tokyo", "user"]);
     expect(patched.status).toBe("active");
     expect((await dbTrip(seeded.id)).updatedAt.toISOString()).toBe(seeded.updatedAt.toISOString());
+  });
+
+  // The two PATCH paths P10 ("write path returns stored ?? UTC") would have broken: a rename
+  // on a LEGACY NULL/NULL row must answer the EFFECTIVE zone, on both the write path and the
+  // write-less path, and must not write the lazily-resolved zone back.
+  const legacyKyoto = (userId: string) =>
+    seedTripRow(userId, {
+      destinationName: KYOTO.name,
+      destinationLat: String(KYOTO.lat),
+      destinationLng: String(KYOTO.lng),
+      destinationTz: null,
+      destinationTzSource: null,
+      startDate: "2026-08-02",
+      endDate: "2026-08-02",
+    });
+
+  it("[patch] a rename on a legacy NULL-zone row (WRITE path) answers Asia/Tokyo + 'derived', judges status there, and writes no zone", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z"); // Tokyo Aug 2 · UTC Aug 1
+    const owner = await seedUser();
+    const legacy = await legacyKyoto(owner.userId);
+    const patched = TripSchema.parse(
+      await (await patchTrip(legacy.id, owner.token, { name: "Renamed" })).json(),
+    );
+    expect([patched.destination_tz, patched.destination_tz_source]).toEqual([
+      "Asia/Tokyo",
+      "derived",
+    ]);
+    expect(patched.status).toBe("active"); // Tokyo-today Aug 2 (the UTC rule said planning)
+    const row = await dbTrip(legacy.id);
+    expect(row.name).toBe("Renamed"); // it WAS a write
+    expect([row.destinationTz, row.destinationTzSource]).toEqual([null, null]);
+    // Falsification (P10): answer `stored ?? "UTC"` from the PATCH write path -> "UTC"/"default", red.
+  });
+
+  it("[patch] a write-less body on a legacy NULL-zone row (WRITE-LESS path) answers Asia/Tokyo + 'derived' and converges status", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const legacy = await legacyKyoto(owner.userId);
+    const patched = TripSchema.parse(await (await patchTrip(legacy.id, owner.token, {})).json());
+    expect([patched.destination_tz, patched.destination_tz_source, patched.status]).toEqual([
+      "Asia/Tokyo",
+      "derived",
+      "active",
+    ]);
+    const row = await dbTrip(legacy.id);
+    expect(row.updatedAt.toISOString()).toBe(legacy.updatedAt.toISOString());
+    expect([row.destinationTz, row.destinationTzSource]).toEqual([null, null]);
   });
 
   // ===========================================================================
@@ -741,10 +833,442 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
   });
 
   // ===========================================================================
-  // DB CHECK (migration 0007)
+  // Zone provenance (round-1 decision): user > derived > booking > device > UTC
   // ===========================================================================
 
-  it("[migration 0007] trips_destination_tz_ck: 1..64 chars or NULL — 64 inserts, 65 and empty are 23514", async () => {
+  const OSAKA = { name: "Osaka, Japan", lat: 34.6937, lng: 135.5023 }; // Asia/Tokyo
+  const COORDLESS = { name: "Somewhere custom", lat: null, lng: null };
+  const sourcesOf = (t: { destination_tz: string; destination_tz_source: string }) => [
+    t.destination_tz,
+    t.destination_tz_source,
+  ];
+  const storedOf = async (tripId: string) => {
+    const row = await dbTrip(tripId);
+    return [row.destinationTz, row.destinationTzSource];
+  };
+
+  it("[provenance F1] a coordless Osaka trip created in LA (device hint) is CORRECTED by a later KIX flight — the booking zone outranks the device hint; the stored hint is never rewritten", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z"); // LA Aug 1 13:00 · Tokyo Aug 2 05:00
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      { name: "Osaka (custom)", lat: null, lng: null },
+      { start: "2026-08-02", end: "2026-08-02" },
+      { destination_tz: "America/Los_Angeles", destination_tz_source: "device" },
+    );
+    expect(sourcesOf(trip)).toEqual(["America/Los_Angeles", "device"]);
+    expect(trip.status).toBe("planning"); // LA is still Aug 1
+
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Asia/Tokyo", // KIX
+      status: "booked",
+    });
+    const read = TripWithRoleSchema.parse(await (await getTrip(trip.id, owner.token)).json());
+    expect(sourcesOf(read)).toEqual(["Asia/Tokyo", "booking"]);
+    expect(read.status).toBe("active"); // judged on Tokyo's day, same zone as the wire
+    expect(await storedOf(trip.id)).toEqual(["America/Los_Angeles", "device"]); // never written back
+    // Falsification: rank the device hint above bookings (the pre-decision "explicit" slot) -> stays LA/planning, red.
+  });
+
+  it("[provenance] a USER zone outranks a booking zone (a person's choice is never auto-corrected)", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      COORDLESS,
+      { start: "2026-08-02", end: "2026-08-02" },
+      { destination_tz: "America/Los_Angeles", destination_tz_source: "user" },
+    );
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+      status: "booked",
+    });
+    const read = TripSchema.parse(await (await getTrip(trip.id, owner.token)).json());
+    expect(sourcesOf(read)).toEqual(["America/Los_Angeles", "user"]);
+    expect(read.status).toBe("planning");
+  });
+
+  it("[provenance] an UNUSABLE device hint is IGNORED, never a 400: coordless -> UTC/default with nothing stored; with coordinates -> derived", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    for (const hint of ["SystemV/AST4", "Not/AZone", "GMT+05:30", ""]) {
+      const coordless = await postTrip(
+        owner.token,
+        tripBody(
+          COORDLESS,
+          { start: "2026-09-01", end: "2026-09-05" },
+          { destination_tz: hint, destination_tz_source: "device" },
+        ),
+      );
+      expect([hint, coordless.status]).toEqual([hint, 201]);
+      const created = TripWithRoleSchema.parse(await coordless.json());
+      expect([hint, ...sourcesOf(created)]).toEqual([hint, "UTC", "default"]);
+      expect([hint, ...(await storedOf(created.id))]).toEqual([hint, null, null]);
+    }
+    // A VALID hint with coordinates is ignored too (derived outranks device) and stores the derivation.
+    const withCoords = await createTrip(
+      owner.token,
+      KYOTO,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "America/Los_Angeles", destination_tz_source: "device" },
+    );
+    expect(sourcesOf(withCoords)).toEqual(["Asia/Tokyo", "derived"]);
+    expect(await storedOf(withCoords.id)).toEqual(["Asia/Tokyo", "derived"]);
+    // Falsification: 400 on an unusable device hint -> the first request is 400, red.
+  });
+
+  it("[provenance] a USER zone the allow-list rejects stays a 400 even when a device hint rides elsewhere on the call", async () => {
+    const owner = await seedUser();
+    const res = await postTrip(
+      owner.token,
+      tripBody(
+        COORDLESS,
+        { start: "2026-09-01", end: "2026-09-05" },
+        { destination_tz: "SystemV/AST4" },
+      ),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  // ---- PATCH: durability, re-derive, clear, heal, reset ------------------------
+
+  it("[provenance F4] a USER zone is durable under coordinate edits: a nudge AND a big move leave it alone (only a reset clears it)", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      KYOTO,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "Pacific/Auckland", destination_tz_source: "user" },
+    );
+    const nudge = TripSchema.parse(
+      await (
+        await patchTrip(trip.id, owner.token, {
+          destination_name: OSAKA.name,
+          destination_lat: OSAKA.lat,
+          destination_lng: OSAKA.lng,
+        })
+      ).json(),
+    );
+    expect(sourcesOf(nudge)).toEqual(["Pacific/Auckland", "user"]);
+    const big = TripSchema.parse(
+      await (
+        await patchTrip(trip.id, owner.token, {
+          destination_lat: LOS_ANGELES.lat,
+          destination_lng: LOS_ANGELES.lng,
+        })
+      ).json(),
+    );
+    expect(sourcesOf(big)).toEqual(["Pacific/Auckland", "user"]);
+    expect(await storedOf(trip.id)).toEqual(["Pacific/Auckland", "user"]);
+    // Falsification: re-derive on a coordinates move regardless of source -> America/Los_Angeles/derived, red.
+  });
+
+  it("[provenance] a coordinates->coordless move clears a DERIVED zone but KEEPS a user zone", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const derived = await createTrip(owner.token, KYOTO, {
+      start: "2026-09-01",
+      end: "2026-09-05",
+    });
+    const user = await createTrip(
+      owner.token,
+      KYOTO,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "Pacific/Auckland" },
+    );
+    const goCoordless = {
+      destination_name: "Custom",
+      destination_lat: null,
+      destination_lng: null,
+    };
+    const a = TripSchema.parse(
+      await (await patchTrip(derived.id, owner.token, goCoordless)).json(),
+    );
+    const b = TripSchema.parse(await (await patchTrip(user.id, owner.token, goCoordless)).json());
+    expect(sourcesOf(a)).toEqual(["UTC", "default"]);
+    expect(await storedOf(derived.id)).toEqual([null, null]);
+    expect(sourcesOf(b)).toEqual(["Pacific/Auckland", "user"]);
+    expect(await storedOf(user.id)).toEqual(["Pacific/Auckland", "user"]);
+  });
+
+  it("[provenance] the settings path: moving to a coordinate-less place WITH a device hint stores 'device' (a booking, if any, still outranks it)", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(owner.token, KYOTO, { start: "2026-08-02", end: "2026-08-02" });
+    const patched = TripSchema.parse(
+      await (
+        await patchTrip(trip.id, owner.token, {
+          destination_name: "Custom",
+          destination_lat: null,
+          destination_lng: null,
+          destination_tz: "America/Los_Angeles",
+          destination_tz_source: "device",
+        })
+      ).json(),
+    );
+    expect(sourcesOf(patched)).toEqual(["America/Los_Angeles", "device"]);
+    expect(patched.status).toBe("planning"); // LA Aug 1
+    expect(await storedOf(trip.id)).toEqual(["America/Los_Angeles", "device"]);
+
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+      status: "booked",
+    });
+    const read = TripSchema.parse(await (await getTrip(trip.id, owner.token)).json());
+    expect(sourcesOf(read)).toEqual(["Asia/Tokyo", "booking"]);
+  });
+
+  it("[provenance] gaining coordinates (the settings heal) replaces a device hint with the derived zone", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      COORDLESS,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "America/Los_Angeles", destination_tz_source: "device" },
+    );
+    const healed = TripSchema.parse(
+      await (
+        await patchTrip(trip.id, owner.token, {
+          destination_name: KYOTO.name,
+          destination_lat: KYOTO.lat,
+          destination_lng: KYOTO.lng,
+        })
+      ).json(),
+    );
+    expect(sourcesOf(healed)).toEqual(["Asia/Tokyo", "derived"]);
+    expect(await storedOf(trip.id)).toEqual(["Asia/Tokyo", "derived"]);
+  });
+
+  it("[provenance] a device hint never overwrites a user zone, and an UNUSABLE hint on PATCH is ignored (200, unchanged)", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const userTrip = await createTrip(
+      owner.token,
+      COORDLESS,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "Pacific/Auckland" },
+    );
+    const deviceTrip = await createTrip(
+      owner.token,
+      COORDLESS,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "America/Los_Angeles", destination_tz_source: "device" },
+    );
+    const overwrite = await patchTrip(userTrip.id, owner.token, {
+      name: "x",
+      destination_tz: "America/Los_Angeles",
+      destination_tz_source: "device",
+    });
+    expect(overwrite.status).toBe(200);
+    expect(await storedOf(userTrip.id)).toEqual(["Pacific/Auckland", "user"]);
+    const junk = await patchTrip(deviceTrip.id, owner.token, {
+      name: "y",
+      destination_tz: "SystemV/AST4",
+      destination_tz_source: "device",
+    });
+    expect(junk.status).toBe(200);
+    expect(await storedOf(deviceTrip.id)).toEqual(["America/Los_Angeles", "device"]);
+  });
+
+  it("[provenance] destination_tz: null RESETS to automatic: a user zone is cleared and the coordinates re-derive; coordless clears to NULL/NULL", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const withCoords = await createTrip(
+      owner.token,
+      KYOTO,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "Pacific/Auckland" },
+    );
+    const reset = TripSchema.parse(
+      await (await patchTrip(withCoords.id, owner.token, { destination_tz: null })).json(),
+    );
+    expect(sourcesOf(reset)).toEqual(["Asia/Tokyo", "derived"]);
+    expect(await storedOf(withCoords.id)).toEqual(["Asia/Tokyo", "derived"]);
+
+    const coordless = await createTrip(
+      owner.token,
+      COORDLESS,
+      { start: "2026-09-01", end: "2026-09-05" },
+      { destination_tz: "Pacific/Auckland" },
+    );
+    const cleared = TripSchema.parse(
+      await (await patchTrip(coordless.id, owner.token, { destination_tz: null })).json(),
+    );
+    expect(sourcesOf(cleared)).toEqual(["UTC", "default"]);
+    expect(await storedOf(coordless.id)).toEqual([null, null]);
+    // Falsification: 400 / ignore a null destination_tz -> the zone stays Pacific/Auckland, red.
+  });
+
+  it("[provenance] a source without a zone, or null WITH a source, is a 400 (nothing written)", async () => {
+    const owner = await seedUser();
+    const trip = await createTrip(owner.token, KYOTO, { start: "2026-09-01", end: "2026-09-05" });
+    const before = await dbTrip(trip.id);
+    for (const body of [
+      { destination_tz_source: "user" },
+      { destination_tz_source: "device" },
+      { destination_tz: null, destination_tz_source: "user" },
+      { destination_tz: "Asia/Tokyo", destination_tz_source: "derived" },
+    ]) {
+      const res = await patchTrip(trip.id, owner.token, body);
+      expect([JSON.stringify(body), res.status]).toEqual([JSON.stringify(body), 400]);
+    }
+    expect((await dbTrip(trip.id)).updatedAt.toISOString()).toBe(before.updatedAt.toISOString());
+  });
+
+  // ---- Booking rung: cancelled excluded, booked > planned > idea, earliest within ----
+
+  it("[provenance] CANCELLED flights never supply the zone (only-cancelled -> UTC/default); a cancelled earlier flight is skipped for the live one", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const dates = { startDate: "2026-08-02", endDate: "2026-08-02" };
+    const read = async (tripId: string) =>
+      TripSchema.parse(await (await getTrip(tripId, owner.token)).json());
+
+    const onlyCancelled = await seedTripRow(owner.userId, dates);
+    await seedFlight(onlyCancelled.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Europe/Paris",
+      status: "cancelled",
+    });
+    expect(sourcesOf(await read(onlyCancelled.id))).toEqual(["UTC", "default"]);
+
+    const skipsCancelled = await seedTripRow(owner.userId, dates);
+    await seedFlight(skipsCancelled.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Europe/Paris",
+      status: "cancelled",
+    });
+    await seedFlight(skipsCancelled.id, owner.userId, {
+      startsAt: "2026-08-05T01:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+      status: "booked",
+    });
+    expect(sourcesOf(await read(skipsCancelled.id))).toEqual(["Asia/Tokyo", "booking"]);
+    // Falsification: drop the `status <> 'cancelled'` filter -> Europe/Paris, red.
+  });
+
+  it("[provenance] booked beats planned beats idea (even when the idea is earlier); within one status the EARLIEST wins", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const dates = { startDate: "2026-08-02", endDate: "2026-08-02" };
+    const trip = await seedTripRow(owner.userId, dates);
+    const zone = async () =>
+      TripSchema.parse(await (await getTrip(trip.id, owner.token)).json()).destination_tz;
+
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Europe/Paris",
+      status: "idea",
+    });
+    expect(await zone()).toBe("Europe/Paris"); // the only (idea) flight
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-09T01:00:00Z",
+      arrivesTz: "America/Chicago",
+      status: "planned",
+    });
+    expect(await zone()).toBe("America/Chicago"); // planned beats the EARLIER idea
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-20T01:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+      status: "booked",
+    });
+    expect(await zone()).toBe("Asia/Tokyo"); // booked beats both, though latest
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-10T01:00:00Z",
+      arrivesTz: "Australia/Sydney",
+      status: "booked",
+    });
+    expect(await zone()).toBe("Australia/Sydney"); // earliest of the booked pair
+    // Falsification: order by starts_at alone -> Europe/Paris first, red.
+  });
+
+  it("[provenance] KNOWN LIMIT: the earliest booked leg can be a CONNECTION (SFO->ORD->KIX picks Chicago) — a user zone is the override", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await seedTripRow(owner.userId, {
+      startDate: "2026-08-02",
+      endDate: "2026-08-02",
+    });
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "America/Chicago",
+      status: "booked",
+    });
+    await seedFlight(trip.id, owner.userId, {
+      startsAt: "2026-08-02T05:00:00Z",
+      arrivesTz: "Asia/Tokyo",
+      status: "booked",
+    });
+    const read = TripSchema.parse(await (await getTrip(trip.id, owner.token)).json());
+    expect(sourcesOf(read)).toEqual(["America/Chicago", "booking"]); // documented limit, not a goal
+
+    const fixed = TripSchema.parse(
+      await (
+        await patchTrip(trip.id, owner.token, {
+          destination_tz: "Asia/Tokyo",
+          destination_tz_source: "user",
+        })
+      ).json(),
+    );
+    expect(sourcesOf(fixed)).toEqual(["Asia/Tokyo", "user"]);
+  });
+
+  // ===========================================================================
+  // Concurrency (round-1 server F6)
+  // ===========================================================================
+
+  it("[concurrency] a PATCH touching the destination takes the trip row FOR UPDATE: it decides 'moved?' against the row AFTER a concurrent committed move, so zone and coordinates stay consistent", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(owner.token, KYOTO, { start: "2026-09-01", end: "2026-09-05" });
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalLocked!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      signalLocked = resolve;
+    });
+    // T1: takes the row lock and moves the destination to Los Angeles (committed on release).
+    const t1 = client.begin(async (tx) => {
+      await tx`select id from trips where id = ${trip.id} for update`;
+      await tx`update trips set destination_lat = ${String(LOS_ANGELES.lat)},
+        destination_lng = ${String(LOS_ANGELES.lng)}, destination_tz = 'America/Los_Angeles',
+        destination_tz_source = 'derived' where id = ${trip.id}`;
+      signalLocked();
+      await held;
+    });
+    await locked;
+    // The PATCH resubmits the ORIGINAL Kyoto coordinates. Against a STALE snapshot those equal
+    // the row's coordinates -> "not moved" -> zone untouched (Los Angeles) beside Kyoto
+    // coordinates. Under the lock it re-reads after T1 commits -> LA -> Kyoto is a move -> Tokyo.
+    const patching = patchTrip(trip.id, owner.token, {
+      destination_lat: KYOTO.lat,
+      destination_lng: KYOTO.lng,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 400)); // let the PATCH reach its read
+    release();
+    await t1;
+    const res = await patching;
+    expect(res.status).toBe(200);
+    const row = await dbTrip(trip.id);
+    expect(Number(row.destinationLat)).toBeCloseTo(KYOTO.lat, 4);
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["Asia/Tokyo", "derived"]);
+    // Falsification: drop `touchesDestination` from the FOR UPDATE condition -> the row ends with
+    // Kyoto coordinates and America/Los_Angeles, red.
+  });
+
+  // ===========================================================================
+  // DB CHECKs (migration 0007)
+  // ===========================================================================
+
+  it("[migration 0007] the zone CHECKs: length 1..64 or NULL; source in (user, derived, device) or NULL; the pair moves together", async () => {
     const owner = await seedUser();
     const base = {
       name: "Check",
@@ -753,19 +1277,44 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
       endDate: "2026-01-02",
       createdBy: owner.userId,
     };
-    await db.insert(schema.trips).values({ ...base, destinationTz: "A".repeat(64) });
-    await db.insert(schema.trips).values({ ...base, destinationTz: null });
+    const insert = (values: { destinationTz: string | null; destinationTzSource: string | null }) =>
+      db.insert(schema.trips).values({ ...base, ...values });
+    const violated = (name: string) => (err: unknown) => isCheckViolationOf(err, name);
+
+    await insert({ destinationTz: "A".repeat(64), destinationTzSource: "user" });
+    await insert({ destinationTz: "Asia/Tokyo", destinationTzSource: "derived" });
+    await insert({ destinationTz: "Asia/Tokyo", destinationTzSource: "device" });
+    await insert({ destinationTz: null, destinationTzSource: null });
+
     for (const bad of ["A".repeat(65), ""]) {
-      await expect(
-        db.insert(schema.trips).values({ ...base, destinationTz: bad }),
-      ).rejects.toSatisfy((err: unknown) => isCheckViolationOf(err, "trips_destination_tz_ck"));
+      await expect(insert({ destinationTz: bad, destinationTzSource: "user" })).rejects.toSatisfy(
+        violated("trips_destination_tz_ck"),
+      );
     }
-    // The raw catalog row exists exactly as the migration declares it.
-    const [constraint] = await client<{ def: string }[]>`
-      select pg_get_constraintdef(oid) as def from pg_constraint
-      where conname = 'trips_destination_tz_ck'`;
-    // Postgres normalizes BETWEEN into the two comparisons.
-    expect(constraint?.def).toContain("length(destination_tz) >= 1");
-    expect(constraint?.def).toContain("length(destination_tz) <= 64");
+    // Only the three STORED sources: 'booking' / 'default' are read-time and never persisted.
+    for (const bad of ["booking", "default", "explicit", "USER", ""]) {
+      await expect(
+        insert({ destinationTz: "Asia/Tokyo", destinationTzSource: bad }),
+      ).rejects.toSatisfy(violated("trips_destination_tz_source_ck"));
+    }
+    // The pair: a zone always has a source; a source never floats without a zone.
+    await expect(
+      insert({ destinationTz: "Asia/Tokyo", destinationTzSource: null }),
+    ).rejects.toSatisfy(violated("trips_destination_tz_source_pair_ck"));
+    await expect(insert({ destinationTz: null, destinationTzSource: "user" })).rejects.toSatisfy(
+      violated("trips_destination_tz_source_pair_ck"),
+    );
+
+    // The catalog rows exist exactly as the migration declares them.
+    const defs = await client<{ conname: string; def: string }[]>`
+      select conname, pg_get_constraintdef(oid) as def from pg_constraint
+      where conname like 'trips_destination_tz%' order by conname`;
+    const def = (name: string) => defs.find((row) => row.conname === name)?.def ?? "";
+    expect(def("trips_destination_tz_ck")).toContain("length(destination_tz) >= 1");
+    expect(def("trips_destination_tz_ck")).toContain("length(destination_tz) <= 64");
+    expect(def("trips_destination_tz_source_ck")).toContain("'user'");
+    expect(def("trips_destination_tz_source_ck")).toContain("'derived'");
+    expect(def("trips_destination_tz_source_ck")).toContain("'device'");
+    expect(def("trips_destination_tz_source_pair_ck")).toContain("destination_tz IS NULL");
   });
 });

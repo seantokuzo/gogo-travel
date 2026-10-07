@@ -1,5 +1,5 @@
 {
-  "id": "725f01b8-6ba5-436e-b9ae-30c4cba275a6",
+  "id": "583c5bb4-32a8-4855-9d78-9fd9defb5c34",
   "prevId": "f154cec1-7996-46c7-90b1-2047cbb0d788",
   "version": "7",
   "dialect": "postgresql",
@@ -884,6 +884,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "destination_tz_source": {
+          "name": "destination_tz_source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "start_date": {
           "name": "start_date",
           "type": "date",
@@ -1006,6 +1012,14 @@
         "trips_destination_tz_ck": {
           "name": "trips_destination_tz_ck",
           "value": "\"trips\".\"destination_tz\" IS NULL OR length(\"trips\".\"destination_tz\") BETWEEN 1 AND 64"
+        },
+        "trips_destination_tz_source_ck": {
+          "name": "trips_destination_tz_source_ck",
+          "value": "\"trips\".\"destination_tz_source\" IS NULL OR \"trips\".\"destination_tz_source\" IN ('user', 'derived', 'device')"
+        },
+        "trips_destination_tz_source_pair_ck": {
+          "name": "trips_destination_tz_source_pair_ck",
+          "value": "(\"trips\".\"destination_tz\" IS NULL) = (\"trips\".\"destination_tz_source\" IS NULL)"
         }
       },
       "isRLSEnabled": false

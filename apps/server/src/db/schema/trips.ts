@@ -22,6 +22,15 @@ import { tripMemberRole, tripStatus } from "./enums.js";
 import { timestamps } from "./_shared.js";
 import { users } from "./identity.js";
 
+/**
+ * The provenances `trips.destination_tz_source` may hold (B-30). A subset of
+ * the wire's effective `DestinationTzSource`: `booking` and `default` are
+ * resolved at read time and never stored. Single tuple → the CHECK below and
+ * the resolver's `StoredZoneSource` type (R-shared-2 spirit).
+ */
+export const STORED_DESTINATION_TZ_SOURCES = ["user", "derived", "device"] as const;
+export type StoredDestinationTzSource = (typeof STORED_DESTINATION_TZ_SOURCES)[number];
+
 export const trips = pgTable(
   "trips",
   {
@@ -34,13 +43,22 @@ export const trips = pgTable(
     destinationLng: numeric("destination_lng", { precision: 9, scale: 6 }),
     /**
      * IANA zone of the destination (B-30) — the zone a trip's "today" is
-     * evaluated in. Written ONLY by the explicit user value or the
-     * coordinate derivation (`trips/destination-tz.ts`). NULL = nothing
-     * stored yet (legacy rows, or a coordinate-less destination with no
-     * explicit zone): reads resolve the EFFECTIVE zone lazily (booking
-     * `arrives_tz`/`departs_tz` fallback, then UTC) and never write it back.
+     * evaluated in. Written ONLY by a person's choice (`user`), the
+     * coordinate derivation (`derived`) or the creator's device-zone hint
+     * (`device`) — `trips/destination-tz.ts`. NULL = nothing stored yet
+     * (legacy rows, or a coordinate-less destination nobody gave a zone):
+     * reads resolve the EFFECTIVE zone lazily (booking `arrives_tz`/
+     * `departs_tz`, then UTC) and never write it back.
      */
     destinationTz: text("destination_tz"),
+    /**
+     * Provenance of `destination_tz` (B-30 zone-provenance decision): which
+     * rung of the chain stored it, so a coordinates edit may re-derive a
+     * `derived`/`device` zone but must NEVER overwrite a `user` one, and a
+     * device hint ranks BELOW a booking zone on read. NULL iff
+     * `destination_tz` is NULL (`trips_destination_tz_source_pair_ck`).
+     */
+    destinationTzSource: text("destination_tz_source"),
     startDate: date("start_date").notNull(),
     endDate: date("end_date").notNull(),
     status: tripStatus("status").notNull().default("planning"),
@@ -70,6 +88,19 @@ export const trips = pgTable(
     check(
       "trips_destination_tz_ck",
       sql`${t.destinationTz} IS NULL OR length(${t.destinationTz}) BETWEEN 1 AND 64`,
+    ),
+    // B-30 provenance: only the three STORED sources (`booking`/`default` are
+    // read-time and never persisted), and the pair moves together — a zone
+    // always has a source, a source never floats without a zone.
+    check(
+      "trips_destination_tz_source_ck",
+      sql`${t.destinationTzSource} IS NULL OR ${t.destinationTzSource} IN (${sql.raw(
+        STORED_DESTINATION_TZ_SOURCES.map((source) => `'${source}'`).join(", "),
+      )})`,
+    ),
+    check(
+      "trips_destination_tz_source_pair_ck",
+      sql`(${t.destinationTz} IS NULL) = (${t.destinationTzSource} IS NULL)`,
     ),
   ],
 );

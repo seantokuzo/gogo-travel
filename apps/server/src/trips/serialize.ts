@@ -19,6 +19,7 @@ import type { Trip, TripListItem, TripWithRole } from "@gogo/shared/domains/trip
 import type { TripMemberRole } from "@gogo/shared/enums";
 import type * as schema from "../db/schema/index.js";
 import { toUserProfileWire } from "../users/serialize.js";
+import type { EffectiveZone } from "./destination-tz.js";
 
 type TripRow = typeof schema.trips.$inferSelect;
 type TripMemberRow = typeof schema.tripMembers.$inferSelect;
@@ -30,13 +31,14 @@ type UserRow = typeof schema.users.$inferSelect;
  * routes reconcile stored → effective (trips/status.ts) BEFORE serializing,
  * so what crosses the wire is always the §3.4 effective status.
  *
- * `destinationTz` is the EFFECTIVE zone (B-30; `trips/destination-tz.ts`) —
- * a required argument, NOT `row.destinationTz`: the stored column is NULL
- * for legacy / coordinate-less trips and the wire field is never null. It is
- * the same zone `reconcileStoredStatuses` evaluated the status in, so the
- * client's `todayInZone(now, trip.destination_tz)` reproduces the server's day.
+ * `zone` is the EFFECTIVE zone + the rung that produced it (B-30;
+ * `trips/destination-tz.ts`) — a required argument, NOT the row's stored
+ * columns: those are NULL for legacy / coordinate-less trips and the wire
+ * fields are never null. It is the same zone `reconcileStoredStatuses`
+ * evaluated the status in, so the client's `todayInZone(now,
+ * trip.destination_tz)` reproduces the server's day.
  */
-export function toTripWire(row: TripRow, destinationTz: string): Trip {
+export function toTripWire(row: TripRow, zone: EffectiveZone): Trip {
   return {
     id: row.id,
     name: row.name,
@@ -45,7 +47,8 @@ export function toTripWire(row: TripRow, destinationTz: string): Trip {
     // `Number(null) === 0` would silently re-mint Null Island on the wire.
     destination_lat: row.destinationLat === null ? null : Number(row.destinationLat),
     destination_lng: row.destinationLng === null ? null : Number(row.destinationLng),
-    destination_tz: destinationTz,
+    destination_tz: zone.zone,
+    destination_tz_source: zone.source,
     start_date: row.startDate,
     end_date: row.endDate,
     status: row.status,
@@ -63,9 +66,9 @@ export function toTripWire(row: TripRow, destinationTz: string): Trip {
 export function toTripWithRoleWire(
   row: TripRow,
   role: TripMemberRole,
-  destinationTz: string,
+  zone: EffectiveZone,
 ): TripWithRole {
-  return { ...toTripWire(row, destinationTz), role };
+  return { ...toTripWire(row, zone), role };
 }
 
 /** `GET /trips` list item: `Trip & { role, member_count }` (R-trips-4). */
@@ -73,9 +76,9 @@ export function toTripListItemWire(
   row: TripRow,
   role: TripMemberRole,
   memberCount: number,
-  destinationTz: string,
+  zone: EffectiveZone,
 ): TripListItem {
-  return { ...toTripWire(row, destinationTz), role, member_count: memberCount };
+  return { ...toTripWire(row, zone), role, member_count: memberCount };
 }
 
 // ---------------------------------------------------------------------------
