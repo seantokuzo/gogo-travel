@@ -793,7 +793,7 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     }
   });
 
-  it("[sub-floor custom] plan pin: the two-armed predicate still decomposes into index arms — a BitmapOr of the tier partial index (Index Cond on the fold expression) and `places_created_by_idx` — and NEVER a Seq Scan on places (falsification, each observed red: dropping the `created_by` equality, dropping the custom arm, or dropping `category = 'locality'` from the tier arm changes the plan). NOTE the hoisted `(tier OR custom) AND fold` spelling plans IDENTICALLY on PG 18, so this pin does NOT discriminate it — it guards plan SHAPE, not spelling. NO new index: per-creator custom rows are few and `places_created_by_idx` already exists; see `placesExactTierMatchQuery`'s doc comment for the measured scale probe", async () => {
+  it("[sub-floor custom] plan pin: the two-armed predicate still decomposes into index arms — a BitmapOr of the tier partial index (Index Cond on the fold expression) and `places_created_by_idx` — and NEVER a full-table read via `places_pkey` (falsification, each observed red: dropping the `created_by` equality, dropping the custom arm, or dropping `category = 'locality'` from the tier arm changes the plan). NOTE the hoisted `(tier OR custom) AND fold` spelling plans IDENTICALLY on PG 18, so this pin does NOT discriminate it — it guards plan SHAPE, not spelling. NO new index: per-creator custom rows are few and `places_created_by_idx` already exists; see `placesExactTierMatchQuery`'s doc comment for the measured scale probe", async () => {
     const user = await seedUserWithToken();
     const { sql: text, params: values } = placesExactTierMatchQuery(db, {
       userId: user.userId,
@@ -809,7 +809,13 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     expect(plan).toContain("places_tier_name_folded_idx");
     expect(plan).toMatch(/Index Cond: \(lower\(regexp_replace/);
     expect(plan).toContain("places_created_by_idx");
-    expect(plan).not.toMatch(/Seq Scan on places\b/);
+    // Under forced `enable_seqscan = off` Postgres never prints "Seq Scan": an
+    // arm it cannot serve from an index falls back to `Index Scan Backward
+    // using places_pkey` + Filter (a full-table read), so THAT is the
+    // full-scan tell. This pin proves both arms are index-servable under
+    // forced `enable_seqscan = off`, NOT the unforced plan at production
+    // scale (B-7/#84 follow-up ②).
+    expect(plan).not.toContain("places_pkey");
     expect(plan).not.toContain("places_name_trgm_idx");
   });
 
