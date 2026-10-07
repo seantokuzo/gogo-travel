@@ -39,15 +39,23 @@
 - **R-itin-4**: WHEN two consecutive items in a day are both located THE
   SYSTEM SHALL render a travel-time chip between them (duration + mode
   icon); tapping the chip SHALL open a Sheet listing every computed mode for
-  that pair plus a "Directions" handoff to Google/Apple Maps (never replace
-  the nav app — competitors § feature-matrix).
+  that pair plus a "Directions" handoff to Google Maps — Google-only in v1,
+  an Apple Maps variant being deferred pending a device-verified URL format
+  (R-itin-67, Q2-125, ruled 2026-09-19) — never replacing the nav app
+  (competitors § feature-matrix).
 - **R-itin-5**: WHEN choosing the chip's displayed mode THE SYSTEM SHALL
   show walking when the walking leg is ≤ 15 minutes, else driving; transit
   and cycling appear in the mode Sheet when their legs exist (transit rows
-  may be absent — degradation is silent, API R-ib-21).
+  may be absent — degradation is silent, API R-ib-21). WHEN driving is also
+  absent THE SYSTEM SHALL continue down transit → cycling →
+  walking-over-15-minutes (first rung present wins) so a computed leg is
+  never hidden behind an absent one — Mapbox modes routinely are absent, and
+  a pair can arrive transit-only (Q2-117, ruled 2026-09-19).
 - **R-itin-6**: WHEN a pair's legs are absent (still computing, provider
-  down, an endpoint unlocated) THE SYSTEM SHALL render no chip or a subtle
-  placeholder — never a spinner row, never an inline error.
+  down, an endpoint unlocated) THE SYSTEM SHALL render no chip (the "subtle
+  placeholder" arm is NOT used — whitespace is the honest render for "nothing
+  computed", matching §2.5's gap semantics; Q2-118, ruled 2026-09-19) —
+  never a spinner row, never an inline error.
 - **R-itin-7**: WHEN timed items on a day overlap THE SYSTEM SHALL show a
   warning chip on the involved items (overlaps are legal — API R-ib-17);
   WHEN a day's times are non-monotonic relative to its `sort_order` THE
@@ -545,6 +553,91 @@ extension; this batch does not touch them.
   exists). WHEN a `TimeField` has no value THE SYSTEM SHALL open its picker
   at 12:00 (noon) — a midnight default would hit the DST edges.
 
+#### Travel-time legs + conflict surfacing (T-7.5)
+
+- **R-itin-65 (chip placement + endpoints; Q2-119, Q2-120, Q2-132, Q2-150,
+  Q2-151, ruled 2026-09-19):** WHEN a located pair has computed legs THE
+  SYSTEM SHALL render its chip directly after its FROM row — the leg's anchor
+  is the item you are leaving — even when the pair is not adjacent because
+  the chain crosses unlocated items (API R-ib-20; both endpoint titles ride
+  the accessibility label). The forward scan for the TO endpoint SHALL STOP at
+  the first LOCATED entry: transparency is for unlocated items only, so a
+  stale leg after a reorder (legs are directional and recompute is async,
+  API R-ib-19) degrades to absent (R-itin-6), never drawn against the wrong
+  neighbour. Check-out rows ARE leg endpoints — a spanning item chains into
+  both its `day` and `end_day` (API R-ib-20) — so hotel → first-stop on a
+  check-out morning gets a chip; where the client's row order and the
+  server's chain order disagree on a check-out day, the directional pair key
+  degrades to absent and can never invent a chip. A same-place pair
+  (`provider: 'same_place'` — zero duration and distance for every mode, API
+  §3.5) renders NO chip: there is no travel to time. An entry whose parent
+  booking is unknown to the client (an enrichment gap) counts as LOCATED —
+  located-ness only STOPS the scan, so the gap fails safe to absent instead
+  of skipping a real item; a KNOWN parent with a null `place_id` stays
+  genuinely unlocated and transparent.
+- **R-itin-66 (leg Sheet; Q2-121, Q2-122, Q2-123, Q2-124, Q2-130, Q2-131,
+  Q2-133, ruled 2026-09-19):** the leg Sheet (R-itin-4) SHALL be titled "To
+  {toTitle}" and list every computed mode as INFORMATIONAL rows, not
+  selectors — only Directions and close are interactive, so the chip can
+  never contradict R-itin-5 (the row matching the chip carries a "Shown"
+  badge). Distance (metric only — no locale/units preference exists yet) and
+  the provider (e.g. "3.4 km · transitous", for legibility) ride the Sheet
+  rows, never the chip, which stays duration + mode icon (§2.2). Duration
+  copy rounds to the nearest minute, floors a sub-minute leg to "1 min", and
+  splits hours above 60 minutes. The Sheet does NOT use `dismissDisabled` (it
+  wraps no mutation to gate) and mounts EAGERLY like every other Sheet on the
+  screen — a lazy mount put mounting and `visible → true` in one commit and
+  gave Reduce Motion users a spring slide-up then a teleport (R-ds-11).
+- **R-itin-67 (Directions handoff; Q2-125, Q2-126, Q2-127, Q2-128, Q2-129,
+  ruled 2026-09-19):** WHEN the Directions row is tapped THE SYSTEM SHALL
+  open Google Maps via the §2.7 "Directions handoff" URL — Google-only for
+  v1. An Apple Maps variant (`maps.apple.com` `saddr`/`daddr`/`dirflg`) is
+  deferred until a device-verify pass proves the format (the Airbnb/Turo
+  posture); this one ruling also closes T-8.3's cite of the same decision.
+  Directions taps SHALL NOT be recorded for the return prompt (R-itin-22) — a
+  navigation handoff books nothing. WHEN an endpoint has no usable free-text
+  label (an unnamed `place_visit`; API R-ib-30) THE SYSTEM SHALL render
+  Directions disabled with a "Needs …" hint — never a junk-text query for the
+  literal "Place visit". The endpoint label is a two-way branch on
+  `item.kind`: a `booking`-kind item resolves `details.address` → the
+  booking's title → none and NEVER falls back to `item.title` (null for
+  booking rows by schema); any other kind uses `item.title` directly (null
+  for an unnamed `place_visit`, which is what disables Directions — adding a
+  fallback would reintroduce the junk query). The trip destination is
+  appended as query context ("Walk Shibuya, Tokyo"), suppressed when the
+  label already contains it.
+- **R-itin-68 (overlap vs sort; "Sort by time"; Q2-134, Q2-135, Q2-136,
+  Q2-137, Q2-138, Q2-139, Q2-140, Q2-149, ruled 2026-09-19):** the OVERLAP
+  span and the SORT key are deliberately different notions: the overlap span
+  is null for untimed items AND for spanning lodging (the grid draws those in
+  the all-day lane — a hotel stay is ambient, not a conflict with dinner),
+  while the sort key includes any item with a `start_time`, spanning lodging
+  included, because the list renders its check-in row inline (R-itin-31).
+  "Sort day by time" (R-itin-7) leaves untimed items exactly in their
+  existing slot — only timed items are permuted among the slots timed items
+  already occupy — and sorting is stable: items sharing a start minute never
+  mark a day "unsorted", and non-monotonicity checks ignore untimed rows
+  entirely. The affordance lives in the day header, labelled "Sort by time",
+  shown only when that day is unsorted; it is a WRITE, so it is viewer- and
+  pending-gated, while overlap chips are read-only and not gated. Its PUT
+  reuses `useDayOrder`'s rollback / invalidation / ErrorBanner plumbing (a
+  failed sort restores the original order and re-offers the affordance), and
+  its tap fires the `actionLight` haptic (tokens §2.8 tap-vocabulary rule).
+- **R-itin-69 (form conflict notice; Q2-141, Q2-142, Q2-143, Q2-144, Q2-145,
+  Q2-146, ruled 2026-09-19):** the add/edit form's conflict notice (R-itin-20)
+  SHALL be DERIVED live from the current fields, never latched — no dismiss
+  affordance, so it cannot desync. Its copy names up to three overlapping
+  items, then "and N more", and states that overlaps are allowed ("Overlaps
+  {title} ({times}) — that's allowed, just so you know."). The booking form
+  derives it from the shared server derivation (`deriveAutoItems`, API
+  R-ib-5/§3.3), never a client re-derivation, so it describes exactly the
+  placement a save would create. A half-filled datetime yields NO notice (no
+  placement, nothing to warn about); a spanning-lodging candidate warns about
+  nothing (ambient, as in R-itin-68) while a same-day lodging (check-in =
+  check-out) warns normally. `useFormConflicts` reads the two plan queries
+  from cache rather than taking props — a cold deep link fetches them and the
+  notice appears when the data lands, never blocking the form.
+
 ---
 
 ## 2. Design
@@ -591,7 +684,8 @@ rows, Sheet for pickers/modes) — zero new primitives.
   default mode per R-itin-5. Tap → mode Sheet: one row per computed leg
   (walk/drive/cycle/transit — absent modes simply missing) + "Directions"
   external handoff row. Data: legs from the composite itinerary read (API
-  R-ib-13), keyed by `(from_item_id, to_item_id)`.
+  R-ib-13), keyed by `(from_item_id, to_item_id)`. Round-2 rulings:
+  R-itin-65..R-itin-69.
 - **Drag-drop**: reorder commits as a single day-order PUT for the target
   day (API §3.4); optimistic with rollback (R-itin-2). Midpoint math is not
   the client's problem — the PUT reassigns the day.
@@ -767,6 +861,24 @@ Not deeplinked in v1 (buttons absent, manual entry only): `moped_rental`
 (no verified format exists in research). Google Flights is deliberately
 excluded (research: unofficial param only — "can break; don't depend").
 
+**Directions handoff (not a partner link — R-itin-4/67; Q2-125, ruled
+2026-09-19).** The leg Sheet's "Directions" row opens the Google Maps URLs API:
+`https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode={mode}`.
+Every interpolation is URL-encoded; `{origin}`/`{destination}` are the
+free-text endpoint labels of R-itin-67 (trip destination appended as context),
+`{mode}` is `driving | walking | bicycling | transit` (the app's `cycling` leg
+maps to `bicycling`). No API key is needed. **Citation:** Google's Maps URLs
+documentation, § Directions
+(`developers.google.com/maps/documentation/urls/get-started`, fetched
+2026-10-06) — `api=1` is mandatory; `travelmode` ∈ driving, walking,
+bicycling, two-wheeler, transit; "You don't need a Google API key to use Maps
+URLs". `.specs/research/` covers Mapbox/Transitous leg COMPUTATION only, never
+an outbound maps URL, so this paragraph is the spec's citation of record for
+the format. **Apple Maps is not shipped in v1** (a `maps.apple.com`
+`saddr`/`daddr`/`dirflg` variant is deferred until a device-verify pass proves
+it — Q2-125) and the builder never records a return-prompt tap (R-itin-67).
+Both T-7.5's and T-8.3's directions handoffs cite this ruling.
+
 ### 2.8 Deeplink-out → return prompt loop
 
 Owned by the navigation spec (R-nav-18, §2.3 capture-return): this spec's
@@ -799,9 +911,13 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Item card                                                                                                                                                                                      | `itinerary-list-item-{itemId}` (nav §2.7 example)                                                                                                                                                                                      |
 | Item card rental subtext (B-18, QA-wave sync)                                                                                                                                                  | `itinerary-list-item-{itemId}-subtext` (list); `itinerary-grid-item-{key}-subtext` (grid — `key` = `itemId` or `itemId-checkpoint`)                                                                                                    |
 | Flight Departs/Arrives point row (R-itin-36, feature ①)                                                                                                                                        | `itinerary-list-item-{itemId}-departs` / `-arrives` (rule-4 derived shape, same family as `-check-in`/`-check-out`)                                                                                                                    |
-| Travel-time chip                                                                                                                                                                               | `itinerary-leg-{fromItemId}` (leg ids are rebuilt — from-item id is the stable key)                                                                                                                                                    |
+| Travel-time chip                                                                                                                                                                               | `itinerary-leg-{date}-{fromItemId}` — day-scoped (Q2-148): a pair is co-chained on two days when a spanning lodging is a FROM on both, so `{fromItemId}` alone is not unique; `{date}` = the render day                                |
+| Leg Sheet root / close / error (T-7.5, Q2-147)                                                                                                                                                 | `itinerary-leg-sheet` · `itinerary-leg-sheet-close` (DS-derived) · `itinerary-leg-error`                                                                                                                                               |
 | Mode sheet row                                                                                                                                                                                 | `itinerary-leg-{fromItemId}-mode-{mode}`                                                                                                                                                                                               |
 | Directions handoff                                                                                                                                                                             | `itinerary-leg-{fromItemId}-directions`                                                                                                                                                                                                |
+| Directions hint (disabled-row "Needs …", R-itin-67; Q2-147)                                                                                                                                    | `itinerary-leg-{fromItemId}-directions-hint`                                                                                                                                                                                           |
+| List overlap chip (R-itin-7; Q2-147)                                                                                                                                                           | `itinerary-list-item-{itemId}-overlap`                                                                                                                                                                                                 |
+| Form conflict notice (R-itin-69; Q2-147)                                                                                                                                                       | `itinerary-item-new-conflict`                                                                                                                                                                                                          |
 | Sort-by-time affordance                                                                                                                                                                        | `itinerary-sort-by-time-{date}`                                                                                                                                                                                                        |
 | Add sheet root (T-7.6, Q2-097)                                                                                                                                                                 | `itinerary-add-sheet`                                                                                                                                                                                                                  |
 | Ideas / Cancelled bin roots + Ideas list (T-7.6, Q2-097)                                                                                                                                       | `itinerary-ideas`, `itinerary-ideas-list`, `itinerary-cancelled`                                                                                                                                                                       |

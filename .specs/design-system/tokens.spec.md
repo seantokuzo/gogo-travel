@@ -496,6 +496,13 @@ calls. (Synced 2026-07-17, post-T-4.1)
 Rules: never on scroll; never on push/pop navigation; max one per user
 action; ghost/secondary buttons default to none.
 
+**Tap-vocabulary rule (Q2-149, ruled 2026-09-19):** a tap that commits the
+same result a gesture also produces fires the TAP vocabulary (`actionLight`),
+not the gesture's (`dragLift`/`dragDrop`) — e.g. the itinerary "Sort by time"
+button (client itinerary spec R-itin-68), whose gesture twin is the drag
+reorder. Both map to the same `impactAsync(Light)` feel; the vocabulary is
+just the correct one. The max-one-per-action rule still holds.
+
 ### 2.9 Core component inventory
 
 All components: consume tokens only; interactive ones require `testID`
