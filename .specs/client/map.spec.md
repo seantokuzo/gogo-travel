@@ -300,6 +300,27 @@ photos.
   color is never the only signal (R-ds-8 spirit, colorblind-safe). The
   same mapping colors the day-filter chips. Saved-but-unscheduled pins =
   accent; photo pins = neutral ring with thumbnail.
+- **Day-color sourcing — RULED (Q2-187, ruled 2026-09-19):** the eight day
+  hues draw ONLY from the four shared status ramps (info / success /
+  warning / danger), two scheme-tuned stops per ramp, hue-interleaved so
+  adjacent days — including the day-8 → day-1 wrap — never share a hue
+  family. The accent, primary, and neutral families are reserved for other
+  pin families (accent = saved-but-unscheduled pins; primary = cluster
+  bubble and selected ring; neutral = photo-pin ring) and SHALL NOT serve
+  as day colors, so a day pin can never impersonate a reserved family.
+- **Pin color roles — RULED (`mapColors`, the one token home in
+  `packages/tokens`):**
+  - `pinPhotoRing` is a neutral-ramp ring; `routeLine` is an info-ramp line
+    (future-reserved); `dimOpacity` is 0.35 (Q2-188, ruled 2026-09-19).
+    These are values, not contract: phase QA may retune them inside the
+    token home without a spec change; the contract is "theme-derived, one
+    home, no literal colors" (R-map-7).
+  - `clusterFill` / `clusterText` are `primary.solid` / `primary.onSolid` —
+    the AA-validated on-solid pairing; no dedicated cluster color exists
+    (Q2-190, ruled 2026-09-19).
+  - `pinSelectedRing` is `border.focus` — the theme's existing "this is
+    selected" affordance; no dedicated color exists (Q2-191, ruled
+    2026-09-19).
 
 ### 2.3 Place sheet vs detail screen
 
@@ -364,7 +385,10 @@ photos.
   first ("show where you are on the trip map").
 - `Info.plist` carries ONLY `NSLocationWhenInUseUsageDescription` — no
   always keys, no background modes (R-map-15; App-Store-friction rationale
-  in PLANNING provider table).
+  in PLANNING provider table). **The purpose string is RULED (Q2-189,
+  ruled 2026-09-19):** "Allow $(PRODUCT_NAME) to use your location to show
+  where you are on the trip map while the app is open." — it states the
+  foreground-only purpose in the user-visible permission prompt.
 - Locate-me states: off (no permission) → prompt; denied → Settings
   deeplink hint (once per session, non-blocking); granted → camera fly-to
   (R-map-17). Puck position is never sent to the server by this screen
