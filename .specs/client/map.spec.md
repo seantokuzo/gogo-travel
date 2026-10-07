@@ -284,7 +284,10 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   of the root mount: the flip is observed for as long as that layout is
   mounted, so no particular surface has to be showing — which closes the
   one-visit-late gap (a trip that flipped `active` before the map tab or
-  settings mounted used to download only on the NEXT visit).
+  settings mounted used to download only on the NEXT visit). The trigger
+  exists only while a trip's `[tripId]` layout is mounted: a trip that turns
+  `active` while the user is on the trip list or any non-trip route
+  downloads when that trip is next opened, not at the flip.
   **AMENDED (round-2, T-8.5 — each ruled 2026-09-19):**
   - **Arms only from `none` (Q2-272):** auto-download starts only WHEN the
     pack state is `none`. A `stale` pack (style or region drift) requires a
