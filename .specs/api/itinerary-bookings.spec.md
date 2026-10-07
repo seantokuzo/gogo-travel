@@ -232,23 +232,26 @@ record.
   result is structurally invalid under R-ib-17 (`end_day < :day`, or a span
   collapsed to a single day with `end_time` before `start_time`) is
   `VALIDATION_FAILED`.
-- **R-ib-29 (malformed `:day`; Q2-063, ruled 2026-09-19):** WHEN the `:day`
-  path parameter of the day-order PUT is not an `ISODate` THE SYSTEM SHALL
-  respond `400 VALIDATION_FAILED`, never `404` — the 404-indistinguishable
-  posture (R-ib-24) protects the existence of RESOURCES (trip, booking,
-  item); a day string carries no existence to protect.
-- **R-ib-30 (no place names on the wire; Q2-074, ruled 2026-09-19):** WHEN
-  the composite itinerary read (R-ib-13) or a booking/item row crosses the
-  wire THE SYSTEM SHALL carry `place_id` only — no place name, in v1.
-  Resolving names is the maps-spine join, a later seam (it needs no new
-  invariant here); until it lands clients label an unnamed place with their
-  documented placeholders (client spec R-itin-47, R-itin-59) and never
-  invent a name.
-- **R-ib-31 (no per-item GET; Q2-174, ruled 2026-09-19):** THE SYSTEM SHALL
-  NOT expose a `GET …/itinerary/items/:itemId` endpoint in v1 — an item's
-  detail resolves from the composite itinerary read (R-ib-13), whose default
-  range covers every item by construction (§3.4), so an id absent from it is
-  genuinely not found (a booking's detail has its own GET, §3.4).
+- **R-ib-29 (malformed `:day`; Q2-063, ruled 2026-09-19):** WHEN an
+  AUTHORIZED caller (R-ib-24: a trip member with role `editor`/`owner`) sends
+  a day-order PUT whose `:day` path parameter is not an `ISODate` THE SYSTEM
+  SHALL respond `400 VALIDATION_FAILED`, never `404` — the
+  404-indistinguishable posture (R-ib-24) protects the existence of RESOURCES
+  (trip, booking, item); a day string carries no existence to protect.
+  R-ib-24's outcomes take precedence: the membership/role gate runs before
+  the `:day` check, so a non-member still gets `404` and a `viewer` `403`.
+- **R-ib-30 (place names on the wire; Q2-074, ruled 2026-09-19):** v1
+  carries `place_id` only — on the composite itinerary read (R-ib-13) and on
+  booking/item rows — and no place name. Adding names (e.g. a maps-spine join
+  on the composite read) is additive and un-ruled; until then clients label
+  an unnamed place with their documented placeholders (client spec R-itin-47,
+  R-itin-59) and never invent a name.
+- **R-ib-31 (no per-item GET; Q2-174, ruled 2026-09-19):** no
+  `GET …/itinerary/items/:itemId` endpoint exists in v1 — an item's detail
+  resolves from the composite itinerary read (R-ib-13), whose default range
+  covers every item by construction (§3.4), so an id absent from it is
+  genuinely not found (a booking's detail has its own GET, §3.4). Adding a
+  per-item GET later is additive.
 - **R-ib-32 (the required floor; Q2-181 — as shipped; Sean pick pending:
   (a) keep as shipped / (b) a real floor):** WHEN a booking is created THE
   SYSTEM SHALL require only `category` and `title` — every `details` field is
