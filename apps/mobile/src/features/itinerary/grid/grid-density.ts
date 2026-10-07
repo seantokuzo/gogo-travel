@@ -16,6 +16,11 @@
  * re-opening this file; `GridSurface` only renders the three it can
  * (`GridSurfaceDensity` — Month is its own surface, R-itin-35).
  *
+ * WHO WRITES: the SCREEN (T-7.16), through one `changeDensity(next)` =
+ * `setDensity(next)` + `storeGridDensity(tripId, next)` shared by the
+ * `DensitySegment` and T-7.14's Month day-cell tap (which sets density
+ * programmatically). `DensitySegment` itself never stores.
+ *
  * Not cleared on sign-out by design: a view preference is not account data
  * (same call as `view-mode.ts`).
  */

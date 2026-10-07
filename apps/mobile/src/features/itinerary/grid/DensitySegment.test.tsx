@@ -1,16 +1,19 @@
 /**
  * DensitySegment (T-7.13 — R-itin-33, §2.5b, R-itin-30): the Day · 3-day ·
- * (Month) · Trip-span control. A controlled wrapper over the DS
- * SegmentedControl that persists a selection per trip before calling back.
+ * Month · Trip-span control. A PURE controlled wrapper over the DS
+ * SegmentedControl — it reports a choice; the SCREEN (T-7.16) persists it,
+ * because density is also set programmatically (T-7.14's Month day-cell tap)
+ * and a store inside the control would be skipped on that path. Persistence
+ * itself is pinned in `grid-density.test.ts`; the screen-level "one
+ * changeDensity = set + store" pin belongs to T-7.16's screen test.
  *
  * What change makes each pin red (mutation-verified in the PR body):
  * - selected state: `selectedKey` stops following `value` (pinned / inverted)
- *   → the selected-state, announced-after-change and restore pins;
- * - persistence: the `storeGridDensity` call is dropped or the key is wrong
- *   → the persist, ordering, per-trip and restore pins;
+ *   → the selected-state, announced-after-change and Month-selected pins;
+ * - purity: the control starts storing a choice itself → the "never stores" pin;
  * - reachability: the control is hidden from the a11y tree → every role query;
- * - option set: the default grows a Month tab, or `options` is ignored →
- *   the three-vs-four pins.
+ * - option set: the default drops Month, or `options` is ignored / reordered
+ *   → the four-vs-subset pins.
  */
 import { fireEvent, screen } from "@testing-library/react-native";
 import { useState } from "react";
@@ -19,25 +22,23 @@ import { triggerHaptic } from "@/theme/haptics";
 import { renderWithTheme } from "@/test-utils/render";
 
 import { DensitySegment } from "./DensitySegment";
-import { DENSITIES, readGridDensity, storeGridDensity, type Density } from "./grid-density";
+import * as gridDensity from "./grid-density";
+import { DENSITIES, GRID_SURFACE_DENSITIES, type Density } from "./grid-density";
 
 jest.mock("@/theme/haptics", () => ({ triggerHaptic: jest.fn() }));
 const mockTriggerHaptic = triggerHaptic as jest.Mock;
 
-let tripCounter = 0;
-let tripId = "";
-
 beforeEach(() => {
   jest.clearAllMocks();
-  // A fresh trip per test: the MMKV jest mock is per-process-module, so a
-  // unique key is the isolation (nothing here depends on cross-test state).
-  tripCounter += 1;
-  tripId = `density-segment-trip-${tripCounter}`;
 });
 
-/** The real wiring T-7.16 will do: persisted value in, controlled state out. */
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+/** The wiring T-7.16 does: controlled state in, the chosen density out. */
 function Wired({
-  initial = readGridDensity(tripId),
+  initial = "day",
   onChange,
   options,
 }: {
@@ -48,7 +49,6 @@ function Wired({
   const [value, setValue] = useState<Density>(initial);
   return (
     <DensitySegment
-      tripId={tripId}
       value={value}
       options={options}
       onChange={(next) => {
@@ -62,20 +62,22 @@ function Wired({
 const tabLabels = () => screen.getAllByRole("tab").map((tab) => tab.props.accessibilityLabel);
 
 describe("DensitySegment — options", () => {
-  it("offers the three GridSurface densities by default — Day · 3-day · Trip-span, no Month", async () => {
+  it("offers all four R-itin-33 options in spec order by default — Month included", async () => {
     await renderWithTheme(<Wired />);
     expect(screen.getByTestId("itinerary-density-segment")).toBeOnTheScreen();
-    expect(tabLabels()).toEqual(["Day", "3-day", "Trip-span"]);
-    for (const key of ["day", "3-day", "trip-span"]) {
+    expect(tabLabels()).toEqual(["Day", "3-day", "Month", "Trip-span"]);
+    for (const key of DENSITIES) {
       expect(screen.getByTestId(`itinerary-density-segment-${key}`)).toBeOnTheScreen();
     }
-    expect(screen.queryByTestId("itinerary-density-segment-month")).toBeNull();
   });
 
-  it("offers all four R-itin-33 options in spec order when the screen passes DENSITIES", async () => {
-    await renderWithTheme(<Wired options={DENSITIES} />);
-    expect(tabLabels()).toEqual(["Day", "3-day", "Month", "Trip-span"]);
-    expect(screen.getByTestId("itinerary-density-segment-month")).toBeOnTheScreen();
+  it("offers only the subset it is given, in the order given", async () => {
+    await renderWithTheme(<Wired options={GRID_SURFACE_DENSITIES} />);
+    expect(tabLabels()).toEqual(["Day", "3-day", "Trip-span"]);
+    expect(screen.queryByTestId("itinerary-density-segment-month")).toBeNull();
+    await screen.unmount();
+    await renderWithTheme(<Wired options={["trip-span", "day"]} />);
+    expect(tabLabels()).toEqual(["Trip-span", "Day"]);
   });
 
   it("selects Day first on a fresh trip (R-itin-33 default)", async () => {
@@ -86,84 +88,44 @@ describe("DensitySegment — options", () => {
   });
 });
 
-describe("DensitySegment — selection calls back and persists (R-itin-33)", () => {
-  it.each([
-    ["3-day", "3-day"],
-    ["trip-span", "trip-span"],
-  ] as const)(
-    "choosing %s calls back with it and writes it to the trip's key",
-    async (key, expected) => {
+describe("DensitySegment — selection calls back, and only calls back (R-itin-33)", () => {
+  it.each(["3-day", "trip-span", "month"] as const)(
+    "choosing %s calls back once with exactly that density",
+    async (key) => {
       const onChange = jest.fn();
       await renderWithTheme(<Wired onChange={onChange} />);
-      expect(readGridDensity(tripId)).toBe("day"); // nothing persisted yet
       await fireEvent.press(screen.getByTestId(`itinerary-density-segment-${key}`));
       expect(onChange).toHaveBeenCalledTimes(1);
-      expect(onChange).toHaveBeenCalledWith(expected);
-      expect(readGridDensity(tripId)).toBe(expected);
+      expect(onChange).toHaveBeenCalledWith(key);
     },
   );
 
-  it("choosing Month (when offered) calls back and persists it too — T-7.14/16's path", async () => {
+  it("can go back to Day — Day is a real selection, not just the unset state", async () => {
     const onChange = jest.fn();
-    await renderWithTheme(<Wired options={DENSITIES} onChange={onChange} />);
-    await fireEvent.press(screen.getByTestId("itinerary-density-segment-month"));
-    expect(onChange).toHaveBeenCalledWith("month");
-    expect(readGridDensity(tripId)).toBe("month");
-  });
-
-  it("can go back to Day — Day is a real selection that overwrites a stored non-default", async () => {
-    // A default read is also "day", so the write is only provable by
-    // overwriting a stored NON-default value.
-    storeGridDensity(tripId, "trip-span");
-    const onChange = jest.fn();
-    await renderWithTheme(<Wired onChange={onChange} />);
-    expect(readGridDensity(tripId)).toBe("trip-span");
+    await renderWithTheme(<Wired initial="trip-span" onChange={onChange} />);
     await fireEvent.press(screen.getByTestId("itinerary-density-segment-day"));
     expect(onChange).toHaveBeenCalledWith("day");
-    expect(readGridDensity(tripId)).toBe("day");
     expect(screen.getByRole("tab", { name: "Day", selected: true })).toBeOnTheScreen();
   });
 
-  it("persists BEFORE it calls back — a handler that re-reads storage already sees the choice", async () => {
-    const seenInHandler: Density[] = [];
-    await renderWithTheme(<Wired onChange={() => seenInHandler.push(readGridDensity(tripId))} />);
-    await fireEvent.press(screen.getByTestId("itinerary-density-segment-3-day"));
-    expect(seenInHandler).toEqual(["3-day"]);
-  });
-
-  it("re-tapping the selected segment calls nothing and writes nothing", async () => {
-    // Seed a non-default value while the control shows Day, so a stray write
-    // of "day" would be visible (a default read alone could not tell).
-    storeGridDensity(tripId, "trip-span");
+  it("re-tapping the selected segment calls nothing — no callback, no haptic", async () => {
     const onChange = jest.fn();
-    await renderWithTheme(<DensitySegment tripId={tripId} value="day" onChange={onChange} />);
+    await renderWithTheme(<DensitySegment value="day" onChange={onChange} />);
     await fireEvent.press(screen.getByTestId("itinerary-density-segment-day"));
     expect(onChange).not.toHaveBeenCalled();
-    expect(readGridDensity(tripId)).toBe("trip-span");
     expect(mockTriggerHaptic).not.toHaveBeenCalled();
   });
 
-  it("is per trip — choosing on one trip leaves another trip's density alone", async () => {
-    const otherTrip = `${tripId}-other`;
-    storeGridDensity(otherTrip, "trip-span");
-    await renderWithTheme(<Wired />);
-    await fireEvent.press(screen.getByTestId("itinerary-density-segment-3-day"));
-    expect(readGridDensity(tripId)).toBe("3-day");
-    expect(readGridDensity(otherTrip)).toBe("trip-span");
-  });
-
-  it("a choice survives a remount — the next open restores it (R-itin-33)", async () => {
-    await renderWithTheme(<Wired />);
-    await fireEvent.press(screen.getByTestId("itinerary-density-segment-trip-span"));
-    await screen.unmount();
-    // A fresh mount reads the persisted value, exactly as the screen will.
-    await renderWithTheme(<Wired />);
-    expect(
-      screen.getByTestId("itinerary-density-segment-trip-span").props.accessibilityState,
-    ).toEqual(expect.objectContaining({ selected: true }));
-    expect(screen.getByTestId("itinerary-density-segment-day").props.accessibilityState).toEqual(
-      expect.objectContaining({ selected: false }),
-    );
+  it("NEVER stores — persistence is the screen's, so a programmatic set can't skip it (T-7.16 contract)", async () => {
+    // Falsification: a `storeGridDensity(...)` call inside the control (the
+    // round-0 design) makes this red. The spy is on the module's export, which
+    // is the exact binding the component would call.
+    const store = jest.spyOn(gridDensity, "storeGridDensity");
+    await renderWithTheme(<Wired options={DENSITIES} />);
+    for (const label of ["3-day", "Month", "Trip-span", "Day"]) {
+      await fireEvent.press(screen.getByRole("tab", { name: label }));
+    }
+    expect(store).not.toHaveBeenCalled();
   });
 });
 
@@ -171,7 +133,7 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
   it("exposes a tablist of tabs, each named by its label", async () => {
     await renderWithTheme(<Wired />);
     expect(screen.getByTestId("itinerary-density-segment").props.accessibilityRole).toBe("tablist");
-    for (const label of ["Day", "3-day", "Trip-span"]) {
+    for (const label of ["Day", "3-day", "Month", "Trip-span"]) {
       expect(screen.getByRole("tab", { name: label })).toBeOnTheScreen();
     }
   });
@@ -181,6 +143,7 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
     expect(screen.getAllByRole("tab", { selected: true })).toHaveLength(1);
     expect(screen.getByRole("tab", { name: "3-day", selected: true })).toBeOnTheScreen();
     expect(screen.getByRole("tab", { name: "Day", selected: false })).toBeOnTheScreen();
+    expect(screen.getByRole("tab", { name: "Month", selected: false })).toBeOnTheScreen();
     expect(screen.getByRole("tab", { name: "Trip-span", selected: false })).toBeOnTheScreen();
   });
 
@@ -195,7 +158,7 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
 
   it("every option is reachable by role+name and activatable — the screen-reader path", async () => {
     const onChange = jest.fn();
-    await renderWithTheme(<Wired options={DENSITIES} onChange={onChange} />);
+    await renderWithTheme(<Wired onChange={onChange} />);
     expect(screen.getAllByRole("tab")).toHaveLength(4);
     for (const label of ["3-day", "Month", "Trip-span"]) {
       await fireEvent.press(screen.getByRole("tab", { name: label }));
@@ -204,7 +167,7 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
   });
 
   it("each tab is an accessible, focusable element — keyboard / switch-control reachable", async () => {
-    await renderWithTheme(<Wired options={DENSITIES} />);
+    await renderWithTheme(<Wired />);
     for (const tab of screen.getAllByRole("tab")) {
       // `accessible === false` would drop it from the VoiceOver tree;
       // `focusable === false` would drop it from hardware-keyboard traversal.
@@ -217,7 +180,7 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
   });
 
   it("gives every option a distinct testID and accessible name (no two tabs collide)", async () => {
-    await renderWithTheme(<Wired options={DENSITIES} />);
+    await renderWithTheme(<Wired />);
     const tabs = screen.getAllByRole("tab");
     expect(new Set(tabs.map((tab) => tab.props.testID)).size).toBe(4);
     expect(new Set(tabs.map((tab) => tab.props.accessibilityLabel)).size).toBe(4);
@@ -225,10 +188,17 @@ describe("DensitySegment — a11y: selected state announced, every option reacha
 });
 
 describe("DensitySegment — adversarial", () => {
-  it("a persisted Month with the default three options selects nothing and does not crash", async () => {
-    // T-7.16 misconfiguration guard: Month restored from storage but the
-    // control wasn't given DENSITIES. No tab claims the selection.
+  it("a restored Month selects the Month tab by default — the screen can't forget `options` and lose it", async () => {
     await renderWithTheme(<Wired initial="month" />);
+    expect(screen.getAllByRole("tab")).toHaveLength(4);
+    expect(screen.getByRole("tab", { name: "Month", selected: true })).toBeOnTheScreen();
+    expect(screen.getAllByRole("tab", { selected: true })).toHaveLength(1);
+  });
+
+  it("a value outside a restricted option subset selects nothing and does not crash", async () => {
+    // A screen that restricts `options` (no Month) but restored Month from
+    // storage: no tab claims the selection, and nothing throws.
+    await renderWithTheme(<Wired initial="month" options={GRID_SURFACE_DENSITIES} />);
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     expect(screen.queryAllByRole("tab", { selected: true })).toHaveLength(0);
   });
