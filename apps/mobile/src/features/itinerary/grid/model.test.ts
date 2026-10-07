@@ -19,10 +19,13 @@ import {
   TRIP_START,
 } from "@/test-utils/itinerary-fixtures";
 
+import { COLUMN_FRACTION, GUTTER_WIDTH, MIN_COLUMN_WIDTH, THREE_DAY_COLUMNS } from "./constants";
 import {
   buildGridDays,
   CHECKPOINT_BLOCK_MINUTES,
+  clampLandingIndex,
   DEFAULT_BLOCK_MINUTES,
+  gridColumnLayout,
   initialDayIndex,
   MINUTES_PER_DAY,
   parseISOTime,
@@ -343,5 +346,176 @@ describe("buildGridDays", () => {
     const { days } = buildGridDays(TRIP, [orphan], new Map());
     expect(days[0]?.blocks[0]?.title).toBe("Booking");
     expect(days[0]?.blocks[0]?.status).toBeNull();
+  });
+});
+
+/**
+ * Density → day-column geometry (T-7.13, R-itin-33/34). Pure. "Pager" below is
+ * the window minus the hour gutter — the width the day columns share.
+ *
+ * What change makes these red: collapsing the `density` branching back to the
+ * single `COLUMN_FRACTION` formula (every non-Day width/visible-count pin),
+ * dropping the `MIN_COLUMN_WIDTH` floor (the 8+/60-day pins), or flipping
+ * `snap` (the Trip-span continuous-scroll pin).
+ */
+describe("gridColumnLayout (R-itin-34 density → column geometry)", () => {
+  // iPhone SE-class / iPhone 13-class / Pro Max-class widths + the jest default.
+  const WINDOWS = [320, 360, 375, 390, 430, 750] as const;
+  const pagerOf = (windowWidth: number) => windowWidth - GUTTER_WIDTH;
+
+  describe("day (the default — regression pin)", () => {
+    it.each(WINDOWS)(
+      "is byte-identical to the pre-density formula at %ipt (one column + peek)",
+      (w) => {
+        const layout = gridColumnLayout("day", w, 3);
+        expect(layout.columnWidth).toBe(Math.max(1, Math.round(pagerOf(w) * COLUMN_FRACTION)));
+        expect(layout.visibleColumns).toBe(1);
+        expect(layout.snap).toBe(true);
+      },
+    );
+
+    it("ignores the trip length — a 1-day and a 60-day trip get the same Day column", () => {
+      expect(gridColumnLayout("day", 375, 1)).toEqual(gridColumnLayout("day", 375, 60));
+    });
+
+    it("leaves a peek of the neighbor (column narrower than the pager)", () => {
+      const layout = gridColumnLayout("day", 375, 5);
+      expect(layout.columnWidth).toBe(301); // round(327 * 0.92)
+      expect(layout.columnWidth).toBeLessThan(pagerOf(375));
+    });
+  });
+
+  describe("3-day (three columns, no snap-peek)", () => {
+    it.each(WINDOWS)("splits the pager three ways at %ipt — and never overflows it", (w) => {
+      const layout = gridColumnLayout("3-day", w, 10);
+      expect(layout.columnWidth).toBe(Math.floor(pagerOf(w) / THREE_DAY_COLUMNS));
+      expect(layout.visibleColumns).toBe(3);
+      expect(layout.snap).toBe(true);
+      // No peek: three columns fit the pager exactly (to the rounding pixel).
+      expect(layout.columnWidth * 3).toBeLessThanOrEqual(pagerOf(w));
+      expect(layout.columnWidth * 3).toBeGreaterThan(pagerOf(w) - 3);
+    });
+
+    it("is narrower than Day (the whole point) and keeps no peek", () => {
+      expect(gridColumnLayout("3-day", 375, 10).columnWidth).toBe(109);
+      expect(gridColumnLayout("3-day", 375, 10).columnWidth).toBeLessThan(
+        gridColumnLayout("day", 375, 10).columnWidth,
+      );
+    });
+
+    it("is trip-length independent — a 1-day trip still gets a third-width column", () => {
+      expect(gridColumnLayout("3-day", 375, 1).columnWidth).toBe(109);
+      expect(gridColumnLayout("3-day", 375, 1).visibleColumns).toBe(3);
+    });
+  });
+
+  describe("trip-span (every day at once, then continuous scroll)", () => {
+    it("a 1-day trip is ONE full-width column (boundary)", () => {
+      const layout = gridColumnLayout("trip-span", 375, 1);
+      expect(layout.columnWidth).toBe(pagerOf(375));
+      expect(layout.visibleColumns).toBe(1);
+      expect(layout.snap).toBe(false);
+    });
+
+    it.each([
+      [2, 163],
+      [3, 109],
+      [5, 65],
+      [7, 46],
+    ])("a %i-day trip fits whole at %ipt per column", (days, width) => {
+      const layout = gridColumnLayout("trip-span", 375, days);
+      expect(layout.columnWidth).toBe(width);
+      expect(layout.visibleColumns).toBe(days);
+      // Every day on screen at once — nothing to scroll to.
+      expect(layout.columnWidth * days).toBeLessThanOrEqual(pagerOf(375));
+    });
+
+    it("never narrows past the floor — an 8-day trip scrolls instead (boundary)", () => {
+      const layout = gridColumnLayout("trip-span", 375, 8);
+      expect(layout.columnWidth).toBe(MIN_COLUMN_WIDTH);
+      expect(layout.visibleColumns).toBe(7); // floor(327 / 44) — the 8th is off-screen
+      expect(layout.visibleColumns).toBeLessThan(8);
+    });
+
+    it("a 60-day trip stays at the floor width — bounded, never sub-floor (no trip-length cap)", () => {
+      const layout = gridColumnLayout("trip-span", 375, 60);
+      expect(layout.columnWidth).toBe(MIN_COLUMN_WIDTH);
+      expect(layout.visibleColumns).toBe(7);
+      expect(layout.snap).toBe(false); // continuous scroll, no page-snap
+    });
+
+    it("a 3650-day trip is the same bounded floor — the width never depends on length past the floor", () => {
+      expect(gridColumnLayout("trip-span", 375, 3650)).toEqual(
+        gridColumnLayout("trip-span", 375, 60),
+      );
+    });
+
+    it("a week fits a 360pt phone (the floor was chosen so)", () => {
+      const layout = gridColumnLayout("trip-span", 360, 7);
+      expect(layout.columnWidth).toBeGreaterThanOrEqual(MIN_COLUMN_WIDTH);
+      expect(layout.visibleColumns).toBe(7);
+    });
+
+    it("never page-snaps in ANY trip length (continuous scroll, R-itin-34)", () => {
+      for (const days of [1, 2, 7, 8, 60]) {
+        expect(gridColumnLayout("trip-span", 390, days).snap).toBe(false);
+      }
+    });
+
+    it("treats a zero-day model as one column — no divide-by-zero, no NaN width", () => {
+      const layout = gridColumnLayout("trip-span", 375, 0);
+      expect(layout.columnWidth).toBe(pagerOf(375));
+      expect(Number.isFinite(layout.columnWidth)).toBe(true);
+    });
+  });
+
+  describe("adversarial window widths", () => {
+    it.each(["day", "3-day", "trip-span"] as const)(
+      "%s: a window narrower than the gutter still yields a finite positive width",
+      (density) => {
+        for (const w of [0, 1, GUTTER_WIDTH - 1, GUTTER_WIDTH]) {
+          const layout = gridColumnLayout(density, w, 5);
+          expect(Number.isFinite(layout.columnWidth)).toBe(true);
+          expect(layout.columnWidth).toBeGreaterThanOrEqual(1);
+          expect(layout.visibleColumns).toBeGreaterThanOrEqual(1);
+        }
+      },
+    );
+  });
+
+  it("the densities give three DIFFERENT geometries for the same trip (the branching is real)", () => {
+    const day = gridColumnLayout("day", 375, 7);
+    const three = gridColumnLayout("3-day", 375, 7);
+    const span = gridColumnLayout("trip-span", 375, 7);
+    expect(new Set([day.columnWidth, three.columnWidth, span.columnWidth]).size).toBe(3);
+    expect([day.visibleColumns, three.visibleColumns, span.visibleColumns]).toEqual([1, 3, 7]);
+  });
+});
+
+describe("clampLandingIndex (R-itin-17 landing, per density)", () => {
+  it("Day lands on the R-itin-17 index untouched — even the last day", () => {
+    expect(clampLandingIndex("day", 0, 10, 1)).toBe(0);
+    expect(clampLandingIndex("day", 9, 10, 1)).toBe(9);
+  });
+
+  it("3-day never starts past the last full window (today = last day shows days N-2..N)", () => {
+    expect(clampLandingIndex("3-day", 4, 10, 3)).toBe(4);
+    expect(clampLandingIndex("3-day", 7, 10, 3)).toBe(7);
+    expect(clampLandingIndex("3-day", 8, 10, 3)).toBe(7);
+    expect(clampLandingIndex("3-day", 9, 10, 3)).toBe(7);
+  });
+
+  it("3-day on a trip shorter than the window lands on 0 (no negative index)", () => {
+    expect(clampLandingIndex("3-day", 1, 2, 3)).toBe(0);
+    expect(clampLandingIndex("3-day", 0, 1, 3)).toBe(0);
+  });
+
+  it("trip-span lands on 0 when every day fits (nothing to scroll)", () => {
+    expect(clampLandingIndex("trip-span", 6, 7, 7)).toBe(0);
+  });
+
+  it("trip-span on an overflowing trip lands on today but never past the last full window", () => {
+    expect(clampLandingIndex("trip-span", 30, 60, 7)).toBe(30);
+    expect(clampLandingIndex("trip-span", 59, 60, 7)).toBe(53);
   });
 });

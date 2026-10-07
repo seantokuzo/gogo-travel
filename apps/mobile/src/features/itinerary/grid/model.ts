@@ -35,6 +35,8 @@ import type { Booking, BookingStatus, ISODate, ItineraryItem } from "@gogo/share
 import type { IconName } from "@/components";
 
 import { buildDaySet, projectItem } from "../model";
+import { COLUMN_FRACTION, GUTTER_WIDTH, MIN_COLUMN_WIDTH, THREE_DAY_COLUMNS } from "./constants";
+import type { GridSurfaceDensity } from "./grid-density";
 import { assignOverlapColumns, spansDirectlyOverlap, type ColumnAssignment } from "./layout";
 
 export const MINUTES_PER_DAY = 24 * 60;
@@ -73,6 +75,104 @@ export function slotPrefillTime(hour: number, fraction: number): string {
 export function initialDayIndex(dates: readonly ISODate[], today: ISODate): number {
   const index = dates.indexOf(today);
   return index >= 0 ? index : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Density → day-column geometry (T-7.13, R-itin-33/34)
+// ---------------------------------------------------------------------------
+
+export interface GridColumnLayout {
+  /** Width of ONE day column, pt — header strip and pager share it. */
+  columnWidth: number;
+  /** Whole day columns on screen at once (a Day-mode peek is not counted). */
+  visibleColumns: number;
+  /**
+   * True ⇒ the pager snaps column to column (Day, 3-day); false ⇒ continuous
+   * horizontal scroll with no page-snap (Trip-span, R-itin-34).
+   */
+  snap: boolean;
+}
+
+/**
+ * R-itin-34: the ONLY thing density changes is the simultaneous day-column
+ * count/width — the hour timeline, block layout, all-day lane and gap-tap are
+ * density-blind. `windowWidth` is the screen width; the hour gutter is
+ * subtracted here so the pager's share is the single source of truth.
+ *
+ * - `day`:       `COLUMN_FRACTION` of the pager (one full day + neighbor peek) —
+ *                byte-identical to the pre-density formula.
+ * - `3-day`:     the pager split THREE_DAY_COLUMNS ways, floored so three columns
+ *                never overflow it by a rounding pixel; no peek.
+ * - `trip-span`: the pager split across every trip day, down to
+ *                `MIN_COLUMN_WIDTH`; past that floor the trip scrolls instead.
+ *                A 1-day trip is one full-width column.
+ *
+ * `dayCount` is the rendered column count (`GridModel.days.length`, so sparse
+ * out-of-range item days count); 0 is treated as 1 — never a divide-by-zero.
+ */
+export function gridColumnLayout(
+  density: GridSurfaceDensity,
+  windowWidth: number,
+  dayCount: number,
+): GridColumnLayout {
+  const pager = windowWidth - GUTTER_WIDTH;
+  switch (density) {
+    case "day":
+      return {
+        columnWidth: Math.max(1, Math.round(pager * COLUMN_FRACTION)),
+        visibleColumns: 1,
+        snap: true,
+      };
+    case "3-day":
+      return {
+        columnWidth: Math.max(1, Math.floor(pager / THREE_DAY_COLUMNS)),
+        visibleColumns: THREE_DAY_COLUMNS,
+        snap: true,
+      };
+    case "trip-span": {
+      const days = Math.max(1, dayCount);
+      const columnWidth = Math.max(MIN_COLUMN_WIDTH, Math.floor(pager / days));
+      return {
+        columnWidth,
+        visibleColumns: Math.min(days, Math.max(1, Math.floor(pager / columnWidth))),
+        snap: false,
+      };
+    }
+  }
+}
+
+/**
+ * R-itin-17 landing, per density. `index` is the R-itin-17 pick (today's
+ * column, else the first) already clamped into `[0, dayCount)`. Day lands on
+ * it as-is; the multi-column densities clamp it so the viewport never
+ * starts past `dayCount - visibleColumns` and shows blank space where the
+ * trip has already ended (today = last day of a 3-day window lands on days
+ * N-2..N, with today still on screen).
+ *
+ * NATIVE-CLAMP DEPENDENCY (Trip-span past the floor): the clamp counts WHOLE
+ * columns, so when the pager isn't an exact multiple of the column width it
+ * overshoots the true max scroll offset by the partial column — e.g. 390pt
+ * window, 60 days: 53 * 44 = 2332 vs the real max 60 * 44 - 342 = 2298. Only
+ * the platform ScrollView's own clamp of a programmatic scroll to its content
+ * bounds hides that (iOS Fabric, `RCTScrollViewComponentView.mm` `scrollTo:`
+ * — checked at RN 0.86.2, honored unless `scrollToOverflowEnabled`); with it
+ * the viewport pins to the content end and the leftmost column is a partial
+ * one (34pt of the 44pt column 52 here). This is deliberately NOT clamped
+ * again in JS: 3-day overshoots by at most its 2pt rounding remainder, Day has
+ * ALWAYS relied on the same native clamp (landing on the last day overshoots
+ * by the 8% peek), and a partial column is cosmetic — a trip that doesn't fit
+ * has to cut a column somewhere. If a platform ever stops clamping, the
+ * symptom is blank space past the last day on first paint, and the fix is an
+ * exact `contentWidth - pager` offset clamp here.
+ */
+export function clampLandingIndex(
+  density: GridSurfaceDensity,
+  index: number,
+  dayCount: number,
+  visibleColumns: number,
+): number {
+  if (density === "day") return index;
+  return Math.min(index, Math.max(0, dayCount - visibleColumns));
 }
 
 // ---------------------------------------------------------------------------
