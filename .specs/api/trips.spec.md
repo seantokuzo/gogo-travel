@@ -763,8 +763,9 @@ Upstream resolutions this section depends on (canonical homes):
   deletes user rows).
 - Trip-level visibility (dropped from v1 — §3.6, resolved Gate 2).
 - A client surface for the owner's manual status override ("archive",
-  §3.2 / §3.4) — API-only in v1 (client trips spec R-tripui-27, Q2-288,
-  ruled 2026-09-19); the endpoint and shared wire field stay as specced.
+  §3.2 / §3.4) — none as shipped (Q2-288 — as shipped; Sean pick pending:
+  surface it vs leave API-only — see the open marker at client trips spec
+  R-tripui-27); the endpoint and shared wire field stay as specced.
 
 ---
 

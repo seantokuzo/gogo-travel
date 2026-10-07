@@ -195,14 +195,19 @@
   gains coordinates via a map-drop — there is no `trips.destination_
 place_id` link (part-2 review finding, parked); see the P-8 follow-up
   QUEUE-row draft in this task's PR body.
-- **R-tripui-27 (status override is API-only in v1 — Q2-288, ruled
-  2026-09-19):** THE SYSTEM SHALL NOT render a manual status-override
-  ("archive") control on any trip screen in v1. The owner capability exists
-  API-side (`PATCH /trips/:tripId` `status`, API spec §3.2 "Manual status
-  override", §3.4, R-trips-7; `TripUpdate.status` is on the shared wire), but
-  trip settings carries no archive row (§2.5 table) until a surface is
-  specced — choosing where it lives is a scope change, not an
-  implementation detail.
+- **R-tripui-27 (status-override client surface — Q2-288 — as shipped; Sean
+  pick pending: (a) surface an owner-only archive/status-override control on
+  the client / (b) leave it API-only):** AS SHIPPED, THE SYSTEM renders NO
+  manual status-override ("archive") control on any trip screen. The owner
+  capability exists API-side (`PATCH /trips/:tripId` `status`, API spec §3.2
+  "Manual status override", §3.4, R-trips-7; `TripUpdate.status` is on the
+  shared wire), but trip settings carries no archive row (§2.5 table).
+  **[NEEDS CLARIFICATION: Q2-288 — surface an archive/status-override
+  control on the client (and where), or leave it API-only?]** Until Sean
+  picks, builders SHALL NOT add a surface: choosing where it lives is a
+  scope change, not an implementation detail. The round-2 Rec for this item
+  was "Choose: …", so the batch's keep-as-shipped default does not apply and
+  this is NOT a ruling.
 - **R-tripui-28 (settings interaction model — Q2-289, ruled 2026-09-19):**
   WHEN trip settings renders THE SYSTEM SHALL present the trip-details form
   INLINE as a card at the top of the screen (name, destination, dates, Save —
@@ -355,7 +360,7 @@ here (it lives on trip settings — R-tripui-26, Q2-286).
 | Theme                                   | owner, editor  | Sheet picker (tokens spec themes; R-tripui-28); optimistic apply                                                                  |
 | Base currency                           | owner          | Sheet (R-tripui-28); locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
 | Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                              |
-| Status override ("archive")             | —              | NOT RENDERED — API-only in v1 (R-tripui-27, Q2-288; owner capability per API §3.2)                                                |
+| Status override ("archive")             | —              | NOT RENDERED as shipped — API-only; pick pending (R-tripui-27, Q2-288)                                                            |
 | Offline pack                            | all            | Status pill + download/refresh (offline spec owns content)                                                                        |
 | Members                                 | all            | Shortcut → members screen                                                                                                         |
 | Leave trip                              | editor, viewer | ConfirmDialog → `DELETE /trips/:tripId/members/:me` → trip list                                                                   |
@@ -448,8 +453,9 @@ rule; ConfirmDialog children derive `-confirm`/`-cancel` per rule 4).
 - Manual invite-code entry UI (not v1; links only).
 - Header overflow menu on the trip list (R-tripui-25 — the DS has none; not
   scheduled).
-- A manual status-override ("archive") surface (R-tripui-27 — API-only in
-  v1) and a leave-trip entry on the members screen (R-tripui-26).
+- A manual status-override ("archive") surface (R-tripui-27 — as shipped
+  API-only; Q2-288 Sean pick pending) and a leave-trip entry on the members
+  screen (R-tripui-26).
 
 ---
 
