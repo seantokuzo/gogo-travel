@@ -263,20 +263,15 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   than attempt a download the region grid cannot compute — see R-map-26.
   **AMENDED (Q2-186, ruled 2026-10-06, Sean) — activation mount:** THE
   SYSTEM SHALL mount the offline-pack controller (`useOfflinePackController`)
-  at the trip-scoped root layout (`[tripId]/_layout`), so that WHEN a trip's
-  effective status flips to `active` the wifi-gated auto-download triggers
-  regardless of which of the trip's surfaces is mounted — map tab, trip
-  settings, or any other. The map status pill and the management sheet are
-  presentation consumers of the pack state; neither owns the trigger, and a
-  download starts at most once per activation however many surfaces read
-  pack state. The stand-down rules (the coordinate-less and
-  unusable-destination stand-downs below, R-map-21) and the
-  arms-only-from-`none` rule are unchanged — mounting at the root changes
-  WHERE the flip is observed, never WHEN a download is allowed. The trip
-  shell's lifetime is the observation window: a flip while no surface of
-  that trip is mounted is acted on the moment the shell next mounts. This
-  closes the one-visit-late gap (a trip that flipped `active` before the map
-  tab or settings mounted used to download only on the NEXT visit).
+  at the trip-scoped root layout, so that WHEN a trip's effective status
+  flips to `active` the wifi-gated auto-download triggers regardless of which
+  surface is mounted — map tab, trip settings, or any other. The stand-down
+  rules (the coordinate-less and unusable-destination stand-downs below,
+  R-map-21) and the arms-only-from-`none` rule are unchanged. Consequence
+  of the root mount: the flip is observed for as long as that layout is
+  mounted, so no particular surface has to be showing — which closes the
+  one-visit-late gap (a trip that flipped `active` before the map tab or
+  settings mounted used to download only on the NEXT visit).
   **AMENDED (round-2, T-8.5 — each ruled 2026-09-19):**
   - **Arms only from `none` (Q2-272):** auto-download starts only WHEN the
     pack state is `none`. A `stale` pack (style or region drift) requires a
