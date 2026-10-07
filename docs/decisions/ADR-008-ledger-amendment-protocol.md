@@ -1,6 +1,6 @@
 # ADR-008: Feature-ledger amendment protocol — append a superseding note, never edit the step
 
-**Status:** Accepted in direction (Sean, 2026-09-19 — round-2 spec pass, Q2-296, approve-all; the Rec read "needs an actual product call, not a rubber-stamp"). The concrete `amendments` key shape below is the write-back agent's design within that direction, **pending Sean's eyeball**; written back 2026-10-06.
+**Status:** Proposed — direction approved by Sean's round-2 approval (2026-09-19, Q2-296, approve-all; the Rec read "needs an actual product call, not a rubber-stamp"); the concrete `amendments` key shape below is the write-back agent's design within that direction, **pending Sean's eyeball**. Moves to Accepted when Sean confirms the shape. Written back 2026-10-06.
 **Date:** 2026-09-19
 **Supersedes:** none
 **Superseded by:** none
@@ -56,8 +56,7 @@ A ledger verification step that is unsatisfiable or incorrect as written is
    CHECKs) and verifying the claim against them. Reviewers judge non-weakening;
    **each amendment needs Sean's explicit ruling** — this ADR approves the
    _protocol_ only. F-001's replacement wording needs Sean's sign-off in B-1's
-   PR before `passes` flips (a reviewer or judge `human-decides` routes it
-   there). Every later amendment needs its own ruling.
+   PR before `passes` flips. Every later amendment needs its own ruling.
 5. **Mechanics preserve the audit trail.** Amendments are applied by **text
    insertion, not a JSON re-parse/re-emit** (Law #8's escape-style note). Insert
    the `amendments` key **between `verification` and `passes`** so the diff is

@@ -33,7 +33,7 @@ answered here.
 | [ADR-005](ADR-005-free-v1-entitlement-seams.md)  | Free v1 + entitlement seams; offline/collab/splitting free forever      | Accepted |
 | [ADR-006](ADR-006-testing-strategy-overhaul.md)  | Testing strategy overhaul — four layers above unit tests                | Accepted |
 | [ADR-007](ADR-007-maestro-e2e-lane.md)           | Maestro is the E2E lane — local-first, Release simulator build          | Accepted |
-| [ADR-008](ADR-008-ledger-amendment-protocol.md)  | Ledger amendment protocol — append a superseding note, not an edit      | Accepted |
+| [ADR-008](ADR-008-ledger-amendment-protocol.md)  | Ledger amendment protocol — append a superseding note, not an edit      | Proposed |
 
 ## See also
 
