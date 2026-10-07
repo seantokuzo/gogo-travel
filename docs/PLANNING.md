@@ -621,7 +621,8 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `'user'`, diffing zone AND source so re-picking the zone already shown
     still ships `'user'` — and `destination_tz: null` for "Automatic"; on a
     pending real→null destination move the field prefills `deviceZoneHint()`
-    rather than the old derived zone). **T-7.21 deliberately reverses PR
+    rather than the old derived zone — unless `Trip.destination_tz_source` is
+    `'user'`, which survives the move and stays shown). **T-7.21 deliberately reverses PR
     #99's pin in `trip-settings.test.tsx` ("the source is NEVER 'user' from
     the settings form: a zone edit without source 'device' emits nothing")**
     — that test goes red by design; rewrite it in the same commit, it is not
@@ -786,16 +787,19 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     settings move from a destination WITH coordinates to a coordinate-less
     one prefills the field with `deviceZoneHint()` (not the old derived
     zone): untouched, the PATCH carries `destination_tz` + `'device'`; an
-    explicit pick carries `'user'`; a null→null move sends no hint · re-picking
-    the zone already shown while `destination_tz_source` is `'device'` or
-    `'booking'` still PATCHes `{ destination_tz }` as `'user'`, and while it is
-    already `'user'` sends nothing · `deviceZoneHint()` → `undefined`
+    explicit pick carries `'user'`; a null→null move sends no hint; with a
+    stored `'user'` zone the same move keeps that zone shown and sends no zone
+    keys (the server would ignore a hint over a user zone anyway) · re-picking
+    the zone already shown while `destination_tz_source` is `'device'`,
+    `'booking'` or `'default'` (re-picking UTC) still PATCHes `{ destination_tz }`
+    as `'user'`, and while it is already `'user'` sends nothing · `deviceZoneHint()` → `undefined`
     renders an empty field with Save enabled and no zone keys sent (NC-7
     (a) rec) · the settings suggestions are `deriveTripZones(...)` minus
     the destination · ACT gate prints `0` · mutation-verify (ship `'user'`
     for the untouched prefill → RED; drop the `null` branch → RED; hide the
     field once coordinates exist → RED under (ii); prefill the old derived
-    zone on a real→null move → RED; diff on zone only so a re-pick of the
+    zone on a real→null move → RED; prefill the device hint over a stored user
+    zone on a coords→coordless move → RED; diff on zone only so a re-pick of the
     shown zone sends nothing → RED).
 
 ### P-8 — Maps, saved places & offline tile packs

@@ -224,7 +224,8 @@ place_id` link (part-2 review finding, parked); see the P-8 follow-up
   (R-tripui-24's effective destination), where the save clears the old derived zone: the
   field then prefills with `deviceZoneHint()` instead, which untouched goes out as the
   `'device'` hint (B-30's existing real→null path, kept) and, once the user explicitly picks
-  a zone, as `'user'`. An explicit pick SHALL ride `buildTripPatch` as `destination_tz`
+  a zone, as `'user'` — unless `Trip.destination_tz_source` is `'user'`, which survives the
+  move (§3.3 PATCH) and stays shown. An explicit pick SHALL ride `buildTripPatch` as `destination_tz`
   (source `'user'`, never `'device'`), with or without a destination change; a pick equal to a
   non-`'user'` effective zone still ships `'user'` (the diff compares zone and source, not the
   zone alone). WHILE `Trip.destination_tz_source` is `'user'` or `'device'` (the wire carries
@@ -243,7 +244,7 @@ place_id` link (part-2 review finding, parked); see the P-8 follow-up
   stored, (i) the field hides and the user zone persists unseen (B-30's rank 1 is durable; no
   reset path in the UI) or (ii) the field stays visible as an exception to the line above
   WHILE `destination_tz_source === 'user'`, so "Automatic" can still clear it. Consequence of
-  "Automatic": on a coordinate-less trip with no flight/train bookings, clearing a `'device'`
+  "Automatic": on a coordinate-less trip with no non-cancelled flight/train booking with a usable zone, clearing a `'device'`
   hint resolves to `UTC` (`'default'`, B-30) — (iii) offer "Automatic" only while the source
   is `'user'`, since a device hint is already the lowest-ranked guess. Rec (a) with (ii) —
   device hint when untouched, user when picked, field shown whenever the source is `'user'`,
