@@ -325,9 +325,12 @@
   untouched → set-caps + AI-estimate CTAs; WHEN any money query fails THE
   SYSTEM SHALL render ErrorBanner with retry (R-ds-17). "Budget untouched"
   means no overall cap, no per-category cap, and no AI estimate — it is
-  **spend-agnostic** and still shows when expenses exist; the set-caps
-  action reveals the row editor in place, so nothing is hidden after one
-  tap. (Q2-003, ruled 2026-09-19)
+  **spend-agnostic** and still shows when expenses exist. For editor+ the
+  EmptyState carries a set-caps action that reveals the row editor in
+  place, so nothing is hidden after one tap; a **viewer** (who cannot edit
+  caps — R-cmoney-2) sees the same EmptyState without that action, plus the
+  visible disabled AI-estimate CTA, until an editor sets a cap or an
+  estimate exists. (Q2-003, ruled 2026-09-19)
 - **R-cmoney-30 (testIDs):** WHEN any money screen renders THE SYSTEM SHALL
   carry testIDs on its root and every interactive element per the navigation
   spec §2.7 grammar (mirror of R-nav-22); the money inventory is §2.8 —
