@@ -1311,6 +1311,28 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
   // Concurrency (round-1 server F6)
   // ===========================================================================
 
+  /**
+   * Resolves with the SQL text of the first backend (other than `exceptPid`) seen waiting on a
+   * heavyweight lock in THIS database — a request that has provably reached a row/transaction
+   * lock and is blocked there. Event-driven (polls `pg_stat_activity` every 10 ms, bounded), not a
+   * sleep: the answer is "blocked now", however slow the machine is.
+   */
+  async function waitForLockWaiter(exceptPid: number, timeoutMs = 20_000): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const waiting = await client<{ query: string }[]>`
+        select query from pg_stat_activity
+        where datname = current_database() and wait_event_type = 'Lock' and pid <> ${exceptPid}`;
+      if (waiting[0] !== undefined) return waiting[0].query;
+      if (Date.now() > deadline) {
+        throw new Error(
+          `no backend blocked on a lock within ${timeoutMs} ms — the PATCH never waited`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   it("[concurrency] a PATCH touching the destination takes the trip row FOR UPDATE: it decides 'moved?' against the row AFTER a concurrent committed move, so zone and coordinates stay consistent", async () => {
     clock = new Date("2026-08-01T20:00:00.000Z");
     const owner = await seedUser();
@@ -1320,36 +1342,56 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    let signalLocked!: () => void;
-    const locked = new Promise<void>((resolve) => {
+    let signalLocked!: (pid: number) => void;
+    const locked = new Promise<number>((resolve) => {
       signalLocked = resolve;
     });
-    // T1: takes the row lock and moves the destination to Los Angeles (committed on release).
+    // T1: takes the row lock and moves the destination to Los Angeles; it commits only when the
+    // test releases the gate (`held`), however long the PATCH takes to arrive.
     const t1 = client.begin(async (tx) => {
+      const [self] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
       await tx`select id from trips where id = ${trip.id} for update`;
       await tx`update trips set destination_lat = ${String(LOS_ANGELES.lat)},
         destination_lng = ${String(LOS_ANGELES.lng)}, destination_tz = 'America/Los_Angeles',
         destination_tz_source = 'derived' where id = ${trip.id}`;
-      signalLocked();
+      signalLocked(self?.pid ?? -1);
       await held;
     });
-    await locked;
+    // If T1 itself fails before taking the lock, surface THAT instead of hanging on the gate.
+    const t1Pid = await Promise.race([
+      locked,
+      t1.then(() => Promise.reject(new Error("T1 finished before the test released it"))),
+    ]);
     // The PATCH resubmits the ORIGINAL Kyoto coordinates. Against a STALE snapshot those equal
     // the row's coordinates -> "not moved" -> zone untouched (Los Angeles) beside Kyoto
     // coordinates. Under the lock it re-reads after T1 commits -> LA -> Kyoto is a move -> Tokyo.
-    const patching = patchTrip(trip.id, owner.token, {
-      destination_lat: KYOTO.lat,
-      destination_lng: KYOTO.lng,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 400)); // let the PATCH reach its read
-    release();
+    const patching = Promise.resolve(
+      patchTrip(trip.id, owner.token, {
+        destination_lat: KYOTO.lat,
+        destination_lng: KYOTO.lng,
+      }),
+    ); // Hono's request() is `Response | Promise<Response>`
+    void patching.catch(() => undefined); // observed below; keeps a failure path from going unhandled
+    let waiterQuery = "";
+    try {
+      // Hold T1 open until the PATCH is OBSERVED blocked on a lock (no fixed sleep: under load a
+      // timer can fire before the request is even scheduled, and a PATCH that only reads the row
+      // after T1 commits would pass whatever the lock does — a vacuous pin).
+      waiterQuery = await waitForLockWaiter(t1Pid);
+    } finally {
+      release(); // always: a throw above must not leave T1 holding the row lock
+    }
     await t1;
     const res = await patching;
     expect(res.status).toBe(200);
     const row = await dbTrip(trip.id);
     expect(Number(row.destinationLat)).toBeCloseTo(KYOTO.lat, 4);
     expect([row.destinationTz, row.destinationTzSource]).toEqual(["Asia/Tokyo", "derived"]);
-    // Falsification: drop `touchesDestination` from the FOR UPDATE condition -> the row ends with
+    // The blocked statement was the trip-row read taking FOR UPDATE — not some later write.
+    expect(waiterQuery).toMatch(/from "trips"/i);
+    expect(waiterQuery).toMatch(/for update/i);
+    // Falsification: drop `touchesDestination` from the FOR UPDATE condition -> the PATCH reads the
+    // pre-T1 row, blocks later on its UPDATE (waiter is no `for update`), and the row ends with
     // Kyoto coordinates and America/Los_Angeles, red.
   });
 
