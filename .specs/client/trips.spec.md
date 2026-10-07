@@ -330,7 +330,9 @@ Single-screen form (nav §2.4: "name, destination, dates"):
    spine imported into `places`** (option a — free, no new dependency; the
    import-task scope grows to include the city/locality subset). Mapbox
    Geocoding rejected (new metered product); free-text rejected (kills
-   guaranteed weather/AI grounding). (Resolved 2026-07-09, Gate 2)
+   guaranteed weather/AI grounding). (Resolved 2026-07-09, Gate 2) WHEN
+   the selected destination has no coordinates (R-tripui-23) a "Time zone"
+   field renders beneath it (R-tripui-29, T-7.17; NC-7 pending).
 3. **Dates** — **required** range picker (§2.2, resolved Gate 2); the
    "No dates yet" states across this spec drop out.
 
@@ -383,7 +385,7 @@ here (it lives on trip settings — R-tripui-26, Q2-286).
 
 | Row                                     | Roles shown    | Behavior                                                                                                                          |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Trip details (name, destination, dates) | owner, editor  | Inline card, no push (R-tripui-28); save sends `expect_updated_at` (R-tripui-19)                                                  |
+| Trip details (name, destination, dates) | owner, editor  | Inline card, no push (R-tripui-28); save sends `expect_updated_at` (R-tripui-19); coordinate-less → Time zone field (R-tripui-29) |
 | Theme                                   | owner, editor  | Sheet picker (tokens spec themes; R-tripui-28); optimistic apply                                                                  |
 | Base currency                           | owner          | Sheet (R-tripui-28); locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
 | Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                              |
@@ -435,6 +437,7 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 |               | `trip-new-input-destination`             | destination search input                                                        |
 |               | `trip-new-list-item-{placeId}`           | destination result row                                                          |
 |               | `trip-new-input-dates`                   | date-range control                                                              |
+|               | `trip-new-input-timezone`                | destination time-zone field (R-tripui-29; coordinate-less destination only)     |
 |               | `trip-new-button-create`                 | submit                                                                          |
 |               | `trip-new-button-cancel`                 | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
 | invite-join   | `invite-join-button-accept`              | accept                                                                          |
@@ -458,6 +461,7 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 |               | `trip-settings-button-leave`             | leave trip                                                                      |
 |               | `trip-settings-button-delete`            | delete trip                                                                     |
 |               | `trip-settings-button-save`              | details form save                                                               |
+|               | `trip-settings-input-timezone`           | destination time-zone field (R-tripui-29); picks: `-suggested-{slug}`           |
 |               | `trip-settings-list-item-custom`         | R-tripui-24: empty-results custom-destination row (R-tripui-23 parity)          |
 |               | `trip-settings-notice-no-location`       | R-tripui-24: standing coordinate-less-destination explanation                   |
 |               | `trip-settings-error-create-destination` | R-tripui-24: custom-create failure banner                                       |
