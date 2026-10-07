@@ -607,6 +607,45 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
+  // The `none` PIN itself (R-map-18 amendment: "state pinned `none`"): with no
+  // annotation the unusable arm would read `none` by accident, so seed one — a
+  // trip whose destination LOST its coordinates after a pack was saved must
+  // still render `none`, not `stale` (the "" regionKey mismatch) or `ready`.
+  // Falsification: drop the `if (!usable) return NONE` line in
+  // `useOfflinePackState` -> the annotation drives `stale` -> red.
+  it("NULL coords with a previously-saved annotation still pin `none` (the stand-down is not an accident of an empty store)", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    writePackAnnotation({
+      tripId: TEST_TRIP_ID,
+      styleUrl: LIGHT_STYLE,
+      regionKey: packRegionKeyFor(KYOTO.lat, KYOTO.lng),
+      completedAt: "2026-08-18T00:00:00.000Z",
+      sizeBytes: 7_000_000,
+    });
+    const coordless = { ...activeTrip(), destination_lat: null, destination_lng: null };
+    const { result, unmount } = await renderHook(() => useScope(coordless), { wrapper });
+    expect(result.current).toEqual({ phase: "none" });
+    await act(flush);
+    expect(result.current).toEqual({ phase: "none" });
+    expect(om.getPack).not.toHaveBeenCalled(); // no SDK touch either
+    expect(om.createPack).not.toHaveBeenCalled();
+    await unmount();
+  });
+
+  // The R-map-1 world-view fallback renders the map screen with NaN coords.
+  // Falsification: narrow `usePackInputs` to a bare `lat === null` check and
+  // NaN reaches `packRegionKeyFor`, which throws during render -> red.
+  it("NaN coords (the R-map-1 world fallback) stand the machine down — no throw, no download, renders none", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const world = { ...activeTrip(), destination_lat: Number.NaN, destination_lng: Number.NaN };
+    const { result, unmount } = await renderHook(() => useScope(world), { wrapper });
+    expect(result.current).toEqual({ phase: "none" });
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+    await unmount();
+  });
+
   // Round-1 architecture fix: both the controller and `OfflinePackManager`
   // now route usability through the ONE `usableDestinationCoords` helper
   // instead of three hand-rolled null-checks — this pins the FULL rule
