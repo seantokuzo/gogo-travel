@@ -38,6 +38,7 @@ import {
 } from "./offline-pack-annotation";
 import {
   deleteTripPack,
+  liveNetworkWaitersForTests,
   liveOfflinePackControllers,
   offlinePackStateFor,
   reconcilePackState,
@@ -803,6 +804,72 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await act(async () => listener(wifi));
     await act(flush);
     expect(om.createPack).not.toHaveBeenCalled();
+  });
+
+  // PR #98 round 1 fix-verifier Adv 1: the Set withdrawal is MASKED by the
+  // `cancelled` check in `onNetwork` — a leaked closure behaves identically,
+  // so only the waiter count can see it, and a leaked waiter is a dead closure
+  // held in the module-level Set for the life of the app, one per deferred
+  // shell mount that was left. Two exits from waiting, each pinned to 0.
+  // Falsification: drop `withdraw()` from `stopWaiting` -> both stay at 1 -> red.
+  it("a waiting controller holds exactly ONE fan-out slot, and UNMOUNT frees it", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    expect(liveNetworkWaitersForTests()).toBe(0);
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(liveNetworkWaitersForTests()).toBe(1);
+    await unmount();
+    expect(liveNetworkWaitersForTests()).toBe(0);
+  });
+
+  it("a SUCCESSFUL START frees the fan-out slot (the wait is over, the controller stays mounted)", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(liveNetworkWaitersForTests()).toBe(1);
+
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(wifi));
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    expect(liveNetworkWaitersForTests()).toBe(0); // still mounted — the slot is gone anyway
+    await unmount();
+  });
+
+  // PR #98 round 1 fix-verifier Adv 2: `cancelled ||` in `onNetwork` is the
+  // ONLY protection for this window — the AppState re-read is in flight (iOS's
+  // temporary path monitor can take up to 5 s), the user leaves the trip, the
+  // read resolves WIFI -> a download would start for a trip the user left.
+  // Falsification: drop `cancelled ||` from `onNetwork` -> createPack fires. The
+  // deferred read is released in `finally`.
+  it("an AppState re-read that resolves WIFI after the user left the trip starts nothing", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(appStateSubs).toHaveLength(1);
+    expect(liveNetworkWaitersForTests()).toBe(1);
+
+    // Foreground: the re-read goes in flight and is HELD.
+    let release: (state: unknown) => void = () => undefined;
+    network.getNetworkStateAsync.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    await act(async () => appStateSubs[0].handler("active"));
+    try {
+      await unmount();
+      release(wifi);
+      await act(flush);
+      expect(om.createPack).not.toHaveBeenCalled();
+      expect(offlinePackStateFor(TEST_TRIP_ID)).toEqual({ phase: "none" });
+      expect(liveNetworkWaitersForTests()).toBe(0);
+    } finally {
+      release(wifi);
+    }
   });
 
   // PR #98 round 1 advisory: both `cancelled` guards on the connectivity read

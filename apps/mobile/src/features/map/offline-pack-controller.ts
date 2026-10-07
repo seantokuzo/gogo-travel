@@ -188,6 +188,16 @@ export function liveOfflinePackControllers(tripId: string): number {
   return liveControllers.get(tripId) ?? 0;
 }
 
+/**
+ * Test-only observable: how many controllers are waiting in the network
+ * fan-out right now. Withdrawal is otherwise invisible (the `cancelled` check
+ * in `onNetwork` masks a leaked closure's behaviour), and a leaked waiter is a
+ * dead closure held for the life of the app per deferred shell mount.
+ */
+export function liveNetworkWaitersForTests(): number {
+  return networkWaiters.size;
+}
+
 /** Test-only: clear store + latches (mirrors resetMapLocationForTests). */
 export function resetOfflinePacksForTests(): void {
   useOfflinePackStore.setState({ packs: {} });
