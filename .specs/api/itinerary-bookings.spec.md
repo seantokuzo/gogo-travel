@@ -191,9 +191,11 @@ Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
 (`.specs/OPEN-QUESTIONS.md` § Round 2): each `Q2-NNN` rule below is the
 as-shipped interpretation made normative. Items whose Rec named a real
 alternative — which approve-all did NOT decide (Q2-056, Q2-064, Q2-181) — are
-written as shipped, labelled "Sean pick pending", and carry a
-`[NEEDS CLARIFICATION]` marker. The OPEN-QUESTIONS rows stay as the decision
-record.
+written as shipped, labelled "as shipped; Sean pick pending", and carry a
+`[NEEDS CLARIFICATION]` marker — this spec's 3 open markers (Q2-056 at
+R-ib-25, Q2-064 at R-ib-15, Q2-181 at R-ib-32); it is approvable once they
+are ruled. Rules stamped "ruled 2026-09-19" are ruled as shipped. The
+OPEN-QUESTIONS rows stay as the decision record.
 
 - **R-ib-25 (`unscheduled=false`; Q2-056 — as shipped; Sean pick pending:
   (a) bless as-is / (b) spec the complement "false = scheduled-only"):** WHEN
@@ -378,7 +380,8 @@ List a trip's bookings for the bookings/ideas surfaces.
 
 **Request** (query): `status?` (repeatable `booking_status`; default: all
 except `cancelled`), `category?` (`booking_category`), `unscheduled?`
-(boolean — R-ib-10; `false` ≡ absent, R-ib-25), `cursor?`, `limit?`.
+(boolean — R-ib-10; `false` ≡ absent — as shipped, Q2-056 pick pending at
+R-ib-25), `cursor?`, `limit?`.
 
 **Response 200**: `Paginated<Booking>` — ordered `starts_at ASC NULLS LAST,
 updated_at DESC` (timeless ideas trail, freshest first; uses schema
@@ -393,7 +396,7 @@ updated_at DESC` (timeless ideas trail, freshest first; uses schema
 
 - [ ] Happy path: filters by status/category; pagination cursor round-trip
 - [ ] `unscheduled=true` returns exactly zero-item bookings; excludes cancelled by default
-- [ ] `unscheduled=false` returns exactly what the absent param returns (R-ib-25)
+- [ ] `unscheduled=false` returns exactly what the absent param returns (as shipped — Q2-056 pick pending at R-ib-25)
 - [ ] Authz: non-member gets 404 with zero data; viewer can read
 
 ---
@@ -820,4 +823,6 @@ Sized one agent session each; queued as `T-N.M` rows at build time.
 _Trace: every R-ib-N cites its enforcing section/endpoint inline. Both
 repeated markers resolved at their canonical home (schema spec) at Gate 2,
 2026-07-09 — multi-day bookings → one spanning item (Branch A); trip dates
-→ required at creation. Zero markers remain._
+→ required at creation. Gate-2 markers all resolved; round 2 (2026-09-19)
+leaves 3 open — Q2-056, Q2-064, Q2-181, Sean picks pending (R-ib-25, R-ib-15,
+R-ib-32) — approvable once ruled._
