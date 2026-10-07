@@ -832,11 +832,12 @@ photos.
 | Offline status     | `trip-settings-sheet-offline`, `offline-pack-status`, `offline-pack-past-offer`, `offline-pack-offline-notice`                                                                                                                              |
 
 **Round-2 testID notes (ids ruled 2026-09-19, except the Q2-240 naming pick,
-which is pending Sean)** — the ids above are the inventory of shipped map
-and place-detail ids (the structural and state ids — overlays, detail
-states, content, fresh block — carry no round-2 ruling of their own; they
-complete the list). These notes explain the entries the original inventory
-did not anticipate:
+which is pending Sean)** — the table lists every map and place-detail id,
+shipped or specced (`place-detail-button-tour-guide` is specced only, R-map-13
+/ Q2-245; the structural and state ids — overlays, detail states, content,
+fresh block — carry no round-2 ruling of their own and only complete the
+list). These notes explain the entries the original inventory did not
+anticipate:
 
 - **`map-pin-*` / `map-cluster-*` live in the GeoJSON feature's
   `properties.testID`, not in RN `testID` props (Q2-210):** style-layer pins
