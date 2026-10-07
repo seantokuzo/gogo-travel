@@ -177,10 +177,12 @@ unaffected and keeps its existing day-sectioned form.
   this add flow prefilled with the category and `source: 'deeplink_return'`
   (API R-ib-11).
 - **R-itin-23**: WHEN "Place visit" is being added THE SYSTEM SHALL offer
-  the trip's saved places first, then spine search (places search endpoint —
-  maps/places spec seam; v1 ships spine search only — R-itin-59); place ideas without a day are saved places by
-  design (navigation spec place-detail "add to day"), not day-less items —
-  the schema requires every item to have a `day`.
+  spine search (places search endpoint — maps/places spec seam). Listing the
+  trip's saved places FIRST is the target, NOT yet wired in v1: the
+  saved-places list exists (T-8.1, `GET /trips/:tripId/saved-places`) but the
+  item picker does not call it (Q2-103, R-itin-59). Place ideas without a day
+  are saved places by design (navigation spec place-detail "add to day"), not
+  day-less items — the schema requires every item to have a `day`.
 
 ### Booking detail (per category)
 
@@ -513,9 +515,11 @@ extension; this batch does not touch them.
   to the day failed") shows, and Save swaps for Done — no duplicate-create
   risk.
 - **R-itin-59 (place attach; Q2-102, Q2-103, Q2-114, ruled 2026-09-19):** the
-  place picker searches the places spine only — R-itin-23's "saved places
-  first" leg has no picker endpoint yet and is a flagged seam, not a silent
-  skip. WHEN an edit form opens on a record whose attached place has no name
+  place picker searches the places spine only (Q2-103, as shipped): the
+  saved-places list endpoint exists (T-8.1, `GET /trips/:tripId/saved-places`;
+  mobile `useSavedPlaces`) but the item picker is NOT wired to it, so
+  R-itin-23's "saved places first" leg is a flagged seam, not a silent skip.
+  WHEN an edit form opens on a record whose attached place has no name
   on the wire (API R-ib-30) THE SYSTEM SHALL show a generic placeholder chip:
   "Attached place" on a booking edit, "Selected place" on `ItemForm` edit —
   two strings for one state, pending the maps-spine join; unify them into one
@@ -1005,6 +1009,17 @@ Google-only for v1 or device-verify a `maps.apple.com`
 `saddr`/`daddr`/`dirflg` variant is Sean's pick — Q2-125, R-itin-67), and the
 builder never records a return-prompt tap (R-itin-67). T-7.5's and T-8.3's
 (Q2-232) directions handoffs share that pick.
+
+**Coordinate-only Navigate variant (T-8.3, Q2-232).** The map place sheet and
+place detail "Navigate" (map spec R-map-8) open the same Maps URLs endpoint
+with a coordinate destination only —
+`https://www.google.com/maps/dir/?api=1&destination={lat},{lng}` (the comma
+URL-encoded as `%2C`), origin omitted so Maps starts from the current
+location, no `travelmode`. The builder returns null for a coordinate-less
+place (B-7 part 3; the control is hidden) and records no return-prompt tap. It
+lives in `features/map/nav-handoff.ts` and `features/places/place-links.ts`
+(`placeNavigateUrl`); a future fold into `directions.ts` MUST keep this
+coordinate-only shape alongside the label-based one above.
 
 ### 2.8 Deeplink-out → return prompt loop
 
