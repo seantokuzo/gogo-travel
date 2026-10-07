@@ -68,6 +68,7 @@ Every spawn prompt includes:
 - [ ] **Locked decisions** from prior waves the worker must honor.
 - [ ] **Constraints** — Context7 for all library APIs; one atomic commit; CI green locally before done.
 - [ ] **Contract notes** — if it consumes/produces a `@gogo/shared` schema or an endpoint shape, name it.
+- [ ] **Researcher spawns** — ask for a prescriptive answer ("use X because Y") with HIGH / MEDIUM / LOW confidence per finding; Context7 → official docs → `npm view` before any API or version claim; "implemented" means reachable and executed, not merely present (the server entry starts only HTTP, some workers are TODO stubs, some E2E is `describe.skip`'d). A spike (`S-N`) outputs an ADR or a STATE note, never a PR.
 
 ## Verify after each wave (hard gate)
 
