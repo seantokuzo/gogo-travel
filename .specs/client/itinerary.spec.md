@@ -338,9 +338,11 @@ unaffected and keeps its existing day-sectioned form.
   accessibilityLabel "Time zone: {city}, {GMT±X}", hint "Shows this trip's time zones".
   Tapping it SHALL open a DS Sheet listing every zone in the set as one row ("{city} —
   GMT±X"; subtitle the IANA id; the destination row additionally captioned "Trip
-  destination", or "Trip destination (from your first flight)" WHEN `Trip.destination_tz_source`
-  (B-30) is `booking` — that rung can be a connecting leg (`.specs/api/trips.spec.md` §3.4
-  limit; a user zone, R-tripui-29, is the override)), the active row check-marked with `accessibilityState.selected`. Selecting a
+  destination", or "Trip destination (from your bookings)" WHEN `Trip.destination_tz_source`
+  (B-30) is `booking` — that rung picks among the non-cancelled flight/train bookings (booked
+  before planned before idea, then earliest) and can be a connecting leg
+  (`.specs/api/trips.spec.md` §3.4 limit; a user zone, R-tripui-29, is the override)), the
+  active row check-marked with `accessibilityState.selected`. Selecting a
   different row SHALL close the Sheet and make that zone active (R-itin-38); selecting the
   active row SHALL close the Sheet with no change. ("Railway accessible" in the T-7.17 story
   is read as "readily accessible": one tap from either view mode, never behind a menu,
