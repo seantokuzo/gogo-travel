@@ -31,9 +31,9 @@
  */
 import tzlookup from "@photostructure/tz-lookup";
 import { and, asc, inArray, sql } from "drizzle-orm";
-import { isValidTimeZone } from "@gogo/shared/time";
 import type { DbClient } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
+import { canonicalizeZone } from "./zone-canon.js";
 
 /** The last-resort zone (chain step 4). */
 export const DEFAULT_DESTINATION_TZ = "UTC";
@@ -69,7 +69,7 @@ export function deriveZoneFromCoords(lat: number | null, lng: number | null): st
   } catch {
     return null;
   }
-  return isValidTimeZone(zone) ? zone : null;
+  return canonicalizeZone(zone);
 }
 
 /**
@@ -91,17 +91,18 @@ export function resolveDestinationTz(input: ResolveDestinationTzInput): {
   zone: string;
   source: DestinationTzSource;
 } {
-  if (input.explicit !== undefined && input.explicit !== null && isValidTimeZone(input.explicit)) {
-    return { zone: input.explicit, source: "explicit" };
-  }
+  const explicit =
+    input.explicit === undefined || input.explicit === null
+      ? null
+      : canonicalizeZone(input.explicit);
+  if (explicit !== null) return { zone: explicit, source: "explicit" };
   const derived = deriveZoneFromCoords(input.lat, input.lng);
   if (derived !== null) return { zone: derived, source: "derived" };
   for (const booking of input.bookings ?? []) {
     // arrives_tz first (the destination end); departs_tz only if it's unusable.
     for (const candidate of [booking.arrivesTz, booking.departsTz]) {
-      if (candidate !== null && isValidTimeZone(candidate)) {
-        return { zone: candidate, source: "booking" };
-      }
+      const zone = candidate === null ? null : canonicalizeZone(candidate);
+      if (zone !== null) return { zone, source: "booking" };
     }
   }
   return { zone: DEFAULT_DESTINATION_TZ, source: "default" };

@@ -681,6 +681,66 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
   });
 
   // ===========================================================================
+  // Zone allow-list (zone-canon.ts) — round-1 server F3
+  // ===========================================================================
+
+  it("[validator] an explicit zone is stored in its canonical modern spelling (lowercase asia/tokyo -> Asia/Tokyo)", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await createTrip(
+      owner.token,
+      { name: "Cabin", lat: null, lng: null },
+      { start: "2026-08-02", end: "2026-08-02" },
+      { destination_tz: "asia/tokyo" },
+    );
+    expect(trip.destination_tz).toBe("Asia/Tokyo");
+    expect((await dbTrip(trip.id)).destinationTz).toBe("Asia/Tokyo");
+    const patched = TripSchema.parse(
+      await (await patchTrip(trip.id, owner.token, { destination_tz: "EUROPE/PARIS" })).json(),
+    );
+    expect(patched.destination_tz).toBe("Europe/Paris");
+    expect((await dbTrip(trip.id)).destinationTz).toBe("Europe/Paris");
+  });
+
+  it("[validator] V8-resolvable ids that Hermes' NSTimeZone lacks are REJECTED on POST and PATCH (SystemV/*, Japan, EST, Zulu)", async () => {
+    const owner = await seedUser();
+    const base = await createTrip(owner.token, KYOTO, { start: "2026-09-01", end: "2026-09-05" });
+    for (const bad of ["SystemV/AST4", "Japan", "EST", "Zulu"]) {
+      const created = await postTrip(
+        owner.token,
+        tripBody(KYOTO, { start: "2026-09-01", end: "2026-09-05" }, { destination_tz: bad }),
+      );
+      expect([bad, created.status]).toEqual([bad, 400]);
+      const patched = await patchTrip(base.id, owner.token, { destination_tz: bad });
+      expect([bad, patched.status]).toEqual([bad, 400]);
+    }
+    expect((await dbTrip(base.id)).destinationTz).toBe("Asia/Tokyo"); // untouched
+  });
+
+  it("[validator] booking-zone fallback canonicalises too: lowercase arrives_tz is served as Asia/Tokyo; SystemV/* is skipped for the next candidate", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const dates = { startDate: "2026-08-02", endDate: "2026-08-02" };
+    const zoneOf = async (tripId: string) =>
+      TripSchema.parse(await (await getTrip(tripId, owner.token)).json()).destination_tz;
+
+    const lower = await seedTripRow(owner.userId, dates);
+    await seedFlight(lower.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "asia/tokyo",
+    });
+    expect(await zoneOf(lower.id)).toBe("Asia/Tokyo");
+
+    const systemV = await seedTripRow(owner.userId, dates);
+    await seedFlight(systemV.id, owner.userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "SystemV/AST4",
+      departsTz: "Europe/Paris",
+    });
+    expect(await zoneOf(systemV.id)).toBe("Europe/Paris");
+  });
+
+  // ===========================================================================
   // DB CHECK (migration 0007)
   // ===========================================================================
 

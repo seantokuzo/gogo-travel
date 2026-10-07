@@ -48,7 +48,6 @@ import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { tripEndpoints, type Trip, type TripListItem } from "@gogo/shared/domains/trip";
 import type { Paginated } from "@gogo/shared/api/envelope";
-import { isValidTimeZone } from "@gogo/shared/time";
 import { TRIPS_PAGE_SIZE_DEFAULT } from "../config.js";
 import { rethrowCoordsCkMapped } from "../db/coords-ck.js";
 import type { DbClient } from "../db/create-user.js";
@@ -80,6 +79,7 @@ import {
   storedDestinationTz,
 } from "./destination-tz.js";
 import { effectiveTripStatus, reconcileStoredStatuses, tripToday } from "./status.js";
+import { canonicalizeZone } from "./zone-canon.js";
 import { toTripListItemWire, toTripWire, toTripWithRoleWire } from "./serialize.js";
 
 export interface TripsRouterDeps {
@@ -227,10 +227,13 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const { userId } = authContextOf(c);
       const body = c.req.valid("json");
 
-      // B-30: an explicit zone must be one this runtime's `Intl` resolves —
-      // the shared schema only checks its SHAPE (a client-side Intl gap must
-      // never block a create), so the write-time gate lives here → 400.
-      if (body.destination_tz !== undefined && !isValidTimeZone(body.destination_tz)) {
+      // B-30: an explicit zone must be on the zone allow-list (zone-canon.ts;
+      // the shared schema only checks its SHAPE, so a client-side Intl gap can
+      // never block a create) and is STORED in its canonical modern spelling
+      // (lowercase asia/tokyo is stored as Asia/Tokyo) → 400 otherwise.
+      const explicitZone =
+        body.destination_tz === undefined ? undefined : canonicalizeZone(body.destination_tz);
+      if (explicitZone === null) {
         throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
           destination_tz: "unknown time zone",
         });
@@ -239,7 +242,7 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       // coordinates, else nothing stored (NULL). A brand-new trip has no
       // bookings, so its effective zone is the stored one or UTC (step 4).
       const storedTz = storedDestinationTz({
-        explicit: body.destination_tz,
+        explicit: explicitZone,
         lat: body.destination_lat,
         lng: body.destination_lng,
       });
@@ -452,9 +455,12 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
       const body = c.req.valid("json");
       const now = nowOf();
 
-      // B-30: an explicit zone must resolve in this runtime's `Intl` (the
-      // shared schema is shape-only) — checked before any DB work → 400.
-      if (body.destination_tz !== undefined && !isValidTimeZone(body.destination_tz)) {
+      // B-30: an explicit zone must be on the zone allow-list and is stored in
+      // its canonical spelling (zone-canon.ts; the shared schema is
+      // shape-only) — checked before any DB work → 400.
+      const explicitZone =
+        body.destination_tz === undefined ? undefined : canonicalizeZone(body.destination_tz);
+      if (explicitZone === null) {
         throw new HttpError("VALIDATION_FAILED", "unknown time zone", {
           destination_tz: "unknown time zone",
         });
@@ -583,8 +589,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
         // place is coordinate-less — the old zone described the old place);
         // otherwise the column is left alone. `undefined` = don't touch.
         const storedTzWrite: string | null | undefined =
-          body.destination_tz !== undefined
-            ? body.destination_tz
+          explicitZone !== undefined
+            ? explicitZone
             : coordsMoved
               ? deriveZoneFromCoords(numOrNull(nextLatText), numOrNull(nextLngText))
               : undefined;
