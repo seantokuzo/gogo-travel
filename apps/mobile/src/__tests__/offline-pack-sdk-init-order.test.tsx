@@ -5,15 +5,17 @@
  * The offline-pack controller is mounted by the `[tripId]` layout and fires
  * `offlineManager` calls from the TODAY tab. The Mapbox runtime token and the
  * telemetry opt-out were configured ONLY at module scope of the map route
- * (`app/[tripId]/map/index.tsx`). expo-router evaluates a route module only
- * when its screen first renders (`useScreens.js` `getComponent` ->
- * `loadRoute()`; `BottomTabView.js` renders lazy tabs only once visited; only
- * DEV loads every route up front — `getRoutesCore.js`
- * `validateRouteTreeExports`), so in a RELEASE build the first `createPack`
- * ran with no token (download failed -> `failed`; auto-download arms only from
- * `none`, Q2-272 -> the retry pill on every cold start) and hygiene touched
- * TileStore before the telemetry opt-out. Dev builds and jest-with-a-mocked-SDK
- * both hide it — which is why this suite makes the premise EXPLICIT:
+ * (`app/[tripId]/map/index.tsx`). expo-router evaluates a LEAF route module
+ * (layout modules load eagerly) only when its screen first renders
+ * (`useScreens.js` `getComponent` -> `loadRoute()`; `BottomTabView.js` renders
+ * lazy tabs only once visited; only DEV loads every route up front —
+ * `getRoutesCore.js` `validateRouteTreeExports`), so in a RELEASE build the
+ * first `createPack` WOULD run with no token (inferred from the sources, never
+ * observed on a device: the download would fail -> `failed`; auto-download
+ * arms only from `none`, Q2-272 -> the retry pill on every cold start) and
+ * hygiene would touch TileStore before the telemetry opt-out. Dev builds and
+ * jest-with-a-mocked-SDK both hide it — which is why this suite makes the
+ * premise EXPLICIT:
  *
  * the map route module is replaced by a sentinel that records being loaded, so
  * "the map route was never imported" is asserted, not assumed. Both tests then
@@ -142,10 +144,15 @@ it("TODAY tab, map route never loaded: the telemetry opt-out precedes the FIRST 
 });
 
 // PR #98 round-2 verifier Adv 3: the per-test checks above only see loads that
-// happen after `beforeEach`. This one reads the never-cleared counter after
-// EVERY test in the file, so an import-time load or an earlier test's load is
-// visible. Falsification: `import "@/app/[tripId]/map/index"` at the top of this
-// file (an import-time load) -> red.
-it("the map route module was never loaded anywhere in this file (import time included)", () => {
+// happen after `beforeEach` (a `jest.fn` sentinel would have been wiped by its
+// `clearAllMocks`). This one reads the never-cleared counter after EVERY test
+// in the file, so a module-scope load or an earlier test's load is visible.
+// Falsification: a module-scope `require("@/app/[tripId]/map/index")` placed
+// AFTER the counter is declared -> red (`Expected: 0 / Received: 1`). Note a
+// hoisted top-of-file `import` of the route does NOT reach this assertion: the
+// hoisted import runs the mock factory before the counter exists, so it fails
+// the whole suite by crashing it (`TypeError … reading 'count'`) — also loud,
+// just not through this test.
+it("the map route module was never loaded anywhere in this file (module-scope loads included)", () => {
   expect(mockMapRouteLoads.count).toBe(0);
 });
