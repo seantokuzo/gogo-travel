@@ -628,6 +628,58 @@ describe("ScheduleBookingInputSchema (R-ib-8)", () => {
       ScheduleBookingInputSchema.safeParse({ day: "2026-09-03", start_time: "25:00" }).success,
     ).toBe(false);
   });
+
+  // T-7.10 — optional target status. What makes these red: deleting the
+  // `status` field from ScheduleBookingInputSchema (zod strips the unknown
+  // key, so the accept pins see `undefined` and the reject pins see success).
+  describe("status (T-7.10, optional target status)", () => {
+    it.each(["planned", "booked"] as const)("accepts %s and carries it through", (status) => {
+      const parsed = ScheduleBookingInputSchema.safeParse({ day: "2026-09-03", status });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.status).toBe(status);
+    });
+
+    it("omitted = undefined — the key is absent, not defaulted (backward-compat: the server decides the default)", () => {
+      const parsed = ScheduleBookingInputSchema.parse({ day: "2026-09-03" });
+      expect(parsed.status).toBeUndefined();
+      expect("status" in parsed).toBe(false);
+      expect(parsed).toEqual({ day: "2026-09-03" });
+    });
+
+    it.each([
+      ["cancelled (terminal — cannot be scheduled into)", "cancelled"],
+      ["idea (ideas are off-calendar, I-1)", "idea"],
+      ["empty string", ""],
+      ["wrong case", "Booked"],
+      ["null", null],
+      ["a number", 1],
+      ["an object", { value: "booked" }],
+      ["garbage", "confirmed"],
+    ])("rejects %s with a status field path", (_label, status) => {
+      const parsed = ScheduleBookingInputSchema.safeParse({ day: "2026-09-03", status });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues.some((issue) => issue.path[0] === "status")).toBe(true);
+    });
+
+    it("composes with the rest of the body (times + anchor + status)", () => {
+      const anchor = "123e4567-e89b-42d3-a456-426614174000";
+      expect(
+        ScheduleBookingInputSchema.parse({
+          day: "2026-09-03",
+          start_time: "19:00",
+          end_time: "21:00",
+          after_item_id: anchor,
+          status: "booked",
+        }),
+      ).toEqual({
+        day: "2026-09-03",
+        start_time: "19:00",
+        end_time: "21:00",
+        after_item_id: anchor,
+        status: "booked",
+      });
+    });
+  });
 });
 
 describe("BookingListQuerySchema (§3.4 GET)", () => {

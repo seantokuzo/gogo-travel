@@ -83,7 +83,12 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   items THE SYSTEM SHALL reject `CONFLICT`; WHEN the booking has known times
   THE SYSTEM SHALL reject `VALIDATION_FAILED` (its calendar presence is
   automatic, R-ib-5) — for that case the client spec routes through a plain
-  status PATCH instead (R-itin-41), not this endpoint.
+  status PATCH instead (R-itin-41), not this endpoint. WHEN `status` is
+  passed THE SYSTEM SHALL validate it against §3.2 from the booking's current
+  status (same-status is not a transition — status unchanged, the item is
+  still created; `booked → planned` is a legal demotion; `cancelled` is
+  always `VALIDATION_FAILED`); WHEN omitted, only
+  `idea → planned` advances and `planned`/`booked` are unchanged.
 - **R-ib-9 (unscheduling):** WHEN a `booking`-kind item is deleted and its
   parent booking is `planned` THE SYSTEM SHALL revert the booking to `idea`
   in the same transaction; WHEN the parent is `booked` THE SYSTEM SHALL
@@ -506,11 +511,14 @@ day" action).
 
 **Request** (body): `day` (ISODate, required), `start_time?`/`end_time?`
 (ISOTime), `after_item_id?` (position; default append), `status?`
-(`'planned' | 'booked'`, default `'planned'` — Sean QA feature batch
+(`'planned' | 'booked'`; omitted ⇒ the pre-change behaviour (`idea → planned`;
+`planned`/`booked` unchanged), no schema default — Sean QA feature batch
 2026-09-06 feature ④, additive).
 
 **Response 201**: `BookingWithItems` — item created, status advanced
-`idea → planned` or `idea → booked` per the request (R-ib-8).
+`idea → planned` or `idea → booked` per the request, or the explicit
+target per R-ib-8 (`planned → booked`, `booked → planned`, or unchanged on
+same-status).
 
 **Errors**: 400 VALIDATION_FAILED (booking has known times; bad body) ·
 409 CONFLICT (already scheduled) · 401 · 403 · 404.

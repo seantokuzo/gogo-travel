@@ -236,7 +236,10 @@ export function createBookingsRouter(deps: BookingsRouterDeps): Hono<RequestVars
 
   // -------------------------------------------------------------------------
   // POST /trips/:tripId/bookings/:bookingId/schedule — the ideas-bucket
-  // "Add to day" action (R-ib-8). 201 with the post-state (R-ib-18).
+  // "Add to day" action (R-ib-8). 201 with the post-state (R-ib-18). The
+  // optional `status` (T-7.10) is validated by the shared body schema and
+  // handed to the service untouched — transition legality is the service's
+  // §3.2 guard, not a route concern.
   // -------------------------------------------------------------------------
   router.post(
     bookingEndpoints.scheduleBooking.path,
