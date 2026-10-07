@@ -231,12 +231,18 @@ export function createPlacesRouter(deps: PlacesRouterDeps): Hono<RequestVars> {
       // would otherwise drive. A short `q` WITH a geo bound is unaffected
       // (the existing bbox/near-driven arm already bounds the candidate
       // set, so it keeps using `placesSearchQuery` unchanged).
+      // Sean's ruling, 2026-09-19: that arm ALSO matches the CALLER'S OWN
+      // custom places (creator-scoped — `userId` is the only identity it
+      // takes). `trip_id` is deliberately NOT passed: the ruling is not
+      // trip-scoped, so a co-member's trip-referenced custom place stays
+      // invisible at 2–3 chars. The membership gate above still runs first.
       const rows =
         query.q !== undefined &&
         query.q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS &&
         bbox === undefined &&
         near === undefined
           ? await placesExactTierMatchQuery(deps.db, {
+              userId,
               q: query.q,
               coarse: query.coarse_category,
               cursor,

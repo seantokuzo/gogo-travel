@@ -354,7 +354,8 @@ export const PlaceSearchQuerySchema = CursorQuerySchema.extend({
   // name. The floor now selects the search ARM instead of gating
   // validation: `apps/server/src/places/routes.ts` runs an exact,
   // case-insensitive, accent-folded match against the bootstrap
-  // destination tier ONLY (never the trgm scan this floor still protects
+  // destination tier PLUS the caller's own custom places (creator-scoped,
+  // Sean's 2026-09-19 ruling; never the trgm scan this floor still protects
   // against for everything else) — see `places/search-query.ts`'s
   // `placesExactTierMatchQuery`. `q` still can't be shorter than 2 chars
   // (SearchTextSchema.min(2) above); that boundary is unaffected.
@@ -522,8 +523,9 @@ export const placeEndpoints = {
    * PLACES_SEARCH_TEXT_ONLY_MIN_CHARS (4) runs the trigram scan as before;
    * BELOW it (but still ≥ PLACES_SEARCH_MIN_CHARS) no longer rejects — it
    * runs an exact, case-insensitive, accent-folded match against the
-   * bootstrap destination tier only (never the trgm scan, never a `custom`
-   * row). bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per axis
+   * bootstrap destination tier plus the caller's OWN custom places (creator-
+   * scoped, 2026-09-19 — never the trgm scan, never another user's or a
+   * trip-referenced `custom` row). bbox spans CLAMP to PLACES_SEARCH_BBOX_MAX_SPAN_DEGREES per axis
    * around the box center (degrade, not reject).
    */
   searchPlaces: {
