@@ -53,8 +53,8 @@ null]`; it still appears in list surfaces by name. See R-map-26.
     color and glyph throughout, so "only that day's itinerary pins" reads
     as "items covering that day". This is a deliberate SUPERSET of the
     itinerary's check-in/check-out-only point-row treatment (R-itin-31:
-    nights between render nothing in list mode); the map/grid divergence
-    is ruled intentional.
+    nights between render nothing in list mode); the map/itinerary
+    divergence is ruled intentional.
   - **"All" and empty subsets (Q2-207):** WHEN "All" is re-selected THE
     SYSTEM SHALL refit the camera to all pins; WHEN the selected day has no
     pins THE SYSTEM SHALL move the camera nowhere.
