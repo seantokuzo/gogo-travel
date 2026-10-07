@@ -518,7 +518,7 @@ pnpm test && pnpm build`
     `Trip.destination_tz`); otherwise parallel with T-7.13/T-7.14/T-7.15
     (T-7.21 starts after c2). Rulings: c1 none; c2/c3 assume NC-1 (a) or
     (c) — rule NC-1 before c2 starts. The Sheet's destination caption reads
-    "Trip destination (from your first flight)" when `Trip.destination_tz_source`
+    "Trip destination (from your bookings)" when `Trip.destination_tz_source`
     is `booking` (R-itin-37; a connecting-leg limit of B-30's chain), so
     `deriveTripZones` takes the destination's source alongside `destinationTz`
     (extends the brief's `DeriveTripZonesInput`). Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
@@ -618,7 +618,14 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `apps/mobile/src/app/[tripId]/more/settings.tsx`,
     `apps/mobile/src/data/trip-settings.ts` + `trip-settings.test.tsx`
     (`buildTripPatch` emits `destination_tz` for an explicit pick — source
-    `'user'` — and `destination_tz: null` for "Automatic"),
+    `'user'`, diffing zone AND source so re-picking the zone already shown
+    still ships `'user'` — and `destination_tz: null` for "Automatic"; on a
+    pending real→null destination move the field prefills `deviceZoneHint()`
+    rather than the old derived zone). **T-7.21 deliberately reverses PR
+    #99's pin in `trip-settings.test.tsx` ("the source is NEVER 'user' from
+    the settings form: a zone edit without source 'device' emits nothing")**
+    — that test goes red by design; rewrite it in the same commit, it is not
+    a regression,
     `apps/mobile/src/__tests__/trip-new-screen.test.tsx`,
     `apps/mobile/src/__tests__/trip-settings-form.test.tsx`. `depends_on:
 [PR #98, PR #99, T-7.12 c2]` (PR #98/#99 both edit `settings.tsx`;
@@ -627,7 +634,7 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `P-7/T-7-21-destination-zone-field`.
 - **Wave plan** (amended — T-7.17; T-7.12 is now gated on S0 + PR #99 and
   the T-7.17 split adds T-7.18..T-7.21): **Now** — S0 (docs) ∥ the open
-  PR reviews (#98, #99; T-7.10/T-7.11/T-7.13 = #100/#101/#103 have merged);
+  PR reviews (#99; #98 and T-7.10/T-7.11/T-7.13 = #100/#101/#103 have merged);
   Sean rules NC-1..NC-7 in one batch.
   **Wave 1** (parallel worktrees) — T-7.10 ∥ T-7.11 ∥ T-7.13 ∥ T-7.12
   (c1→c2→c3, ONE agent, after S0 + PR #99 merged; NC-1 ruled before c2).
@@ -691,11 +698,15 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `TimezoneSwitcher.test.tsx` (RNTL v14, every `render`/`fireEvent`/`act`
     awaited, ACT gate prints `0`) — hide < 2, chip label/role/touch
     target, Sheet order, selected state, `onSelect` once, active-row
-    no-op, unknown `activeTz` falls back · mutation-verify every pin
+    no-op, unknown `activeTz` falls back, destination caption (plain "Trip
+    destination" for source `user`/`derived`/`device`/`default`; "Trip
+    destination (from your bookings)" for `booking` — a Eurostar-only trip
+    has no flight) · mutation-verify every pin
     (identity short-circuit, plausible-offset passthrough,
     containing-segment pick, no-re-attribution fallback, acceptability
     filter, de-dup, destination inclusion, status filter, order, hide
-    rule, `onSelect`, `selected`); run `git add -N .` before probing (new
+    rule, `onSelect`, `selected`, ignore the destination source → caption
+    RED); run `git add -N .` before probing (new
     files are invisible to `git diff`).
   - T-7.13: happy (each density renders its column count) · boundary
     (1-day trip in Trip-span; very long trip, no crash) · offline (n/a —
@@ -771,11 +782,21 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `expect_updated_at` · "Automatic" PATCHes `destination_tz: null` with no
     source key · a stored user zone on a trip whose destination has since
     gained coordinates keeps the field visible and "Automatic" resets it
-    (NC-7 sub-choice (ii), the recommendation; (i) hides it) · the settings
-    suggestions are `deriveTripZones(...)` minus the destination · ACT gate
-    prints `0` · mutation-verify (ship `'user'` for the untouched prefill →
-    RED; drop the `null` branch → RED; hide the field once coordinates exist
-    → RED under (ii)).
+    (NC-7 sub-choice (ii), the recommendation; (i) hides it) · a pending
+    settings move from a destination WITH coordinates to a coordinate-less
+    one prefills the field with `deviceZoneHint()` (not the old derived
+    zone): untouched, the PATCH carries `destination_tz` + `'device'`; an
+    explicit pick carries `'user'`; a null→null move sends no hint · re-picking
+    the zone already shown while `destination_tz_source` is `'device'` or
+    `'booking'` still PATCHes `{ destination_tz }` as `'user'`, and while it is
+    already `'user'` sends nothing · `deviceZoneHint()` → `undefined`
+    renders an empty field with Save enabled and no zone keys sent (NC-7
+    (a) rec) · the settings suggestions are `deriveTripZones(...)` minus
+    the destination · ACT gate prints `0` · mutation-verify (ship `'user'`
+    for the untouched prefill → RED; drop the `null` branch → RED; hide the
+    field once coordinates exist → RED under (ii); prefill the old derived
+    zone on a real→null move → RED; diff on zone only so a re-pick of the
+    shown zone sends nothing → RED).
 
 ### P-8 — Maps, saved places & offline tile packs
 
