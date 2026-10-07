@@ -7,8 +7,11 @@
  * rolls back visibly (hook-owned) and surfaces here.
  *
  *  - TIMELESS booking → day/time pickers (day required, times optional),
- *    confirm calls `POST …/schedule` with the day/times AND the tapped
- *    status (`useScheduleBooking`; API R-ib-8 as extended by T-7.10).
+ *    confirm calls `POST …/schedule` with the day/times and the status
+ *    `scheduleStatusToSend` allows (`useScheduleBooking`; API R-ib-8 as
+ *    extended by T-7.10): only an ADVANCING "Booked" rides the wire —
+ *    "Planned" and same-status taps omit it, so a stale cache can never
+ *    cause a server-side demotion.
  *  - KNOWN-TIMES booking (the pre-existing B-16 dead end: the schedule
  *    endpoint always rejected these) → the booking's own start/end render
  *    READ-ONLY with a "change it on the booking itself" hint (R-ib-16

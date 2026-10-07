@@ -315,6 +315,30 @@ export function validateScheduleForm(form: ScheduleFormValues): ScheduleFormErro
   return errors;
 }
 
+/**
+ * The `status` a SCHEDULE call carries, or `undefined` (omitted).
+ *
+ * [NEEDS CLARIFICATION: T-7.15 bucket-card demotion] "Never demotes" must hold
+ * against the SERVER, not just this client's cache: collaborator B can mark a
+ * timeless booking Booked from the detail screen (R-itin-39) while A's cache
+ * still says `idea`, and an explicit `status: "planned"` would then be a LEGAL
+ * `booked → planned` demotion (R-ib-8). The server's OMITTED path never
+ * demotes (`idea → planned`; `planned`/`booked` unchanged) and lands the same
+ * result in every non-stale case, so `planned` is never sent. Only an
+ * advancing `booked` rides the wire; a same-status tap omits it too (the
+ * pre-change path). This narrows R-itin-41's literal "AND the tapped target
+ * status" — Sean's ruling pending (PR body, open question).
+ *
+ * The status-only PATCH route cannot be protected the same way: it must name
+ * a status, and collab-v1 LWW (R-ib-18) gives it no precondition — known gap.
+ */
+export function scheduleStatusToSend(
+  booking: Booking,
+  target: StatusActionTarget,
+): StatusActionTarget | undefined {
+  return target === "booked" && !isSameStatusAction(booking, target) ? "booked" : undefined;
+}
+
 /** What the Sheet sends on confirm — one arm per route. */
 export type StatusActionRequest =
   | { route: "status"; input: { status: StatusActionTarget } }
@@ -327,11 +351,11 @@ export type StatusActionRequest =
  *
  *  - known times ⇒ status-only PATCH `{ status }` (the form is irrelevant:
  *    day/times are read-only, R-itin-41);
- *  - timeless ⇒ the schedule endpoint with `day`, the optional times, and the
- *    tapped `status` — OMITTED when the tap is a same-status one (a timeless
- *    `booked` card tapping "Booked"), so the server's pre-change path runs
- *    ("omitted ⇒ planned/booked unchanged", R-ib-8) instead of re-asserting
- *    a status the booking already holds.
+ *  - timeless ⇒ the schedule endpoint with `day`, the optional times, and
+ *    `scheduleStatusToSend`'s status: only an ADVANCING "Booked" is sent;
+ *    "Planned" and same-status taps omit it so the server's pre-change path
+ *    runs ("omitted ⇒ idea → planned, planned/booked unchanged", R-ib-8) —
+ *    it can never demote, whatever the server's current status.
  */
 export function buildStatusActionRequest(
   booking: Booking,
@@ -343,11 +367,12 @@ export function buildStatusActionRequest(
     return { route: "status", input: { status: target } };
   }
   if (Object.keys(validateScheduleForm(form)).length > 0) return null;
+  const status = scheduleStatusToSend(booking, target);
   const candidate: ScheduleBookingInput = {
     day: form.day,
     ...(form.startTime === "" ? {} : { start_time: form.startTime }),
     ...(form.endTime === "" ? {} : { end_time: form.endTime }),
-    ...(isSameStatusAction(booking, target) ? {} : { status: target }),
+    ...(status === undefined ? {} : { status }),
   };
   // Client mirror of the wire schema (trip-new precedent): the schema stays
   // the single source of truth for what is sendable.

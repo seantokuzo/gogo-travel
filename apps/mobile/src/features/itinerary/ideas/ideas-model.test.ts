@@ -22,6 +22,7 @@ import {
   knownTimesSummary,
   offeredStatusActions,
   schedulePrefill,
+  scheduleStatusToSend,
   STATUS_ACTION_FAILED_BANNER,
   statusActionCopy,
   statusActionFailure,
@@ -366,10 +367,35 @@ describe("buildStatusActionRequest (R-itin-41 routing)", () => {
     expect(ScheduleBookingInputSchema.safeParse(request.input).success).toBe(true);
   });
 
-  it("happy: a timeless idea + Planned schedules with status 'planned'; times stay optional", () => {
-    expect(
-      buildStatusActionRequest(timeless("idea"), "planned", { ...EMPTY_FORM, day: "2027-03-02" }),
-    ).toEqual({ route: "schedule", input: { day: "2027-03-02", status: "planned" } });
+  // Falsify: send `status: target` for Planned again ⇒ the body regains
+  // `status: "planned"` ⇒ RED (and so does the server-true pin below).
+  it("happy: a timeless idea + Planned schedules with `status` OMITTED (the server's idea → planned); times stay optional", () => {
+    const request = buildStatusActionRequest(timeless("idea"), "planned", {
+      ...EMPTY_FORM,
+      day: "2027-03-02",
+    });
+    expect(request).toEqual({ route: "schedule", input: { day: "2027-03-02" } });
+    if (request?.route !== "schedule") throw new Error("expected the schedule route");
+    expect(request.input).not.toHaveProperty("status");
+  });
+
+  // Falsify: return `target` for planned (the literal R-itin-41 "AND the
+  // tapped target status") ⇒ idea/planned + Planned carry `status: "planned"`
+  // ⇒ RED. Why it matters: B marks the booking Booked from the detail screen
+  // while A's cache still says `idea`; an explicit "planned" is then a LEGAL
+  // server `booked → planned` demotion (R-ib-8), the omitted path is not.
+  it("[NEEDS CLARIFICATION: T-7.15 bucket-card demotion] 'planned' NEVER rides a schedule call — the server's omitted path cannot demote a booking the client's cache still shows as idea/planned", () => {
+    expect(scheduleStatusToSend(timeless("idea"), "planned")).toBeUndefined();
+    expect(scheduleStatusToSend(timeless("planned"), "planned")).toBeUndefined();
+    // Only an ADVANCING booked is sent; a same-status booked is omitted too.
+    expect(scheduleStatusToSend(timeless("idea"), "booked")).toBe("booked");
+    expect(scheduleStatusToSend(timeless("planned"), "booked")).toBe("booked");
+    expect(scheduleStatusToSend(timeless("booked"), "booked")).toBeUndefined();
+    for (const status of ["idea", "planned"] as const) {
+      const request = buildStatusActionRequest(timeless(status), "planned", FORM);
+      if (request?.route !== "schedule") throw new Error("expected the schedule route");
+      expect(request.input).not.toHaveProperty("status");
+    }
   });
 
   it("a timeless PLANNED card advances with Booked (status 'booked')", () => {
@@ -425,7 +451,7 @@ describe("buildStatusActionRequest (R-itin-41 routing)", () => {
     });
     expect(request).toEqual({
       route: "schedule",
-      input: { day: "2027-03-02", start_time: "14:30", end_time: "14:30", status: "planned" },
+      input: { day: "2027-03-02", start_time: "14:30", end_time: "14:30" },
     });
   });
 });

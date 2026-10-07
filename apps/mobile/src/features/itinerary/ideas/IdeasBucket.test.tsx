@@ -25,8 +25,10 @@
 import {
   ScheduleBookingInputSchema,
   type Booking,
+  type BookingStatus,
   type BookingWithItems,
   type ItineraryItem,
+  type ScheduleBookingInput,
 } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
@@ -343,16 +345,17 @@ async function scheduleTimelessIdea(target: "planned" | "booked") {
   return { scheduleRequests, request };
 }
 
-it("happy: 'Planned' on a timeless idea schedules with status 'planned' (R-itin-41); the wire body parses; sheet closes", async () => {
+it("happy: 'Planned' on a timeless idea schedules with `status` OMITTED (the server's idea → planned); the wire body parses; sheet closes", async () => {
   const { scheduleRequests, request } = await scheduleTimelessIdea("planned");
   const input = scheduleRequests[0] as { params: unknown; body: unknown };
   expect(input.params).toEqual({ tripId: TEST_TRIP_ID, bookingId: BOOKING_IDEA_ID });
-  // Falsifiable wire pin: the body IS a valid ScheduleBookingInput.
+  // Falsifiable wire pin: the body IS a valid ScheduleBookingInput, and
+  // Planned never rides it (server-true never-demote, see the pin below).
   expect(ScheduleBookingInputSchema.parse(input.body)).toEqual({
     day: TRIP_DAY_2,
     start_time: "14:30",
-    status: "planned",
   });
+  expect(input.body).not.toHaveProperty("status");
   // Timeless ⇒ the schedule route ONLY: no status PATCH rode along.
   expect(callsTo(request, "PATCH")).toHaveLength(0);
 
@@ -535,6 +538,41 @@ it("a timeless PLANNED card's Booked advances it: the schedule body carries stat
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
 
+// Falsify: send `status: target` for Planned again ⇒ the body carries
+// `status: "planned"` ⇒ the responder (R-ib-8 verbatim) legally demotes
+// `booked → planned` ⇒ `serverStatus` ends "planned" ⇒ RED.
+it("[NEEDS CLARIFICATION: T-7.15 bucket-card demotion] a stale-cache 'Planned' cannot demote — B already marked it booked server-side while A's cache says idea; the body carries NO status, so the server keeps it booked", async () => {
+  const bodies: ScheduleBookingInput[] = [];
+  const idea = ideaBooking(); // A's cache: idea
+  let serverStatus: BookingStatus = "booked"; // server truth: B's write landed first
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), idea] },
+    overrides: {
+      [SCHEDULE_ROUTE]: (input) => {
+        const body = input.body as ScheduleBookingInput;
+        bodies.push(body);
+        // R-ib-8: an explicit status is validated against §3.2 from the
+        // CURRENT status (`booked → planned` is a legal demotion); omitted
+        // advances only `idea → planned` and leaves planned/booked alone.
+        serverStatus = body.status ?? (serverStatus === "idea" ? "planned" : serverStatus);
+        return Promise.resolve({
+          ...idea,
+          status: serverStatus,
+          items: [scheduledItem(BOOKING_IDEA_ID)],
+        });
+      },
+    },
+  });
+  await openSheet(BOOKING_IDEA_ID, "planned");
+  await pickDay();
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  await waitFor(() => expect(bodies).toHaveLength(1));
+
+  expect(bodies[0]).toEqual({ day: TRIP_DAY_2 });
+  expect(serverStatus).toBe("booked");
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
 // --- error: inline validation (R-itin-41) ----------------------------------
 
 it("error: an empty day and an end before the start each show an INLINE error and block confirm (R-itin-41)", async () => {
@@ -598,7 +636,6 @@ it("boundary: an end time EQUAL to the start time is valid — no error, confirm
     day: TRIP_DAY_2,
     start_time: "14:30",
     end_time: "14:30",
-    status: "planned",
   });
   await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
 });
