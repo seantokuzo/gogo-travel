@@ -265,6 +265,43 @@ it("each idea card shows 'Planned' and 'Booked' — and the old single 'Add to d
   expect(screen.queryByText("Add to day")).toBeNull();
 });
 
+// --- a11y (R-itin-30) -------------------------------------------------------
+
+// Falsify: drop the per-card `accessibilityLabel` on the action buttons ⇒ the
+// Button falls back to its bare title, so two cards' "Planned" read
+// identically to VoiceOver ("Planned, button" ×2 — which card?) ⇒ RED.
+it("a11y (R-itin-30): each action is a button whose label NAMES its card — two cards' identical 'Planned' captions stay distinguishable", async () => {
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaBooking(), ideaWithTimes()] },
+  });
+  await expandIdeas();
+  const teamLab = screen.getByTestId(`itinerary-ideas-planned-${BOOKING_IDEA_ID}`);
+  const sumo = screen.getByTestId(`itinerary-ideas-planned-${WITH_TIMES_IDEA_ID}`);
+  expect(teamLab.props.accessibilityRole).toBe("button");
+  expect(teamLab.props.accessibilityLabel).toBe("Mark TeamLab Planets as Planned");
+  expect(sumo.props.accessibilityLabel).toBe("Mark Sumo tournament as Planned");
+  expect(
+    screen.getByTestId(`itinerary-ideas-booked-${WITH_TIMES_IDEA_ID}`).props.accessibilityLabel,
+  ).toBe("Mark Sumo tournament as Booked");
+});
+
+// Falsify: drop `accessible` / the combined `accessibilityLabel` on the
+// read-only rows ⇒ VoiceOver reads "Starts" and "Mar 2, 2027 · 14:30" as two
+// unrelated fragments (or skips the row) ⇒ RED.
+it("a11y (R-itin-30): the known-times read-only rows are ONE accessible element each, with the full date + time in the label", async () => {
+  await renderBucket({
+    api: { bookings: [...defaultBookings(), ideaWithTimes()] },
+  });
+  await openSheet(WITH_TIMES_IDEA_ID, "booked");
+  const start = screen.getByTestId("itinerary-ideas-schedule-readonly-start");
+  const end = screen.getByTestId("itinerary-ideas-schedule-readonly-end");
+  expect(start.props.accessible).toBe(true);
+  expect(start.props.accessibilityLabel).toBe("Starts, Mar 2, 2027 at 14:30");
+  expect(end.props.accessible).toBe(true);
+  expect(end.props.accessibilityLabel).toBe("Ends, Mar 2, 2027 at 16:00");
+  await closeSheet();
+});
+
 // --- happy: timeless idea → schedule endpoint WITH status ------------------
 
 /**
@@ -763,6 +800,10 @@ it("error: a server 400 VALIDATION_FAILED with `details.fieldErrors.status` land
       "illegal status transition",
     ),
   );
+  // Announced when it lands (R-itin-30): a polite live region, not silent text.
+  expect(
+    screen.getByTestId("itinerary-ideas-schedule-status-error").props.accessibilityLiveRegion,
+  ).toBe("polite");
   // The reason lives on the field — NO generic banner repeats it.
   expect(screen.queryByTestId("itinerary-ideas-schedule-error")).toBeNull();
   expect(screen.getByTestId("itinerary-ideas-schedule-sheet")).toBeOnTheScreen();
