@@ -270,8 +270,9 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   at the trip-scoped root layout, so that WHEN a trip's effective status
   flips to `active` the wifi-gated auto-download triggers regardless of which
   surface is mounted — map tab, trip settings, or any other. The stand-down
-  rules (the coordinate-less and unusable-destination stand-downs below,
-  R-map-21) and the arms-only-from-`none` rule are unchanged. Consequence
+  rules (the coordinate-less stand-down above and the unusable-destination
+  stand-down in the round-2 block below) and the arms-only-from-`none` rule
+  are unchanged. Consequence
   of the root mount: the flip is observed for as long as that layout is
   mounted, so no particular surface has to be showing — which closes the
   one-visit-late gap (a trip that flipped `active` before the map tab or
@@ -913,7 +914,7 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 - [ ] Save on already-saved place (409 stub) lands in saved state, no error UI (MAP-3)
 - [ ] Locate-me before grant prompts once; denied path shows Settings hint, no re-prompt; no background location keys in the built plist (MAP-4)
 - [ ] Activation on wifi starts download exactly once; cellular defers then resumes on wifi event; failure → retry works; delete-trip removes pack; past-trip purge frees count before new download (MAP-5)
-- [ ] Activation observed with only a non-map, non-settings trip surface mounted (e.g. Today) starts the wifi-gated download exactly once, and later mounting the map tab or settings starts no second one (root-layout mount, R-map-18 / Q2-186) (MAP-5)
+- [ ] Activation observed with only a non-map, non-settings trip surface mounted (e.g. Today) starts the wifi-gated download, and later mounting the map tab or settings starts no second one — the in-flight latch keeps it to one download per trip however many surfaces read pack state (root-layout mount, R-map-18 / Q2-186) (MAP-5)
 - [ ] Airplane-mode E2E inside a downloaded region: tiles + pins + sheet work; search/fresh entry points show offline notice (MAP-5)
 - [ ] Itinerary → map focuses pin + opens sheet once, param not re-consumed; map → itinerary lands on item detail with tab stacks intact (MAP-6)
 
