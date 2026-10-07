@@ -358,13 +358,15 @@ unaffected and keeps its existing day-sectioned form.
 
 Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
 (`.specs/OPEN-QUESTIONS.md` § Round 2; the `Q2-NNN` rows stay as the decision
-record). Each rule below is the as-shipped interpretation made normative and
-cites its id. Four items whose Rec named a real alternative — which approve-all
-did NOT decide (Q2-056, Q2-064, Q2-125, Q2-181) — are written as shipped,
-labelled "Sean pick pending", and carry a `[NEEDS CLARIFICATION]` marker (the
-API-side ones live in `.specs/api/itinerary-bookings.spec.md`). Grouped by
-source task. R-itin-33..41 above are the separately signed-off P-7
-extension; this batch does not touch them.
+record). Each rule stamped "ruled 2026-09-19" is the as-shipped
+interpretation made normative (ruled as shipped) and cites its id. Four items
+whose Rec named a real alternative — which approve-all did NOT decide
+(Q2-056, Q2-064, Q2-125, Q2-181) — are written as shipped, labelled "as
+shipped; Sean pick pending", and carry a `[NEEDS CLARIFICATION]` marker. This
+file's 2 open markers are Q2-125 (R-itin-67) and Q2-181 (R-itin-76); the
+other two live in `.specs/api/itinerary-bookings.spec.md`. The spec is
+approvable once all are ruled. Grouped by source task. R-itin-33..41 above
+are the separately signed-off P-7 extension; this batch does not touch them.
 
 #### Deeplink-out builders (T-7.8)
 
@@ -1220,4 +1222,6 @@ inline-editable → R-itin-32; plan-mode mini-map → deferred to polish).
 Two markers opened by the Sean QA feature batch 2026-09-06 amendment —
 R-itin-35 (month view's exact shape) and R-itin-38 (timezone-switcher
 selection effect) — both **Ruled 2026-09-13, Sean** (PR #71 Questions
-#1/#2, both confirmed the recommended default). Zero markers remain._
+#1/#2, both confirmed the recommended default). Gate-2 and feature-batch
+markers are all resolved; round 2 (2026-09-19) leaves 2 open — Q2-125, Q2-181,
+Sean picks pending (R-itin-67, R-itin-76) — approvable once ruled._
