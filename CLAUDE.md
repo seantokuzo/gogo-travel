@@ -66,7 +66,7 @@ Everything reversible AND in-spec runs without asking.
 ## Before you code
 
 1. Read the relevant `.specs/` contract and `.agents/skills/` for the domain.
-2. Read the role file in `.agents/agents/` for the work you're doing.
+2. Engineers: your charter is your agent definition (`.claude/agents/<role>.md`) — it is already your system prompt.
 
 ## Tech stack
 
@@ -107,7 +107,7 @@ While an engineer agent owns the tree on a feature branch, the orchestrator
 FREEZES all git writes (no commits, no checkouts); doc updates queue until
 the branch merges. Parallel review lanes: only ONE lane (correctness, which
 runs the CI gate) may checkout; the rest review via `git diff`/`git show`.
-Agents that mutate files in parallel get `isolation: "worktree"`.
+Agents that mutate files in parallel get `isolation: "worktree"` — the engineer agents in `.claude/agents/` carry it in their frontmatter.
 
 ## Planning convention
 
