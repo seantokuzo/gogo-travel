@@ -2028,6 +2028,31 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
       expect(await dbItems(doomed.id)).toHaveLength(0);
       expect(dirtyCalls).toHaveLength(0);
     }
+
+    // Guard order (round-1 A3): a cancelled booking that ALSO has known times
+    // answers with the §3.2 guard's error, not the known-times precondition's
+    // `{ starts_at: "known" }` — the guard runs first. Falsification: move
+    // `assertStatusTransition` below the known-times check and this goes red.
+    const timedDoomed = await createBookingVia(trip.id, owner.accessToken, {
+      category: "flight",
+      title: "Timed then cancelled",
+      status: "planned",
+      details: FLIGHT_DETAILS,
+    });
+    expect(
+      (await patchBooking(trip.id, timedDoomed.id, owner.accessToken, { status: "cancelled" }))
+        .status,
+    ).toBe(200);
+    const timedRes = await scheduleBooking(trip.id, timedDoomed.id, owner.accessToken, {
+      day: "2026-09-03",
+      status: "booked",
+    });
+    expect(timedRes.status).toBe(400);
+    const timedErr = (await timedRes.json()) as ErrorEnvelope;
+    expect(timedErr.error.code).toBe("VALIDATION_FAILED");
+    expect(timedErr.error.details).toEqual({ status: "illegal transition" });
+    expect((await dbBooking(timedDoomed.id))?.status).toBe("cancelled");
+    expect(await dbItems(timedDoomed.id)).toHaveLength(0);
   });
 
   it("T-7.10 error: the pre-existing preconditions still win and a rejected call never moves status — timed booking 400, already-scheduled 409", async () => {
