@@ -121,14 +121,27 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   text-only search's `q` (trimmed) is shorter than
   `PLACES_SEARCH_TEXT_ONLY_MIN_CHARS` THE SYSTEM SHALL NOT reject the
   request; instead THE SYSTEM SHALL run an exact, case-insensitive,
-  accent-folded name match against the bootstrap destination tier only
+  accent-folded name match against (a) the bootstrap destination tier
   (`source = 'overture' AND category = 'locality'`, R-places-6's spine) and
-  SHALL NOT run a trigram scan or consider `custom`-source places (R-places-8
-  holds trivially — this arm never reads a `custom` row, not even the
-  caller's own). WHEN no tier row matches exactly THE SYSTEM SHALL return
-  200 with an empty list, not 400 (Sean's ruling, 2026-09-14: 54 seeded tier
-  rows — Fez, Van, Ufa, Qom, … — are shorter than the floor and were
-  otherwise unreachable by their own name).
+  (b) the CALLER'S OWN custom places (`source = 'custom' AND created_by =
+caller`) — and SHALL NOT run a trigram scan, SHALL NOT prefix- or
+  wildcard-widen the match, and SHALL NOT consider any other row (no other
+  spine POI, no other user's custom place, and no custom place visible to
+  the caller only through a trip reference). WHEN nothing matches exactly
+  THE SYSTEM SHALL return 200 with an empty list, not 400 (Sean's ruling,
+  2026-09-14: 54 seeded tier rows — Fez, Van, Ufa, Qom, … — are shorter than
+  the floor and were otherwise unreachable by their own name).
+  _Amendment, Sean's ruling 2026-09-19:_ arm (b) is new — a user's own custom
+  place was findable at >= 4 chars (trigram arm, R-places-8's creator branch)
+  and vanished at 2–3 chars; the arm is now creator-scoped so it no longer
+  does. It is deliberately CREATOR-scoped, NOT trip-scoped: R-places-8's
+  trip-reference widening does not apply to this arm (`trip_id` still
+  membership-gates the request — non-member → the indistinguishable 404 —
+  but never widens the 2–3-char match), so Law #3 holds by construction (the
+  arm is strictly narrower than R-places-8's predicate). Tier and custom
+  matches rank equally (constant rank key; pure `id DESC` order, the same
+  tie-break the trigram arm applies to an exact-name tie without a geo
+  bound). `coarse_category` filters both arms.
 
   _Spec-placement note (review R1 A5 — process meta moved out of the SHALL
   text):_ this requirement lives under PL-2 (search, R-places-6..10), not
