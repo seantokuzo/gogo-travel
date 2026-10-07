@@ -1261,11 +1261,32 @@ describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
   const DEPARTURE_STOP = "aaaaaaae-aaaa-4aaa-8aaa-aaaaaaaaaaae";
   const ARRIVAL_STOP = "aaaaaaaf-aaaa-4aaa-8aaa-aaaaaaaaaaaf";
 
-  /** The red-eye with a `place_id` attached — LOCATED, so the server chains it. */
-  function locatedFlight() {
+  /**
+   * The red-eye. `located` attaches a `place_id` (the server chains a LOCATED
+   * flight and draws legs through it); without one it is UNLOCATED — R-ib-20
+   * transparent, the scan walks straight past it.
+   */
+  function redEyeFlight(located: boolean) {
     const { item, booking } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
-    const located = { ...booking, place_id: PLACE_ID };
-    return { item, byId: new Map([[located.id, located]]) };
+    const withPlace = { ...booking, place_id: located ? PLACE_ID : null };
+    return { item, byId: new Map([[withPlace.id, withPlace]]) };
+  }
+
+  /**
+   * A LOCATED stay (Jun 9 → Jun 11, `place_id` set) whose check-out row leads
+   * Jun 11 AHEAD of the flight's Arrives row (sort_order 512 < the flight's
+   * 1024). Located on purpose: the server's `locatedPairs` only ever emits a
+   * leg whose FROM is a located item, so a fixture leg from an unlocated stay
+   * could never exist in production (fix-verifier Adv 2).
+   */
+  function locatedStay() {
+    const hotel = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+    const booking = defaultBookings().find((b) => b.id === BOOKING_LODGING_ID);
+    if (hotel === undefined || booking === undefined) throw new Error("fixture missing lodging");
+    return {
+      stay: { ...hotel, day: "2027-06-09", end_day: "2027-06-11", sort_order: 512 },
+      byId: new Map([[booking.id, { ...booking, place_id: PLACE_ID }]]),
+    };
   }
 
   function stop(id: string, day: string, sortOrder: number) {
@@ -1281,7 +1302,7 @@ describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
   }
 
   it("FROM: no chip hangs off the Arrives row (the '42 h drive from the departure airport' scenario); Departs still anchors its chip", () => {
-    const { item, byId } = locatedFlight();
+    const { item, byId } = redEyeFlight(true);
     const items = [
       item,
       stop(DEPARTURE_STOP, "2027-06-10", 2048),
@@ -1308,17 +1329,11 @@ describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
   });
 
   it("TO: no chip ENDS on the Arrives row (a check-out → flight pair stays absent); a stop → Departs chip still renders", () => {
-    const { item: flightItem, byId: flightMap } = locatedFlight();
-    const hotel = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
-    if (hotel === undefined) throw new Error("fixture missing lodging item");
-    // sort_order 512 < the flight's 1024: the check-out row precedes Arrives on
-    // Jun 11, so the pair (hotel → flight) is a forward scan that ends ON Arrives.
-    const stay = {
-      ...hotel,
-      day: "2027-06-09",
-      end_day: "2027-06-11",
-      sort_order: 512,
-    };
+    const { item: flightItem, byId: flightMap } = redEyeFlight(true);
+    // The check-out row precedes Arrives on Jun 11, so the pair (hotel → flight)
+    // is a forward scan that ends ON Arrives. BOTH ends are located, so the fed
+    // leg is one the server's `locatedPairs` really emits.
+    const { stay, byId: stayMap } = locatedStay();
     const items = [stay, flightItem, stop(DEPARTURE_STOP, "2027-06-10", 512)];
     const legs = [
       // CONTROL — a stop → Departs leg on the departure day renders as it always did.
@@ -1326,7 +1341,7 @@ describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
       // The pair: the lodging's check-out row → the flight's Arrives row.
       makeTravelLeg(ITEM_LODGING_ID, FLIGHT_ITEM_ID, "driving"),
     ];
-    const byId = new Map([...bookingsById(), ...flightMap]);
+    const byId = new Map([...stayMap, ...flightMap]);
     const rows = buildDayRows({ start_date: "2027-06-09", end_date: "2027-06-11" }, items, byId, {
       legs,
     });
@@ -1341,5 +1356,31 @@ describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
       `entry:${ITEM_LODGING_ID}-check-out`,
       `entry:${FLIGHT_ITEM_ID}-arrives`,
     ]);
+  });
+
+  it("a LOCATED Arrives row still STOPS the scan — a stale H → Y leg never draws across it; an UNLOCATED flight is transparent (control)", () => {
+    // H = the located stay's check-out row, Y = a located stop later on Jun 11,
+    // the flight's Arrives row between them. The server chains the LOCATED
+    // flight, so it stores (H, flight) and (flight, Y) — never (H, Y); a client
+    // still holding an H → Y leg (stale: the flight was attached / located
+    // after it was computed) must degrade to ABSENT, not draw a hop that skips
+    // the arrival (the findLegFrom stale-leg case). Falsify: `continue` past an
+    // Arrives `to` before the located-stop check → the located variant draws it.
+    const chipsAcrossArrives = (located: boolean): string[] => {
+      const { item, byId: flightMap } = redEyeFlight(located);
+      const { stay, byId: stayMap } = locatedStay();
+      const items = [stay, item, stop(ARRIVAL_STOP, "2027-06-11", 2048)];
+      const legs = [makeTravelLeg(ITEM_LODGING_ID, ARRIVAL_STOP, "driving")];
+      const byId = new Map([...stayMap, ...flightMap]);
+      const rows = buildDayRows({ start_date: "2027-06-09", end_date: "2027-06-11" }, items, byId, {
+        legs,
+      });
+      return rows.filter((row) => row.type === "leg").map(rowLabel);
+    };
+    expect(chipsAcrossArrives(true)).toEqual([]);
+    // CONTROL: the SAME leg DOES render once the flight is unlocated — R-ib-20
+    // transparency, so the pin above is about the located stop, not a fixture
+    // that can never draw H → Y.
+    expect(chipsAcrossArrives(false)).toEqual([`leg:${ITEM_LODGING_ID}->${ARRIVAL_STOP}`]);
   });
 });
