@@ -14,7 +14,7 @@
 > and the §3.8 handoff ("push notification payload schemas — notifications
 > spec") · `.specs/client/navigation.spec.md` (deep-link registry §2.3) ·
 > `.specs/research/competitors.md` (TripIt Pro flight alerts = what users pay
-> for; leave-by prompts) · `.agents/agents/mobile-engineer.md` (EAS
+> for; leave-by prompts) · `.claude/agents/mobile-engineer.md` (EAS
 > `projectId` landmine) · ADR-003 / Law #5 (no scheduled LLM jobs) · ADR-005
 > (`alerts_enabled` entitlement seam).
 >

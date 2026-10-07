@@ -24,7 +24,7 @@ planning docs land first, then specs (P-2), then the build.
 | How sessions work                      | `docs/SESSION-GUIDE.md`                                     |
 | Feature specs                          | `.specs/`                                                   |
 | Review pipeline                        | `.claude/rules/review.md` (brief) + the `review-loop` skill |
-| Autonomous chain mode                  | `scripts/run-loop.sh` + `.agents/skills/autonomous-loop/`   |
+| Autonomous chain mode                  | `scripts/run-loop.sh` + `.claude/skills/autonomous-loop/`   |
 
 ## Provenance
 
