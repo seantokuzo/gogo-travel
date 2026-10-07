@@ -115,7 +115,9 @@
   as compact chips in an all-day lane pinned above that day's column.
 - **R-itin-17**: WHEN grid mode opens THE SYSTEM SHALL land on the trip's
   first day (or today's column when the trip is active and today is in
-  range) with the 08:00–20:00 band initially visible.
+  range) with the 08:00–20:00 band initially visible. ("First day" is the
+  first column of the grid's day set — an earlier out-of-range item day wins
+  over the trip's first day; R-itin-51.)
 
 ### Calendar view density (3-day / month / trip-span)
 
@@ -389,9 +391,8 @@ extension; this batch does not touch them.
   `source: 'deeplink_return'`, status defaulting to `idea`) is the HOST'S
   FALLBACK only — the itinerary stack passes `onAddManually`, which routes to
   `item/new?category=…` per R-itin-22, so the fallback never mounts there.
-  Its testIDs (`booking-manual-add-sheet`, `-error`, `-input-title`) sit
-  outside the §2.9 screen inventory by design and are recorded there as
-  fallback-only.
+  Its five testIDs — `booking-manual-add-sheet`, `-error`, `-input-title`,
+  `-button-save`, `-button-cancel` — are listed in §2.9 (fallback-only).
 
 #### Plan-mode day list (T-7.4)
 
@@ -437,8 +438,9 @@ extension; this batch does not touch them.
 - **R-itin-50 (gap-tap; Q2-078, Q2-084, ruled 2026-09-19):** "rounded to 30
   min" (R-itin-14) means FLOOR to the half-hour containing the tap — the
   tap's `locationY` within its hour row (24 pressable hour slots per day sit
-  behind the blocks); a press event carrying no location data (some
-  assistive-tech paths) prefills `HH:00`. WHEN the member's role is
+  behind the blocks); a press event carrying no location prefills `HH:00` (a
+  defensive default — native always supplies the event; the bare case is a
+  test-renderer artifact). WHEN the member's role is
   `viewer` (R-ib-24) THE SYSTEM SHALL render the slots as inert grid lines —
   no slot Pressables, no slot testIDs; read affordances (blocks, chips,
   lanes) stay pressable.
@@ -449,7 +451,9 @@ extension; this batch does not touch them.
   08:00. The landing column is today's whenever today is in the grid's
   day-column set (the trip range plus any sparse out-of-range item days,
   R-itin-45) — so a trip that has ended but has an item dated today lands on
-  today — else the trip's first day.
+  today — else the FIRST column of that set: the trip's first day, or an
+  earlier out-of-range item day when one exists (`initialDayIndex` returns
+  the earliest column).
 - **R-itin-52 (spanning lane segments; Q2-081, Q2-083, Q2-088, ruled
   2026-09-19):** WHEN a spanning booking renders in the grid's all-day lane
   (R-itin-31, §2.6) THE SYSTEM SHALL draw it as abutting per-column segments
@@ -659,8 +663,10 @@ extension; this batch does not touch them.
   terminal in the UI as on the wire (API §3.2): no status buttons and no
   Cancel button — but Delete still works (API §3.4 DELETE has no status
   precondition). Status actions render as plain buttons, not a segmented
-  control (the form already owns the status segment): the list excludes the
-  current status and `cancelled`. ConfirmDialog ids derive `-confirm` /
+  control (the form already owns the status segment): the list is API §3.2's
+  legal targets minus the current status and `cancelled` — so `booked → idea`
+  is absent too (§3.2's deliberate two-step: demote to `planned` first).
+  ConfirmDialog ids derive `-confirm` /
   `-cancel` from the TRIGGERING button's id (§2.9), the trip-settings
   precedent.
 - **R-itin-71 (detail rendering; Q2-158, Q2-159, Q2-160, Q2-161, Q2-162,
