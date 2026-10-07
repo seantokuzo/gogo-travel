@@ -13,10 +13,11 @@
  *     (whose `tz` IS the geo-tz answer). Any offset disagreement must be on
  *     `KNOWN_OFFSET_DISAGREEMENTS` BY NAME with the reason; an entry that no
  *     longer disagrees also fails (the list cannot rot).
- *  2. FULL-CORPUS RATCHET: the disagreement COUNT over ALL 6,927 destination
- *     rows and all 4,133 airports may not exceed the measured baseline — a
- *     tz-lookup upgrade (or a dataset refresh) that degrades accuracy goes
- *     red. ~3 s; it is what makes a version bump safe.
+ *  2. FULL-CORPUS RATCHET: the exact KEY SET of disagreeing rows over ALL 6,927
+ *     destination rows and all 4,133 airports may not grow beyond the pinned
+ *     baseline (destination-tz.accuracy.baseline.json) — a tz-lookup upgrade (or
+ *     a dataset refresh) that breaks ANY new row goes red, even if it fixes as
+ *     many others. ~3 s; it is what makes a version bump safe.
  *  3. MEASUREMENT TIE-OUT: baseline numbers recorded in the PR body came from
  *     exactly this comparison (tz-lookup 11.7.0 vs geo-tz 8.1.8, 2026-07-01 /
  *     2026-01-01 12:00Z).
@@ -194,28 +195,59 @@ describe("tz-lookup vs geo-tz — SAMPLED PIN (strict; allow-list by name)", () 
   });
 });
 
-describe("tz-lookup vs geo-tz — FULL-CORPUS RATCHET (count may not grow)", () => {
-  // Measured 2026-10-06, tz-lookup 11.7.0 vs geo-tz 8.1.8, instants 2026-07-01 / 2026-01-01 12:00Z:
-  //   destination tier: 51 of 6,927 offset-disagree (31 Asia/Urumqi vs Asia/Shanghai, 20 border/other)
-  //   airports:         70 of 4,133 offset-disagree (16 Urumqi/Shanghai, 54 border cells across ~28 countries)
-  // (zone-ID disagreements are higher — 83 / 152 — but most are equal-offset: irrelevant here.)
-  const DESTINATION_BASELINE = 51;
-  const AIRPORT_BASELINE = 70;
+describe("tz-lookup vs geo-tz — FULL-CORPUS RATCHET (the disagreeing KEY SET may not grow)", () => {
+  // `destination-tz.accuracy.baseline.json` pins the exact keys that offset-disagree
+  // (measured 2026-10-06, tz-lookup 11.7.0 vs geo-tz 8.1.8, instants 2026-07-01 /
+  // 2026-01-01 12:00Z): 51 destination rows (31 Asia/Urumqi vs Asia/Shanghai, 20
+  // border/other) and 70 airports (16 Urumqi/Shanghai, 54 border cells). Pinning the
+  // SET, not just the count, means a library bump (or dataset refresh) that FIXES
+  // some rows while BREAKING others can no longer hide behind an unchanged total
+  // (PR #99 round-1 adversarial finding 4). Shrinking is fine — regenerate to tighten.
+  // (Zone-ID disagreements are higher — 83 / 152 — but most are equal-offset: irrelevant.)
+  const baseline = JSON.parse(
+    readFileSync(join(import.meta.dirname, "destination-tz.accuracy.baseline.json"), "utf8"),
+  ) as { tzLookupVersion: string; destination: string[]; airports: string[] };
 
-  it("destination tier: offset disagreements ≤ the measured baseline", { timeout: 120_000 }, () => {
-    let count = 0;
-    for (const row of readJson<DestinationRow>("destinations.json")) {
-      const geo = geoTzFind(row.lat, row.lng)[0];
-      if (geo === undefined || offsetsDisagree(lookupZone(row.lat, row.lng), geo)) count += 1;
-    }
-    expect(count).toBeLessThanOrEqual(DESTINATION_BASELINE);
+  it("the baseline matches the installed tz-lookup version (a bump must re-measure, not inherit)", () => {
+    const { version } = JSON.parse(
+      readFileSync(
+        join(import.meta.dirname, "../../node_modules/@photostructure/tz-lookup/package.json"),
+        "utf8",
+      ),
+    ) as { version: string };
+    expect(baseline.tzLookupVersion).toBe(version);
   });
 
-  it("airports: offset disagreements ≤ the measured baseline", { timeout: 120_000 }, () => {
-    let count = 0;
-    for (const row of readJson<AirportRow>("airports.json")) {
-      if (offsetsDisagree(lookupZone(row.lat, row.lng), row.tz)) count += 1;
-    }
-    expect(count).toBeLessThanOrEqual(AIRPORT_BASELINE);
-  });
+  it(
+    "destination tier: no row disagrees that the baseline does not already list",
+    { timeout: 120_000 },
+    () => {
+      const offenders: string[] = [];
+      for (const row of readJson<DestinationRow>("destinations.json")) {
+        const geo = geoTzFind(row.lat, row.lng)[0];
+        if (geo === undefined || offsetsDisagree(lookupZone(row.lat, row.lng), geo)) {
+          offenders.push(`${row.name}|${row.country}|${row.sourceId}`);
+        }
+      }
+      const known = new Set(baseline.destination);
+      const added = offenders.filter((key) => !known.has(key));
+      expect(added, `NEW offset disagreements:\n${added.join("\n")}`).toEqual([]);
+      expect(offenders.length).toBeLessThanOrEqual(baseline.destination.length);
+    },
+  );
+
+  it(
+    "airports: no airport disagrees that the baseline does not already list",
+    { timeout: 120_000 },
+    () => {
+      const offenders: string[] = [];
+      for (const row of readJson<AirportRow>("airports.json")) {
+        if (offsetsDisagree(lookupZone(row.lat, row.lng), row.tz)) offenders.push(row.iata);
+      }
+      const known = new Set(baseline.airports);
+      const added = offenders.filter((key) => !known.has(key));
+      expect(added, `NEW offset disagreements:\n${added.join("\n")}`).toEqual([]);
+      expect(offenders.length).toBeLessThanOrEqual(baseline.airports.length);
+    },
+  );
 });
