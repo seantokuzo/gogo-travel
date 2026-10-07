@@ -1,5 +1,7 @@
 ---
-paths: [".agents/agents/reviewer.md"]
+# By-path only: review-loop hands reviewers this file explicitly. The glob below
+# deliberately matches nothing; without `paths:` this brief would load every session.
+paths: [".claude/rules/review.md.by-path-only"]
 ---
 
 # Review brief — GoGo Travel

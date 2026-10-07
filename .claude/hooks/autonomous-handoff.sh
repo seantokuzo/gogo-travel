@@ -7,7 +7,7 @@
 #
 # The loop is OPT-IN: with no `.loop/` directory this hook does nothing, so
 # interactive sessions are completely unaffected.
-# Canonical spec (when present): .agents/skills/autonomous-loop/SKILL.md
+# Canonical spec (when present): .claude/skills/autonomous-loop/SKILL.md
 #
 # CONTRACT: ALWAYS exits 0 — never blocks Claude from stopping.
 
