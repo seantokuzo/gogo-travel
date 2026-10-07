@@ -96,7 +96,9 @@ enforced in CI.**
   of it, trailing whitespace trimmed. That is the grep key to its archived detail. Giving those rows IDs
   is an ADR-001-class question and is not decided here.
 - Execution order stays **derived** (ADR-001): the highest-priority `queued` row whose `depends_on` are all
-  `done`. IDs never renumber. The status enum is unchanged ([ADR-002](ADR-002-status-enum-lock.md)).
+  `done`. A `depends_on` ID absent from the live index (its `done` row was rotated out) is resolved with
+  the history grep, `grep -nE '^\| <ID> +\|' docs/history/QUEUE-*.md`; a `done` or `cancelled` archive row
+  means the dependency is met. IDs never renumber. The status enum is unchanged ([ADR-002](ADR-002-status-enum-lock.md)).
 - **Not Prettier-formatted, on purpose** (`.prettierignore`): padding re-inflates the file several-fold and
   the pre-commit gate would force it back. The CI byte cap is the backstop if something re-pads it.
 - **Detail is read by ID, never by whole file.** Recipes (the archives are never Read whole; hand a worker

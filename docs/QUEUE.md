@@ -4,6 +4,7 @@
 > One row per live item, no narrative. Order is **derived**: highest-priority `queued` row whose `depends_on` are all `done`. IDs never renumber.
 > Status enum ([ADR-002](decisions/ADR-002-status-enum-lock.md)): `queued · in-progress · blocked · done · deferred · cancelled`.
 > **Detail is read by ID, never whole files:** `grep -nE '^\| B-30 +\|' docs/QUEUE.md docs/history/QUEUE-*.md` · ID-less rows: `grep -nF '<handle>' docs/QUEUE.md docs/history/QUEUE-*.md`.
+> **Dependency not in the live index?** Its `done` row was rotated out: `grep -nE '^\| <ID> +\|' docs/history/QUEUE-*.md`. A `done`/`cancelled` archive row means the dependency is met.
 > Not prettier-formatted on purpose (`.prettierignore`): table padding re-inflates this file 5×.
 
 ## Active
