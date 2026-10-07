@@ -225,6 +225,13 @@ export function placesSearchQuery(db: DbClient, params: PlacesSearchParams) {
 }
 
 export interface PlacesExactTierMatchParams {
+  /**
+   * The authenticated caller — the custom arm's CREATOR scope (R-places-28,
+   * Sean's 2026-09-19 ruling). Deliberately the ONLY identity this query
+   * takes: there is no `tripId` here, because the ruling is creator-scoped,
+   * not trip-scoped (the route's membership gate still runs first).
+   */
+  userId: string;
   /** Trimmed, NFC-normalized query text (SearchTextSchema handles that). */
   q: string;
   /** Derived coarse-category filter (§3.2.3) — review R1 A1/ADVISORY-2:
@@ -240,10 +247,10 @@ export interface PlacesExactTierMatchParams {
 /**
  * B-7 follow-up (Sean's ruling, 2026-09-14; places spec R-places-28):
  * sub-floor (`q.length < PLACES_SEARCH_TEXT_ONLY_MIN_CHARS`, trimmed)
- * TEXT-ONLY destination queries no longer 400 (the floor moved from a
- * validation reject to an arm SELECTION — `@gogo/shared`'s
- * `PlaceSearchQuerySchema`, see that file's comment) — `routes.ts` sends
- * them here instead of `placesSearchQuery`.
+ * TEXT-ONLY queries no longer 400 (the floor moved from a validation reject
+ * to an arm SELECTION — `@gogo/shared`'s `PlaceSearchQuerySchema`, see that
+ * file's comment) — `routes.ts` sends them here instead of
+ * `placesSearchQuery`.
  *
  * Deliberately a SEPARATE, narrower query, not `placesSearchQuery` with
  * different params:
@@ -256,19 +263,58 @@ export interface PlacesExactTierMatchParams {
  *    index, and a widened `LIKE '<q>%'` prefix match would silently
  *    reopen the same blowup (falsified by the "Fe" 2-char pin,
  *    destination-tier.db.test.ts — a real tier row, "Fez", would leak
- *    into a 2-char prefix query that must return empty).
- *  - Bootstrap destination TIER rows only (`source = 'overture' AND
- *    category = 'locality'`, the migration-0004 seed) — driven by the
- *    partial index `places_tier_name_folded_idx` (EXPLAIN-pinned,
- *    destination-tier.db.test.ts, mirroring the SARGABILITY CONTRACT
- *    pins above).
- *  - `custom`-source places are UNCONDITIONALLY excluded — not even the
- *    caller's own. R-places-8 / Law #3 holds trivially (no visibility
- *    predicate needed at all: the tier-only filter structurally can never
- *    match a `source='custom'` row), and this doubles as the "no POI
- *    scan" contract — a custom place is never read by this query,
- *    regardless of who is asking (falsified by the creator-owned-"Fez"
- *    pin, not just the stranger one).
+ *    into a 2-char prefix query that must return empty; the same holds
+ *    for the custom arm, "Zq" must not return "Zqx").
+ *  - TWO arms, OR'd (Sean's ruling, 2026-09-19 — R-places-28 amendment):
+ *      1. Bootstrap destination TIER rows (`source = 'overture' AND
+ *         category = 'locality'`, the migration-0004 seed) — driven by the
+ *         partial index `places_tier_name_folded_idx` (EXPLAIN-pinned,
+ *         destination-tier.db.test.ts, mirroring the SARGABILITY CONTRACT
+ *         pins above).
+ *      2. The CALLER'S OWN custom places (`source = 'custom' AND
+ *         created_by = caller`) — removes the seam where a user's own custom
+ *         place was findable at 4 chars (trigram arm + R-places-8) and
+ *         vanished at 3 (this arm used to exclude every `custom` row).
+ *    The custom arm is CREATOR-scoped on purpose — NOT trip-scoped, NOT
+ *    other members' custom places, NOT public: R-places-8 / Law #3 stays
+ *    intact because the predicate is strictly NARROWER than
+ *    `placesSearchQuery`'s visibility predicate (it keeps the creator
+ *    branch and drops the trip-reference widening). Consequently this query
+ *    takes the caller's id and NO `tripId`: `routes.ts` still runs the
+ *    membership gate (non-member `trip_id` → the indistinguishable 404)
+ *    BEFORE arm selection, but `trip_id` never widens THIS arm. Residual,
+ *    ruled and accepted: a co-member's custom place that the trip
+ *    references is still visible at >= 4 chars under `trip_id` (trigram arm)
+ *    and NOT at 2-3 chars.
+ *    "No POI scan" holds for every non-custom row: only tier rows (indexed)
+ *    and the caller's own custom rows are ever candidates; `source =
+ *    'custom'` is explicit so a spine row that merely carries a
+ *    `created_by` can never match.
+ *  - The fold match is repeated INSIDE each OR arm — `(tier AND fold) OR
+ *    (custom AND created_by AND fold)` — so each arm is self-contained and
+ *    the planner builds a BitmapOr of `places_tier_name_folded_idx` (Index
+ *    Cond on the fold) and `places_created_by_idx` (EXPLAIN-pinned).
+ *    Verified on PG 18 at spine scale: the HOISTED spelling `(tier OR
+ *    custom) AND fold` plans IDENTICALLY (same BitmapOr, same Recheck Cond),
+ *    so repeating the fold is robustness against planner-version drift,
+ *    not a measured win — the plan pin guards the shape either way.
+ *  - INDEX DECISION — no new index (migration 0007 NOT added). The custom
+ *    arm is driven by the EXISTING `places_created_by_idx`, so its cost is
+ *    O(the caller's own custom rows), never O(spine). Measured on a scratch
+ *    DB at spine scale (431,927 `places` rows: 400k overture POIs + 25k
+ *    custom rows over 40 creators; `ANALYZE`d, planner UNFORCED — it picks
+ *    the BitmapOr by itself; EXPLAIN ANALYZE, `q = 'Fez'`):
+ *      pre-change tier-only query ........................... 0.06 ms
+ *      this query, creator with 500 custom rows ............. 1.6 ms
+ *      this query, creator with 5,500 custom rows ........... 7.7 ms
+ *    Custom places are hand-created one row per user action, the endpoint
+ *    is per-user rate-limited (RATE_LIMITS.placesSearch, 120/min) and
+ *    debounced, and the cost lands only on the caller's own request. A
+ *    partial `(created_by, fold(name)) WHERE source = 'custom'` index would
+ *    make the arm O(log n) but costs a migration + per-write maintenance
+ *    for a creator size nobody has today. REVISIT if custom-place counts
+ *    per creator reach the tens of thousands (note: `POST /places` has no
+ *    per-user cap today) — the index is additive, no query change needed.
  *  - No bbox/near — `routes.ts` only reaches this arm when both geo bounds
  *    are absent; a short `q` WITH a geo bound keeps using the existing
  *    geo-bounded arm (`placesSearchQuery`), unaffected. `coarse_category`
@@ -276,27 +322,46 @@ export interface PlacesExactTierMatchParams {
  *    dropped before): the same AND-residual `coarseCategorySqlExpr` filter
  *    the trigram/geo arm uses, so `?q=Fez&coarse_category=food` correctly
  *    excludes a locality (Fez's own `coarse_category` is `other`) instead
- *    of leaking it through a mismatched category filter. The driving fold
- *    predicate/index are unaffected — this is a residual AND, same posture
- *    as `placesSearchQuery`'s coarse filter above.
- *  - `rankKey` is a constant `0` — every match is equally "exact," nothing
- *    to rank by — so page order is pure `id DESC`, still stable across
- *    pages via the SAME keyset-cursor codec the text/geo arm uses
- *    (`routes.ts` builds the cursor/envelope identically regardless of
- *    which arm ran the query).
+ *    of leaking it through a mismatched category filter. It applies to both
+ *    arms (a custom place's category-derived coarse value is filtered the
+ *    same way). The driving fold predicate/index are unaffected — this is a
+ *    residual AND, same posture as `placesSearchQuery`'s coarse filter above.
+ *  - ORDERING RULE: `rankKey` is a constant `0` for EVERY match, tier or
+ *    custom — every match is equally "exact," nothing to rank by — so page
+ *    order is pure `id DESC`, kind-blind: a mixed page interleaves tier and
+ *    custom rows by uuid, exactly the tie-break the trigram arm applies to
+ *    an exact-name tie with no geo bound (so crossing the 3 -> 4 char floor
+ *    never reorders), and tier-only results are byte-identical to the
+ *    pre-ruling arm. Still stable across pages via the SAME keyset-cursor
+ *    codec the text/geo arm uses (`routes.ts` builds the cursor/envelope
+ *    identically regardless of which arm ran the query). Biasing the
+ *    caller's own place first is a one-line rank change if product wants it
+ *    — deliberately NOT done here (not in the ruling).
  */
 export function placesExactTierMatchQuery(db: DbClient, params: PlacesExactTierMatchParams) {
   const places = schema.places;
   const rankExpr = sql<string>`0::bigint`;
 
+  // The fold match is repeated INSIDE each OR arm so each arm is
+  // self-contained and independently indexable (BitmapOr — EXPLAIN-pinned).
+  // PG 18 plans the hoisted `(tier OR custom) AND fold` spelling identically
+  // (verified); this form just doesn't lean on the planner to distribute it.
+  const foldMatch = sql`${schema.tierNameFoldExpr(places.name)} = ${schema.tierNameFoldExpr(sql`${params.q}`)}`;
+
   const predicates: SQL[] = [
-    // Literal text, not bound params: matching the partial index's WHERE
-    // clause verbatim (byte-for-byte, `db/schema/places.ts`) is what lets
-    // Postgres apply it regardless of prepared-statement generic-plan mode
-    // (SARGABILITY CONTRACT precedent, this file's header comment).
-    sql`${places.source} = 'overture' and ${places.category} = 'locality'`,
-    sql`${schema.tierNameFoldExpr(places.name)} = ${schema.tierNameFoldExpr(sql`${params.q}`)}`,
+    sql`(
+      (${places.source} = 'overture' and ${places.category} = 'locality' and ${foldMatch})
+      or (${places.source} = 'custom' and ${places.createdBy} = ${params.userId}::uuid and ${foldMatch})
+    )`,
   ];
+  // Tier arm: `source`/`category` are LITERAL text, not bound params —
+  // matching the partial index's WHERE clause verbatim (byte-for-byte,
+  // `db/schema/places.ts`) is what lets Postgres apply the index regardless
+  // of prepared-statement generic-plan mode (SARGABILITY CONTRACT precedent,
+  // this file's header comment). Custom arm: `created_by` is the bound
+  // caller (`places_created_by_idx` drives it); `source = 'custom'` is
+  // explicit so a non-custom row that merely carries a `created_by` can
+  // never match (defense-in-depth — nothing writes one today).
 
   if (params.coarse !== undefined) {
     predicates.push(sql`${coarseCategorySqlExpr(places.category)} = ${params.coarse}`);

@@ -31,7 +31,11 @@ import { createUserWithEntitlements } from "../db/create-user.js";
 import * as schema from "../db/schema/index.js";
 import { createSessionWithTokens, type AccessTokenSigner } from "../auth/token-issuer.js";
 import type { AuthRouterDeps } from "../auth/routes.js";
-import type { ErrorEnvelope } from "../http/idor-404.test-util.js";
+import {
+  expectIndistinguishable404s,
+  NONEXISTENT_UUID,
+  type ErrorEnvelope,
+} from "../http/idor-404.test-util.js";
 import { placesExactTierMatchQuery, placesSearchQuery } from "./search-query.js";
 import { DESTINATION_TIER_ROW_COUNT } from "../test/destination-tier-fixture.js";
 import { encodeKeysetCursor } from "../http/keyset-cursor.js";
@@ -304,8 +308,9 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
   // R-places-28): a text-only query shorter than
   // PLACES_SEARCH_TEXT_ONLY_MIN_CHARS no longer 400s — it runs an exact,
   // case-insensitive, accent-folded, trimmed match against the bootstrap
-  // destination tier ONLY, never the trgm scan the floor still protects
-  // against everywhere else.
+  // destination tier (plus, per Sean's 2026-09-19 ruling, the CALLER'S OWN
+  // custom places — see the creator-scope block below), never the trgm scan
+  // the floor still protects against everywhere else.
   // ===========================================================================
 
   it("[B-7 follow-up] a 3-char exact-match query finds a real seeded city (Fez, MA, pop. 1.17M) — 200, not 400 (falsification: reverting routes.ts's arm branch, or `PlaceSearchQuerySchema`'s relaxed floor, turns this back into a 400)", async () => {
@@ -472,6 +477,7 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
 
   it("[B-7 follow-up] a sub-floor query drives the NEW partial index via an INDEX CONDITION, not a filter-only scan of it (EXPLAIN arm-selection pin; falsification: dropping `places_tier_name_folded_idx`, widening the predicate to `LIKE`, or DRIFTING the fold expression by one codepoint all change this plan — review R1 B1: the prior version of this pin only asserted the index NAME appeared, which a filter-only full-index scan also satisfies)", async () => {
     const { sql: text, params: values } = placesExactTierMatchQuery(db, {
+      userId: NONEXISTENT_UUID,
       q: "Fez",
       limit: 21,
     }).toSQL();
@@ -490,7 +496,7 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     expect(plan).not.toContain("places_name_trgm_idx");
   });
 
-  it("[B-7 follow-up] Law #3: a stranger's custom place named exactly 'Fez' (even with category='locality', matching the tier predicate) is NEVER returned by the exact-match arm — and NEITHER is the CREATOR's own, because this arm is tier-rows-only, full stop (falsification: dropping the `source = 'overture'` predicate turns both red)", async () => {
+  it("[B-7 follow-up] Law #3: the exact arm returns the CALLER'S OWN custom 'Fez' (category='locality' — matching the tier predicate's category, but source='custom' keeps it off the tier arm) ALONGSIDE the real tier row, and a stranger NEVER sees it (2026-09-19 ruling amends the 2026-09-14 tier-only posture; falsification: dropping `created_by = caller` from the custom arm turns the stranger half red; dropping the custom arm entirely turns the creator half red)", async () => {
     const creator = await seedUserWithToken();
     const stranger = await seedUserWithToken();
 
@@ -502,12 +508,309 @@ describe.skipIf(!dockerAvailable)("B-7 bootstrap destination tier (migrated seed
     const custom = PlaceSchema.parse(await created.json());
 
     const creatorView = await searchOk(creator.accessToken, "q=Fez");
-    expect(creatorView.items.some((p) => p.id === custom.id)).toBe(false);
+    expect(creatorView.items.some((p) => p.id === custom.id)).toBe(true);
     expect(creatorView.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
 
     const strangerView = await searchOk(stranger.accessToken, "q=Fez");
     expect(strangerView.items.some((p) => p.id === custom.id)).toBe(false);
     expect(strangerView.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+  });
+
+  // ===========================================================================
+  // [B-7 follow-up 2] the sub-floor exact arm ALSO matches the CALLER'S OWN
+  // custom places (Sean's ruling, 2026-09-19; R-places-28 amendment) — creator
+  // scoped (`source = 'custom' AND created_by = caller`): NOT trip-scoped, NOT
+  // other members' custom places, NOT public (Law #3). Removes the seam where
+  // a user's own custom place was findable at 4 chars (trigram arm) and
+  // vanished at 3 (exact arm). Fixture names (Zqx, Zq, Ñqz, …) are not
+  // seeded tier names — every assertion below is an EXACT id-list equality, so
+  // a collision with a real tier row would fail loud, not pass vacuously.
+  // Users are fresh per test, so custom rows never cross tests (creator scope).
+  // ===========================================================================
+
+  type CustomBody = {
+    name: string;
+    lat?: number;
+    lng?: number;
+    category?: string;
+  };
+  async function createCustom(token: string, body: CustomBody) {
+    const res = await request("/api/places", token, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(201);
+    return PlaceSchema.parse(await res.json());
+  }
+  const idsOf = (page: { items: { id: string }[] }) => page.items.map((p) => p.id);
+
+  /** Trip + owner membership, inserted directly (trips surface not under test). */
+  async function seedTrip(ownerId: string) {
+    const [trip] = await db
+      .insert(schema.trips)
+      .values({
+        name: `Trip ${uniq()}`,
+        destinationName: "Lisbon, Portugal",
+        destinationLat: "38.722252",
+        destinationLng: "-9.139337",
+        startDate: "2026-08-01",
+        endDate: "2026-08-10",
+        createdBy: ownerId,
+      })
+      .returning();
+    if (!trip) throw new Error("trip seed failed");
+    await db.insert(schema.tripMembers).values({ tripId: trip.id, userId: ownerId, role: "owner" });
+    return trip;
+  }
+
+  it("[sub-floor custom] happy: the caller's own custom place is found by exact name at 3 chars (coordinate-less) and at 2 chars (located) — and the match is EXACT, never a prefix (falsification: dropping the custom arm turns both red; widening `=` to LIKE/prefix makes 'Zq' return 'Zqx' too)", async () => {
+    const user = await seedUserWithToken();
+    const three = await createCustom(user.accessToken, { name: "Zqx" }); // coordinate-less
+    const two = await createCustom(user.accessToken, {
+      name: "Zq",
+      lat: 35.6,
+      lng: 139.7,
+    });
+    expect(three.lat).toBeNull();
+    expect(three.source).toBe("custom");
+    expect(three.created_by).toBe(user.userId);
+
+    const hit3 = await searchOk(user.accessToken, "q=Zqx");
+    expect(idsOf(hit3)).toEqual([three.id]);
+    expect(hit3.items[0]).toEqual(three); // full wire row, same shape the trigram arm returns
+    expect(hit3.nextCursor).toBeNull();
+
+    // 2 chars: exactly "Zq" — NOT "Zqx" (no prefix widening on the custom arm).
+    expect(idsOf(await searchOk(user.accessToken, "q=Zq"))).toEqual([two.id]);
+    // A near-miss name matches nothing.
+    expect((await searchOk(user.accessToken, "q=Zqy")).items).toEqual([]);
+  });
+
+  it("[sub-floor custom] Law #3 stranger pin: two users each own a custom place with the IDENTICAL folded name — each sees ONLY their own, a third user sees neither (falsification: dropping `created_by = caller` from the custom arm makes both owners see both rows — red)", async () => {
+    const alice = await seedUserWithToken();
+    const bob = await seedUserWithToken();
+    const carol = await seedUserWithToken();
+    const aliceZqx = await createCustom(alice.accessToken, { name: "Zqx" });
+    const bobZqx = await createCustom(bob.accessToken, { name: "ZQX" }); // same folded name
+    expect(aliceZqx.id).not.toBe(bobZqx.id);
+
+    expect(idsOf(await searchOk(alice.accessToken, "q=Zqx"))).toEqual([aliceZqx.id]);
+    expect(idsOf(await searchOk(bob.accessToken, "q=zqx"))).toEqual([bobZqx.id]);
+    expect((await searchOk(carol.accessToken, "q=Zqx")).items).toEqual([]);
+  });
+
+  it("[sub-floor custom] Law #3 co-member pin: a trip co-member's custom place that the trip REFERENCES is NOT returned at 3 chars, even under `trip_id` — the arm is creator-scoped, not trip-scoped (Sean's ruling). Control: the SAME owner's places ARE visible to the co-member via the trigram arm at 4 chars + trip scope, so the fixture's trip reference is live and the negative is not vacuous (falsification: widening the custom arm with the R-places-8 trip-reference subselect turns the 3-char assertions red)", async () => {
+    const owner = await seedUserWithToken();
+    const coMember = await seedUserWithToken();
+    const zqx = await createCustom(owner.accessToken, { name: "Zqx" });
+    const zqxy = await createCustom(owner.accessToken, { name: "Zqxy" });
+
+    const trip = await seedTrip(owner.userId);
+    await db
+      .insert(schema.tripMembers)
+      .values({ tripId: trip.id, userId: coMember.userId, role: "editor" });
+    await db.insert(schema.savedPlaces).values([
+      { tripId: trip.id, placeId: zqx.id, createdBy: owner.userId },
+      { tripId: trip.id, placeId: zqxy.id, createdBy: owner.userId },
+    ]);
+
+    // Control (probe can find the thing): 4 chars + trip scope → trigram arm +
+    // R-places-8 widening shows the co-member the owner's referenced place.
+    const control = await searchOk(coMember.accessToken, `q=Zqxy&trip_id=${trip.id}`);
+    expect(idsOf(control)).toContain(zqxy.id);
+
+    // The pin: 3 chars, with and without the trip scope → nothing.
+    expect((await searchOk(coMember.accessToken, `q=Zqx&trip_id=${trip.id}`)).items).toEqual([]);
+    expect((await searchOk(coMember.accessToken, "q=Zqx")).items).toEqual([]);
+
+    // The owner still finds their own, scoped or not.
+    expect(idsOf(await searchOk(owner.accessToken, `q=Zqx&trip_id=${trip.id}`))).toEqual([zqx.id]);
+    expect(idsOf(await searchOk(owner.accessToken, "q=Zqx"))).toEqual([zqx.id]);
+  });
+
+  it("[sub-floor custom] a non-member `trip_id` on a sub-floor query is still the indistinguishable 404 (the membership gate runs BEFORE arm selection; `trip_id` is gate-only on this arm — it never widens the predicate)", async () => {
+    const owner = await seedUserWithToken();
+    const outsider = await seedUserWithToken();
+    const trip = await seedTrip(owner.userId);
+    await expectIndistinguishable404s([
+      await search(outsider.accessToken, `q=Zqx&trip_id=${trip.id}`),
+      await search(outsider.accessToken, `q=Zqx&trip_id=${NONEXISTENT_UUID}`),
+    ]);
+  });
+
+  it("[sub-floor custom] folding on the custom path: case-insensitive, accent-folded BOTH directions, trimmed (falsification: swapping the custom arm's fold for plain lower(name) = lower(q) turns the accent cases red)", async () => {
+    const user = await seedUserWithToken();
+    const accented = await createCustom(user.accessToken, { name: "Ñqz" });
+    const plain = await createCustom(user.accessToken, { name: "Rqe" });
+
+    for (const q of ["nqz", "NQZ", "ñqz", "ÑQZ", " nqz "]) {
+      expect(
+        idsOf(await searchOk(user.accessToken, `q=${encodeURIComponent(q)}`)),
+        `q=${JSON.stringify(q)} should find Ñqz`,
+      ).toEqual([accented.id]);
+    }
+    for (const q of ["rqe", "RQE", "Rqé", "RQÉ"]) {
+      expect(
+        idsOf(await searchOk(user.accessToken, `q=${encodeURIComponent(q)}`)),
+        `q=${JSON.stringify(q)} should find Rqe`,
+      ).toEqual([plain.id]);
+    }
+  });
+
+  it("[sub-floor custom] 'no POI scan' for non-custom rows: a non-tier overture row, and a non-custom row that merely carries created_by = caller, are NEVER returned (falsification: dropping `category = 'locality'` from the tier arm returns the overture restaurant; dropping `source = 'custom'` from the custom arm returns the fsq_os row)", async () => {
+    const user = await seedUserWithToken();
+    const [poi] = await db
+      .insert(schema.places)
+      .values({
+        source: "overture",
+        sourceId: `ovt-zqp-${uniq()}`,
+        name: "Zqp",
+        lat: "35.600000",
+        lng: "139.600000",
+        category: "restaurant",
+      })
+      .returning();
+    // Defense-in-depth: no code path writes created_by on a spine row, but the
+    // predicate must not depend on that — only `source = 'custom'` rows count.
+    const [stamped] = await db
+      .insert(schema.places)
+      .values({
+        source: "fsq_os",
+        sourceId: `fsq-zqp-${uniq()}`,
+        name: "Zqp",
+        lat: "35.600000",
+        lng: "139.600000",
+        category: "cafe",
+        createdBy: user.userId,
+      })
+      .returning();
+    if (!poi || !stamped) throw new Error("spine seed failed");
+
+    expect((await searchOk(user.accessToken, "q=Zqp")).items).toEqual([]);
+    // Control: the same two rows ARE reachable by the geo-bounded arm (so the
+    // fixtures are real, searchable rows — the empty above is the arm's doing).
+    const control = await searchOk(user.accessToken, "q=Zqp&near=35.6,139.6&radius_m=5000");
+    expect(idsOf(control).sort()).toEqual([poi.id, stamped.id].sort());
+  });
+
+  it("[sub-floor custom] regression: for a user with NO custom places the tier results are identical (membership AND order) to an independent legacy-shaped oracle query (`source='overture' AND category='locality'`, fold = fold, ORDER BY id DESC)", async () => {
+    const user = await seedUserWithToken();
+    for (const q of ["Fez", "fez", "Ota", "Hue", "van", "Fe", "Zzzz"]) {
+      const oracle = await suiteDb.client<{ id: string }[]>`
+        select id from places
+        where source = 'overture' and category = 'locality'
+          and lower(regexp_replace(normalize(trim(name), NFD), '[̀-ͯ]', '', 'g'))
+            = lower(regexp_replace(normalize(trim(${q}::text), NFD), '[̀-ͯ]', '', 'g'))
+        order by id desc limit 21`;
+      const page = await searchOk(user.accessToken, `q=${encodeURIComponent(q)}`);
+      expect(idsOf(page), `q=${q}`).toEqual(oracle.map((r) => r.id));
+    }
+    // Sanity: the oracle is not vacuously empty for every probe.
+    const fez = await searchOk(user.accessToken, "q=Fez");
+    expect(fez.items.some((p) => p.source_id === FEZ.sourceId)).toBe(true);
+  });
+
+  it("[sub-floor custom] ordering rule: tier and custom matches share ONE constant rank key, so a mixed page orders purely by id DESC regardless of kind (the SAME tie-break the trigram arm applies to an exact-name tie with no geo bound — crossing the floor never reorders), and a limit=1 cursor walk crosses the tier/custom boundary with no dup and no skip (falsification: biasing rank toward custom — or flipping to id ASC — reorders the page and reds the exact-list assertion)", async () => {
+    const user = await seedUserWithToken();
+    const [tier] = await db
+      .select({ id: schema.places.id })
+      .from(schema.places)
+      .where(eq(schema.places.sourceId, FEZ.sourceId));
+    if (!tier) throw new Error("FEZ tier row missing");
+    // UUIDs pinned to the extremes of the id order: one custom row sorts
+    // strictly ABOVE every random v4 tier id, one strictly BELOW — the tier
+    // row lands between them, so kind-blind id DESC is the only order that
+    // yields [hi, tier, lo].
+    const hiId = "ffffffff-ffff-4fff-bfff-ffffffffffff";
+    const loId = "00000000-0000-4000-8000-000000000000";
+    await db.insert(schema.places).values([
+      { id: hiId, source: "custom", name: "Fez", createdBy: user.userId },
+      { id: loId, source: "custom", name: "fez", createdBy: user.userId },
+    ]);
+
+    const full = await searchOk(user.accessToken, "q=Fez");
+    expect(idsOf(full)).toEqual([hiId, tier.id, loId]);
+
+    const walked: string[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 5; i++) {
+      const next: Awaited<ReturnType<typeof searchOk>> = await searchOk(
+        user.accessToken,
+        `q=Fez&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      walked.push(...idsOf(next));
+      cursor = next.nextCursor;
+      if (!cursor) break;
+    }
+    expect(walked).toEqual([hiId, tier.id, loId]);
+  });
+
+  it("[sub-floor custom] coarse_category applies to the custom arm too (same AND-residual as the tier arm): a 'restaurant' custom place is food, so coarse_category=food keeps it and =lodging drops it", async () => {
+    const user = await seedUserWithToken();
+    const place = await createCustom(user.accessToken, {
+      name: "Zqx",
+      category: "restaurant",
+    });
+    expect(place.coarse_category).toBe("food");
+    expect(idsOf(await searchOk(user.accessToken, "q=Zqx&coarse_category=food"))).toEqual([
+      place.id,
+    ]);
+    expect((await searchOk(user.accessToken, "q=Zqx&coarse_category=lodging")).items).toEqual([]);
+  });
+
+  it("[sub-floor custom] boundary: the exact arm ends at floor-1 chars — a 3-char q does NOT return a 4-char-named custom place (no prefix), a 4-char q takes the trigram arm and DOES; below the absolute floor (1 char, all-whitespace) is still 400 even when the caller owns custom places", async () => {
+    const user = await seedUserWithToken();
+    const long = await createCustom(user.accessToken, { name: "Zqxy" });
+    const short = await createCustom(user.accessToken, { name: "Zqx" });
+
+    // 3 chars → exact arm: only the exactly-named 3-char place.
+    expect(idsOf(await searchOk(user.accessToken, "q=Zqx"))).toEqual([short.id]);
+    // 4 chars → trigram arm (unchanged): the exact 4-char place is found, AND
+    // a 4-char NEAR-miss ("Zqxz", pg_trgm similarity ≈ 0.43 ≥ 0.3) finds it
+    // too — which only the trigram arm can do; the exact arm would return
+    // nothing. (Falsification: moving the arm boundary up by one — `<=`
+    // instead of `<` in routes.ts — turns the near-miss red; moving it down
+    // by one sends the 3-char q to the trigram arm, which also returns
+    // "Zqxy" at similarity 0.5 and reds the toEqual above.)
+    expect(idsOf(await searchOk(user.accessToken, "q=Zqxy"))).toContain(long.id);
+    expect(idsOf(await searchOk(user.accessToken, "q=Zqxz"))).toContain(long.id);
+
+    for (const q of ["Z", "   "]) {
+      const res = await search(user.accessToken, `q=${encodeURIComponent(q)}`);
+      expect(res.status, `q=${JSON.stringify(q)} should be 400`).toBe(400);
+      expect(((await res.json()) as ErrorEnvelope).error.code).toBe("VALIDATION_FAILED");
+    }
+  });
+
+  it("[sub-floor custom] adversarial input never widens the custom match: LIKE metacharacters, an apostrophe, and a combining-marks-only string (which folds to the EMPTY string) all resolve to 200 + empty while the caller owns 'Zqx' (falsification: swapping `=` for LIKE/ILIKE returns 'Zqx' for 'Z_x' and 'Zq%')", async () => {
+    const user = await seedUserWithToken();
+    await createCustom(user.accessToken, { name: "Zqx" });
+    for (const q of ["Z_x", "Zq%", "%%%", "a'a", "́́"]) {
+      const res = await search(user.accessToken, `q=${encodeURIComponent(q)}`);
+      expect(res.status, `q=${JSON.stringify(q)} should be 200`).toBe(200);
+      const page = PaginatedPlacesSchema.parse(await res.json());
+      expect(page.items, `q=${JSON.stringify(q)} should match nothing`).toEqual([]);
+    }
+  });
+
+  it("[sub-floor custom] plan pin: the two-armed predicate still decomposes into index arms — a BitmapOr of the tier partial index (Index Cond on the fold expression) and `places_created_by_idx` — and NEVER a Seq Scan on places (falsification, each observed red: dropping the `created_by` equality, dropping the custom arm, or dropping `category = 'locality'` from the tier arm changes the plan). NOTE the hoisted `(tier OR custom) AND fold` spelling plans IDENTICALLY on PG 18, so this pin does NOT discriminate it — it guards plan SHAPE, not spelling. NO new index: per-creator custom rows are few and `places_created_by_idx` already exists; see `placesExactTierMatchQuery`'s doc comment for the measured scale probe", async () => {
+    const user = await seedUserWithToken();
+    const { sql: text, params: values } = placesExactTierMatchQuery(db, {
+      userId: user.userId,
+      q: "Fez",
+      limit: 21,
+    }).toSQL();
+    const planRows = await suiteDb.client.begin(async (tx) => {
+      await tx`set local enable_seqscan = off`;
+      return tx.unsafe(`explain (costs false) ${text}`, values as never[]);
+    });
+    const plan = planRows.map((row) => String(Object.values(row as object)[0])).join("\n");
+    expect(plan).toContain("BitmapOr");
+    expect(plan).toContain("places_tier_name_folded_idx");
+    expect(plan).toMatch(/Index Cond: \(lower\(regexp_replace/);
+    expect(plan).toContain("places_created_by_idx");
+    expect(plan).not.toMatch(/Seq Scan on places\b/);
+    expect(plan).not.toContain("places_name_trgm_idx");
   });
 
   // ===========================================================================
