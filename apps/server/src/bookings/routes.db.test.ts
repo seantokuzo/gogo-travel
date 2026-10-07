@@ -1864,6 +1864,317 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
   });
 
   // ===========================================================================
+  // T-7.10 — schedule's optional target `status` (R-ib-8 amended; §3.2)
+  // ===========================================================================
+
+  /**
+   * Raw response text with per-run noise replaced by stable placeholders:
+   * UUIDs are numbered by first appearance (so id REFERENCES — booking id on
+   * the item, creator — stay pinned, not just their shape) and ISO instants
+   * become `<ts>`. What remains is the byte-level wire shape: key order,
+   * whitespace, null-vs-absent, value formats.
+   */
+  function normalizeWireBytes(text: string): string {
+    const seen = new Map<string, number>();
+    return text
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (id) => {
+        if (!seen.has(id)) seen.set(id, seen.size + 1);
+        return `<uuid${seen.get(id)}>`;
+      })
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g, "<ts>");
+  }
+
+  /** Create a booking and force its stored status (bypassing the wire's creatable set). */
+  async function seedTimelessBooking(
+    tripId: string,
+    token: string,
+    status: "idea" | "planned" | "booked",
+    title = `T-7.10 ${status} ${uniq()}`,
+  ): Promise<Booking> {
+    return createBookingVia(tripId, token, { category: "activity", title, status });
+  }
+
+  // REGRESSION PIN (backward compat): with `status` OMITTED the endpoint
+  // behaves EXACTLY as it did before the field existed. The literals below
+  // were RECORDED from the pre-change service (base 81fc9dc) before the
+  // feature was written — they must stay green on both sides of the change.
+  // Falsification: a naive "default to planned" that also demotes a timeless
+  // `booked` booking (or any change to the wire shape) turns these red.
+  it("T-7.10 regression pin: omitted status — 201 body bytes are identical to pre-change for idea / planned / booked", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const bytes: Record<string, string> = {};
+    for (const from of ["idea", "planned", "booked"] as const) {
+      const booking = await seedTimelessBooking(trip.id, editor.accessToken, from, `Pin ${from}`);
+      const res = await scheduleBooking(trip.id, booking.id, editor.accessToken, {
+        day: "2026-09-03",
+        start_time: "19:00",
+        end_time: "21:00",
+      });
+      expect(res.status).toBe(201);
+      bytes[from] = normalizeWireBytes(await res.text());
+      // Omitted ⇒ legacy status behavior: idea → planned, the rest untouched.
+      expect((await dbBooking(booking.id))?.status).toBe(from === "idea" ? "planned" : from);
+    }
+    expect(bytes).toEqual({
+      idea: `{"id":"<uuid1>","trip_id":"<uuid2>","category":"activity","status":"planned","title":"Pin idea","details":{"category":"activity"},"starts_at":null,"ends_at":null,"price_cents":null,"currency":null,"confirmation_code":null,"source":"manual","capture_id":null,"place_id":null,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>","items":[{"id":"<uuid4>","trip_id":"<uuid2>","kind":"booking","booking_id":"<uuid1>","place_id":null,"title":null,"notes":null,"day":"2026-09-03","end_day":null,"start_time":"19:00","end_time":"21:00","sort_order":1024,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>"}]}`,
+      planned: `{"id":"<uuid1>","trip_id":"<uuid2>","category":"activity","status":"planned","title":"Pin planned","details":{"category":"activity"},"starts_at":null,"ends_at":null,"price_cents":null,"currency":null,"confirmation_code":null,"source":"manual","capture_id":null,"place_id":null,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>","items":[{"id":"<uuid4>","trip_id":"<uuid2>","kind":"booking","booking_id":"<uuid1>","place_id":null,"title":null,"notes":null,"day":"2026-09-03","end_day":null,"start_time":"19:00","end_time":"21:00","sort_order":2048,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>"}]}`,
+      booked: `{"id":"<uuid1>","trip_id":"<uuid2>","category":"activity","status":"booked","title":"Pin booked","details":{"category":"activity"},"starts_at":null,"ends_at":null,"price_cents":null,"currency":null,"confirmation_code":null,"source":"manual","capture_id":null,"place_id":null,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>","items":[{"id":"<uuid4>","trip_id":"<uuid2>","kind":"booking","booking_id":"<uuid1>","place_id":null,"title":null,"notes":null,"day":"2026-09-03","end_day":null,"start_time":"19:00","end_time":"21:00","sort_order":3072,"created_by":"<uuid3>","created_at":"<ts>","updated_at":"<ts>"}]}`,
+    });
+  });
+
+  it("T-7.10 regression pin: omitted status on a cancelled booking — the pre-change 400 body is unchanged", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    const doomed = await seedTimelessBooking(
+      trip.id,
+      owner.accessToken,
+      "planned",
+      "Pin cancelled",
+    );
+    expect(
+      (await patchBooking(trip.id, doomed.id, owner.accessToken, { status: "cancelled" })).status,
+    ).toBe(200);
+    const res = await scheduleBooking(trip.id, doomed.id, owner.accessToken, {
+      day: "2026-09-03",
+    });
+    expect(res.status).toBe(400);
+    expect(normalizeWireBytes(await res.text())).toBe(
+      `{"error":{"code":"VALIDATION_FAILED","message":"a cancelled booking cannot be scheduled","details":{"status":"cancelled is terminal"},"requestId":"<uuid1>"}}`,
+    );
+  });
+
+  // ---- T-7.10 new behavior ---------------------------------------------------
+  // Mutation map (each was broken, watched RED, restored — see the PR body):
+  //  M1 revert the optional `status` field in ScheduleBookingInputSchema
+  //     → the happy / adversarial pins below go red (zod strips the key);
+  //  M2 drop the status write in scheduleBooking → the `booked` pins go red;
+  //  M3 bypass the §3.2 transition guard → the illegal-transition pin goes red.
+
+  it("T-7.10 happy: schedule with status 'booked' — item created AND status booked, one transaction", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea", "Book it");
+    dirtyCalls.length = 0;
+    const res = await scheduleBooking(trip.id, idea.id, editor.accessToken, {
+      day: "2026-09-03",
+      start_time: "19:00",
+      status: "booked",
+    });
+    expect(res.status).toBe(201);
+    const body = BookingWithItemsSchema.parse(await res.json());
+    expect(body.status).toBe("booked");
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      kind: "booking",
+      booking_id: idea.id,
+      day: "2026-09-03",
+      start_time: "19:00",
+    });
+    // The DB agrees (not just the response): row status + item row.
+    expect((await dbBooking(idea.id))?.status).toBe("booked");
+    expect(await dbItems(idea.id)).toHaveLength(1);
+    expect(dirtyCalls.at(-1)).toEqual([{ tripId: trip.id, day: "2026-09-03" }]);
+  });
+
+  it("T-7.10 happy: explicit 'planned' on an idea equals the default; legal §3.2 moves apply (planned → booked, booked → booked no-op, booked → planned)", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const schedule = async (booking: Booking, status: string) => {
+      const res = await scheduleBooking(trip.id, booking.id, editor.accessToken, {
+        day: "2026-09-04",
+        status,
+      });
+      expect(res.status).toBe(201);
+      return BookingWithItemsSchema.parse(await res.json());
+    };
+    // idea + explicit planned = the default arm.
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea");
+    expect((await schedule(idea, "planned")).status).toBe("planned");
+    // timeless planned → booked (§3.2 planned → booked is legal).
+    const planned = await seedTimelessBooking(trip.id, editor.accessToken, "planned");
+    const promoted = await schedule(planned, "booked");
+    expect(promoted.status).toBe("booked");
+    expect(promoted.items).toHaveLength(1);
+    expect((await dbBooking(planned.id))?.status).toBe("booked");
+    // booked + booked: same-status is not a transition (no-op) — still booked.
+    const booked = await seedTimelessBooking(trip.id, editor.accessToken, "booked");
+    expect((await schedule(booked, "booked")).status).toBe("booked");
+    // booked → planned is a LEGAL §3.2 move ("didn't actually book"): an
+    // EXPLICIT planned is honoured (omitted would have left it booked — see
+    // the regression pin above).
+    const demoted = await seedTimelessBooking(trip.id, editor.accessToken, "booked");
+    const demotedBody = await schedule(demoted, "planned");
+    expect(demotedBody.status).toBe("planned");
+    expect(demotedBody.items).toHaveLength(1);
+    expect((await dbBooking(demoted.id))?.status).toBe("planned");
+  });
+
+  it("T-7.10 error: an illegal transition still 400s VALIDATION_FAILED via the §3.2 guard — a cancelled booking cannot be scheduled to booked/planned; nothing is written", async () => {
+    const { owner, trip } = await seedCollabTrip();
+    for (const target of ["booked", "planned"] as const) {
+      const doomed = await seedTimelessBooking(trip.id, owner.accessToken, "planned");
+      expect(
+        (await patchBooking(trip.id, doomed.id, owner.accessToken, { status: "cancelled" })).status,
+      ).toBe(200);
+      dirtyCalls.length = 0;
+      const res = await scheduleBooking(trip.id, doomed.id, owner.accessToken, {
+        day: "2026-09-03",
+        status: target,
+      });
+      expect(res.status).toBe(400);
+      const err = (await res.json()) as ErrorEnvelope;
+      expect(err.error.code).toBe("VALIDATION_FAILED");
+      expect(err.error.details).toEqual({ status: "illegal transition" });
+      expect(err.error.message).toBe(`illegal status transition 'cancelled' → '${target}'`);
+      // I-4 holds: still cancelled, zero items, no dirty-day mark.
+      expect((await dbBooking(doomed.id))?.status).toBe("cancelled");
+      expect(await dbItems(doomed.id)).toHaveLength(0);
+      expect(dirtyCalls).toHaveLength(0);
+    }
+  });
+
+  it("T-7.10 error: the pre-existing preconditions still win and a rejected call never moves status — timed booking 400, already-scheduled 409", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const timed = await createBookingVia(trip.id, editor.accessToken, {
+      category: "flight",
+      title: "Timed",
+      status: "planned",
+      details: FLIGHT_DETAILS,
+    });
+    const timedRes = await scheduleBooking(trip.id, timed.id, editor.accessToken, {
+      day: "2026-09-03",
+      status: "booked",
+    });
+    expect(timedRes.status).toBe(400);
+    expect((await dbBooking(timed.id))?.status).toBe("planned"); // not promoted
+
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea");
+    expect(
+      (await scheduleBooking(trip.id, idea.id, editor.accessToken, { day: "2026-09-03" })).status,
+    ).toBe(201); // → planned, one item
+    const again = await scheduleBooking(trip.id, idea.id, editor.accessToken, {
+      day: "2026-09-04",
+      status: "booked",
+    });
+    expect(again.status).toBe(409);
+    expect(((await again.json()) as ErrorEnvelope).error.code).toBe("CONFLICT");
+    expect((await dbBooking(idea.id))?.status).toBe("planned"); // the 409 did not promote
+    expect(await dbItems(idea.id)).toHaveLength(1);
+  });
+
+  it("T-7.10 adversarial: out-of-set / wrong-typed status 400s with the field path and writes nothing", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea");
+    const hostile: unknown[] = [
+      "cancelled",
+      "idea",
+      "",
+      "BOOKED",
+      " booked",
+      null,
+      1,
+      true,
+      ["booked"],
+      { v: "booked" },
+    ];
+    dirtyCalls.length = 0;
+    for (const status of hostile) {
+      const res = await scheduleBooking(trip.id, idea.id, editor.accessToken, {
+        day: "2026-09-03",
+        status,
+      });
+      expect(res.status, JSON.stringify(status)).toBe(400);
+      const err = (await res.json()) as ErrorEnvelope;
+      expect(err.error.code).toBe("VALIDATION_FAILED");
+      const details = err.error.details as { fieldErrors: Record<string, string[]> };
+      expect(details.fieldErrors.status?.length, JSON.stringify(status)).toBeGreaterThan(0);
+    }
+    // Nothing leaked through any of the rejected calls.
+    expect((await dbBooking(idea.id))?.status).toBe("idea");
+    expect(await dbItems(idea.id)).toHaveLength(0);
+    expect(dirtyCalls).toHaveLength(0);
+  });
+
+  it("T-7.10 authz: a viewer (403) and a stranger (404) cannot schedule-to-booked; status unchanged", async () => {
+    const { viewer, editor, trip } = await seedCollabTrip();
+    const stranger = await seedUserWithToken();
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea");
+    const body = { day: "2026-09-03", status: "booked" };
+    expect((await scheduleBooking(trip.id, idea.id, viewer.accessToken, body)).status).toBe(403);
+    expect((await scheduleBooking(trip.id, idea.id, stranger.accessToken, body)).status).toBe(404);
+    expect((await dbBooking(idea.id))?.status).toBe("idea");
+    expect(await dbItems(idea.id)).toHaveLength(0);
+  });
+
+  it("T-7.10 atomicity: a failing status write leaves NO scheduled item (forced via a trigger on the bookings UPDATE) and the booking stays schedulable", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const title = `T-7.10 atomicity probe ${uniq()}`;
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea", title);
+    // The item INSERT succeeds first; the booking status UPDATE to 'booked'
+    // then raises. A `planned` UPDATE of the same row stays legal, so the
+    // failure is attributable to the status write alone.
+    await db.execute(sql`
+      CREATE OR REPLACE FUNCTION t710_reject_booked_status() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.status = 'booked' AND NEW.title LIKE 'T-7.10 atomicity probe%' THEN
+          RAISE EXCEPTION 'forced failure (T-7.10 atomicity probe)';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql;
+    `);
+    await db.execute(
+      sql`CREATE TRIGGER t710_reject_booked_status BEFORE UPDATE ON bookings FOR EACH ROW EXECUTE FUNCTION t710_reject_booked_status()`,
+    );
+    try {
+      dirtyCalls.length = 0;
+      const res = await scheduleBooking(trip.id, idea.id, editor.accessToken, {
+        day: "2026-09-03",
+        status: "booked",
+      });
+      expect(res.status).toBe(500);
+      // The item insert rolled back with the failed status write...
+      expect(await dbItems(idea.id)).toHaveLength(0);
+      // ...the row never moved...
+      expect((await dbBooking(idea.id))?.status).toBe("idea");
+      // ...and an aborted transaction never marks (dirty-days contract).
+      expect(dirtyCalls).toHaveLength(0);
+
+      // No orphan: the SAME booking schedules cleanly afterward. A leaked
+      // item would answer 409 already_scheduled here.
+      const retry = await scheduleBooking(trip.id, idea.id, editor.accessToken, {
+        day: "2026-09-03",
+      });
+      expect(retry.status).toBe(201);
+      expect(BookingWithItemsSchema.parse(await retry.json()).status).toBe("planned");
+      expect(await dbItems(idea.id)).toHaveLength(1);
+    } finally {
+      await db.execute(sql`DROP TRIGGER t710_reject_booked_status ON bookings`);
+      await db.execute(sql`DROP FUNCTION t710_reject_booked_status`);
+    }
+  });
+
+  it("T-7.10 replay: the same schedule-to-booked request twice — first 201, replay 409 already_scheduled, exactly one item, status stays booked, no second mark", async () => {
+    const { editor, trip } = await seedCollabTrip();
+    const idea = await seedTimelessBooking(trip.id, editor.accessToken, "idea");
+    const body = { day: "2026-09-03", start_time: "10:00", status: "booked" };
+    dirtyCalls.length = 0;
+    const first = await scheduleBooking(trip.id, idea.id, editor.accessToken, body);
+    expect(first.status).toBe(201);
+    const firstBody = BookingWithItemsSchema.parse(await first.json());
+    expect(firstBody.status).toBe("booked");
+    const marksAfterFirst = dirtyCalls.length;
+
+    const replay = await scheduleBooking(trip.id, idea.id, editor.accessToken, body);
+    expect(replay.status).toBe(409);
+    const err = (await replay.json()) as ErrorEnvelope;
+    expect(err.error.code).toBe("CONFLICT");
+    expect(err.error.details).toEqual({ reason: "already_scheduled" });
+
+    const items = await dbItems(idea.id);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.id).toBe(firstBody.items[0]?.id); // the first item, untouched
+    expect((await dbBooking(idea.id))?.status).toBe("booked");
+    expect(dirtyCalls).toHaveLength(marksAfterFirst); // the replay marked nothing
+  });
+
+  // ===========================================================================
   // Dirty-day seam contract (I-5; dirty-days.ts)
   // ===========================================================================
 

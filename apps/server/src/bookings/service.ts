@@ -90,6 +90,20 @@ export const BOOKING_STATUS_TRANSITIONS: Readonly<Record<BookingStatus, readonly
   };
 
 /**
+ * THE §3.2 transition guard (one home — `updateBooking` and the schedule
+ * arm both call it, nobody re-states the matrix). Same-status is not a
+ * transition (no-op, allowed); anything else absent from the matrix is
+ * VALIDATION_FAILED on the `status` field.
+ */
+function assertStatusTransition(from: BookingStatus, to: BookingStatus): void {
+  if (to !== from && !BOOKING_STATUS_TRANSITIONS[from].includes(to)) {
+    throw new HttpError("VALIDATION_FAILED", `illegal status transition '${from}' → '${to}'`, {
+      status: "illegal transition",
+    });
+  }
+}
+
+/**
  * The service-level create input: the wire `BookingCreate` with `source`
  * widened to the full enum — the capture landing service (P-11) is the only
  * caller allowed to pass `email`/`share` (R-ib-11); the router hands over
@@ -555,15 +569,7 @@ export async function updateBooking(
 
         // §3.2 transition legality (same-status is not a transition — no-op).
         const nextStatus = input.status ?? current.status;
-        if (nextStatus !== current.status) {
-          if (!BOOKING_STATUS_TRANSITIONS[current.status].includes(nextStatus)) {
-            throw new HttpError(
-              "VALIDATION_FAILED",
-              `illegal status transition '${current.status}' → '${nextStatus}'`,
-              { status: "illegal transition" },
-            );
-          }
-        }
+        assertStatusTransition(current.status, nextStatus);
 
         // R-ib-12 on the MERGED row: a non-null price requires a currency.
         const nextPrice = input.price_cents !== undefined ? input.price_cents : current.priceCents;
@@ -722,10 +728,15 @@ export async function deleteBooking(
 /**
  * Schedule a TIMELESS booking onto a day (§3.4 POST …/schedule, R-ib-8):
  * creates its `booking`-kind item with the given day/times and advances
- * `idea → planned`. Known times → VALIDATION_FAILED (its calendar presence
- * is automatic, R-ib-5); already scheduled → CONFLICT; `cancelled` →
- * VALIDATION_FAILED (terminal — I-4 pins zero items; the §3.4 error table
- * has no cancelled row, folded into the 400 arm and flagged in the PR).
+ * `idea → planned` — or to the caller's explicit target `status` (T-7.10:
+ * `planned | booked`, validated against the §3.2 matrix by
+ * `assertStatusTransition`; the item insert and the status write share ONE
+ * transaction). OMITTED `status` = the pre-T-7.10 behavior exactly (`idea →
+ * planned`, planned/booked keep their status). Known times →
+ * VALIDATION_FAILED (its calendar presence is automatic, R-ib-5); already
+ * scheduled → CONFLICT; `cancelled` → VALIDATION_FAILED (terminal — I-4
+ * pins zero items; the §3.4 error table has no cancelled row, folded into
+ * the 400 arm and flagged in the PR).
  */
 export async function scheduleBooking(
   db: DbClient,
@@ -741,7 +752,15 @@ export async function scheduleBooking(
       .for("update");
     if (!current) throw new HttpError("NOT_FOUND", NOT_FOUND_MESSAGE);
 
-    if (current.status === "cancelled") {
+    // R-ib-8 target status. An EXPLICIT `status` (T-7.10) goes through THE
+    // §3.2 guard — the same one PATCH uses — which is also what rejects
+    // `cancelled` (terminal, I-4: no scheduling target is reachable from it).
+    // An OMITTED `status` keeps the pre-T-7.10 arm verbatim (backward-compat
+    // pin): the original cancelled 400 here, `idea → planned` and
+    // planned/booked untouched at the status write below.
+    if (input.status !== undefined) {
+      assertStatusTransition(current.status, input.status);
+    } else if (current.status === "cancelled") {
       throw new HttpError("VALIDATION_FAILED", "a cancelled booking cannot be scheduled", {
         status: "cancelled is terminal",
       });
@@ -822,8 +841,10 @@ export async function scheduleBooking(
       createdBy: userId,
     });
 
-    // R-ib-8: advance `idea → planned` (the schedule arm of the §3.2
-    // matrix); `planned`/`booked` timeless bookings keep their status.
+    // R-ib-8 status write, same transaction as the item insert above: an
+    // explicit target (T-7.10, already guard-checked) wins; OMITTED advances
+    // `idea → planned` (the schedule arm of the §3.2 matrix) and leaves
+    // `planned`/`booked` timeless bookings at their current status.
     //
     // Round-2 advisory: this is the one bookings-UPDATE with neither
     // `assertStoredInstantsOrdered` nor `.catch(rethrowTimeOrderCkMapped)`
@@ -847,10 +868,12 @@ export async function scheduleBooking(
     // (see the Neon-HTTP `.transaction()` landmine). Add the fallback WHEN
     // that guard changes, alongside a test that can actually exercise it.
     let booking = current;
-    if (current.status === "idea") {
+    const nextStatus: BookingStatus =
+      input.status ?? (current.status === "idea" ? "planned" : current.status);
+    if (nextStatus !== current.status) {
       const [advanced] = await tx
         .update(schema.bookings)
-        .set({ status: "planned" })
+        .set({ status: nextStatus })
         .where(eq(schema.bookings.id, bookingId))
         .returning();
       if (!advanced) throw new HttpError("INTERNAL", "booking status update returned no row");
