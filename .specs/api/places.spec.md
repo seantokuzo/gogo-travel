@@ -210,9 +210,10 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
     409 above. One class of window stays open by design: a membership,
     role, or grant-basis (reference) withdrawal between the access check and
     the insert is not re-checked — the caller leaving or being demoted, or
-    the trip's saved-place / item / booking reference that granted a custom
-    place's visibility being deleted (the insert is a single unlocked
-    statement) — Law #3-adjacent, and the posture stands.
+    a trip's (any trip the caller belongs to) saved-place / item / booking
+    reference that granted a custom place's visibility being deleted (the
+    insert is a single unlocked statement) — Law #3-adjacent, and the
+    posture stands.
 
 ### Attribution
 
