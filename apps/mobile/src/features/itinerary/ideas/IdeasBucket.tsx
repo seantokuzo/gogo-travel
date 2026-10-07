@@ -172,6 +172,15 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
     [bookingsQuery.data, itineraryQuery.data],
   );
   const cancelled = useMemo(() => cancelledQuery.data?.items ?? [], [cancelledQuery.data]);
+  // The presented card's row in the LIVE cache. The sheet routes off this,
+  // not the tap-time snapshot: a collaborator adding times while it is open
+  // must flip it to the status PATCH, not leave it re-POSTing into the same
+  // `known times` 400. Absent from the list (deleted/cancelled) ⇒ the sheet
+  // falls back to the snapshot.
+  const liveActionBooking =
+    statusAction === null
+      ? undefined
+      : bookingsQuery.data?.items.find((row) => row.id === statusAction.booking.id);
   const ideasRows = useMemo(() => buildIdeasRows(buildIdeasGroups(unscheduled)), [unscheduled]);
   const cancelledRows = useMemo(() => buildCancelledRows(cancelled), [cancelled]);
 
@@ -271,6 +280,7 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
           <ScheduleSheet
             tripId={trip.id}
             action={statusAction}
+            liveBooking={liveActionBooking}
             contextDay={trip.start_date}
             onClose={() => setStatusAction(null)}
           />

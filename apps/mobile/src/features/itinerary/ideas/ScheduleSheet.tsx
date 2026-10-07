@@ -42,7 +42,7 @@
  * `…-status`, `…-status-error`, `…-readonly-start`, `…-readonly-end`,
  * `…-hint` (the known-times route's read-only rows).
  */
-import type { ISODate } from "@gogo/shared";
+import type { Booking, ISODate } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useState } from "react";
 import { StyleSheet, View } from "react-native";
@@ -56,6 +56,7 @@ import {
   buildStatusActionRequest,
   knownTimesSummary,
   schedulePrefill,
+  STATUS_ACTION_FAILED_BANNER,
   STATUS_ACTION_LABELS,
   statusActionCopy,
   statusActionFailure,
@@ -68,8 +69,16 @@ import {
 
 export interface ScheduleSheetProps {
   tripId: string;
-  /** Non-null ⇒ presented for this card + tapped status. */
+  /** Non-null ⇒ presented for this card + tapped status. `booking` is the tap-time SNAPSHOT. */
   action: StatusAction | null;
+  /**
+   * The booking's row in the LIVE cache (undefined ⇒ fall back to the
+   * snapshot). Route, read-only times and the request itself resolve from
+   * this, so a collaborator adding times while the sheet is open re-routes
+   * it to the status PATCH instead of re-POSTing into the same `known times`
+   * 400. Copy stays keyed to the snapshot (`statusActionCopy`).
+   */
+  liveBooking?: Booking | undefined;
   /** B-10b: seeds the Day picker (trip start) so it never opens on today. */
   contextDay?: ISODate;
   onClose(): void;
@@ -88,6 +97,8 @@ const useStyles = createStyles((t) =>
 
 interface StatusActionFormProps {
   action: StatusAction;
+  /** Live row for `action.booking` (or the snapshot) — what routing reads. */
+  booking: Booking;
   pending: boolean;
   failure: StatusActionFailure | null;
   /** B-10b: passed through to the Day DateField's picker seed. */
@@ -96,6 +107,8 @@ interface StatusActionFormProps {
   onEdit(): void;
   onDismissBanner(): void;
   onConfirm(request: StatusActionRequest): void;
+  /** The action is no longer offered for the live row — nothing was sent. */
+  onUnavailable(): void;
 }
 
 /**
@@ -106,15 +119,17 @@ interface StatusActionFormProps {
  */
 function StatusActionForm({
   action,
+  booking,
   pending,
   failure,
   contextDay,
   onEdit,
   onDismissBanner,
   onConfirm,
+  onUnavailable,
 }: StatusActionFormProps) {
   const s = useStyles();
-  const { booking, target } = action;
+  const { target } = action;
   const route = statusActionRoute(booking);
   // B-16: initial-only by design — the form remounts per action (`key`), so
   // these seed `useState` and the user keeps full control afterwards.
@@ -128,12 +143,21 @@ function StatusActionForm({
   // day/times are the booking's own and read-only).
   const errors = route === "schedule" ? validateScheduleForm(form) : {};
   const blocked = Object.keys(errors).length > 0;
-  const copy = statusActionCopy(booking, target);
+  // Copy keys off the SNAPSHOT: the optimistic write flips the live status
+  // mid-flight and the button label must not flip with it.
+  const copy = statusActionCopy(action.booking, target);
 
   const confirm = (): void => {
     if (pending) return;
     const request = buildStatusActionRequest(booking, target, form);
-    if (request === null) return;
+    if (request === null) {
+      // `blocked` already disables confirm for an invalid form, so a null
+      // here means the LIVE row no longer offers this action (a collaborator
+      // advanced it while the sheet was open — never demote). Say so; a
+      // button that silently does nothing reads as frozen.
+      onUnavailable();
+      return;
+    }
     onConfirm(request);
   };
 
@@ -249,7 +273,13 @@ function StatusActionForm({
   );
 }
 
-export function ScheduleSheet({ tripId, action, contextDay, onClose }: ScheduleSheetProps) {
+export function ScheduleSheet({
+  tripId,
+  action,
+  liveBooking,
+  contextDay,
+  onClose,
+}: ScheduleSheetProps) {
   const [failure, setFailure] = useState<StatusActionFailure | null>(null);
 
   // Hook-level seam (superseded-call landmine): fires for EVERY settled call
@@ -322,6 +352,7 @@ export function ScheduleSheet({ tripId, action, contextDay, onClose }: ScheduleS
           // pattern); the remount is also what applies each booking's prefill.
           key={`${action.booking.id}:${action.target}`}
           action={action}
+          booking={liveBooking ?? action.booking}
           pending={pending}
           failure={failure}
           contextDay={contextDay}
@@ -330,6 +361,7 @@ export function ScheduleSheet({ tripId, action, contextDay, onClose }: ScheduleS
             setFailure((prev) => (prev === null ? prev : { ...prev, banner: null }))
           }
           onConfirm={send}
+          onUnavailable={() => setFailure({ fieldErrors: {}, banner: STATUS_ACTION_FAILED_BANNER })}
         />
       ) : null}
     </Sheet>

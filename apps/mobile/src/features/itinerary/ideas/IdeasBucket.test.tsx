@@ -879,6 +879,131 @@ it("error: a refusal that maps to no field (the stale 'known times' 400) is the 
   await closeSheet();
 });
 
+// --- collab races: the sheet follows the LIVE booking (round-1 Adv 1/2) -----
+
+/** The booking as a collaborator leaves it after adding the B-16 times. */
+function withCollaboratorTimes(booking: Booking): Booking {
+  return {
+    ...booking,
+    details: {
+      category: "activity",
+      starts_at: "2027-03-02T14:30:00+09:00",
+      ends_at: "2027-03-02T16:00:00+09:00",
+    },
+    starts_at: "2027-03-02T05:30:00.000Z",
+    ends_at: "2027-03-02T07:00:00.000Z",
+  };
+}
+
+// Falsify: hand the sheet the tap-time SNAPSHOT again (drop `liveBooking`
+// in IdeasBucket) ⇒ after the refetch the sheet still renders the pickers
+// and the second confirm re-POSTs /schedule into the same 400
+// (`writes = ["schedule", "schedule"]`) ⇒ RED.
+it("collab race: a collaborator adds times after the sheet opens — the first confirm 400s, the refetch brings the times, and the OPEN sheet re-routes to the read-only status PATCH instead of re-POSTing the same 400", async () => {
+  const idea = ideaBooking(); // timeless when tapped
+  const bookings = [...defaultBookings(), idea];
+  const items = defaultItineraryItems();
+  const writes: string[] = [];
+  const patchBodies: unknown[] = [];
+  await renderBucket({
+    api: { bookings, items },
+    overrides: {
+      [SCHEDULE_ROUTE]: () => {
+        writes.push("schedule");
+        // The collaborator's edit is already server-side; the refetch the
+        // failure triggers reads it. The server arm is R-ib-8's third.
+        bookings[bookings.findIndex((row) => row.id === idea.id)] = withCollaboratorTimes(idea);
+        return Promise.reject(
+          new ApiRequestError(
+            400,
+            "VALIDATION_FAILED",
+            "booking has known times — its calendar presence is automatic",
+            { starts_at: "known" },
+          ),
+        );
+      },
+      [STATUS_ROUTE]: (input) => {
+        writes.push("status");
+        patchBodies.push((input as { body: unknown }).body);
+        const item = scheduledItem(idea.id, { end_time: "16:00" });
+        const row: Booking = { ...withCollaboratorTimes(idea), status: "booked" };
+        // Server truth for the refetch the success path triggers.
+        bookings[bookings.findIndex((r) => r.id === idea.id)] = row;
+        const post: BookingWithItems = { ...row, items: [item] };
+        items.push(item);
+        return Promise.resolve(post);
+      },
+    },
+  });
+
+  await openSheet(BOOKING_IDEA_ID, "booked");
+  // Timeless at tap ⇒ the pickers.
+  expect(screen.getByTestId("itinerary-ideas-schedule-input-day")).toBeOnTheScreen();
+  await pickDay();
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+
+  // The 400 → rollback → invalidation refetch → the live row now has times:
+  // the SAME open sheet flips to the read-only status route.
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-readonly-start")).toBeOnTheScreen(),
+  );
+  expect(screen.queryByTestId("itinerary-ideas-schedule-input-day")).toBeNull();
+  expect(screen.getByText("Mar 2, 2027 · 14:30")).toBeOnTheScreen();
+  // Copy is keyed to the tap-time snapshot (idea → Booked), not the live row.
+  expect(screen.getByText('Mark "TeamLab Planets" as Booked')).toBeOnTheScreen();
+
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  await waitFor(() => expect(patchBodies).toHaveLength(1));
+  expect(patchBodies[0]).toEqual({ status: "booked" });
+  // One doomed schedule, then ONE status PATCH — never a second schedule.
+  expect(writes).toEqual(["schedule", "status"]);
+  await waitFor(() => expect(screen.queryByTestId("itinerary-ideas-schedule-sheet")).toBeNull());
+});
+
+// Falsify: make `confirm` swallow a null request (drop `onUnavailable()`) ⇒
+// the button silently does nothing and no banner reappears ⇒ RED; allow the
+// demotion (flip the predicate) ⇒ a second write is sent ⇒ RED.
+it("[NEEDS CLARIFICATION: T-7.15 bucket-card demotion] never demotes against the REFRESHED cache — a collaborator marks it booked while the 'Planned' sheet is open; confirm says so and sends nothing", async () => {
+  const idea = ideaBooking();
+  const bookings = [...defaultBookings(), idea];
+  const writes: string[] = [];
+  await renderBucket({
+    api: { bookings },
+    overrides: {
+      [SCHEDULE_ROUTE]: () => {
+        writes.push("schedule");
+        // A transient failure; the refetch it triggers sees the collaborator's
+        // Booked (still timeless, so the card stays in the bucket).
+        bookings[bookings.findIndex((row) => row.id === idea.id)] = { ...idea, status: "booked" };
+        return Promise.reject(new Error("503"));
+      },
+    },
+  });
+
+  await openSheet(BOOKING_IDEA_ID, "planned");
+  await pickDay();
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+  // The refetch landed: the card behind the sheet is now a booked "Needs a day".
+  await waitFor(() => expect(screen.getByText("Needs a day")).toBeOnTheScreen());
+
+  // Retire the first failure's banner so the next one is unambiguous.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-error-dismiss"));
+  expect(screen.queryByTestId("itinerary-ideas-schedule-error")).toBeNull();
+
+  // Planned on a now-booked booking would be a demotion: nothing is sent, and
+  // the refusal is VISIBLE, not a dead button.
+  await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
+  await waitFor(() =>
+    expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+  );
+  expect(writes).toEqual(["schedule"]);
+
+  await closeSheet();
+});
+
 // --- cancelled / viewers ----------------------------------------------------
 
 it("cancelled bookings live in their own PEER bin — collapsed by default, never actionable (B-13, R-itin-12)", async () => {
