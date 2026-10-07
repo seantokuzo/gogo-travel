@@ -152,11 +152,14 @@ cleanup
 # Skills moved out of the old dot-agents dir into .claude/skills/ (2026-10). A
 # stale path in DEFAULT_PROMPT sends every chained session to a missing file.
 # Reads the REAL script and the REAL tree, not a sandbox. Guards:
-#  - DEFAULT_PROMPT= is assigned exactly once (bash uses the LAST assignment, so a
-#    second line would silently override the one inspected here);
+#  - exactly one column-0 "DEFAULT_PROMPT=" line exists (a plain textual count: an
+#    export/readonly/declare line, an indented reassignment inside a function, or a
+#    "; DEFAULT_PROMPT=" on the same line is NOT counted, so none of those is caught);
 #  - that line opens "Read <path>" where <path> (up to the first space or comma) is
 #    exactly .claude/skills/autonomous-loop/SKILL.md, the skill run-loop exists to
 #    load, so a real-but-wrong skill fails; and that file exists;
+#  - the prompt bash actually runs (the last effective assignment) is checked
+#    behaviourally by QS-T8 (PR-C), via the stub's prompt log, not here;
 #  - every skill .md path run-loop.sh names is well-formed and exists;
 #  - no .agents path.
 # Not guarded: the rest of the prompt text (the amendment-1 STATE/QUEUE wording).
