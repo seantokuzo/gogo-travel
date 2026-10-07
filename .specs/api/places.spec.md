@@ -203,11 +203,14 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
     IS the grant (trip content already exposes the place to every member).
   - **POST visibility check (Q2-203):** the POST's place-visibility check
     runs on the bare client, in no transaction (under READ COMMITTED a
-    lock-free transaction adds no guarantee). The races are closed by
-    constraint instead: a place hard-deleted between check and insert fires
-    the place FK and maps onto the same canonical 404; a duplicate save
-    fires the `(trip_id, place_id)` unique constraint and maps onto the 409
-    above.
+    lock-free transaction adds no guarantee). Exactly two races are closed
+    by constraint instead: a place hard-deleted between check and insert
+    fires the place FK and maps onto the same canonical 404; a duplicate
+    save fires the `(trip_id, place_id)` unique constraint and maps onto the
+    409 above. One window stays open by design: a membership or role
+    revocation that lands between the access/visibility check and the insert
+    is not re-checked (the insert is a single unlocked statement) —
+    Law #3-adjacent, and the posture stands.
 
 ### Attribution
 
