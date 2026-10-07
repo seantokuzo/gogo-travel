@@ -92,17 +92,22 @@ import {
  * the idempotent Mapbox init — runtime access token + telemetry opt-out, the
  * SAME latched seams the map route runs at its module scope (`map-style.ts`) —
  * because the map route's module scope is NOT a guarantee for SDK work that
- * starts from other tabs: expo-router evaluates a route module only when its
- * screen first renders (`useScreens.js` `getComponent` -> `loadRoute()`; dev
+ * starts from other tabs: expo-router evaluates a LEAF route module (layout
+ * modules load eagerly) only when its screen first renders
+ * (`useScreens.js` `getComponent` -> `loadRoute()`; dev
  * builds also load every route up front, `getRoutesCore.js`
  * `validateRouteTreeExports`), so in a RELEASE build the controller's
- * first `createPack` (root mount, Today tab, wifi) used to run with
- * `RNMBXModule.accessToken` unset -> the download failed -> `failed`, and
- * arming only from `none` (Q2-272) left the retry pill on every cold start;
- * hygiene (`getPacks`/`getPack`) likewise touched TileStore before the
- * telemetry opt-out. Dev builds and jest (mocked SDK) both hide it. Both calls
- * are cheap latches, so they run on every touch — no per-path bookkeeping.
- * Do not reach for a bare `offlineManager` in this file.
+ * first `createPack` (root mount, Today tab, wifi) WOULD run with
+ * `RNMBXModule.accessToken` unset (inferred from the sources, never observed on
+ * a device) -> the download fails -> `failed`, and arming only from `none`
+ * (Q2-272) would leave the retry pill on every cold start; hygiene
+ * (`getPacks`/`getPack`) likewise runs before the telemetry opt-out. Dev
+ * builds and jest (mocked SDK) both hide it. Both calls are cheap latches, so
+ * they run on every touch — no per-path bookkeeping. Ordering the opt-out first
+ * is necessary, not sufficient: on iOS the opt-out reaches the native SDK only
+ * once a map view or snapshot exists (see `disableMapboxTelemetry`). Do not
+ * reach for a bare `offlineManager` in this file — a source-grep test fails on
+ * one.
  */
 function sdk(): typeof offlineManager {
   configureMapboxAccessToken();
@@ -432,8 +437,12 @@ export function startPackDownload(
   void (async () => {
     try {
       // `createPack` is the one SDK call that NEEDS the token: init, then wait
-      // for the (async, cross-queue) hand-off to land. A tokenless build
-      // resolves at once and fails honestly at createPack (R-map-21).
+      // for the hand-off to land. The await is REQUIRED on Android
+      // (`setAccessToken` sets + resolves on the UI thread while `createPack`
+      // runs inline on the native-modules thread) and redundant-but-harmless on
+      // iOS (one shared in-order module queue) — see `configureMapboxAccessToken`;
+      // do not delete it. A tokenless build resolves at once and fails honestly
+      // at createPack (R-map-21).
       sdk();
       await whenMapboxTokenSet();
       await purgeForNewDownload(tripId, tripStatusFor);
