@@ -17,6 +17,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -1294,6 +1295,40 @@ describe("planRotation / rotateFiles", () => {
       rotateFiles({ queue: join(s.dir, "absent.md"), archive: s.archive, date: DATE }).code,
       2,
     );
+  });
+
+  // Falsification (each checked on a scratch copy of the module): decode the queue in rotateFiles with a
+  // NON-strict TextDecoder (`new TextDecoder("utf-8")`, or `fatal: false` on the shared DECODER) and a kept
+  // live row's lone 0xE9 byte silently becomes U+FFFD in the rewritten queue. rotate still returns 0,
+  // because its self-verify compares DECODED text on both sides, so the corruption is invisible to it.
+  it("a lone non-UTF-8 byte (0xE9) in a KEPT live row is refused: exit 2, queue bytes unchanged, no archive", () => {
+    const [head, tail] = BASE.split("**Alpha** live thing");
+    const poisoned = Buffer.concat([
+      Buffer.from(head + "**Alpha** caf"),
+      Buffer.from([0xe9]),
+      Buffer.from(" live thing" + tail),
+    ]);
+    assert.throws(
+      () => new TextDecoder("utf-8", { fatal: true }).decode(poisoned),
+      "the fixture must really be invalid UTF-8",
+    );
+    const sha = (buf) => createHash("sha256").update(buf).digest("hex");
+    for (const dryRun of [false, true]) {
+      const s = sandbox();
+      writeFileSync(s.queue, poisoned);
+      const r = rotateFiles({ queue: s.queue, archive: s.archive, dryRun, date: DATE });
+      assert.equal(r.code, 2, `dryRun=${dryRun}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /not valid UTF-8/);
+      assert.equal(sha(bytes(s.queue)), sha(poisoned), "queue bytes must be untouched");
+      assert.equal(existsSync(s.archive), false, "no archive may be created");
+    }
+    // The same through the CLI entry point.
+    const s = sandbox();
+    writeFileSync(s.queue, poisoned);
+    const r = cli(["rotate", "--queue", s.queue, "--archive", s.archive]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.equal(sha(bytes(s.queue)), sha(poisoned));
+    assert.equal(existsSync(s.archive), false);
   });
 
   it("CRLF queue: non-moved lines keep their CRLF, the archive is LF, verify passes", () => {
