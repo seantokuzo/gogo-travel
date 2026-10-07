@@ -16,6 +16,14 @@
 >
 > Screens live at the routes the navigation spec §2.1 already carved out
 > under `[tripId]/money/`; this spec owns their content and behavior.
+>
+> **Round-2 rulings (2026-09-19):** Sean approved the Money group of the
+> round-2 spec pass wholesale (`.specs/OPEN-QUESTIONS.md` § Round 2 — Money,
+> Q2-001..Q2-055). Each ruling is written inline where it governs, tagged
+> `(Q2-NNN, ruled 2026-09-19)`; the OPEN-QUESTIONS rows stay as the decision
+> record. A "keep as shipped" ruling makes the shipped interpretation the
+> normative rule; where it contradicts an earlier sentence, that sentence is
+> amended in place.
 
 ---
 
@@ -25,8 +33,11 @@
 
 - **R-cmoney-1 (segments):** WHEN the money tab mounts THE SYSTEM SHALL show
   three segments — budget, expenses, balances — defaulting to **budget**, and
-  SHALL keep the user's in-session segment choice (mirroring the R-nav-9
-  no-snap-back pattern; cold launch re-defaults).
+  SHALL keep the user's in-session segment choice, per trip (mirroring the
+  R-nav-9 no-snap-back pattern; cold launch re-defaults). The memory is
+  in-session only, never persisted: it resets at sign-out (R-nav-4) and on
+  cold launch, and **not** on navigation — leaving the money tab and coming
+  back keeps the choice. (Q2-009, ruled 2026-09-19)
 - **R-cmoney-2 (budget overview):** WHEN the budget segment renders THE
   SYSTEM SHALL show one row per `expense_category` with cap, AI estimate, and
   actual spend (from `GET /budgets`) plus a progress indicator; WHEN actual ≥
@@ -57,7 +68,10 @@
   payer, amount in its logged currency, and per-item "your share"; SHALL
   offer member + category filters in a Sheet (nav §2.6 "filters"); and SHALL
   show the add-expense FAB for **every member including viewers** (api
-  money spec R-money-26, resolved Gate 2 — viewers log expenses too).
+  money spec R-money-26, resolved Gate 2 — viewers log expenses too). The
+  FAB lives on the **Expenses segment** only (§2.2); the today-tab quick
+  action (nav §2.4) is the other add-expense entry point. (Q2-005, ruled
+  2026-09-19)
 - **R-cmoney-6 (balances view):** WHEN the balances segment renders THE
   SYSTEM SHALL show (a) the caller's headline position ("you're owed" /
   "you owe" / settled), (b) per-member net chips, and (c) the transfer
@@ -67,8 +81,12 @@
   precedent: it changes who pays whom); the toggle is a per-view control,
   not a persisted setting. Each row is actionable: rows where the caller
   is debtor open the settle screen; rows where the caller is creditor open
-  the send-the-bill flow. (Resolved 2026-07-09, Gate 2 — api money spec
-  R-money-10)
+  the **same** settle screen (`settle/[memberId]`), whose creditor variant
+  (R-cmoney-23) carries the send-the-bill entry — there is no dedicated
+  request route from balances, because `request/[requestId]` needs an id
+  that only exists after `POST /settle-requests`. (Resolved 2026-07-09,
+  Gate 2 — api money spec R-money-10; creditor routing: Q2-001, ruled
+  2026-09-19)
 
 ### Add-expense flow (`expense-new` — modal)
 
@@ -224,7 +242,11 @@
   SHALL render an EmptyState (never a blank region — R-ds-16): no expenses →
   "No expenses yet" + add CTA; balances all zero → "All settled up"; budget
   untouched → set-caps + AI-estimate CTAs; WHEN any money query fails THE
-  SYSTEM SHALL render ErrorBanner with retry (R-ds-17).
+  SYSTEM SHALL render ErrorBanner with retry (R-ds-17). "Budget untouched"
+  means no overall cap, no per-category cap, and no AI estimate — it is
+  **spend-agnostic** and still shows when expenses exist; the set-caps
+  action reveals the row editor in place, so nothing is hidden after one
+  tap. (Q2-003, ruled 2026-09-19)
 - **R-cmoney-30 (testIDs):** WHEN any money screen renders THE SYSTEM SHALL
   carry testIDs on its root and every interactive element per the navigation
   spec §2.7 grammar (mirror of R-nav-22); the money inventory is §2.8 —
@@ -237,7 +259,44 @@
   mutation succeeds THE SYSTEM SHALL invalidate expenses + balances + budgets
   queries together (one stale trio is the classic split-app bug); optimistic
   updates follow PLANNING's collab-sync pattern (REST + optimistic +
-  refetch-on-focus).
+  refetch-on-focus). **Budget cap edits are the exception:**
+  `PUT /budgets/:category` is NOT optimistic — optimism is reserved for
+  interaction-continuity cases such as drag, and the PUT response is itself
+  the recomputed budgets document, which replaces the cached one. A cap edit
+  changes no expense or balance row, so it is not a trio site. (Q2-011,
+  ruled 2026-09-19)
+- **R-cmoney-33 (display shape):** WHEN a money amount renders on any money
+  surface THE SYSTEM SHALL use the display shape currency-code, space,
+  amount — `USD 25.50`, `JPY 2550` — produced only by the shared ISO-4217
+  minor-unit formatter (the same shape as the itinerary idea-price
+  formatter, so money copy reads identically across surfaces). Signed net
+  positions wrap a `+` or `-` around that shape (`+USD 25.50`,
+  `-USD 25.50`; zero renders unsigned as `USD 0.00`), the sign handled by
+  integer negation only. No local digit math and no float division, ever
+  (Law #2). Prose examples in this spec that write `$25.50` illustrate
+  magnitude, not the rendered shape. (Q2-007, ruled 2026-09-19)
+- **R-cmoney-34 (former members):** WHEN a balance party is missing from the
+  live member roster (a departed member whose history survives — api money
+  spec R-money-8/28) THE SYSTEM SHALL label them **"Former member"** —
+  never blank, never a raw id. The same label covers a departed expense
+  payer or settle counterparty, who render no payment rails (handles come
+  from the live roster only, R-cmoney-31). (Q2-008, ruled 2026-09-19)
+- **R-cmoney-35 (cache keys):** WHEN money server-state is cached THE
+  SYSTEM SHALL key it under the trip's detail subtree, the key prefix
+  `["trips", tripId]` — balances, budgets, and the expenses root that
+  R-cmoney-32 invalidates — **not** under a disjoint root, so it is evicted
+  with the trip. Money reads are membership-gated (api R-money-25), so the
+  guard-404 scrub and the trip-subtree eviction clear them exactly as they
+  clear the rest of the trip (the NAV-4 zero-trip-data posture). (Q2-012,
+  ruled 2026-09-19)
+- **R-cmoney-36 (offline posture):** WHEN the active trip is offline THE
+  SYSTEM SHALL follow the R-itin-29 pattern verbatim on each money segment:
+  render the cached data with a warning banner and **no retry affordance**
+  (offline is a state, not a fetch error — no retry lie); WHEN there is no
+  cache THE SYSTEM SHALL show the offline-flavored no-cache error. The
+  posture is scoped per segment, since only one segment mounts at a time.
+  Mutations while offline remain the offline spec's queue (§2.10).
+  (Q2-013, ruled 2026-09-19)
 
 ---
 
@@ -268,9 +327,16 @@ already exists in the nav grammar).
 **Budget** — header: total spent vs the editable overall trip cap
 (R-cmoney-2, resolved Gate 2; editor+ edits it like any cap); rows per
 category (full taxonomy from `GET /budgets`): category name, progress bar
-(spent vs cap, warning ≥80%, over >100%), `cap` (tap → inline cents input,
-editor+), `AI est.` column with `ai_estimated_at` timestamp; footer:
-"Estimate with AI" Button (R-cmoney-3 states; loading per R-ds-14).
+(spent vs cap, warning ≥80%, over >100%), `cap` — an **always-inline** cents
+input for editor+ (the field itself is the tap target; there is no separate
+display→edit morph state, so the §2.8 inventory pins input ids only, and
+viewers see the cap as plain text and never mount the input — Q2-006, ruled
+2026-09-19), and the AI estimate with its `ai_estimated_at` timestamp
+rendered **only where an estimate exists** (per row: `ai_estimate_cents`
+and `ai_estimated_at` non-null) — never as a placeholder dash, so a trip
+with no estimates shows no AI-estimate content at all (Q2-004, ruled
+2026-09-19); footer: "Estimate with AI" Button (R-cmoney-3 states; loading
+per R-ds-14).
 
 **Expenses** — ListItem rows: description, category Badge, "Paid by
 {name}", `spent_at`, amount (logged currency), subdued "your share" line;
@@ -281,9 +347,11 @@ filter button opens Sheet (member picker + category picker + clear); FAB →
 (net per member, signed color tokens); transfer list — pairwise by
 default with the "Simplify debts" toggle switching to the API
 `simplified` array (R-cmoney-6, resolved Gate 2): "{A} → {B} {amount}";
-rows involving the caller carry the action chevron (debtor → settle
-screen, creditor → request flow). "All settled up" EmptyState when no
-transfers.
+rows involving the caller carry the action chevron, and **both seats open
+`settle/[memberId]`** — the debtor arm settles there, the creditor arm lands
+on that screen's creditor view, which carries "Request payment" (Q2-001,
+ruled 2026-09-19; no separate request route). "All settled up" EmptyState
+when no transfers.
 
 ### 2.3 Booking → expense prefill mapping (R-cmoney-11)
 
@@ -353,7 +421,9 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
 
 ### 2.7 Send-the-bill sequence
 
-1. Entry: balances row (caller = creditor) or settle screen creditor view.
+1. Entry: the settle screen's creditor view — a balances row or member chip
+   where the caller is creditor routes there (Q2-001, ruled 2026-09-19;
+   `request/[requestId]` is the recipient screen only).
 2. Amount Sheet (prefilled from displayed balance, editable) + optional note
    → `POST /settle-requests`.
 3. iOS share sheet opens with the returned `link` + message text
@@ -364,8 +434,16 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
    the settlement to the request (`request_id` on the POST — api money spec
    R-money-18), flipping it to settled for both parties.
 5. Open requests the caller sent render on the balances segment as subdued
-   "requested $X on <date>" annotations on the relevant transfer rows, with
-   cancel via ConfirmDialog (→ `DELETE /settle-requests/:id`).
+   "requested <amount> on <date>" annotations on the relevant transfer
+   rows. **Ruled (Q2-002, 2026-09-19): this ships as an empty seam** — the
+   balances segment accepts an open-requests input and renders the
+   annotations, but nothing feeds it, because no settle-request LIST
+   endpoint exists on the wire (api money spec Q1–Q3 are create / read /
+   cancel by id). The approved path to make it live is that LIST read
+   (Q2-030); until it ships the seam stays empty in production. Cancel does
+   not wait on the annotation: the request's creator cancels from the
+   request screen's creditor view via ConfirmDialog
+   (→ `DELETE /settle-requests/:id`).
 
 ### 2.8 testID inventory (grammar: navigation spec §2.7 — `<screen>-<element>[-qualifier]`)
 
@@ -387,7 +465,7 @@ spec §2.7 — kept identical.)
 
 | Surface  | Condition                                 | Behavior                                                                                                            |
 | -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Budget   | no caps, no estimates                     | EmptyState: "Plan your spending" + set-caps + AI CTA                                                                |
+| Budget   | no overall cap, no caps, no estimates     | EmptyState: "Plan your spending" + set-caps + AI CTA — spend-agnostic, even when spend exists (R-cmoney-29)         |
 | Budget   | AI cap / kill-switch / offline / dateless | R-cmoney-3 state table                                                                                              |
 | Expenses | none                                      | EmptyState + FAB pulse hint                                                                                         |
 | Expenses | filter yields none                        | "No matches" EmptyState + clear-filters action                                                                      |
