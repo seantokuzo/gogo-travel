@@ -12,6 +12,7 @@ import {
   mapStyleUrlForScheme,
   resetMapboxAccessTokenForTests,
   resetMapboxTelemetryForTests,
+  whenMapboxTokenSet,
 } from "./map-style";
 
 const mapboxMock = jest.requireMock("@rnmapbox/maps") as {
@@ -150,5 +151,57 @@ describe("disableMapboxTelemetry (T-8.7 rider seam)", () => {
     mapboxMock.default.setTelemetryEnabled = setTelemetryEnabled;
     expect(disableMapboxTelemetry()).toBe(true);
     expect(setTelemetryEnabled).toHaveBeenCalledWith(false);
+  });
+});
+
+// PR #98 round 2: the offline-pack controller must not race `createPack`
+// against the async, cross-queue native token hand-off, so the token seam
+// exposes the hand-off. Falsification: make `whenMapboxTokenSet` return an
+// already-resolved promise -> the pending-hand-off case resolves early -> red.
+describe("whenMapboxTokenSet (the async hand-off the controller awaits)", () => {
+  beforeEach(() => {
+    resetMapboxAccessTokenForTests();
+    mapboxMock.__mock.setAccessToken.mockReset();
+    mapboxMock.__mock.setAccessToken.mockImplementation(async () => "pk.test-value");
+  });
+  afterEach(() => {
+    resetMapboxAccessTokenForTests();
+  });
+
+  it("resolves immediately when nothing was handed over (tokenless build)", async () => {
+    expect(configureMapboxAccessToken(undefined)).toBe(false);
+    await expect(whenMapboxTokenSet()).resolves.toBeUndefined();
+  });
+
+  it("stays PENDING until the native token set resolves, then resolves", async () => {
+    let release: (token: string) => void = () => undefined;
+    mapboxMock.__mock.setAccessToken.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+    expect(configureMapboxAccessToken("pk.test-value")).toBe(true);
+
+    let settled = false;
+    const ready = whenMapboxTokenSet().then(() => {
+      settled = true;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false); // the native set is still in flight
+    } finally {
+      release("pk.test-value");
+    }
+    await ready;
+    expect(settled).toBe(true);
+  });
+
+  it("swallows a rejected hand-off — the gated SDK call fails loudly on its own", async () => {
+    mapboxMock.__mock.setAccessToken.mockImplementation(async () => {
+      throw new Error("native set failed");
+    });
+    expect(configureMapboxAccessToken("pk.test-value")).toBe(true);
+    await expect(whenMapboxTokenSet()).resolves.toBeUndefined();
   });
 });

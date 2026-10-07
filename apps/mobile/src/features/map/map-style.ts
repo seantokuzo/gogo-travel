@@ -46,26 +46,51 @@ export function mapStyleUrlForScheme(
 }
 
 let tokenConfigured = false;
+/** The in-flight native hand-off (see `whenMapboxTokenSet`); undefined until a token is handed over. */
+let tokenHandoff: Promise<unknown> | undefined;
 
 /**
  * Idempotent runtime token hand-off (module doc). Returns whether the SDK
  * has a token — `false` is the tokenless-build path, deliberately silent
  * (no error surface: the map shell is fully functional, only tiles are
  * blank until phase QA).
+ *
+ * CALL SITES (PR #98 round 2): the map route's module scope AND the
+ * offline-pack controller's SDK door (`offline-pack-controller.ts`). The
+ * route's module scope alone is NOT a guarantee for SDK work started from
+ * other tabs: expo-router evaluates a route module only when its screen first
+ * renders (dev builds additionally load EVERY route up front —
+ * `getRoutesCore.js` `validateRouteTreeExports`), so in a release build the
+ * token is unset until the map tab has opened once.
  */
 export function configureMapboxAccessToken(
   token: string | undefined = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN,
 ): boolean {
   if (tokenConfigured) return true;
   if (token === undefined || token === "") return false;
-  void Mapbox.setAccessToken(token);
+  // Kept (not `void`ed): the native set is a bridge CALL on RNMBXModule's own
+  // queue, while `offlineManager.createPack` hops queues again — callers that
+  // must not race it await `whenMapboxTokenSet()`. A rejection is swallowed
+  // (the SDK call it would have gated fails loudly on its own).
+  tokenHandoff = Promise.resolve(Mapbox.setAccessToken(token)).catch(() => undefined);
   tokenConfigured = true;
   return true;
+}
+
+/**
+ * Resolves once the native token hand-off has landed (immediately on a
+ * tokenless build, or when nothing has been handed over yet). Await it
+ * between `configureMapboxAccessToken()` and any SDK call that needs the
+ * token — today only `offlineManager.createPack`.
+ */
+export function whenMapboxTokenSet(): Promise<unknown> {
+  return tokenHandoff ?? Promise.resolve();
 }
 
 /** Test-only: reset the idempotency latch between cases. */
 export function resetMapboxAccessTokenForTests(): void {
   tokenConfigured = false;
+  tokenHandoff = undefined;
 }
 
 let telemetryDisabled = false;
@@ -76,7 +101,10 @@ let telemetryDisabled = false;
  * opt-out (rnmapbox GettingStarted "Disabling telemetry"; verified against
  * the installed 10.3.5 — `src/RNMBXModule.ts` exports it and the package's
  * `types` entry carries it). Called once at screen module scope beside the
- * token hand-off, idempotent-latched like it.
+ * token hand-off, idempotent-latched like it — AND from the offline-pack
+ * controller's SDK door (PR #98 round 2): the map route's module scope does
+ * not run before SDK work triggered from other tabs (see the token seam's
+ * CALL SITES note), so TileStore/offline calls must opt out first themselves.
  *
  * The `typeof` guard: under jest the package is WHOLESALE-mocked, and the
  * global mock (jest.setup.js — the T-8.5-delivered coordination line this

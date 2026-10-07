@@ -76,7 +76,39 @@ import {
   removePackAnnotation,
   writePackAnnotation,
 } from "./offline-pack-annotation";
-import { mapStyleUrlForScheme } from "./map-style";
+import {
+  configureMapboxAccessToken,
+  disableMapboxTelemetry,
+  mapStyleUrlForScheme,
+  whenMapboxTokenSet,
+} from "./map-style";
+
+// ---------------------------------------------------------------------------
+// SDK door (native-SDK init order — PR #98 round 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The ONLY door to `offlineManager` in this module. Every SDK touch first runs
+ * the idempotent Mapbox init — runtime access token + telemetry opt-out, the
+ * SAME latched seams the map route runs at its module scope (`map-style.ts`) —
+ * because the map route's module scope is NOT a guarantee for SDK work that
+ * starts from other tabs: expo-router evaluates a route module only when its
+ * screen first renders (`useScreens.js` `getComponent` -> `loadRoute()`; dev
+ * builds also load every route up front, `getRoutesCore.js`
+ * `validateRouteTreeExports`), so in a RELEASE build the controller's
+ * first `createPack` (root mount, Today tab, wifi) used to run with
+ * `RNMBXModule.accessToken` unset -> the download failed -> `failed`, and
+ * arming only from `none` (Q2-272) left the retry pill on every cold start;
+ * hygiene (`getPacks`/`getPack`) likewise touched TileStore before the
+ * telemetry opt-out. Dev builds and jest (mocked SDK) both hide it. Both calls
+ * are cheap latches, so they run on every touch — no per-path bookkeeping.
+ * Do not reach for a bare `offlineManager` in this file.
+ */
+function sdk(): typeof offlineManager {
+  configureMapboxAccessToken();
+  disableMapboxTelemetry();
+  return offlineManager;
+}
 
 // ---------------------------------------------------------------------------
 // Store
@@ -237,7 +269,7 @@ export function syncPackStateFromAnnotation(tripId: string, current: PackFingerp
 export async function reconcilePackState(tripId: string, current: PackFingerprint): Promise<void> {
   if (inFlight.has(tripId)) return;
   try {
-    const pack = await offlineManager.getPack(packNameFor(tripId));
+    const pack = await sdk().getPack(packNameFor(tripId));
     if (inFlight.has(tripId)) return; // download started while we awaited
     const annotation = readPackAnnotation(tripId);
     if (annotation !== undefined && pack === undefined) {
@@ -246,7 +278,7 @@ export async function reconcilePackState(tripId: string, current: PackFingerprin
       return;
     }
     if (annotation === undefined && pack !== undefined) {
-      await offlineManager.deletePack(packNameFor(tripId));
+      await sdk().deletePack(packNameFor(tripId));
       syncPackStateFromAnnotation(tripId, current);
     }
   } catch {
@@ -296,7 +328,7 @@ async function purgeForNewDownload(
   tripId: string,
   tripStatusFor: (id: string) => TripStatus | undefined,
 ): Promise<void> {
-  const packs = await offlineManager.getPacks();
+  const packs = await sdk().getPacks();
   const candidates: CeilingPurgeCandidate[] = [];
   // Replace semantics: the incoming trip's own pack (if present) is deleted
   // before createPack, so a refresh nets ZERO regions — counting it (round 1)
@@ -318,7 +350,7 @@ async function purgeForNewDownload(
     });
   }
   for (const name of planCeilingPurge(packCount, candidates)) {
-    await offlineManager.deletePack(name);
+    await sdk().deletePack(name);
     const purgedTripId = tripIdFromPackName(name);
     if (purgedTripId !== null) {
       removePackAnnotation(purgedTripId);
@@ -339,13 +371,13 @@ export async function runOrphanPackSweep(): Promise<void> {
   if (orphanSweepDone) return;
   orphanSweepDone = true;
   try {
-    const packs = await offlineManager.getPacks();
+    const packs = await sdk().getPacks();
     for (const pack of packs) {
       const name = sdkPackName(pack);
       const tripId = name === null ? null : tripIdFromPackName(name);
       if (name === null || tripId === null || inFlight.has(tripId)) continue;
       if (readPackAnnotation(tripId) === undefined) {
-        await offlineManager.deletePack(name);
+        await sdk().deletePack(name);
       }
     }
   } catch {
@@ -393,12 +425,17 @@ export function startPackDownload(
   const finishFailed = (message: string): void => {
     if (!inFlight.has(tripId)) return;
     inFlight.delete(tripId);
-    offlineManager.unsubscribe(name);
+    sdk().unsubscribe(name);
     setPackState(tripId, { phase: "failed", message });
   };
 
   void (async () => {
     try {
+      // `createPack` is the one SDK call that NEEDS the token: init, then wait
+      // for the (async, cross-queue) hand-off to land. A tokenless build
+      // resolves at once and fails honestly at createPack (R-map-21).
+      sdk();
+      await whenMapboxTokenSet();
       await purgeForNewDownload(tripId, tripStatusFor);
       // Replace semantics: createPack on an existing name errors, so any
       // previous pack (ready, stale, or half-downloaded) goes first — and its
@@ -406,9 +443,11 @@ export function startPackDownload(
       // annotation would seed a lying "ready" for a pack the SDK no longer
       // holds on the next launch AND suppress the R-map-18 re-attempt.
       // Completion rewrites the annotation; failure leaves an honest none.
-      await offlineManager.deletePack(name).catch(() => undefined);
+      await sdk()
+        .deletePack(name)
+        .catch(() => undefined);
       removePackAnnotation(tripId);
-      await offlineManager.createPack(
+      await sdk().createPack(
         {
           name,
           styleURL: styleUrl,
@@ -421,7 +460,7 @@ export function startPackDownload(
           if (!inFlight.has(tripId)) return; // late event after settle
           if (isDownloadComplete(status)) {
             inFlight.delete(tripId);
-            offlineManager.unsubscribe(name);
+            sdk().unsubscribe(name);
             const completedAt = new Date().toISOString();
             const sizeBytes = status.completedResourceSize;
             writePackAnnotation({ tripId, styleUrl, regionKey, completedAt, sizeBytes });
@@ -448,8 +487,10 @@ export function startPackDownload(
  */
 export async function deleteTripPack(tripId: string): Promise<void> {
   inFlight.delete(tripId);
-  offlineManager.unsubscribe(packNameFor(tripId));
-  await offlineManager.deletePack(packNameFor(tripId)).catch(() => undefined);
+  sdk().unsubscribe(packNameFor(tripId));
+  await sdk()
+    .deletePack(packNameFor(tripId))
+    .catch(() => undefined);
   removePackAnnotation(tripId);
   setPackState(tripId, NONE);
 }

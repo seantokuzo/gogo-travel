@@ -52,6 +52,7 @@ import {
   type PackDownloadTarget,
 } from "./offline-pack-controller";
 import * as barrel from "./index";
+import { resetMapboxAccessTokenForTests, resetMapboxTelemetryForTests } from "./map-style";
 import { packBoundsFor, packNameFor, packRegionKeyFor } from "./offline-packs";
 
 type MockFn = jest.Mock;
@@ -996,5 +997,127 @@ describe("feature barrel — the single public mount path", () => {
     expect(typeof barrel.OfflinePackController).toBe("function");
     expect(typeof barrel.useOfflinePackState).toBe("function");
     expect("useOfflinePackController" in barrel).toBe(false);
+  });
+});
+
+// PR #98 round 2 (merge-judge): the controller now fires SDK calls from the
+// trip shell — BEFORE the map route has ever executed. expo-router evaluates a
+// route module only when its screen first renders (`useScreens.js`
+// `getComponent` -> `loadRoute()`; tabs render lazily, `BottomTabView.js`
+// `lazy = true`; only DEV loads every route, `getRoutesCore.js`
+// `validateRouteTreeExports`), so the map route's module-scope
+// `configureMapboxAccessToken()` / `disableMapboxTelemetry()` are NOT a
+// guarantee in a release build. The controller's SDK door must run both
+// itself. Nothing here imports the map route.
+describe("native-SDK init order — the controller path never relies on the map route", () => {
+  const mapbox = jest.requireMock("@rnmapbox/maps") as {
+    __mock: { setAccessToken: jest.Mock; setTelemetryEnabled: jest.Mock };
+  };
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(ThemeProvider, { defaultAppearancePref: "light" }, children);
+  const wifi = { type: "WIFI", isConnected: true, isInternetReachable: true };
+  const TOKEN = "pk.test-init-order";
+  const previousToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+  /** The global invocation order of a mock's FIRST call (jest's counter spans every mock). */
+  const firstCall = (fn: jest.Mock): number => Math.min(...fn.mock.invocationCallOrder);
+
+  beforeEach(() => {
+    process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = TOKEN;
+    resetMapboxAccessTokenForTests();
+    resetMapboxTelemetryForTests();
+    mapbox.__mock.setAccessToken.mockImplementation(async () => TOKEN);
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+  });
+  afterEach(() => {
+    if (previousToken === undefined) delete process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    else process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN = previousToken;
+    resetMapboxAccessTokenForTests();
+    resetMapboxTelemetryForTests();
+  });
+
+  // Falsification: drop `configureMapboxAccessToken()` from the controller's
+  // SDK door (`sdk()`) -> the SDK never receives the token -> red.
+  it("the token is handed to the SDK BEFORE the first createPack — with the map route never loaded", async () => {
+    const { unmount } = await renderHook(
+      () => useOfflinePackController(makeActiveTrip(TEST_TRIP_ID)),
+      {
+        wrapper,
+      },
+    );
+    await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    expect(mapbox.__mock.setAccessToken).toHaveBeenCalledTimes(1);
+    expect(mapbox.__mock.setAccessToken).toHaveBeenCalledWith(TOKEN);
+    expect(firstCall(mapbox.__mock.setAccessToken)).toBeLessThan(firstCall(om.createPack));
+    await unmount();
+  });
+
+  // Hygiene only (a PLANNING trip never downloads): isolates the sweep /
+  // reconcile path. Falsification: drop `disableMapboxTelemetry()` from the
+  // SDK door -> never called -> red; or call a bare `offlineManager.getPacks()`
+  // in the sweep (bypassing the door) -> it is the first SDK touch and lands
+  // BEFORE the opt-out -> red.
+  it("the telemetry opt-out precedes the FIRST SDK read of the hygiene path (getPacks / getPack)", async () => {
+    const { unmount } = await renderHook(
+      () => useOfflinePackController(makePlanningTrip(TEST_TRIP_ID)),
+      { wrapper },
+    );
+    await waitFor(() => expect(om.getPacks).toHaveBeenCalled());
+    await waitFor(() => expect(om.getPack).toHaveBeenCalled());
+    expect(mapbox.__mock.setTelemetryEnabled).toHaveBeenCalledWith(false);
+    const optOut = firstCall(mapbox.__mock.setTelemetryEnabled);
+    expect(optOut).toBeLessThan(firstCall(om.getPacks));
+    expect(optOut).toBeLessThan(firstCall(om.getPack));
+    expect(om.createPack).not.toHaveBeenCalled(); // hygiene alone — no download here
+    await unmount();
+  });
+
+  // The native token set is an async bridge call on RNMBXModule's own queue and
+  // `createPack` hops queues again, so a fire-and-forget hand-off could still
+  // lose the race. Hold the hand-off in flight: createPack must wait.
+  // Falsification: drop `await whenMapboxTokenSet()` from the download path ->
+  // createPack fires while the token set is still in flight -> red. Released
+  // in `finally`.
+  it("createPack WAITS for the async token hand-off to land", async () => {
+    let release: (token: string) => void = () => undefined;
+    mapbox.__mock.setAccessToken.mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { unmount } = await renderHook(
+      () => useOfflinePackController(makeActiveTrip(TEST_TRIP_ID)),
+      {
+        wrapper,
+      },
+    );
+    try {
+      await act(flush);
+      expect(mapbox.__mock.setAccessToken).toHaveBeenCalledTimes(1);
+      expect(om.createPack).not.toHaveBeenCalled(); // the hand-off is still in flight
+      release(TOKEN);
+      await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    } finally {
+      release(TOKEN);
+    }
+    await unmount();
+  });
+
+  // Tokenless builds (the P-8 posture) must not hang on the new await: the
+  // download still goes out and fails honestly at the SDK (R-map-21).
+  // Falsification: make `whenMapboxTokenSet` never resolve without a token ->
+  // createPack never fires -> red.
+  it("a TOKENLESS build still attempts the download (no hang on the token await)", async () => {
+    delete process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
+    const { unmount } = await renderHook(
+      () => useOfflinePackController(makeActiveTrip(TEST_TRIP_ID)),
+      {
+        wrapper,
+      },
+    );
+    await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    expect(mapbox.__mock.setAccessToken).not.toHaveBeenCalled();
+    await unmount();
   });
 });
