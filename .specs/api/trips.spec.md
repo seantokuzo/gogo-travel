@@ -762,6 +762,9 @@ Upstream resolutions this section depends on (canonical homes):
   soft-delete + PII scrub, resolved Gate 2; member _removal_ here never
   deletes user rows).
 - Trip-level visibility (dropped from v1 — §3.6, resolved Gate 2).
+- A client surface for the owner's manual status override ("archive",
+  §3.2 / §3.4) — API-only in v1 (client trips spec R-tripui-27, Q2-288,
+  ruled 2026-09-19); the endpoint and shared wire field stay as specced.
 
 ---
 
