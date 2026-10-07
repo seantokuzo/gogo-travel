@@ -174,6 +174,19 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   `404 NOT_FOUND`, indistinguishable from absent); write endpoints SHALL
   additionally require role `editor` or `owner` (`viewer` → `403 FORBIDDEN`).
 
+### Round-2 spec-pass rulings (ruled 2026-09-19)
+
+Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
+(`.specs/OPEN-QUESTIONS.md` § Round 2): each `Q2-NNN` rule below is the
+as-shipped interpretation made normative (or the named alternative where the
+batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
+
+- **R-ib-25 (`unscheduled=false`; Q2-056, ruled 2026-09-19):** WHEN the
+  bookings list is queried with `unscheduled=false` THE SYSTEM SHALL treat it
+  as no filter — identical to the parameter being absent. R-ib-10 defines
+  only `true`; the complement ("false = scheduled-only") is deliberately NOT
+  specced in v1 (a client that needs it asks for a new rule).
+
 ### Upstream resolutions (formerly blocking)
 
 Both canonical markers this spec repeated are resolved:
@@ -285,7 +298,7 @@ List a trip's bookings for the bookings/ideas surfaces.
 
 **Request** (query): `status?` (repeatable `booking_status`; default: all
 except `cancelled`), `category?` (`booking_category`), `unscheduled?`
-(boolean — R-ib-10), `cursor?`, `limit?`.
+(boolean — R-ib-10; `false` ≡ absent, R-ib-25), `cursor?`, `limit?`.
 
 **Response 200**: `Paginated<Booking>` — ordered `starts_at ASC NULLS LAST,
 updated_at DESC` (timeless ideas trail, freshest first; uses schema
@@ -294,12 +307,13 @@ updated_at DESC` (timeless ideas trail, freshest first; uses schema
 **Errors**: 401 UNAUTHENTICATED · 404 NOT_FOUND (no such trip / non-member) ·
 400 VALIDATION_FAILED (bad query).
 
-**Requirements covered**: R-ib-10, R-ib-24
+**Requirements covered**: R-ib-10, R-ib-24, R-ib-25
 
 **Tests required**:
 
 - [ ] Happy path: filters by status/category; pagination cursor round-trip
 - [ ] `unscheduled=true` returns exactly zero-item bookings; excludes cancelled by default
+- [ ] `unscheduled=false` returns exactly what the absent param returns (R-ib-25)
 - [ ] Authz: non-member gets 404 with zero data; viewer can read
 
 ---
