@@ -416,6 +416,29 @@ Rules: modals never stack on modals (dismiss first); ConfirmDialog may sit
 over anything; back/swipe-back pops pushes, swipe-down dismisses modals —
 forms with dirty state intercept dismissal with a discard Confirm.
 
+**Date/time pickers (shared `PickerCard`, B-10/B-15 — rulings Q2-294 and
+Q2-295, 2026-09-19, Sean — round-2 spec pass).** DateField/TimeField open the
+native picker inside the screen-anchored bottom-modal `PickerCard` (testIDs:
+§2.7 rule 4).
+
+- **Date commit is Done-only (Q2-294):** the **Done** affordance
+  (`{testID}-sheet-done`) is the ONE committed-action path for a seeded date;
+  tapping the highlighted day does NOT commit (iOS inline pickers fire on
+  value change only). Tap-the-highlighted-day-to-commit needs a custom
+  calendar (or day-cell hit detection) and is deliberately NOT adopted in v1
+  — no urgency; it would be its own task if ever wanted. A same-value Done is
+  a full no-op (it does not clear a standing field error).
+- **Time commits on first wheel settle (Q2-295):** the time spinner commits
+  as soon as the wheel settles (hour then minute = two opens). A
+  draft-until-Done time model is NOT adopted — it would change the
+  ScheduleSheet/IdeasBucket immediate-commit contract, so it is its own
+  contract-changing task if ever wanted, not a polish item.
+- **Android same-mode dialog flash-close race (picker follow-up ③ — NOT a
+  ruling):** pre-existing, determinized by B-15's exclusive-open slot;
+  press-time claim batching is the fix shape. It rides the **Android
+  pre-launch verification pass** (QUEUE row of that name), which stays open
+  for it — nothing in this section closes it.
+
 ### 2.7 testID convention (R-nav-22)
 
 Grammar — kebab-case, screen-prefixed:
