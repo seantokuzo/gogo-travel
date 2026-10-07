@@ -82,7 +82,7 @@ jobs:
 
       - name: Plan-doc byte budgets
         # ADR-009: docs/STATE.md is to be injected at interactive session start
-        # (QS-T6, a later PR; loop sessions read it explicitly) and
+        # (QS-T6, a later PR; QS-T8 in PR-C makes loop sessions read it explicitly) and
         # docs/QUEUE.md is the live work index, so both have hard caps in
         # BYTES (STATE 6144; QUEUE 20480,
         # every line 400 at most) and required section headings. Bytes, not
