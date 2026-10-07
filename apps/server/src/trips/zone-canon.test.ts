@@ -77,6 +77,15 @@ describe("canonicalizeZone — stores the modern IANA spelling, case-insensitive
     expect(canonicalizeZone(input)).toBe(canonical);
   });
 
+  it("an engine-only alias is stored as the ENGINE spells it, case-folded — never rewritten to the modern name (SPELLING CAVEAT in zone-canon.ts)", () => {
+    // `Europe/Kiev` / `Asia/Calcutta` are not in tz-lookup's table; only the engine's list has them.
+    expect(canonicalizeZone("europe/kiev")).toBe("Europe/Kiev");
+    expect(canonicalizeZone("EUROPE/KIEV")).toBe("Europe/Kiev");
+    expect(canonicalizeZone("asia/calcutta")).toBe("Asia/Calcutta");
+    expect(TZ_LOOKUP_ZONE_NAMES).not.toContain("Europe/Kiev");
+    expect(TZ_LOOKUP_ZONE_NAMES).not.toContain("Asia/Calcutta");
+  });
+
   it("does NOT rewrite modern ids to the engine's older aliases (resolvedOptions().timeZone would: Kolkata->Calcutta, Kyiv->Kiev, Kanton->Enderbury — the ids old Hermes rejects)", () => {
     for (const zone of ["Asia/Kolkata", "Europe/Kyiv", "Pacific/Kanton"]) {
       expect(canonicalizeZone(zone), zone).toBe(zone);
