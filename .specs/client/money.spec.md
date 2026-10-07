@@ -294,8 +294,13 @@
   settled, when" is a best-effort lookup of the linked settlement in the S2
   first page — because the request wire carries no `settled_by` /
   `settled_at`, anything beyond the first page degrades to a generic
-  resolved line until the wire gains those fields (api money spec R-money-33;
-  Q2-031). (Each ruled 2026-09-19.)
+  resolved line, and that holds until/unless Q2-031 resolves to (a) and the
+  wire gains those fields (api money spec R-money-33; Q2-031 — as shipped;
+  Sean pick pending: (a) add the fields at the next settle-request touch /
+  (b) accept the degrade permanently). [NEEDS CLARIFICATION: Q2-031 — (a)
+  add `settled_by` / `settled_at` at the next settle-request touch, or (b)
+  accept the degrade permanently?] (Q2-002, Q2-033, Q2-041, Q2-042 ruled
+  2026-09-19; Q2-031 pending as above.)
 - **R-cmoney-27 (non-member recipients):** Resolved at
   `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09): settle-up
   request links require app install + an account in v1 (no web surface
