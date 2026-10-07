@@ -98,8 +98,9 @@ workspace manifests say what's installed. What they DON'T tell you:
 decomposes, dispatches, tracks, and verifies wave gates; everything else
 (research, specs, code, review lanes, fixes, judging, doc updates, merges,
 handoffs) is delegated to subagents. Full directive + parallelism doctrine
-(its canonical home): `.agents/agents/orchestrator.md`; the per-role files sit
-beside it in `.agents/agents/`.
+(its canonical home): the `orchestrator` skill
+(`.claude/skills/orchestrator/SKILL.md`). Spawnable roles are registered
+agents: engineers in `.claude/agents/`, the rest in `~/.claude/agents/`.
 
 **Shared-worktree rule** (learned 2026-07-10, P-3): background agents share
 the session's working tree — a checkout by either side moves HEAD for both.
