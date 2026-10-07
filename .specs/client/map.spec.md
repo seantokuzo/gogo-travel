@@ -60,8 +60,8 @@ null]`; it still appears in list surfaces by name. See R-map-26.
     pins THE SYSTEM SHALL move the camera nowhere.
   - **Chip range (Q2-208):** the chips span only the trip's own date range
     (`dayIndex` 0..N-1); items outside it (R-itin-1) still pin under "All"
-    but get no chip — a negative-index chip id would fork the §2.7
-    kebab-case testID grammar.
+    but get no chip — a negative-index chip id would fork the navigation
+    spec §2.7 kebab-case testID grammar.
 - **R-map-4 (pin tap → sheet):** WHEN a saved-place or itinerary pin is
   tapped THE SYSTEM SHALL present the place sheet (`map-sheet-place`,
   design-system Sheet — navigation spec: "Sheet over map (small) / PUSH
@@ -86,7 +86,8 @@ null]`; it still appears in list surfaces by name. See R-map-26.
   info sheet (`map-button-attribution`).
   **AMENDED (round-2, T-8.2 — each ruled 2026-09-19):**
   - **SDK ornaments (Q2-216):** the Mapbox logo sits bottom-left at token
-    spacing and the SDK attribution control is offset 96 pt right of it.
+    spacing and the SDK attribution control sits 96 pt from the map's left
+    edge, clear of the logo.
     The exact fit is a phase-QA visual check (ornaments need a live
     style), not a spec-pinned pixel value.
   - **Attribution (i) button (Q2-222):** the tappable info opener
@@ -543,7 +544,8 @@ photos.
   - **Saved-places pagination — RULED (Q2-220, ruled 2026-09-19):** the
     client follows `nextCursor` to exhaustion, bounded at 10 pages (1000
     pins — twice the 500-pin sizing above), so a runaway cursor terminates
-    and a trip with more than 100 saved places never silently truncates.
+    and any trip below that bound (10 pages × 100) loads every saved place
+    rather than truncating at the first page.
   - **Loading and errors — RULED (Q2-213, ruled 2026-09-19):** the map has
     no blocking loading UI — the basemap itself is the loading surface and
     pins hydrate in. WHEN a trip-data query errors THE SYSTEM SHALL show a
