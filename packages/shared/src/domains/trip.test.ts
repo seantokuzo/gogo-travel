@@ -184,6 +184,80 @@ describe("B-7 part 3 — nullable destination coordinates", () => {
   });
 });
 
+describe("B-30 — destination_tz on the wire", () => {
+  const createBase = {
+    name: "Kyoto",
+    destination_name: "Kyoto, Japan",
+    destination_lat: 35.0116,
+    destination_lng: 135.7681,
+    start_date: "2026-09-01",
+    end_date: "2026-09-10",
+  };
+  const tripBase = {
+    id: "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7d",
+    name: "Kyoto",
+    destination_name: "Kyoto, Japan",
+    destination_lat: 35.0116,
+    destination_lng: 135.7681,
+    start_date: "2026-09-01",
+    end_date: "2026-09-10",
+    status: "planning",
+    status_override: null,
+    base_currency: "USD",
+    budget_cap_cents: null,
+    theme: null,
+    created_by: "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7e",
+    created_at: "2026-07-25T00:00:00.000Z",
+    updated_at: "2026-07-25T00:00:00.000Z",
+  };
+
+  it("TripSchema: the EFFECTIVE zone is required and never null", () => {
+    expect(TripSchema.parse({ ...tripBase, destination_tz: "Asia/Tokyo" }).destination_tz).toBe(
+      "Asia/Tokyo",
+    );
+    expect(TripSchema.safeParse(tripBase).success).toBe(false); // missing
+    expect(TripSchema.safeParse({ ...tripBase, destination_tz: null }).success).toBe(false);
+    expect(TripSchema.safeParse({ ...tripBase, destination_tz: "" }).success).toBe(false);
+    // Falsification: make `destination_tz` `.nullable()` / `.optional()` on TripSchema → the null/missing cases go green.
+  });
+
+  it("TripCreate: destination_tz is optional; when sent it must be an IANA-shaped id ≤ 64 chars", () => {
+    expect(TripCreateSchema.parse(createBase).destination_tz).toBeUndefined();
+    expect(
+      TripCreateSchema.parse({ ...createBase, destination_tz: "Asia/Tokyo" }).destination_tz,
+    ).toBe("Asia/Tokyo");
+    expect(
+      TripCreateSchema.parse({ ...createBase, destination_tz: "Etc/GMT+12" }).destination_tz,
+    ).toBe("Etc/GMT+12");
+    for (const bad of ["", "+09:00", "Asia/Tokyo; x", "Asia//Tokyo", `A${"b".repeat(64)}`]) {
+      expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: bad }).success, bad).toBe(
+        false,
+      );
+    }
+    // null is not "unset" on the wire — omit the key instead.
+    expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: null }).success).toBe(false);
+  });
+
+  it("TripCreate: the 64-char cap boundary (64 passes, 65 fails)", () => {
+    const sixtyFour = `A${"b".repeat(63)}`;
+    expect(TripCreateSchema.safeParse({ ...createBase, destination_tz: sixtyFour }).success).toBe(
+      true,
+    );
+    expect(
+      TripCreateSchema.safeParse({ ...createBase, destination_tz: `${sixtyFour}b` }).success,
+    ).toBe(false);
+  });
+
+  it("TripUpdate: destination_tz alone is a valid patch (no coordinate pair required) and is shape-checked", () => {
+    expect(TripUpdateSchema.parse({ destination_tz: "Europe/Paris" }).destination_tz).toBe(
+      "Europe/Paris",
+    );
+    expect(TripUpdateSchema.safeParse({ destination_tz: "not a zone" }).success).toBe(false);
+    expect(TripUpdateSchema.safeParse({ destination_tz: null }).success).toBe(false);
+    expect(TripUpdateSchema.parse({ name: "x" }).destination_tz).toBeUndefined();
+  });
+});
+
 describe("TripListItem (trips spec §3.3 GET /trips)", () => {
   const trip = {
     id: "8f14e45f-ceea-467f-a8d9-4a1c4f5b6e7d",
@@ -191,6 +265,7 @@ describe("TripListItem (trips spec §3.3 GET /trips)", () => {
     destination_name: "Tokyo, Japan",
     destination_lat: 35.6812,
     destination_lng: 139.7671,
+    destination_tz: "Asia/Tokyo",
     start_date: "2026-09-01",
     end_date: "2026-09-10",
     status: "planning",

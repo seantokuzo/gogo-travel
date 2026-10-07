@@ -15,6 +15,21 @@ import {
   UuidSchema,
   type ISODate,
 } from "../scalars.js";
+import { IANA_TIME_ZONE_ID_RE, TIME_ZONE_ID_MAX_CHARS } from "../time.js";
+
+/**
+ * IANA zone id for a trip's destination (B-30). Shape-only here (length +
+ * IANA-shaped — the same gate `isValidTimeZone` applies first); whether the
+ * platform's `Intl` actually RESOLVES the id is the server's check at write
+ * time (`apps/server/src/trips/destination-tz.ts` → 400), kept out of the
+ * schema so a client-side `Intl` gap can never block a create.
+ */
+export const DestinationTzSchema = z
+  .string()
+  .min(1)
+  .max(TIME_ZONE_ID_MAX_CHARS)
+  .regex(IANA_TIME_ZONE_ID_RE);
+export type DestinationTz = z.infer<typeof DestinationTzSchema>;
 
 /** The `trips` row as the API returns it. */
 export const TripSchema = z.object({
@@ -26,6 +41,14 @@ export const TripSchema = z.object({
    *  the pair is NULL together, never independently (`trips_destination_coords_pair_ck`). */
   destination_lat: LatSchema.nullable(),
   destination_lng: LngSchema.nullable(),
+  /**
+   * The EFFECTIVE destination zone (B-30) — NEVER null on the wire. A trip's
+   * "today" is the calendar day in this zone (`todayInZone`), evaluated
+   * identically by server and client. Resolved server-side: explicit user
+   * value → derived from `destination_lat/lng` → (NULL stored only) the
+   * earliest flight/train booking's `arrives_tz`/`departs_tz` → `"UTC"`.
+   */
+  destination_tz: DestinationTzSchema,
   start_date: ISODateSchema,
   end_date: ISODateSchema,
   /** Effective status; date-derived unless overridden (R-db-19). */
@@ -128,6 +151,12 @@ export const TripCreateSchema = z
     destination_name: DestinationNameSchema,
     destination_lat: LatSchema.nullable(),
     destination_lng: LngSchema.nullable(),
+    /**
+     * Optional explicit destination zone (B-30). Wins over the zone derived
+     * from the coordinates. The mobile create form sends the device zone for
+     * a coordinate-less custom destination (no other source exists).
+     */
+    destination_tz: DestinationTzSchema.optional(),
     start_date: ISODateSchema,
     end_date: ISODateSchema,
     base_currency: CurrencyCodeSchema.optional(),
@@ -152,6 +181,12 @@ export const TripUpdateSchema = z
     destination_name: DestinationNameSchema.optional(),
     destination_lat: LatSchema.nullable().optional(),
     destination_lng: LngSchema.nullable().optional(),
+    /**
+     * Explicit destination zone (B-30). When the body moves the coordinates
+     * WITHOUT this, the server re-derives the zone from the new coordinates;
+     * with it, the explicit value wins (and is stored as given).
+     */
+    destination_tz: DestinationTzSchema.optional(),
     start_date: ISODateSchema.optional(),
     end_date: ISODateSchema.optional(),
     theme: ThemeKeySchema.nullable().optional(),
@@ -197,8 +232,9 @@ export type TripListQuery = z.infer<typeof TripListQuerySchema>;
 /**
  * Derived-status rule (trips spec §3.4) — the single definition server and
  * client both use, so the boundary day can never drift (same seam pattern as
- * `canViewPhoto`). `today` is an explicit input (caller supplies its tz's
- * current date). ISO dates compare lexicographically.
+ * `canViewPhoto`). `today` is an explicit input — callers pass
+ * `todayInZone(now, trip.destination_tz)` (B-30: the calendar day AT THE
+ * DESTINATION; `../time.ts`). ISO dates compare lexicographically.
  */
 export function deriveTripStatus(
   today: ISODate,

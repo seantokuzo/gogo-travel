@@ -114,7 +114,8 @@ packages/shared/src/
 │   ├── auth.ts           # AppleSignInRequest, GoogleSignInRequest, RefreshRequest,
 │   │                     #   SignInResponse, AuthTokens, LogoutRequest, AuthSessionInfo
 │   ├── entitlement.ts    # Entitlement, EntitlementOverrides, EffectiveEntitlements
-│   ├── trip.ts           # Trip, TripCreate/Update
+│   ├── trip.ts           # Trip (+ non-null EFFECTIVE `destination_tz`, B-30), TripCreate/Update (+ optional `destination_tz`);
+│   │                     #   a trip's "today" = `todayInZone(now, trip.destination_tz)` (`time.ts`, one helper both sides)
 │   ├── member.ts         # TripMember, Invite, InviteCreate/Accept
 │   ├── place.ts          # Place, SavedPlace
 │   ├── booking.ts        # Booking + BookingDetails discriminated union (8 shapes)

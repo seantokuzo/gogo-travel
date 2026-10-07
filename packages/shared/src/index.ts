@@ -9,6 +9,7 @@
  */
 export * from "./enums.js";
 export * from "./scalars.js";
+export * from "./time.js";
 export * from "./region-grid.js";
 export * from "./api/envelope.js";
 export * from "./api/descriptor.js";
