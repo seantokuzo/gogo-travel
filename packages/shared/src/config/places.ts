@@ -86,8 +86,9 @@ export const PLACES_SEARCH_MIN_CHARS = 2;
  * enforcing this as a hard floor) — this constant now selects which
  * server-side ARM runs (`apps/server/src/places/routes.ts`): `< this` ⇒ an
  * exact, case-insensitive, accent-folded match against the bootstrap
- * destination tier only (`places/search-query.ts`'s
- * `placesExactTierMatchQuery` — never the trgm scan this threshold still
+ * destination tier PLUS the caller's own custom places
+ * (`places/search-query.ts`'s `placesExactTierMatchQuery`; creator-scoped,
+ * Sean's 2026-09-19 ruling — never the trgm scan this threshold still
  * protects against everywhere else); `>= this` ⇒ the trigram arm below.
  */
 export const PLACES_SEARCH_TEXT_ONLY_MIN_CHARS = 4;
