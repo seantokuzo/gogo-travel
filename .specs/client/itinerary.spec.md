@@ -338,7 +338,9 @@ unaffected and keeps its existing day-sectioned form.
   accessibilityLabel "Time zone: {city}, {GMT±X}", hint "Shows this trip's time zones".
   Tapping it SHALL open a DS Sheet listing every zone in the set as one row ("{city} —
   GMT±X"; subtitle the IANA id; the destination row additionally captioned "Trip
-  destination"), the active row check-marked with `accessibilityState.selected`. Selecting a
+  destination", or "Trip destination (from your first flight)" WHEN `Trip.destination_tz_source`
+  (B-30) is `booking` — that rung can be a connecting leg (`.specs/api/trips.spec.md` §3.4
+  limit; a user zone, R-tripui-29, is the override)), the active row check-marked with `accessibilityState.selected`. Selecting a
   different row SHALL close the Sheet and make that zone active (R-itin-38); selecting the
   active row SHALL close the Sheet with no change. ("Railway accessible" in the T-7.17 story
   is read as "readily accessible": one tap from either view mode, never behind a menu,
@@ -1120,7 +1122,7 @@ density control in grid mode — T-7.16's layout call). Not a PageHeader trailin
 zone set has < 2 zones.
 
 **Sheet.** DS `Sheet`, title "Time zone", one `ListItem` row per zone in R-itin-37 order,
-title "{city} — GMT±X", subtitle the IANA id (+ " · Trip destination"), trailing checkmark
+title "{city} — GMT±X", subtitle the IANA id (+ " · Trip destination", the source-aware caption of R-itin-37), trailing checkmark
 on the active row; rows in a `FlatList` (the Sheet is not inside a ScrollView). Dismiss via
 the Sheet's close button.
 
