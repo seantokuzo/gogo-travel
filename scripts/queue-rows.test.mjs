@@ -1004,6 +1004,45 @@ describe("verifyLossless", () => {
           'CHANGED live P-6 phase QA (before L6 -> index L6) Priority: "P2" -> "P1"',
         ]);
       });
+      // Round-1b finding: an ID-less (`—`) row that gains an ID in the index (`| B-999 | **...`) paired by the
+      // substring fallback, printed only a WARN and exited 0, because cell 0 was never compared. The ID cell
+      // is compared too, labelled `id`. Falsification: drop the cell-0 compare in `changedCellLines` and
+      // both tests below go red (rc 0 / no CHANGED line) while every other carried-cells test stays green.
+      it("an ID-less row that gains an ID in the index is a CHANGED on `id`, rc 1 (not just a WARN)", () => {
+        const gained = faithful.replace(P6, P6.replace("| — |", "| B-999 |"));
+        assert.notEqual(gained, faithful, "fixture edit must apply");
+        const r = verifyIndex(gained);
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(
+          r.stdout,
+          /^live: required=3 present=3$/m,
+          "the row is there: only its ID moved",
+        );
+        assert.match(
+          r.stdout,
+          /^WARN live handle "P-6 phase QA"/m,
+          "paired by the substring fallback",
+        );
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live P-6 phase QA (before L6 -> index L6) id: "—" -> "B-999"',
+        ]);
+        assert.doesNotMatch(r.stdout, /^(MISSING|ERROR)/m);
+      });
+      it("the ID cell is reported before the later columns, and the library verdict is not ok", () => {
+        const gained = faithful.replace(
+          P6,
+          P6.replace("| — |", "| B-999 |").replace("| P2 |", "| P1 |"),
+        );
+        const r = verifyLossless({ before: beforeText, afters: [beforeText], live: gained });
+        assert.equal(r.ok, false, r.lines.join("\n"));
+        assert.deepEqual(
+          r.lines.filter((l) => l.startsWith("CHANGED")),
+          [
+            'CHANGED live P-6 phase QA (before L6 -> index L6) id: "—" -> "B-999"',
+            'CHANGED live P-6 phase QA (before L6 -> index L6) Priority: "P2" -> "P1"',
+          ],
+        );
+      });
       it("a row paired only by the substring fallback is compared too (WARN and CHANGED both print)", () => {
         const abbreviated = P6.replace(
           "**P-6 phase QA** simulator",

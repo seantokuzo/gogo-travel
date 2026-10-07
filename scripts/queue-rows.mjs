@@ -47,7 +47,8 @@
  *     A malformed row in any section but `Recently done`, in `before` or the index, is an `ERROR`
  *     and fails the run.
  *   - `verify --live` is also a SAME-MOMENT re-index check: for every before -> index pair it compares
- *     the section and every cell after the Title (status, priority, depends/owner, ...), printing
+ *     the section, the ID cell (`id`) and every cell after the Title (status, priority, depends/owner,
+ *     ...), printing
  *     `CHANGED live <handle-or-ID> (before L<b> -> index L<i>) <column>: "<old>" -> "<new>"` for each
  *     difference and failing the run. The Title is exempt (the index shortens it by design). So
  *     "present" proves the row survived and "unchanged" proves its cells did; a deliberate status or
@@ -85,7 +86,7 @@ const USAGE = [
   "usage: node scripts/queue-rows.mjs <command> ...",
   "  normalize <file>",
   "  verify --before <file> --after <file>... [--live <file>]",
-  "      --live: every live row is present AND its section and every cell after the Title",
+  "      --live: every live row is present AND its section, ID cell and every cell after the Title",
   "      are unchanged (a same-moment re-index check; a deliberate status change is a",
   "      separate sync commit, not part of a rotation)",
   "  rotate --queue <file> --archive <path> [--keep 5] [--dry-run]",
@@ -346,9 +347,10 @@ function matchLive(required, candidates) {
 
 /**
  * `--live` is a same-moment re-index check: a paired row must still carry the cells it had. Compares the
- * section and every cell after the Title (status, priority, depends/owner, ...); the Title is exempt
- * because the index shortens it by design. Differences come back in before-file order, section first,
- * then by column. A missing cell (a dropped or shorter column) reads as the empty string.
+ * section, the ID cell and every cell after the Title (status, priority, depends/owner, ...); the Title is
+ * exempt because the index shortens it by design. Differences come back in before-file order, section
+ * first, then the ID cell (`id`), then by column. A missing cell (a dropped or shorter column) reads as
+ * the empty string.
  * @param {{required: Row, found: Row}[]} pairs
  * @returns {string[]} `CHANGED live ...` lines
  */
@@ -359,6 +361,10 @@ function changedCellLines(pairs) {
   for (const { required: b, found: i } of pairs) {
     const diffs = [];
     if (b.section !== i.section) diffs.push(["section", b.section, i.section]);
+    // An ID-less (`—`) row pairs by handle, so its ID cell can differ: `—` -> `B-999` is a real change.
+    if ((b.cells[0] ?? "") !== (i.cells[0] ?? "")) {
+      diffs.push(["id", b.cells[0] ?? "", i.cells[0] ?? ""]);
+    }
     for (let k = 2; k < Math.max(b.cells.length, i.cells.length); k++) {
       const was = b.cells[k] ?? "";
       const now = i.cells[k] ?? "";
