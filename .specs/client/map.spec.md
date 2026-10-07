@@ -155,9 +155,12 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   `place_id` (navigation spec route; itinerary spec owns the form).
   **AMENDED (round-2, T-8.4 — ruled 2026-09-19):** the prefill rides route
   params (Q2-253): `item/new` accepts `?placeId=` (a UUID) and
-  `?placeName=` (display only, capped at 100 chars — the write path stays
-  id-truth). WHEN a param is malformed or repeated THE SYSTEM SHALL degrade
-  to the empty place picker, never an error.
+  `?placeName=` (display only, trimmed and capped at 100 chars — the write
+  path stays id-truth). WHEN `placeId` is malformed or repeated THE SYSTEM
+  SHALL degrade to the empty place picker; WHEN `placeId` is valid but
+  `placeName` is missing, empty, or repeated THE SYSTEM SHALL still
+  preselect the place, under the generic label "Selected place" — never an
+  error either way.
   **AMENDED (round-2, T-8.7 — ruled 2026-09-19):** Add-to-day is hidden
   from viewers on both surfaces (Q2-268) — viewers cannot write the
   itinerary (R-ib-24), so they see state, not the control (the R-map-11
