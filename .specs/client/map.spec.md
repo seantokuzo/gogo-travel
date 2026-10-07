@@ -106,12 +106,12 @@ null]`; it still appears in list surfaces by name. See R-map-26.
   coordinate-less custom place) THE SYSTEM SHALL NOT render the navigate
   control at all — never a URL built from `null` coordinates, never merely
   a `disabled` affordance.
-  **AMENDED (round-2, T-8.3 — ruled 2026-09-19):** v1 hands off through the
-  Google Maps URLs API only, with the place's coordinates as `destination`
-  and no `travelmode` parameter (Q2-232) — the T-7.5 directions ruling
-  applied verbatim. The Apple Maps variant is one question, decided once
-  with the T-7.5 directions item (Q2-125, itinerary spec §2.7); this rule
-  follows that ruling and does not re-litigate it.
+  **AMENDED (round-2, T-8.3 — Q2-232, as shipped):** the handoff goes
+  through the Google Maps URLs API, with the place's coordinates as
+  `destination` and no `travelmode` parameter — the T-7.5 `directions.ts`
+  handoff applied verbatim. The Apple Maps variant is pending the Q2-125
+  pick (client itinerary spec §2.7); Q2-232 and Q2-125 are one question, so
+  this rule follows whatever that pick lands and is not re-litigated here.
   **AMENDED (round-2, T-8.7 — ruled 2026-09-19):** navigate is ENABLED
   offline on BOTH surfaces — the place sheet and the detail screen (Q2-258,
   superseding the detail-screen-only offline disable, Q2-254). Google Maps'
