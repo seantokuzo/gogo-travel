@@ -412,6 +412,57 @@ extension; this batch does not touch them.
   (R-itin-2); the crafted day-lock hint of R-itin-3 is reserved for drops the
   client itself prevents.
 
+#### Calendar grid (T-7.7)
+
+- **R-itin-49 (block geometry; Q2-077, Q2-091, ruled 2026-09-19):** WHEN a
+  timed item has no `end_time` THE SYSTEM SHALL draw it as a 60-minute block
+  (the list shows a bare start time). WHEN an event is shorter than a
+  tappable block THE SYSTEM SHALL keep `top` duration-true and floor the
+  block's `height` at `MIN_BLOCK_HEIGHT = 22pt` — a documented deviation from
+  strict R-itin-13 duration sizing: a 5-minute espresso stop renders 22pt
+  tall, not 5pt, so tiny blocks stay readable and tappable (R-ds-9 spirit).
+- **R-itin-50 (gap-tap; Q2-078, Q2-084, ruled 2026-09-19):** "rounded to 30
+  min" (R-itin-14) means FLOOR to the half-hour containing the tap — the
+  tap's `locationY` within its hour row (24 pressable hour slots per day sit
+  behind the blocks); a press event carrying no location data (some
+  assistive-tech paths) prefills `HH:00`. WHEN the member's role is
+  `viewer` (R-ib-24) THE SYSTEM SHALL render the slots as inert grid lines — no slot
+  Pressables, no slot testIDs; read affordances (blocks, chips, lanes) stay
+  pressable.
+- **R-itin-51 (landing band + column; Q2-079, Q2-080, ruled 2026-09-19):**
+  the "08:00–20:00 band initially visible" of R-itin-17 is realized as
+  `hourHeight = viewportHeight / 12`, clamped to 44–96pt — exact inside the
+  clamp, approximate on extreme screens — with the initial vertical offset at
+  08:00. The landing column is today's whenever today is in the grid's
+  day-column set (the trip range plus any sparse out-of-range item days,
+  R-itin-45) — so a trip that has ended but has an item dated today lands on
+  today — else the trip's first day.
+- **R-itin-52 (spanning lane segments; Q2-081, Q2-083, Q2-088, ruled
+  2026-09-19):** WHEN a spanning booking renders in the grid's all-day lane
+  (R-itin-31, §2.6) THE SYSTEM SHALL draw it as abutting per-column segments
+  — rounded and labeled at the check-in/check-out edges, squared between,
+  every segment carrying the same `bookingId` so all route to one detail —
+  because a literal single element cannot span a virtualized pager.
+  Non-lodging spanning items generalize §2.6's flight treatment in the GRID:
+  a timed one renders as a block clipped at 24:00 with a "+1" tail on the
+  arrival day; an untimed one renders as an all-day chip with a "+1" badge
+  (list mode keeps §2.6's per-category rules and R-itin-36). Spanning-lodging
+  detection reuses `projectItem`'s two-entry signature, so the list and the
+  grid share one source of truth — no duplicated category logic.
+- **R-itin-53 (overlap badge scope; Q2-085, ruled 2026-09-19):** WHEN blocks
+  are clustered for the side-by-side split (R-itin-15) THE SYSTEM SHALL badge
+  only blocks that DIRECTLY share a time range with another block;
+  transitively-chained cluster members split the width but carry no badge.
+  Touching edges (one block ending at 10:00, another starting at 10:00) do
+  not overlap; identical zero-length point events do (they split
+  side-by-side).
+- **R-itin-54 (column geometry; Q2-086, Q2-087, ruled 2026-09-19):** in Day
+  density the day-peek column is 92% of (window width − 48pt gutter), paged
+  by `snapToInterval` (§2.5 names the behavior; this pins the ratio — the
+  R-itin-34 `COLUMN_FRACTION` peek). All-day chips render in ONE fixed-height
+  row per column — flex-squeezed, no wrap — so the pinned header strip keeps
+  a uniform, virtualization-stable height.
+
 ---
 
 ## 2. Design
@@ -676,8 +727,12 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Cancelled card                                                                                                                                                                                 | `itinerary-cancelled-item-{bookingId}`                                                                                                                                                                                                 |
 | Grid item block                                                                                                                                                                                | `itinerary-grid-item-{itemId}`                                                                                                                                                                                                         |
 | Grid checkpoint indicator (B-12, derived)                                                                                                                                                      | `itinerary-grid-item-{itemId}-check-in` / `-check-out`                                                                                                                                                                                 |
-| Grid empty slot                                                                                                                                                                                | `itinerary-grid-slot-{date}-{HH}`                                                                                                                                                                                                      |
+| Grid empty slot (hour rows; editors only — absent for viewers, R-itin-50)                                                                                                                      | `itinerary-grid-slot-{date}-{HH}`                                                                                                                                                                                                      |
 | Grid all-day chip                                                                                                                                                                              | `itinerary-grid-allday-{itemId}`                                                                                                                                                                                                       |
+| Grid root (T-7.7, Q2-082)                                                                                                                                                                      | `itinerary-grid-surface` (frozen contract)                                                                                                                                                                                             |
+| Grid internals (T-7.7, Q2-082)                                                                                                                                                                 | `itinerary-grid-hours` (hour gutter), `itinerary-grid-pager` (day pager), `itinerary-grid-allday-lane` (pinned all-day lane), `itinerary-grid-scroll` (the one vertical scroller)                                                      |
+| Grid day label (pinned header cell)                                                                                                                                                            | `itinerary-grid-day-{date}`                                                                                                                                                                                                            |
+| Grid spanning-lane segment (R-itin-52 — the chip id would collide across columns)                                                                                                              | `itinerary-grid-span-{itemId}-{date}`                                                                                                                                                                                                  |
 | Grid density segment (R-itin-33, feature ③)                                                                                                                                                    | `itinerary-density-segment-{day\|3-day\|month\|trip-span}`                                                                                                                                                                             |
 | Month view day cell (R-itin-35)                                                                                                                                                                | `itinerary-month-day-{date}`                                                                                                                                                                                                           |
 | Month view spanning bar (derived, same booking-detail routing)                                                                                                                                 | `itinerary-month-span-{bookingId}-{date}`                                                                                                                                                                                              |
@@ -769,6 +824,18 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
 - [ ] Deeplink tap records return-prompt state; "add manually" creates with `source: 'deeplink_return'` (IT-8)
 - [ ] Cancel flow: confirm → booking off calendar, visible under show-cancelled (IT-9)
 - [ ] Every screen root + interactive element exposes its §2.9 testID (all)
+
+**Test-infra rulings (no product surface; ruled 2026-09-19):**
+
+- The Sheet exit-window "rider unmount" pin is a NET assertion, not a
+  discriminator — React 19's post-unmount `setState` is a silent no-op — kept
+  as a regression net; the guard itself (an unmounted ref plus
+  `pointerEvents: "none"` while exiting) is the deliverable (Q2-089).
+- The members-screen two-in-flight overlap pin is driven by same-frame
+  multi-touch (both presses inside ONE `act` scope, before the sheet-closing
+  state commits), because the exit-window tap route is closed by that Sheet
+  guard; the pin's per-call-vs-hook-level discrimination is unchanged
+  (Q2-090).
 
 ---
 
