@@ -65,8 +65,14 @@
   user-definable.
 - **R-cmoney-5 (expense list):** WHEN the expenses segment renders THE SYSTEM
   SHALL list expenses newest-first (`spent_at`) with description, category,
-  payer, amount in its logged currency, and per-item "your share"; SHALL
-  offer member + category filters in a Sheet (nav §2.6 "filters"); and SHALL
+  payer, amount in its logged currency, and per-item "your share" — rendered
+  **only when the caller holds a share row** on that expense (an explicit
+  zero-share row included; an absent share means not involved, so no
+  synthetic zero line — Q2-052, ruled 2026-09-19); SHALL offer member +
+  category filters in a Sheet (nav §2.6 "filters") — date filters
+  (`from`/`to`) are **not built** this pass; the wire already supports them
+  (api money spec E2) for a later surface (Q2-055, ruled 2026-09-19); and
+  SHALL
   show the add-expense FAB for **every member including viewers** (api
   money spec R-money-26, resolved Gate 2 — viewers log expenses too). The
   FAB lives on the **Expenses segment** only (§2.2); the today-tab quick
@@ -95,7 +101,10 @@
   caller), date (default: today), participants (default: all current
   members, individually toggleable), split type, and optional booking link —
   save disabled until amount > 0, description present, and the split is
-  valid.
+  valid. The category defaults to `other` (so the save-disabled list above
+  stays exhaustive); the category chips render the full shared
+  `expense_category` taxonomy in its fixed tuple order (R-cmoney-4), and a
+  booking prefill overrides the default via §2.3. (Q2-050, ruled 2026-09-19)
 - **R-cmoney-8 (integer-cents input):** WHEN the user types an amount THE
   SYSTEM SHALL parse the string directly to integer minor units (ISO-4217
   aware — JPY has none) via the shared helper and SHALL perform all split
@@ -118,18 +127,37 @@
   rate entry before save. The rate is captured at entry and never
   re-fetched; balances render in trip base currency. Resolved at
   `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09) — this
-  unlocks PLANNING's "spend-in-local-currency logging" extra.
+  unlocks PLANNING's "spend-in-local-currency logging" extra. The base
+  amount is **derived and read-only** in the form — computed from amount ×
+  rate by exact integer/rational arithmetic (never float), rounded inside the
+  R-money-6 consistency window the server accepts — so a free-typed base can
+  never form an inconsistent pair; the manual path is rate entry. A
+  currency change drops any manual rate override (a EUR rate means nothing
+  for GBP). (Q2-048, ruled 2026-09-19)
 - **R-cmoney-11 (booking link):** WHEN the user links a booking THE SYSTEM
   SHALL offer the trip's bookings in a picker and prefill amount
   (`price_cents`), description (title), and category via the fixed mapping
-  §2.3 — prefills editable, link removable.
+  §2.3 — prefills editable, link removable. When a price is prefilled, the
+  booking's **currency** is prefilled with it, not just the amount (15000 JPY
+  must never land as "15000 USD"). (Q2-051, ruled 2026-09-19)
 - **R-cmoney-12 (edit mode):** WHEN opened with `?expenseId=` THE SYSTEM
   SHALL prefill all fields from the expense and open the split editor in
   `exact` mode showing current shares (equal splits detectable within
-  remainder tolerance may display "split equally"), submitting via PATCH
-  with full shares replacement. Resolved at
-  `.specs/api/money.spec.md`:§R-money-29 (Gate 2, 2026-07-09): resolved
-  cents only persist in v1 — no `split_meta`; derive-on-read is the
+  remainder tolerance may display "split equally"), submitting a
+  **changed-fields-only PATCH**: a shares payload (full replacement of the
+  share set, api money spec §3.2) is sent only when the split actually
+  changed. The server validates INCOMING `paid_by` / `shares[].user_id`
+  against current members even on PATCH (R-money-5), so a literal "full
+  shares replacement on every save" cannot hold for legacy splits naming a
+  departed member: an **untouched** split or payer naming an ex-member
+  survives by omission, while a **changed** split that still names a former
+  member is save-blocked with visible copy (never a guaranteed 400);
+  former members render in the split editor as removable-only rows.
+  (Q2-047, ruled 2026-09-19) WHEN `?expenseId=` is malformed THE SYSTEM
+  SHALL render the "gone" EmptyState — never a blank create form, since a
+  surprise duplicate is worse than a dead end. (Q2-054, ruled 2026-09-19)
+  Resolved at `.specs/api/money.spec.md`:§R-money-29 (Gate 2, 2026-07-09):
+  resolved cents only persist in v1 — no `split_meta`; derive-on-read is the
   decided UX.
 
 ### Expense detail (`expense-detail` — push)
@@ -142,7 +170,15 @@
   **soft delete with a visible audit trail** — the deletion renders as an
   audit entry ("Sean deleted 'Dinner ¥12,000'") in the expense history and
   balances exclude the deleted expense. Resolved at
-  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09).
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09). **Scope of
+  the audit trail in v1 (Q2-046, ruled 2026-09-19):** the audit entry renders
+  on the expense **detail** screen (E3 returns the soft-deleted row with its
+  `deleted_at` / `deleted_by` pair); the expense **list** does not show
+  deletions, because E2 always excludes soft-deleted rows and the list query
+  has no include-deleted switch. Listing deleted entries in the history
+  needs a wire change (an include-deleted param or a dedicated history
+  read) and is a separate ruling, required only if the history screen
+  should list them.
 
 ### Settle-up screen (`settle` — push, per research §Recommended v1 #3)
 
@@ -510,14 +546,20 @@ ids derive from each sheet's base per navigation spec §2.7 rule 4 — e.g.
 `settle-picker-method` lives on the mark-as-settled sheet's method segments
 (per-segment `-{method}` derivation). (Q2-032, ruled 2026-09-19)
 
+`expense-new-picker-currency` is an uppercase 3-letter **code field**
+(characters keyboard, no autocorrect, max length 3, as-you-type uppercase —
+the BookingForm/B-20 precedent) carrying the pinned inventory id: this spec
+pins the id, not the control style. (Q2-049, ruled 2026-09-19)
+
 ### 2.9 Empty / edge / error states
 
 | Surface  | Condition                                 | Behavior                                                                                                            |
 | -------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | Budget   | no overall cap, no caps, no estimates     | EmptyState: "Plan your spending" + set-caps + AI CTA — spend-agnostic, even when spend exists (R-cmoney-29)         |
 | Budget   | AI cap / kill-switch / offline / dateless | R-cmoney-3 state table                                                                                              |
-| Expenses | none                                      | EmptyState + FAB pulse hint                                                                                         |
+| Expenses | none                                      | EmptyState + FAB pulse hint — finite 3-cycle ring, `useReduceMotion` honored, never an infinite loop (Q2-053)       |
 | Expenses | filter yields none                        | "No matches" EmptyState + clear-filters action                                                                      |
+| Expenses | malformed `?expenseId=` edit link         | "gone" EmptyState — never a blank create form (R-cmoney-12, Q2-054)                                                 |
 | Balances | all zero                                  | "All settled up" EmptyState                                                                                         |
 | Settle   | counterparty has zero handles             | hint + mark-as-settled only (R-cmoney-15)                                                                           |
 | Settle   | non-USD base trip                         | USD rails hidden (R-cmoney-18)                                                                                      |

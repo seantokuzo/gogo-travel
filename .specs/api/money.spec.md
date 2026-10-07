@@ -299,7 +299,11 @@ Conventions inherited wholesale (not restated per endpoint):
   and default lists, and keep a visible audit-trail entry ("Sean deleted
   'Dinner ¥12,000'") in the expense history. Resolved at
   `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09):
-  soft-delete with visible audit trail.
+  soft-delete with visible audit trail. In v1 the entry is readable through
+  E3 (which returns a soft-deleted expense with its `deleted_at` /
+  `deleted_by` pair); E2 never lists soft-deleted rows and carries no
+  include-deleted param, so deletions cannot be listed until a wire ruling
+  adds one (Q2-046, ruled 2026-09-19).
 - **R-money-28 (member removal):** WHEN a member with a nonzero balance is
   removed or leaves THE SYSTEM SHALL allow it — removal is never blocked on
   balances; their expense/share/settlement rows survive (R-db-16 posture,
@@ -419,7 +423,11 @@ creator or trip owner — R-money-26, resolved Gate 2).
 the coupling rule: a body containing `amount_cents` MUST contain `shares`;
 `shares` alone is allowed iff it sums to the stored amount. Any accepted
 shares payload **replaces** the full share set in one transaction
-(R-money-1/2 re-run in full).
+(R-money-1/2 re-run in full). R-money-5's current-member check applies to the
+INCOMING `paid_by` / `shares[].user_id` only — a field omitted from the PATCH
+is not re-validated, which is what lets a changed-fields-only edit leave an
+untouched legacy split or payer naming a departed member in place (client
+money spec R-cmoney-12; Q2-047, ruled 2026-09-19).
 
 **DELETE**: soft-delete (sets `deleted_at`/`deleted_by`; shares excluded
 from balance math with the expense) behind a client-side ConfirmDialog;
