@@ -527,9 +527,11 @@ payment" (→ §2.7) and "Mark as settled" (records received money).
    balances segment accepts an open-requests input and renders the
    annotations, but nothing feeds it, because no settle-request LIST
    endpoint exists on the wire (api money spec Q1–Q3 are create / read /
-   cancel by id). The approved path to make it live is that LIST read
-   (api money spec R-money-32, Q2-030); until it ships the seam stays empty
-   in production. Cancel does
+   cancel by id). The proposed path to make it live is a LIST read (api
+   money spec R-money-32; Q2-030 — as shipped; Sean ruling pending)
+   [NEEDS CLARIFICATION: Q2-030 — add a settle-request LIST endpoint so
+   annotations go live, or leave the seam empty?]; until one ships the seam
+   stays empty in production. Cancel does
    not wait on the annotation: the request's creator cancels from the
    request screen's creditor view via ConfirmDialog
    (→ `DELETE /settle-requests/:id`).

@@ -200,15 +200,20 @@ Conventions inherited wholesale (not restated per endpoint):
   as the first-expense insert — so creation serializes against a racing
   base-currency change (R-trips-22) and a request is never born carrying a
   stale base currency. (Q2-020, ruled 2026-09-19)
-- **R-money-32 (open-requests read — approved, unbuilt):** WHEN the balances
-  segment needs the caller's outstanding settle-requests (the client money
-  spec §2.7 step 5 annotations) THE SYSTEM SHALL provide a trip-scoped,
-  membership-gated LIST read of settle-requests, so the annotation can go
-  live. Ruled 2026-09-19 (Q2-030): adding that LIST endpoint is the approved
-  path; **its wire shape (path, filters, pagination, descriptor) is not yet
-  pinned** — a spec amendment to this section pins it before MON-8 builds it
-  (Autonomy Contract §6: not improvised). Until it ships, Q1–Q3 remain the
-  only request endpoints and the client annotation is an empty seam.
+- **R-money-32 (open-requests read — proposed, unbuilt; Sean ruling
+  pending):** WHEN the balances segment needs the caller's outstanding
+  settle-requests (the client money spec §2.7 step 5 annotations) THE SYSTEM
+  SHALL provide a trip-scoped, membership-gated LIST read of settle-requests,
+  so the annotation can go live. (Q2-030 — as shipped; Sean ruling pending:
+  the Rec flags a settle-request LIST endpoint as needing a wire ruling
+  before the annotation can go live.) **Its wire shape (path, filters,
+  pagination, descriptor) is not yet pinned** — a spec amendment to this
+  section pins it before MON-8 builds it (Autonomy Contract §6: not
+  improvised). Until a LIST read ships, Q1–Q3 remain the only request
+  endpoints and the client annotation is an empty seam (the empty seam itself
+  is ruled, Q2-002). [NEEDS CLARIFICATION: Q2-030 — add a settle-request
+  LIST endpoint (wire shape to be specified) so balances-row annotations go
+  live, or leave the seam empty?]
 - **R-money-33 (request settle attribution — as shipped; Sean pick
   pending):** The v1 `SettleRequest` wire carries no `settled_by` /
   `settled_at`, so "who settled, and when" on a resolved request (client
@@ -919,7 +924,7 @@ Depends on DB-1 + SH-1 (schema + shared) having landed.
 | MON-5 | Settle-requests (Q1–Q3) + `settlement_requests` migration (entity approved Gate 2) + link construction (domain-agnostic format; universal-link domain pending Sean's purchase).                   | R-money-16..19                |
 | MON-6 | Budgets (G1, G2): upsert + computed spend + full-taxonomy synthesis.                                                                                                                              | R-money-20                    |
 | MON-7 | AI estimate (A1): gate order, cache, refinement, totals, budget write, `ai_usage` accounting.                                                                                                     | R-money-21..24                |
-| MON-8 | Open-requests LIST read — pin the wire shape in a spec amendment first, then feed the client's balances-annotation seam.                                                                          | R-money-32                    |
+| MON-8 | Open-requests LIST read — blocked on the Q2-030 ruling; pin the wire shape in a spec amendment first, then feed the client's seam.                                                                | R-money-32                    |
 | MON-9 | Settle-request attribution: nullable `settled_by` / `settled_at` + migration + wire fields — blocked on the Q2-031 pick (option a).                                                               | R-money-33                    |
 
 **Cross-cutting tests required** (beyond per-endpoint checklists):
