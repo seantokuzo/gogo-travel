@@ -6,7 +6,9 @@
  * ruling): day-colors, pin-features, camera, day-filter, cluster-config,
  * map-style, search-geo, search-pins, nav-handoff, distance, location,
  * camera-intent, photo-visibility, place-lookup, offline-packs (+ the
- * annotation/controller pair behind the offlineManager seam, T-8.5). UI:
+ * annotation/controller pair behind the offlineManager seam, T-8.5 — the
+ * controller is mounted ONCE per trip by the `[tripId]` layout, surfaces read
+ * `useOfflinePackState`, Q2-186). UI:
  * the day-filter strip, attribution sheet, place sheet, search overlay,
  * locate button, offline-pack manager. Seams: MapPlaceSheetSlot (FILLED,
  * T-8.3), MapOfflinePillSlot (FILLED, T-8.5), pending-focus (T-8.4
@@ -159,6 +161,8 @@ export {
 } from "./offline-pack-annotation";
 export {
   deleteTripPack,
+  liveOfflinePackControllers,
+  OfflinePackController,
   offlinePackStateFor,
   reconcilePackState,
   resetOfflinePacksForTests,
@@ -166,6 +170,7 @@ export {
   startPackDownload,
   syncPackStateFromAnnotation,
   useOfflinePackController,
+  useOfflinePackState,
   useOfflinePackStore,
 } from "./offline-pack-controller";
 export type {

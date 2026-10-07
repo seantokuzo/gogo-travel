@@ -13,14 +13,18 @@
  *    once-per-session orphan sweep;
  *  - the controller hook's R-map-18 wifi gate: wifi starts, cellular defers
  *    then resumes on the wifi event, planning/annotated trips never start,
- *    the deferred listener is removed on unmount.
+ *    the deferred listener is removed on unmount;
+ *  - Q2-186 single-controller scope: ONE `useOfflinePackController` per trip
+ *    (surfaces read `useOfflinePackState`, effect-free), `liveOfflinePackControllers`
+ *    pins the count, two racing instances still start ONE download, and a
+ *    trip switch mid-download neither cancels nor cross-talks.
  */
 import { ThemeProvider } from "@gogo/tokens/react";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { createElement } from "react";
 
-import { TEST_TRIP_ID } from "@/test-utils/ids";
+import { TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
 import { makeActiveTrip, makePlanningTrip } from "@/test-utils/trip-fixtures";
 
 import {
@@ -30,12 +34,16 @@ import {
 } from "./offline-pack-annotation";
 import {
   deleteTripPack,
+  liveOfflinePackControllers,
   offlinePackStateFor,
   reconcilePackState,
   resetOfflinePacksForTests,
   runOrphanPackSweep,
   startPackDownload,
   useOfflinePackController,
+  useOfflinePackState,
+  useOfflinePackStore,
+  type OfflinePackTrip,
   type PackDownloadTarget,
 } from "./offline-pack-controller";
 import { packBoundsFor, packNameFor, packRegionKeyFor } from "./offline-packs";
@@ -350,10 +358,41 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     createElement(ThemeProvider, { defaultAppearancePref: "light" }, children);
   const activeTrip = () => makeActiveTrip(TEST_TRIP_ID);
 
+  /** One trip scope as the app mounts it: the root controller + a surface reader. */
+  const useScope = (trip: OfflinePackTrip) => {
+    useOfflinePackController(trip);
+    return useOfflinePackState(trip);
+  };
+
   const wifi = { type: "WIFI", isConnected: true, isInternetReachable: true };
   const cellular = { type: "CELLULAR", isConnected: true, isInternetReachable: true };
+  const none = { type: "NONE", isConnected: false, isInternetReachable: false };
 
-  it("active trip on wifi auto-starts exactly once — even with the pill AND settings mounted", async () => {
+  it("active trip on wifi auto-starts exactly once — ONE controller, the pill AND settings readers both mounted", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const root = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    const pill = await renderHook(() => useOfflinePackState(activeTrip()), { wrapper });
+    const settings = await renderHook(() => useOfflinePackState(activeTrip()), { wrapper });
+
+    await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(1);
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(1);
+    // Both readers see the controller's download — one store, many readers.
+    expect(pill.result.current).toEqual({ phase: "downloading", progress: 0 });
+    expect(settings.result.current).toEqual({ phase: "downloading", progress: 0 });
+    await root.unmount();
+    await pill.unmount();
+    await settings.unmount();
+  });
+
+  // Q2-186 duplicate-download pin. Falsification: delete the in-flight /
+  // `downloading` guard at the top of `startPackDownload` and BOTH racing
+  // instances call createPack -> 2 -> red. (The structural single-mount pins
+  // are `liveOfflinePackControllers` here + the real-tree file
+  // `src/__tests__/offline-pack-root-mount.test.tsx`.)
+  it("two controller instances racing one wifi activation still start ONE download (latch backstop)", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const first = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
     const second = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
@@ -361,8 +400,43 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
     await act(flush);
     expect(om.createPack).toHaveBeenCalledTimes(1);
+    // The observable the single-mount pins read: two live instances is the bug.
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(2);
     await first.unmount();
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(1);
     await second.unmount();
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
+  });
+
+  // Q2-186: surfaces consume, never mount. Falsification: put the activation
+  // effect (or the live-instance registration) back into `useOfflinePackState`
+  // and the SDK / network reads below fire -> red.
+  it("useOfflinePackState is effect-free — an active trip on wifi never touches the SDK, the network or the store", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const { unmount } = await renderHook(() => useOfflinePackState(activeTrip()), { wrapper });
+    await act(flush);
+
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(om.getPack).not.toHaveBeenCalled();
+    expect(om.getPacks).not.toHaveBeenCalled();
+    expect(network.getNetworkStateAsync).not.toHaveBeenCalled();
+    expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+    expect(useOfflinePackStore.getState().packs).toEqual({});
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
+    await unmount();
+  });
+
+  it("live-instance accounting follows the controller's trip: switching A to B moves the count, unmount zeroes it", async () => {
+    const { rerender, unmount } = await renderHook(
+      (trip: OfflinePackTrip) => useOfflinePackController(trip),
+      { wrapper, initialProps: activeTrip() },
+    );
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(1);
+    await rerender(makeActiveTrip(TRIP_B_ID));
+    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
+    expect(liveOfflinePackControllers(TRIP_B_ID)).toBe(1);
+    await unmount();
+    expect(liveOfflinePackControllers(TRIP_B_ID)).toBe(0);
   });
 
   it("cellular DEFERS, then resumes on the wifi network event (R-map-18)", async () => {
@@ -386,6 +460,39 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
+  // Q2-186 offline cell: NO connection is the stand-down arm — nothing
+  // starts, nothing throws, ONE deferred listener waits, and wifi dropping
+  // again mid-defer (a non-wifi event) neither downloads nor drops the
+  // listener. Falsification: start on `isConnected` instead of the wifi gate
+  // -> createPack fires on the cellular event; drop the `subscription` arm ->
+  // no listener is ever armed.
+  it("OFFLINE (no connection): stands down — no download, no crash, ONE deferred listener that survives non-wifi events", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => none);
+    const remove = jest.fn();
+    network.addNetworkStateListener.mockImplementation(() => ({ remove }));
+    const { result, unmount } = await renderHook(() => useScope(activeTrip()), { wrapper });
+    await act(flush);
+
+    expect(result.current).toEqual({ phase: "none" });
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1);
+
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(none)); // still offline
+    await act(async () => listener(cellular)); // connected, not wifi
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+
+    await act(async () => listener(wifi)); // wifi finally
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(1);
+    await unmount();
+  });
+
   it("planning trips never auto-download (activation = effective status active)", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const { unmount } = await renderHook(
@@ -394,6 +501,8 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     );
     await act(flush);
     expect(om.createPack).not.toHaveBeenCalled();
+    // The status gate precedes the network read — a planning trip costs none.
+    expect(network.getNetworkStateAsync).not.toHaveBeenCalled();
     await unmount();
   });
 
@@ -409,7 +518,7 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
       completedAt: "2026-08-18T00:00:00.000Z",
       sizeBytes: 7_000_000,
     });
-    const { result, unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+    const { result, unmount } = await renderHook(() => useScope(activeTrip()), {
       wrapper,
     });
     expect(result.current).toEqual({
@@ -431,12 +540,12 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     om.getPack.mockImplementation(async () => ({ name: packNameFor(TEST_TRIP_ID) }));
     writePackAnnotation({
       tripId: TEST_TRIP_ID,
-      styleUrl: "mapbox://styles/mapbox/dark-v11", // style drift ⇒ stale
+      styleUrl: "mapbox://styles/mapbox/dark-v11", // style drift => stale
       regionKey: packRegionKeyFor(KYOTO.lat, KYOTO.lng),
       completedAt: "2026-08-01T00:00:00.000Z",
       sizeBytes: 7_000_000,
     });
-    const { result, unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
+    const { result, unmount } = await renderHook(() => useScope(activeTrip()), {
       wrapper,
     });
     expect(result.current.phase).toBe("stale");
@@ -450,11 +559,11 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
   // degrade arm as NaN, but the REAL live signal now, not a defensive-only
   // arm. Falsification: revert the widened `OfflinePackTrip` type / the
   // `usable` guard's null check, and this throws inside `packRegionKeyFor`
-  // → `regionCellsForDestination` (NaN.toFixed-style crash on null math).
+  // -> `regionCellsForDestination` (NaN.toFixed-style crash on null math).
   it("NULL destination coords: never fingerprints, never auto-downloads, renders none", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const coordless = { ...activeTrip(), destination_lat: null, destination_lng: null };
-    const { result, unmount } = await renderHook(() => useOfflinePackController(coordless), {
+    const { result, unmount } = await renderHook(() => useScope(coordless), {
       wrapper,
     });
     expect(result.current).toEqual({ phase: "none" });
@@ -477,7 +586,7 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
   it("out-of-range (non-null) coords stand the machine down too — not just null/NaN", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const outOfRange = { ...activeTrip(), destination_lat: 91, destination_lng: 0 };
-    const { result, unmount } = await renderHook(() => useOfflinePackController(outOfRange), {
+    const { result, unmount } = await renderHook(() => useScope(outOfRange), {
       wrapper,
     });
     expect(result.current).toEqual({ phase: "none" });
@@ -497,5 +606,47 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await waitFor(() => expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1));
     await unmount();
     expect(remove).toHaveBeenCalled();
+  });
+
+  // Q2-186 adversarial: switching trips (the trip switcher REPLACES the
+  // `[tripId]` route, so the shell — and its controller — remounts on the new
+  // trip) must neither cancel the in-flight download of the trip being left
+  // nor leak its progress into the new trip. Falsification: have the
+  // controller's effect cleanup call `deleteTripPack(tripId)` (cancel-on-
+  // leave) -> A drops to `none` and its completion below never lands -> red.
+  it("a trip switch mid-download keeps A's download alive and keyed to A; B starts on its own", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    const { rerender, unmount } = await renderHook(
+      (trip: OfflinePackTrip) => useOfflinePackController(trip),
+      { wrapper, initialProps: activeTrip() },
+    );
+    await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
+    expect(offlinePackStateFor(TEST_TRIP_ID)).toEqual({ phase: "downloading", progress: 0 });
+
+    await rerender(makeActiveTrip(TRIP_B_ID));
+    await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(2));
+    await act(flush);
+    // A was neither restarted nor cancelled; B is its own download. The only
+    // deletePack calls are each start's own replace-semantics delete.
+    expect(om.createPack).toHaveBeenCalledTimes(2);
+    expect(om.createPack.mock.calls[0][0]).toMatchObject({ name: packNameFor(TEST_TRIP_ID) });
+    expect(om.createPack.mock.calls[1][0]).toMatchObject({ name: packNameFor(TRIP_B_ID) });
+    expect(om.deletePack.mock.calls.map(([name]) => name as string)).toEqual([
+      packNameFor(TEST_TRIP_ID),
+      packNameFor(TRIP_B_ID),
+    ]);
+    expect(offlinePackStateFor(TEST_TRIP_ID)).toEqual({ phase: "downloading", progress: 0 });
+    expect(offlinePackStateFor(TRIP_B_ID)).toEqual({ phase: "downloading", progress: 0 });
+
+    // A's SDK listener — captured BEFORE the switch — still lands on A only.
+    capturedProgressListener(0)(null, status(100, 4_000_000));
+    expect(offlinePackStateFor(TEST_TRIP_ID)).toMatchObject({
+      phase: "ready",
+      sizeBytes: 4_000_000,
+    });
+    expect(readPackAnnotation(TEST_TRIP_ID)).toBeDefined();
+    expect(offlinePackStateFor(TRIP_B_ID)).toEqual({ phase: "downloading", progress: 0 });
+    expect(readPackAnnotation(TRIP_B_ID)).toBeUndefined();
+    await unmount();
   });
 });

@@ -14,8 +14,18 @@
  * Exactly-once download semantics (R-map-18 "starts download exactly once"):
  * `startPackDownload`'s guard section is SYNCHRONOUS — in-flight latch and
  * the `downloading` store flip happen with no await between check and set,
- * so two surfaces mounting the controller together (map pill + settings
- * sheet) can never double-start on one trip.
+ * so two controller instances racing one wifi event (or the controller and
+ * a manual retry) can never double-start on one trip.
+ *
+ * ONE controller per trip scope (Q2-186 ruling): the effect-bearing
+ * `useOfflinePackController` is mounted exactly once, by the `[tripId]`
+ * layout's `TripShell` (via `<OfflinePackController />`), so activation fires
+ * wherever the user is inside the trip. Surfaces (map pill, settings row,
+ * management sheet) are READERS — they consume the store through
+ * `useOfflinePackState` and never run the activation effects. The latch
+ * above stays as the correctness backstop; the single mount is what keeps
+ * the network listener / reconcile / orphan-sweep work from multiplying.
+ * `liveOfflinePackControllers` is the test-observable that pins it.
  *
  * ToS: `setTileCountLimit` is NEVER called (readiness brief headline 4 —
  * bypassing the ceiling violates the Mapbox ToS). Hygiene (R-map-20 purge +
@@ -106,6 +116,17 @@ function setPackState(tripId: string, state: OfflinePackState): void {
 /** Trips with a createPack in flight — the exactly-once latch (module doc). */
 const inFlight = new Set<string>();
 let orphanSweepDone = false;
+/** Mounted `useOfflinePackController` instances per trip — the single-mount pin's observable. */
+const liveControllers = new Map<string, number>();
+
+/**
+ * How many controller instances are mounted for the trip right now. The
+ * contract is `1` for any trip with a mounted `[tripId]` shell (`0` outside
+ * one); `2` means a surface re-mounted the effect-bearing hook (Q2-186).
+ */
+export function liveOfflinePackControllers(tripId: string): number {
+  return liveControllers.get(tripId) ?? 0;
+}
 
 /** Test-only: clear store + latches (mirrors resetMapLocationForTests). */
 export function resetOfflinePacksForTests(): void {
@@ -362,7 +383,7 @@ export async function deleteTripPack(tripId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Controller hook (pill + settings surfaces)
+// Controller (ONE per trip scope) + state reader (every surface)
 // ---------------------------------------------------------------------------
 
 /** The trip fields the controller needs (structural — `TripWithRole` fits).
@@ -377,40 +398,61 @@ export interface OfflinePackTrip {
 }
 
 /**
- * Mount-point contract (documented interpretation, PR record): R-map-18's
- * activation trigger evaluates wherever this hook mounts — the map pill and
- * the trip-settings management surface. A trip that turns `active` while
- * neither is mounted downloads on the next map/settings visit; a root-layout
- * mount is a one-line follow-up if QA wants literal app-start coverage.
+ * The inputs both hooks derive from the trip + theme. The region grid THROWS
+ * on unusable coords — null (B-7 part 3: a coordinate-less custom
+ * destination) or NaN/out-of-range (R-map-1 world fallback) — so the whole
+ * machine stands down: no fingerprint, no effects, state pinned to `none`.
+ * Routed through the SAME `usableDestinationCoords` narrowing companion
+ * `OfflinePackManager.tsx` uses (round-1 architecture fix) — one usability
+ * rule, not three hand-rolled copies. Memoized on the primitive lat/lng (not
+ * recomputed every render) so the controller effect can depend on `coords`
+ * directly and satisfy exhaustive-deps without re-running on every unrelated
+ * re-render.
+ */
+function usePackInputs(trip: OfflinePackTrip) {
+  const { scheme } = useTheme();
+  const styleUrl = mapStyleUrlForScheme(scheme);
+  const { id: tripId, status, destination_lat: lat, destination_lng: lng } = trip;
+  const coords = useMemo(() => usableDestinationCoords(lat, lng), [lat, lng]);
+  const regionKey = coords !== null ? packRegionKeyFor(coords.lat, coords.lng) : "";
+  return { tripId, status, styleUrl, coords, regionKey };
+}
+
+/**
+ * The R-map-18 activation controller — EFFECTS ONLY, returns nothing. Mount
+ * it ONCE per trip scope: the `[tripId]` layout's `TripShell` does, through
+ * `<OfflinePackController />` (Q2-186 ruling: the trigger evaluates wherever
+ * the user is inside the trip, not only on the map/settings surfaces, so a
+ * trip that flips `active` while the user sits on Today downloads NOW, not
+ * on the next visit). Surfaces must NOT call this — they read pack state
+ * through `useOfflinePackState`; a second instance multiplies the network
+ * listener, reconcile and sweep work (downloads stay exactly-once through
+ * the `startPackDownload` latch, but the duplicate work is the bug).
+ * `liveOfflinePackControllers` pins the count.
  *
  * Wifi gate (R-map-18): on wifi → download now; connected-but-not-wifi or
- * offline → defer, re-checking on every network-state change while this
- * surface stays mounted ("next wifi + app-active window"). The deferred
- * listener is removed on unmount — no leak, and the latch in
- * `startPackDownload` dedupes the pill + settings surfaces racing the same
- * wifi event.
+ * offline → defer, re-checking on every network-state change while the
+ * controller stays mounted ("next wifi + app-active window"). The deferred
+ * listener is removed on unmount — no leak. A download already in flight
+ * survives the unmount (module-level latch + SDK listener): leaving or
+ * switching trips never cancels it.
  *
  * Auto-download reads the phase IMPERATIVELY (not a dep): a manual delete
  * flips state to `none`, and re-running the effect on that change would
  * instantly re-download what the user just deleted.
  */
-export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackState {
-  const { scheme } = useTheme();
-  const styleUrl = mapStyleUrlForScheme(scheme);
-  const { id: tripId, status, destination_lat: lat, destination_lng: lng } = trip;
-  // The map screen's degrade arm renders with UNUSABLE coords — null
-  // (B-7 part 3: a coordinate-less custom destination) or NaN/out-of-range
-  // (R-map-1 world fallback) — the region grid throws on either, so the
-  // whole machine stands down: no fingerprint, no effects, state pinned to
-  // `none`. Routed through the SAME `usableDestinationCoords` narrowing
-  // companion `OfflinePackManager.tsx` uses (round-1 architecture fix) — one
-  // usability rule, not three hand-rolled copies. Memoized on the primitive
-  // lat/lng (not recomputed every render) so the effect below can depend on
-  // `coords` directly and satisfy exhaustive-deps without re-running on
-  // every unrelated re-render.
-  const coords = useMemo(() => usableDestinationCoords(lat, lng), [lat, lng]);
-  const usable = coords !== null;
-  const regionKey = coords !== null ? packRegionKeyFor(coords.lat, coords.lng) : "";
+export function useOfflinePackController(trip: OfflinePackTrip): void {
+  const { tripId, status, styleUrl, coords, regionKey } = usePackInputs(trip);
+
+  // Live-instance accounting (the single-mount pin's observable).
+  useEffect(() => {
+    liveControllers.set(tripId, (liveControllers.get(tripId) ?? 0) + 1);
+    return () => {
+      const remaining = (liveControllers.get(tripId) ?? 1) - 1;
+      if (remaining <= 0) liveControllers.delete(tripId);
+      else liveControllers.set(tripId, remaining);
+    };
+  }, [tripId]);
 
   useEffect(() => {
     if (coords === null) return;
@@ -452,10 +494,33 @@ export function useOfflinePackController(trip: OfflinePackTrip): OfflinePackStat
       subscription?.remove();
     };
   }, [tripId, status, styleUrl, regionKey, coords]);
+}
 
+/**
+ * The mount shape for the controller: a null-rendering component, so the
+ * theme subscription inside the hook re-renders THIS leaf, never the shell
+ * that hosts it.
+ */
+export function OfflinePackController({ trip }: { trip: OfflinePackTrip }): null {
+  useOfflinePackController(trip);
+  return null;
+}
+
+/**
+ * Read-only pack state for a trip — what the pill, the settings row and the
+ * management sheet render. NO effects: it never touches the SDK, the network
+ * or the annotation (that is the controller's job, mounted once at the trip
+ * root), it only subscribes to the store the controller owns.
+ *
+ * Re-renders its subscriber on every distinct download percent (unthrottled
+ * on Android) — keep it in leaf components (settings.tsx's `OfflineMapRow`).
+ * First-frame value before the controller seeds the store: a sync MMKV read
+ * (house no-flash posture — the settings row never blinks "Not downloaded").
+ */
+export function useOfflinePackState(trip: OfflinePackTrip): OfflinePackState {
+  const { tripId, styleUrl, coords, regionKey } = usePackInputs(trip);
+  const usable = coords !== null;
   const stored = useOfflinePackStore((state) => state.packs[tripId]);
-  // First-frame value before the effect seeds the store: sync MMKV read
-  // (house no-flash posture — the settings row never blinks "Not downloaded").
   return useMemo(() => {
     if (!usable) return NONE;
     return stored ?? annotatedPackState(readPackAnnotation(tripId), { styleUrl, regionKey });
