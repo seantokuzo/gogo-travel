@@ -4,7 +4,20 @@
  * are the falsifiable half of the rendering tests (delete the spanning
  * synthesis and the check-in/check-out pins go red, not just a snapshot).
  */
-import type { Booking } from "@gogo/shared";
+import {
+  deriveAutoItems,
+  deriveBookingInstants,
+  type Booking,
+  type BookingDetails,
+  type FlightDetails,
+  type ItineraryItem,
+} from "@gogo/shared";
+import {
+  DATE_LINE_EASTBOUND,
+  DATE_LINE_WESTBOUND,
+  NAIVE_CONTROL_FLIGHT,
+  localISO,
+} from "@gogo/shared/testing";
 
 import {
   BOOKING_FLIGHT_ID,
@@ -27,6 +40,7 @@ import {
 } from "@/test-utils/itinerary-fixtures";
 
 import { analyzeDayConflicts } from "./conflicts";
+import { buildGridDays } from "./grid/model";
 import { legChipTestID } from "./legs/legs-model";
 import {
   buildDayRows,
@@ -36,6 +50,7 @@ import {
   statusBadgeTone,
   type DayListRow,
 } from "./model";
+import { resolveDrop } from "./reorder";
 
 const TRIP = { start_date: TRIP_START, end_date: TRIP_END };
 
@@ -120,7 +135,7 @@ describe("projectItem (R-itin-31 spanning synthesis)", () => {
     expect(entries.map((e) => e.renderDay)).not.toContain(TRIP_DAY_2);
   });
 
-  it("cross-midnight non-lodging span → ONE row on the departure day with +1", () => {
+  it("cross-midnight non-lodging span, DEFAULT (grid-facing) projection → ONE row on the departure day with +1", () => {
     const redEye = makeItineraryItem({
       id: "aaaaaaa9-aaaa-4aaa-8aaa-aaaaaaaaaaa9",
       kind: "booking",
@@ -670,5 +685,702 @@ describe("buildDayRows — conflict flags (R-itin-7)", () => {
     const rows = buildDayRows(TRIP, items, bookingsById());
     expect(rows.some((row) => row.type === "day" && row.unsorted)).toBe(false);
     expect(rows.some((row) => row.type === "entry" && row.overlapping)).toBe(false);
+  });
+});
+// ---------------------------------------------------------------------------
+// T-7.11 — overnight flight Departs/Arrives list rows (R-itin-36)
+//
+// Fixtures are DERIVED, not hand-typed: each flight's item comes out of the
+// shared `deriveAutoItems` (the exact §3.3 placement the server writes) from
+// real two-zone `FlightDetails`, so a drift between what the server derives
+// and what these pins assume goes red here instead of on a device.
+// ---------------------------------------------------------------------------
+
+const FLIGHT_BOOKING_ID = "bbbbbbb5-bbbb-4bbb-8bbb-bbbbbbbbbbb5";
+const FLIGHT_ITEM_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
+/** JFK → LHR red-eye: depart Jun 10 19:30 EDT, land Jun 11 07:45 BST (7h15m real). */
+const RED_EYE_JFK_LHR: FlightDetails = {
+  category: "flight",
+  airline: "British Airways",
+  flight_number: "BA 178",
+  origin_iata: "JFK",
+  destination_iata: "LHR",
+  departs_at: localISO("2027-06-10", "19:30", "-04:00"),
+  departs_tz: "America/New_York",
+  arrives_at: localISO("2027-06-11", "07:45", "+01:00"),
+  arrives_tz: "Europe/London",
+};
+
+/**
+ * LAX → AKL (13h15m real): depart Apr 20 22:00 PDT, land Apr 22 06:15 NZST —
+ * the arrival wall date is TWO days on (Apr 21 is skipped by the date line),
+ * a flight spanning THREE calendar days.
+ */
+const LAX_AKL_THREE_DAYS: FlightDetails = {
+  category: "flight",
+  airline: "Air New Zealand",
+  flight_number: "NZ 7",
+  origin_iata: "LAX",
+  destination_iata: "AKL",
+  departs_at: localISO("2027-04-20", "22:00", "-07:00"),
+  departs_tz: "America/Los_Angeles",
+  arrives_at: localISO("2027-04-22", "06:15", "+12:00"),
+  arrives_tz: "Pacific/Auckland",
+};
+
+/**
+ * AKL → PPT shifted past midnight: depart Apr 25 00:30 NZST, land Apr 24
+ * 08:20 Tahiti (5h50m real) — the arrival WALL DATE is EARLIER than the
+ * departure's. `deriveAutoItems` emits `end_day: null` for it (end <= day).
+ */
+const ARRIVAL_DATE_BEFORE_DEPARTURE: FlightDetails = {
+  category: "flight",
+  airline: "Air Tahiti Nui",
+  flight_number: "TN 102",
+  origin_iata: "AKL",
+  destination_iata: "PPT",
+  departs_at: localISO("2027-04-25", "00:30", "+12:00"),
+  departs_tz: "Pacific/Auckland",
+  arrives_at: localISO("2027-04-24", "08:20", "-10:00"),
+  arrives_tz: "Pacific/Tahiti",
+};
+
+/** A flight whose booking carries NO arrival at all → `ends_at` NULL, no `end_day`. */
+const NO_ARRIVAL_FLIGHT: FlightDetails = {
+  category: "flight",
+  origin_iata: "SFO",
+  destination_iata: "NRT",
+  departs_at: localISO("2027-06-10", "23:15", "-07:00"),
+  departs_tz: "America/Los_Angeles",
+};
+
+const LIST = { listMode: true } as const;
+const OWN_CLASH_ID = "aaaaaaad-aaaa-4aaa-8aaa-aaaaaaaaaaad";
+
+interface FlightFixture {
+  item: ItineraryItem;
+  booking: Booking;
+  byId: Map<string, Booking>;
+}
+
+function flightFixture(details: FlightDetails, title: string): FlightFixture {
+  const { starts_at, ends_at } = deriveBookingInstants(details);
+  const booking = makeBooking({
+    id: FLIGHT_BOOKING_ID,
+    category: "flight",
+    title,
+    details,
+    starts_at,
+    ends_at,
+  });
+  const placement = deriveAutoItems(details)[0];
+  if (placement === undefined) throw new Error("flight fixture derives no auto-item");
+  const item = makeItineraryItem({
+    id: FLIGHT_ITEM_ID,
+    kind: "booking",
+    booking_id: booking.id,
+    title: null,
+    ...placement,
+  });
+  return { item, booking, byId: new Map([[booking.id, booking]]) };
+}
+
+describe("T-7.11 — overnight flights render Departs/Arrives point rows (R-itin-36)", () => {
+  // The three spanning fixtures: +1 wall day (transatlantic red-eye), +1 wall
+  // day across the date line (B-8/B-9's westbound hostile fixture, 11h50m
+  // real), and +2 wall days (three calendar days touched).
+  const SPANNING: {
+    name: string;
+    details: FlightDetails;
+    departs: [string, string];
+    arrives: [string, string];
+  }[] = [
+    {
+      name: "JFK→LHR red-eye (+1 wall day, 2 zones)",
+      details: RED_EYE_JFK_LHR,
+      departs: ["2027-06-10", "19:30"],
+      arrives: ["2027-06-11", "07:45"],
+    },
+    {
+      name: "LAX→NRT westbound date-line (B-8/B-9 shared fixture)",
+      details: DATE_LINE_WESTBOUND.details,
+      departs: ["2027-04-20", "11:35"],
+      arrives: ["2027-04-21", "15:25"],
+    },
+    {
+      name: "LAX→AKL (+2 wall days — spans three calendar days)",
+      details: LAX_AKL_THREE_DAYS,
+      departs: ["2027-04-20", "22:00"],
+      arrives: ["2027-04-22", "06:15"],
+    },
+  ];
+
+  describe("happy — a spanning flight splits into two point rows in LIST mode", () => {
+    it.each(SPANNING)(
+      "$name → Departs on day, Arrives on end_day, each at its LOCAL wall time",
+      (c) => {
+        const { item, byId } = flightFixture(c.details, "Flight");
+        const entries = projectItem(item, byId, LIST);
+        expect(entries.map((e) => [e.checkpoint, e.renderDay, e.timeLabel])).toEqual([
+          ["departs", ...c.departs],
+          ["arrives", ...c.arrives],
+        ]);
+      },
+    );
+
+    it("both rows are ONE itinerary item and ONE booking (F-051-class single-row invariant)", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
+      const [departs, arrives] = projectItem(item, byId, LIST);
+      expect(departs?.rowKey).toBe(`${FLIGHT_ITEM_ID}-departs`);
+      expect(arrives?.rowKey).toBe(`${FLIGHT_ITEM_ID}-arrives`);
+      for (const row of [departs, arrives]) {
+        expect(row?.itemId).toBe(FLIGHT_ITEM_ID);
+        expect(row?.bookingId).toBe(FLIGHT_BOOKING_ID);
+        expect(row?.homeDay).toBe("2027-06-10");
+        expect(row?.title).toBe("BA 178 JFK→LHR");
+        expect(row?.plusOne).toBe(false);
+        expect(row?.dayLocked).toBe(true);
+      }
+      // Departs keeps the item's drag identity; Arrives is render-only —
+      // listing its id in end_day's order PUT would REASSIGN the flight's day.
+      expect(departs?.draggable).toBe(true);
+      expect(arrives?.draggable).toBe(false);
+    });
+
+    it("buildDayRows lands each row under its OWN day header — nothing else between", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
+      const trip = { start_date: "2027-06-10", end_date: "2027-06-11" };
+      const rows = buildDayRows(trip, [item], byId);
+      expect(rows.map(rowLabel)).toEqual([
+        "day:2027-06-10",
+        `entry:${FLIGHT_ITEM_ID}-departs`,
+        "day:2027-06-11",
+        `entry:${FLIGHT_ITEM_ID}-arrives`,
+      ]);
+      const counts = rows.flatMap((row) => (row.type === "day" ? [row.count] : []));
+      expect(counts).toEqual([1, 1]);
+    });
+
+    it("a three-calendar-day flight renders NOTHING on the middle day (R-itin-31 'nights between')", () => {
+      const { item, byId } = flightFixture(LAX_AKL_THREE_DAYS, "NZ 7 LAX→AKL");
+      const trip = { start_date: "2027-04-20", end_date: "2027-04-22" };
+      const rows = buildDayRows(trip, [item], byId);
+      expect(rows.map(rowLabel)).toEqual([
+        "day:2027-04-20",
+        `entry:${FLIGHT_ITEM_ID}-departs`,
+        "day:2027-04-21",
+        "empty:2027-04-21",
+        "day:2027-04-22",
+        `entry:${FLIGHT_ITEM_ID}-arrives`,
+      ]);
+    });
+  });
+
+  describe("empty/boundary — a flight that does NOT span two wall dates is unchanged", () => {
+    it("same-day flight (SFO→LAX control) → one row, no split, no +1", () => {
+      const { item, byId } = flightFixture(NAIVE_CONTROL_FLIGHT.details, "UA 415 SFO→LAX");
+      expect(item.end_day).toBeNull();
+      const entries = projectItem(item, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.rowKey).toBe(FLIGHT_ITEM_ID);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(false);
+      expect(entries[0]?.timeLabel).toBe("10:00 – 11:30");
+      // …and the whole list model agrees: exactly one entry row for it.
+      const rows = buildDayRows({ start_date: "2027-04-24", end_date: "2027-04-24" }, [item], byId);
+      expect(rows.filter((row) => row.type === "entry")).toHaveLength(1);
+    });
+
+    it("`end_day` equal to `day` (explicit) is not spanning either", () => {
+      const { item, byId } = flightFixture(NAIVE_CONTROL_FLIGHT.details, "UA 415 SFO→LAX");
+      const entries = projectItem({ ...item, end_day: item.day }, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(false);
+    });
+  });
+
+  describe("adversarial — date-line geometry and missing times", () => {
+    it("eastbound date-line (NRT→LAX): arrival WALL time precedes departure on the SAME date → one row, no split", () => {
+      const { item, byId } = flightFixture(DATE_LINE_EASTBOUND.details, "ZG 24 NRT→LAX");
+      // Honesty pin: the fixture really is the inverted-wall shape.
+      expect(item.end_day).toBeNull();
+      expect(item.start_time).toBe("17:00");
+      expect(item.end_time).toBe("10:00");
+      const entries = projectItem(item, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(false);
+      // As-derived, unchanged from before T-7.11 (physics-faithful derivation).
+      expect(entries[0]?.timeLabel).toBe("17:00 – 10:00");
+    });
+
+    it("arrival wall DATE earlier than departure's (AKL→PPT past midnight): derivation emits no end_day → one row, no split", () => {
+      const { item, byId } = flightFixture(ARRIVAL_DATE_BEFORE_DEPARTURE, "TN 102 AKL→PPT");
+      expect(item.day).toBe("2027-04-25");
+      expect(item.end_day).toBeNull();
+      const entries = projectItem(item, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(false);
+    });
+
+    it("a hand-written wire-invalid end_day BEFORE day never splits (spanning needs end_day > day)", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const entries = projectItem({ ...item, end_day: "2027-06-09" }, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+    });
+
+    it("NULL ends_at (booking carries no arrival) → one row at the departure time, no split", () => {
+      const { item, booking, byId } = flightFixture(NO_ARRIVAL_FLIGHT, "SFO→NRT");
+      expect(booking.ends_at).toBeNull();
+      expect(item.end_day).toBeNull();
+      expect(item.end_time).toBeNull();
+      const entries = projectItem(item, byId, LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(false);
+      expect(entries[0]?.timeLabel).toBe("23:15");
+    });
+
+    it("a spanning flight whose item times were cleared (I-3 item-owned) → 'No time' on each missing edge, same as lodging", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const noArrivalTime = projectItem({ ...item, end_time: null }, byId, LIST);
+      expect(noArrivalTime.map((e) => [e.checkpoint, e.timeLabel])).toEqual([
+        ["departs", "19:30"],
+        ["arrives", "No time"],
+      ]);
+      const noDepartureTime = projectItem({ ...item, start_time: null }, byId, LIST);
+      expect(noDepartureTime.map((e) => [e.checkpoint, e.timeLabel])).toEqual([
+        ["departs", "No time"],
+        ["arrives", "07:45"],
+      ]);
+    });
+
+    it("an arrival day OUTSIDE the trip range adds one sparse section carrying the Arrives row (R-itin-45)", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      // Trip ends on the departure day; the flight lands the morning after.
+      const rows = buildDayRows({ start_date: "2027-06-10", end_date: "2027-06-10" }, [item], byId);
+      expect(rows.map(rowLabel)).toEqual([
+        "day:2027-06-10",
+        `entry:${FLIGHT_ITEM_ID}-departs`,
+        "day:2027-06-11",
+        `entry:${FLIGHT_ITEM_ID}-arrives`,
+      ]);
+    });
+  });
+
+  describe("Arrives placement + drag safety (R-itin-36 / R-itin-46 precedent)", () => {
+    const TWO_DAYS = { start_date: "2027-06-10", end_date: "2027-06-11" };
+    const OWN_ARRIVAL_DAY = "aaaaaaab-aaaa-4aaa-8aaa-aaaaaaaaaaab";
+    const OWN_DEPARTURE_DAY = "aaaaaaac-aaaa-4aaa-8aaa-aaaaaaaaaaac";
+
+    function twoDayRows() {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
+      const items = [
+        item,
+        makeItineraryItem({
+          id: OWN_ARRIVAL_DAY,
+          title: "Borough Market",
+          day: "2027-06-11",
+          start_time: "09:00",
+          // BELOW the flight's own sort_order (1024) on purpose: the Arrives row
+          // must lead because it is a leading point row, not because a
+          // sort_order/rowKey tie happened to break its way (M7 probe: a
+          // tie-break-only placement passed the first draft of this pin).
+          sort_order: 512,
+        }),
+        makeItineraryItem({
+          id: OWN_DEPARTURE_DAY,
+          title: "Last dinner",
+          day: "2027-06-10",
+          start_time: "17:00",
+          sort_order: 2048,
+        }),
+      ];
+      return buildDayRows(TWO_DAYS, items, byId);
+    }
+
+    it("the Arrives row FIRST in its end-day section, ahead of the day's own sort_ordered items", () => {
+      expect(twoDayRows().map(rowLabel)).toEqual([
+        "day:2027-06-10",
+        // Departure day: own items by sort_order — Departs (flight's own
+        // sort_order, the fixture default 1024) then Last dinner (2048).
+        `entry:${FLIGHT_ITEM_ID}-departs`,
+        `entry:${OWN_DEPARTURE_DAY}`,
+        "day:2027-06-11",
+        `entry:${FLIGHT_ITEM_ID}-arrives`,
+        `entry:${OWN_ARRIVAL_DAY}`,
+      ]);
+    });
+
+    it("an Arrives row leads WITH a lodging check-out, both ahead of the day's own items", () => {
+      const { item: flightItem, byId: flightMap } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const hotel = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+      if (hotel === undefined) throw new Error("fixture missing lodging item");
+      // Hotel stay Jun 9 → Jun 11 so its check-out lands on the arrival day.
+      const stay = { ...hotel, day: "2027-06-09", end_day: "2027-06-11" };
+      const own = makeItineraryItem({
+        id: OWN_ARRIVAL_DAY,
+        title: "Borough Market",
+        day: "2027-06-11",
+        sort_order: 512, // below the flight's 1024 — see the pin above
+      });
+      const byId = new Map([...flightMap, ...bookingsById()]);
+      const rows = buildDayRows(
+        { start_date: "2027-06-09", end_date: "2027-06-11" },
+        [own, stay, flightItem],
+        byId,
+      );
+      const day3 = rows.findIndex((row) => row.type === "day" && row.date === "2027-06-11");
+      const labels = rows.slice(day3 + 1).map(rowLabel);
+      expect(labels.slice(0, 2).sort()).toEqual(
+        [`entry:${FLIGHT_ITEM_ID}-arrives`, `entry:${ITEM_LODGING_ID}-check-out`].sort(),
+      );
+      expect(labels[2]).toBe(`entry:${OWN_ARRIVAL_DAY}`);
+    });
+
+    it("dropping another item onto the arrival day NEVER lists the flight in that day's order PUT", () => {
+      const rows = twoDayRows();
+      const from = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.itemId === OWN_DEPARTURE_DAY,
+      );
+      const to = rows.length - 1; // past the end of the arrival day
+      const drop = resolveDrop(rows, from, to);
+      expect(drop.kind).toBe("commit");
+      if (drop.kind !== "commit") return;
+      expect(drop.day).toBe("2027-06-11");
+      // Listing FLIGHT_ITEM_ID here would REASSIGN the flight's day (R-ib-15/16).
+      expect(drop.itemIds).not.toContain(FLIGHT_ITEM_ID);
+      expect(drop.itemIds).toEqual([OWN_ARRIVAL_DAY, OWN_DEPARTURE_DAY]);
+    });
+
+    it("the Arrives row cannot START a drag; the Departs row can", () => {
+      const rows = twoDayRows();
+      const arrivesAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.checkpoint === "arrives",
+      );
+      const departsAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.checkpoint === "departs",
+      );
+      // Falsify: make the Arrives row `draggable: true` → each target below goes
+      // RED (refused-day-lock / a commit listing the flight twice). NOT index 0:
+      // a drop at the very top re-lands on the departure day with an unchanged
+      // order, which resolves to "noop" even for a draggable row — a vacuous
+      // target that would let the mutation pass.
+      const betweenDepartureRows = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.itemId === OWN_DEPARTURE_DAY,
+      );
+      expect(resolveDrop(rows, arrivesAt, betweenDepartureRows)).toEqual({ kind: "noop" });
+      expect(resolveDrop(rows, arrivesAt, rows.length - 1)).toEqual({ kind: "noop" });
+      // Departs is draggable, but the booking is day-locked: a cross-day drop is refused.
+      expect(resolveDrop(rows, departsAt, rows.length - 1).kind).toBe("refused-day-lock");
+    });
+
+    it("a same-day reorder on the departure day keeps the Departs row in its home-day order PUT", () => {
+      // `reorder.ts` excludes only the literal "check-out" from a day's order
+      // list; the Departs row must stay a REAL member of its home day's order
+      // (it owns the flight's sort_order). Dropping it would PUT an order
+      // missing the flight. Falsify (reorder.ts, NOT edited here): exclude
+      // `departs` at :100 → the commit's itemIds lose the flight → RED; at :48
+      // → the unchanged-order drop below is no longer a noop → RED.
+      const rows = twoDayRows();
+      const departsAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.checkpoint === "departs",
+      );
+      const lastDinnerAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.itemId === OWN_DEPARTURE_DAY,
+      );
+      // Drag Last dinner above Departs: Jun 10's order becomes [dinner, flight].
+      expect(resolveDrop(rows, lastDinnerAt, departsAt)).toMatchObject({
+        kind: "commit",
+        day: "2027-06-10",
+        itemIds: [OWN_DEPARTURE_DAY, FLIGHT_ITEM_ID],
+      });
+      // CONTROL: dropping it back where it already is changes nothing — a noop,
+      // which only holds while the BEFORE list still contains the flight too.
+      expect(resolveDrop(rows, lastDinnerAt, lastDinnerAt)).toEqual({ kind: "noop" });
+    });
+  });
+
+  describe("R-itin-7 overlap chip belongs to the DEPARTURE day only", () => {
+    it("a collision on the departure evening flags Departs, never Arrives", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const clash = makeItineraryItem({
+        id: OWN_CLASH_ID,
+        title: "Late drinks",
+        day: "2027-06-10",
+        start_time: "20:00",
+        end_time: "21:00",
+        sort_order: 2048,
+      });
+      const items = [item, clash];
+      const conflicts = analyzeDayConflicts(items, byId);
+      // Precondition: the analysis really does flag the flight (clipped at midnight).
+      expect(conflicts.overlappingItemIds.has(FLIGHT_ITEM_ID)).toBe(true);
+      const rows = buildDayRows({ start_date: "2027-06-10", end_date: "2027-06-11" }, items, byId, {
+        conflicts,
+      });
+      const overlapOf = (rowKey: string): boolean | undefined => {
+        const row = rows.find((r) => r.type === "entry" && r.entry.rowKey === rowKey);
+        return row?.type === "entry" ? row.overlapping : undefined;
+      };
+      expect(overlapOf(`${FLIGHT_ITEM_ID}-departs`)).toBe(true);
+      expect(overlapOf(`${OWN_CLASH_ID}`)).toBe(true);
+      expect(overlapOf(`${FLIGHT_ITEM_ID}-arrives`)).toBe(false);
+    });
+  });
+
+  describe("regression — what must NOT change", () => {
+    it("lodging rows are byte-identical in list mode vs the default projection", () => {
+      const lodging = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+      if (lodging === undefined) throw new Error("fixture missing lodging item");
+      const listed = projectItem(lodging, bookingsById(), LIST);
+      expect(listed).toEqual(projectItem(lodging, bookingsById()));
+      expect(listed.map((e) => [e.rowKey, e.checkpoint, e.renderDay, e.timeLabel])).toEqual([
+        [`${ITEM_LODGING_ID}-check-in`, "check-in", TRIP_START, "15:00"],
+        [`${ITEM_LODGING_ID}-check-out`, "check-out", TRIP_END, "11:00"],
+      ]);
+    });
+
+    it.each(["train", "activity", "other", "car_rental", "moped_rental", "restaurant"] as const)(
+      "a spanning %s is NOT split — one row + the +1 chip, in list mode too (R-itin-36 names flight only)",
+      (category) => {
+        const booking = makeBooking({
+          id: FLIGHT_BOOKING_ID,
+          category,
+          title: `A ${category}`,
+          // `category` is the union here, so the literal can't narrow to one
+          // BookingDetails member — the cast is the honest spelling.
+          details: { category } as BookingDetails,
+        });
+        const item = makeItineraryItem({
+          id: FLIGHT_ITEM_ID,
+          kind: "booking",
+          booking_id: booking.id,
+          title: null,
+          day: "2027-06-10",
+          end_day: "2027-06-11",
+          start_time: "22:00",
+          end_time: "06:00",
+        });
+        const entries = projectItem(item, new Map([[booking.id, booking]]), LIST);
+        expect(entries).toHaveLength(1);
+        expect(entries[0]?.rowKey).toBe(FLIGHT_ITEM_ID);
+        expect(entries[0]?.checkpoint).toBeNull();
+        expect(entries[0]?.plusOne).toBe(true);
+        expect(entries[0]?.timeLabel).toBe("22:00 – 06:00");
+      },
+    );
+
+    it("a spanning item with an UNKNOWN parent booking (enrichment gap) fails safe to one row + +1", () => {
+      const { item } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const entries = projectItem(item, new Map(), LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.plusOne).toBe(true);
+      expect(entries[0]?.checkpoint).toBeNull();
+    });
+
+    it("a spanning non-booking (custom) item stays one row + +1", () => {
+      const custom = makeItineraryItem({
+        id: FLIGHT_ITEM_ID,
+        title: "Ferry",
+        day: "2027-06-10",
+        end_day: "2027-06-11",
+        start_time: "22:00",
+        end_time: "06:00",
+      });
+      const entries = projectItem(custom, new Map(), LIST);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.plusOne).toBe(true);
+    });
+  });
+
+  describe("GRID mode is explicitly UNCHANGED (R-itin-36 — list view only)", () => {
+    it("the DEFAULT projection (what grid/model.ts + conflicts.ts call) keeps an overnight flight as ONE row + +1", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      // `entries.length === 2` ⟺ spanning lodging, in BOTH grid/model.ts and
+      // conflicts.ts — a flight returning two here would hijack both.
+      const entries = projectItem(item, byId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.checkpoint).toBeNull();
+      expect(entries[0]?.plusOne).toBe(true);
+      expect(projectItem(item, byId, { listMode: false })).toEqual(entries);
+    });
+
+    it("buildGridDays draws the flight as ONE clipped block with a +1 tail — no span lane, no check-in/out indicators", () => {
+      const { item, byId } = flightFixture(RED_EYE_JFK_LHR, "BA 178");
+      const grid = buildGridDays(
+        { start_date: "2027-06-10", end_date: "2027-06-11" },
+        [item],
+        byId,
+      );
+      expect(grid.laneCount).toBe(0);
+      expect(grid.days.flatMap((day) => day.spans)).toEqual([]);
+      const blocks = grid.days.flatMap((day) => day.blocks.map((block) => [day.date, block]));
+      expect(blocks).toHaveLength(1);
+      const [date, block] = blocks[0] ?? [];
+      expect(date).toBe("2027-06-10");
+      expect(block).toMatchObject({
+        itemId: FLIGHT_ITEM_ID,
+        plusOne: true,
+        checkpoint: null,
+        endMinutes: 24 * 60,
+      });
+    });
+
+    it("CONTROL: the SAME builder still draws spanning LODGING as a lane + indicators (the assertions above can fail)", () => {
+      const grid = buildGridDays(
+        TRIP,
+        defaultItineraryItems().filter((i) => i.id === ITEM_LODGING_ID),
+        bookingsById(),
+      );
+      expect(grid.days.flatMap((day) => day.spans).length).toBeGreaterThan(0);
+      expect(grid.days.flatMap((day) => day.blocks).map((block) => block.checkpoint)).toEqual([
+        "check-in",
+        "check-out",
+      ]);
+    });
+  });
+});
+// ---------------------------------------------------------------------------
+// T-7.11 round 1 (A1) — Arrives rows anchor no travel-time chip
+// ---------------------------------------------------------------------------
+
+describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
+  // The spec is silent on which airport a flight's single `place_id` means, and
+  // the server chains a spanning item on `end_day` too, so legs touching the
+  // Arrives row exist in the composite read. Until Sean rules, an Arrives row
+  // is never a chip endpoint — option (b). Options: (a) lodging-parity chips
+  // from Arrives (needs a rule for which airport `place_id` means) /
+  // (b) suppressed — BUILT. Falsify: delete the `from.checkpoint === "arrives"`
+  // guard (from-pin red) or the `to.checkpoint !== "arrives"` clause (to-pin red).
+  const TWO_DAYS = { start_date: "2027-06-10", end_date: "2027-06-11" };
+  const DEPARTURE_STOP = "aaaaaaae-aaaa-4aaa-8aaa-aaaaaaaaaaae";
+  const ARRIVAL_STOP = "aaaaaaaf-aaaa-4aaa-8aaa-aaaaaaaaaaaf";
+
+  /**
+   * The red-eye. `located` attaches a `place_id` (the server chains a LOCATED
+   * flight and draws legs through it); without one it is UNLOCATED — R-ib-20
+   * transparent, the scan walks straight past it.
+   */
+  function redEyeFlight(located: boolean) {
+    const { item, booking } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
+    const withPlace = { ...booking, place_id: located ? PLACE_ID : null };
+    return { item, byId: new Map([[withPlace.id, withPlace]]) };
+  }
+
+  /**
+   * A LOCATED stay (Jun 9 → Jun 11, `place_id` set) whose check-out row leads
+   * Jun 11 AHEAD of the flight's Arrives row (sort_order 512 < the flight's
+   * 1024). Located on purpose: the server's `locatedPairs` only ever emits a
+   * leg whose FROM is a located item, so a fixture leg from an unlocated stay
+   * could never exist in production (fix-verifier Adv 2).
+   */
+  function locatedStay() {
+    const hotel = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+    const booking = defaultBookings().find((b) => b.id === BOOKING_LODGING_ID);
+    if (hotel === undefined || booking === undefined) throw new Error("fixture missing lodging");
+    return {
+      stay: { ...hotel, day: "2027-06-09", end_day: "2027-06-11", sort_order: 512 },
+      byId: new Map([[booking.id, { ...booking, place_id: PLACE_ID }]]),
+    };
+  }
+
+  function stop(id: string, day: string, sortOrder: number) {
+    return makeItineraryItem({
+      id,
+      kind: "place_visit",
+      place_id: PLACE_ID,
+      title: null,
+      day,
+      start_time: "09:00",
+      sort_order: sortOrder,
+    });
+  }
+
+  it("FROM: no chip hangs off the Arrives row (the '42 h drive from the departure airport' scenario); Departs still anchors its chip", () => {
+    const { item, byId } = redEyeFlight(true);
+    const items = [
+      item,
+      stop(DEPARTURE_STOP, "2027-06-10", 2048),
+      stop(ARRIVAL_STOP, "2027-06-11", 2048),
+    ];
+    const legs = [
+      // CONTROL — a leg from the flight on its DEPARTURE day renders as it always did.
+      makeTravelLeg(FLIGHT_ITEM_ID, DEPARTURE_STOP, "driving"),
+      // The scenario: the SAME flight → a stop on the ARRIVAL day.
+      makeTravelLeg(FLIGHT_ITEM_ID, ARRIVAL_STOP, "driving", {
+        duration_seconds: 42 * 3600,
+      }),
+    ];
+    const rows = buildDayRows(TWO_DAYS, items, byId, { legs });
+    expect(rows.map(rowLabel)).toEqual([
+      "day:2027-06-10",
+      `entry:${FLIGHT_ITEM_ID}-departs`,
+      `leg:${FLIGHT_ITEM_ID}->${DEPARTURE_STOP}`,
+      `entry:${DEPARTURE_STOP}`,
+      "day:2027-06-11",
+      `entry:${FLIGHT_ITEM_ID}-arrives`,
+      `entry:${ARRIVAL_STOP}`,
+    ]);
+  });
+
+  it("TO: no chip ENDS on the Arrives row (a check-out → flight pair stays absent); a stop → Departs chip still renders", () => {
+    const { item: flightItem, byId: flightMap } = redEyeFlight(true);
+    // The check-out row precedes Arrives on Jun 11, so the pair (hotel → flight)
+    // is a forward scan that ends ON Arrives. BOTH ends are located, so the fed
+    // leg is one the server's `locatedPairs` really emits.
+    const { stay, byId: stayMap } = locatedStay();
+    const items = [stay, flightItem, stop(DEPARTURE_STOP, "2027-06-10", 512)];
+    const legs = [
+      // CONTROL — a stop → Departs leg on the departure day renders as it always did.
+      makeTravelLeg(DEPARTURE_STOP, FLIGHT_ITEM_ID, "driving"),
+      // The pair: the lodging's check-out row → the flight's Arrives row.
+      makeTravelLeg(ITEM_LODGING_ID, FLIGHT_ITEM_ID, "driving"),
+    ];
+    const byId = new Map([...stayMap, ...flightMap]);
+    const rows = buildDayRows({ start_date: "2027-06-09", end_date: "2027-06-11" }, items, byId, {
+      legs,
+    });
+    expect(rows.map(rowLabel)).toEqual([
+      "day:2027-06-09",
+      `entry:${ITEM_LODGING_ID}-check-in`,
+      "day:2027-06-10",
+      `entry:${DEPARTURE_STOP}`,
+      `leg:${DEPARTURE_STOP}->${FLIGHT_ITEM_ID}`,
+      `entry:${FLIGHT_ITEM_ID}-departs`,
+      "day:2027-06-11",
+      `entry:${ITEM_LODGING_ID}-check-out`,
+      `entry:${FLIGHT_ITEM_ID}-arrives`,
+    ]);
+  });
+
+  it("a LOCATED Arrives row still STOPS the scan — a stale H → Y leg never draws across it; an UNLOCATED flight is transparent (control)", () => {
+    // H = the located stay's check-out row, Y = a located stop later on Jun 11,
+    // the flight's Arrives row between them. The server chains the LOCATED
+    // flight, so it stores (H, flight) and (flight, Y) — never (H, Y); a client
+    // still holding an H → Y leg (stale: the flight was attached / located
+    // after it was computed) must degrade to ABSENT, not draw a hop that skips
+    // the arrival (the findLegFrom stale-leg case). Falsify: `continue` past an
+    // Arrives `to` before the located-stop check → the located variant draws it.
+    const chipsAcrossArrives = (located: boolean): string[] => {
+      const { item, byId: flightMap } = redEyeFlight(located);
+      const { stay, byId: stayMap } = locatedStay();
+      const items = [stay, item, stop(ARRIVAL_STOP, "2027-06-11", 2048)];
+      const legs = [makeTravelLeg(ITEM_LODGING_ID, ARRIVAL_STOP, "driving")];
+      const byId = new Map([...stayMap, ...flightMap]);
+      const rows = buildDayRows({ start_date: "2027-06-09", end_date: "2027-06-11" }, items, byId, {
+        legs,
+      });
+      return rows.filter((row) => row.type === "leg").map(rowLabel);
+    };
+    expect(chipsAcrossArrives(true)).toEqual([]);
+    // CONTROL: the SAME leg DOES render once the flight is unlocated — R-ib-20
+    // transparency, so the pin above is about the located stop, not a fixture
+    // that can never draw H → Y.
+    expect(chipsAcrossArrives(false)).toEqual([`leg:${ITEM_LODGING_ID}->${ARRIVAL_STOP}`]);
   });
 });
