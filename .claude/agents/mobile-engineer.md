@@ -17,8 +17,9 @@ Query data, Zustand state, offline/sync, maps, camera/photos, push.
 - You are a spawned worker, not the orchestrator: the global "Orchestrator Role" in
   `~/.claude/CLAUDE.md` does not apply to you. Do the work yourself — you have no Agent tool.
 - You start in your own git worktree, but its base is the locally cached `origin/HEAD`, which
-  Claude Code refreshes only if the repo hasn't been fetched in ~24h, so it can be up to a day stale
-  (local `HEAD` is the base only when `origin/HEAD` is uncached and can't be fetched). First
+  Claude Code refreshes only if the repo hasn't been fetched in ~24h, so it can be stale (refreshed
+  at most once a day, and kept as-is when that fetch fails; local `HEAD` is the base only when
+  `origin/HEAD` is uncached and can't be fetched). First
   `git fetch origin`, then cut the task branch from the base the brief names (default
   `origin/main`): `git switch -c <branch> origin/<base>`. If the brief names an existing branch:
   `git fetch origin <branch> && git checkout <branch>`; if another tree holds it,
