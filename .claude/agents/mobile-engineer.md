@@ -16,9 +16,12 @@ Query data, Zustand state, offline/sync, maps, camera/photos, push.
 
 - You are a spawned worker, not the orchestrator: the global "Orchestrator Role" in
   `~/.claude/CLAUDE.md` does not apply to you. Do the work yourself — you have no Agent tool.
-- You start in your own git worktree on a fresh branch off `origin/main`. If the brief names an
-  existing branch: `git fetch origin <branch> && git checkout <branch>`; if another tree holds
-  it, `git checkout --detach origin/<branch>` and publish with `git push origin HEAD:<branch>`.
+- You start in your own git worktree, but its base is the cached `origin/HEAD` (Claude Code only
+  fetches if the repo is ~24h stale, else it falls back to local `HEAD`), so it can be stale. First
+  `git fetch origin`, then cut the task branch from the base the brief names (default
+  `origin/main`): `git switch -c <branch> origin/<base>`. If the brief names an existing branch:
+  `git fetch origin <branch> && git checkout <branch>`; if another tree holds it,
+  `git checkout --detach origin/<branch>` and publish with `git push origin HEAD:<branch>`.
 - Bootstrap before any test or typecheck: `pnpm install --frozen-lockfile`, then
   `pnpm --filter "./packages/*" build`.
 - Read `.claude/rules/mobile.md` and `.claude/rules/testing.md` now — path-scoped rules are not
