@@ -302,11 +302,13 @@ Conventions inherited wholesale (not restated per endpoint):
   and default lists, and keep a visible audit-trail entry ("Sean deleted
   'Dinner ¥12,000'") in the expense history. Resolved at
   `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09):
-  soft-delete with visible audit trail. In v1 the entry is readable through
-  E3 (which returns a soft-deleted expense with its `deleted_at` /
-  `deleted_by` pair); E2 never lists soft-deleted rows and carries no
-  include-deleted param, so deletions cannot be listed until a wire ruling
-  adds one (Q2-046, ruled 2026-09-19).
+  soft-delete with visible audit trail. In v1 as shipped the entry is
+  readable through E3 (which returns a soft-deleted expense with its
+  `deleted_at` / `deleted_by` pair) — reachable by id only, since E2 never
+  lists soft-deleted rows and carries no include-deleted param. (Q2-046 —
+  as shipped; Sean pick pending: the history lists deletions, which needs a
+  wire param, or never does.) [NEEDS CLARIFICATION: Q2-046 — should the
+  expense history list deleted entries (needs a wire param), or never?]
 - **R-money-28 (member removal):** WHEN a member with a nonzero balance is
   removed or leaves THE SYSTEM SHALL allow it — removal is never blocked on
   balances; their expense/share/settlement rows survive (R-db-16 posture,

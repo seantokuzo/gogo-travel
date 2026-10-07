@@ -170,15 +170,20 @@
   **soft delete with a visible audit trail** — the deletion renders as an
   audit entry ("Sean deleted 'Dinner ¥12,000'") in the expense history and
   balances exclude the deleted expense. Resolved at
-  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09). **Scope of
-  the audit trail in v1 (Q2-046, ruled 2026-09-19):** the audit entry renders
-  on the expense **detail** screen (E3 returns the soft-deleted row with its
+  `.specs/database/schema.spec.md`:§3.3.12 (Gate 2, 2026-07-09). **Audit
+  trail, v1 as shipped (Q2-046 — open: whether the expense history lists
+  deletions; needs a wire-param ruling):** the audit entry renders on the
+  expense **detail** screen (E3 returns the soft-deleted row with its
   `deleted_at` / `deleted_by` pair); the expense **list** does not show
   deletions, because E2 always excludes soft-deleted rows and the list query
-  has no include-deleted switch. Listing deleted entries in the history
-  needs a wire change (an include-deleted param or a dedicated history
-  read) and is a separate ruling, required only if the history screen
-  should list them.
+  has no include-deleted switch. Delete success routes back
+  (`router.back()`) and E2 excludes the deleted row, so today the audit
+  entry is reachable only by a direct deep link to the deleted expense.
+  Listing deleted entries in the history needs a wire change (an
+  include-deleted param or a dedicated history read). (Q2-046 — as shipped;
+  Sean pick pending: the history lists deletions (needs a wire param) / it
+  never does.) [NEEDS CLARIFICATION: Q2-046 — should the expense history
+  list deleted entries (needs a wire param), or never?]
 
 ### Settle-up screen (`settle` — push, per research §Recommended v1 #3)
 
