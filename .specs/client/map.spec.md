@@ -812,9 +812,9 @@ photos.
 | Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
 | Offline status     | `trip-settings-sheet-offline`, `offline-pack-status`, `offline-pack-past-offer`, `offline-pack-offline-notice`                                                                                                                              |
 
-**Round-2 testID rulings (ruled 2026-09-19)** — the ids above are the single
-inventory; these notes explain the entries the original inventory did not
-anticipate:
+**Round-2 testID notes (ids ruled 2026-09-19, except the Q2-240 naming pick,
+which is pending Sean)** — the ids above are the single inventory; these
+notes explain the entries the original inventory did not anticipate:
 
 - **`map-pin-*` / `map-cluster-*` live in the GeoJSON feature's
   `properties.testID`, not in RN `testID` props (Q2-210):** style-layer pins
@@ -826,7 +826,8 @@ anticipate:
 - **`map-error` (Q2-213):** the retry banner for an errored trip-data query;
   ErrorBanner derives `-retry` / `-dismiss` (§2.7 rule 4 of the navigation
   spec).
-- **Six ids beyond the original inventory (Q2-240):** `map-sheet-place-distance`
+- **Six ids beyond the original inventory (Q2-240 — as shipped; the dialog
+  naming below is pending Sean):** `map-sheet-place-distance`
   (the sheet's distance label, R-map-17), `map-sheet-place-error` (the
   Navigate-failure banner), `map-search-offline` (the offline notice) and
   `map-search-error` (the retryable error banner), and the two locate-me
@@ -848,17 +849,23 @@ anticipate:
   ConfirmDialog children of download / refresh / retry / delete derive from
   the triggering button's id (`offline-pack-button-download-confirm` /
   `-cancel`, and so on — Q2-283).
-- **Dialog naming — the `map-dialog-locate-*` fork, PICKED (Q2-240):**
-  ConfirmDialog base ids take `dialog` in ELEMENT position —
-  `<screen>-dialog-<qualifier>`, the `<screen>-<element>[-<qualifier>]`
-  grammar's own shape (the photos spec's `photo-viewer-dialog-public` is the
-  same form) — so `map-dialog-locate-*` stands, children derive `-confirm` /
-  `-cancel` (navigation spec §2.7 rule 4). The `<qualifier>-dialog` suffix
-  form (the profile screen's three `profile-*-dialog` ids) is the outlier
-  and migrates to the element-position form repo-wide. Dialogs keyed by
-  their triggering control (e.g. `offline-pack-button-delete-confirm`)
+- **Dialog naming — the `map-dialog-locate-*` fork (Q2-240 — as shipped;
+  Sean pick pending: (a) element-position `<screen>-dialog-<qualifier>` /
+  (b) trailing `<qualifier>-dialog`):** as shipped, the map's locate-me
+  ConfirmDialog base ids take `dialog` in ELEMENT position
+  (`map-dialog-locate-rationale` / `-settings` / `-unavailable`), and
+  children derive `-confirm` / `-cancel` (navigation spec §2.7 rule 4). The
+  profile screen's three `profile-*-dialog` ids use the trailing form, and
+  the photos spec's `photo-viewer-dialog-public` uses the element-position
+  form — two live conventions; the repo-wide pick is Sean's. Dialogs keyed
+  by their triggering control (e.g. `offline-pack-button-delete-confirm`)
   derive from that control's id and are not dialog-named, so the fork does
-  not touch them.
+  not touch them. [NEEDS CLARIFICATION: Q2-240 — pick the ConfirmDialog
+  testID naming convention to apply repo-wide: (a) element-position
+  `<screen>-dialog-<qualifier>` (keeps `map-dialog-locate-*`; renames the
+  three `profile-*-dialog` ids) or (b) trailing `<qualifier>-dialog`
+  (renames the three `map-dialog-locate-*` ids and the photos spec's
+  `photo-viewer-dialog-public`)]
 
 ### 2.9 Out of scope (explicit)
 
