@@ -589,6 +589,7 @@ export function buildDayRows(
 ): DayListRow[] {
   const byDay = new Map<ISODate, DayEntry[]>();
   for (const item of items) {
+    // R-itin-36: list mode only — grid/conflicts must keep the default projection
     for (const entry of projectItem(item, bookingsById, { listMode: true })) {
       const bucket = byDay.get(entry.renderDay);
       if (bucket === undefined) byDay.set(entry.renderDay, [entry]);
