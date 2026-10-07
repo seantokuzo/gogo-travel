@@ -81,9 +81,10 @@ jobs:
         run: node .github/scripts/check-place-fresh-persistence.mjs
 
       - name: Plan-doc byte budgets
-        # ADR-009: docs/STATE.md is injected at interactive session start
-        # (loop sessions read it explicitly) and docs/QUEUE.md is the live work
-        # index, so both have hard caps in BYTES (STATE 6144; QUEUE 20480,
+        # ADR-009: docs/STATE.md is to be injected at interactive session start
+        # (QS-T6, a later PR; loop sessions read it explicitly) and
+        # docs/QUEUE.md is the live work index, so both have hard caps in
+        # BYTES (STATE 6144; QUEUE 20480,
         # every line 400 at most) and required section headings. Bytes, not
         # lines or chars: one very long line, or
         # multibyte text, games either of those. Nothing else in the toolchain

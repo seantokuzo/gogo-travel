@@ -45,7 +45,8 @@ enforced in CI.**
   conservative against the 10,000-character cap on hook output.
 - QUEUE.md requires its three section headings, as whole-line matches, because rotation and the close-out
   tooling locate rows by those headings.
-- **Rotate-soon advisory** at 80% (STATE ≥ 4,915 B, QUEUE ≥ 16,384 B): surfaced by `/tidy-docs`, not by CI.
+- **Rotate-soon advisory** at 80% (STATE ≥ 4,915 B, QUEUE ≥ 16,384 B): to be surfaced by `/tidy-docs`
+  (QS-T10, a later PR), not by CI.
 - Enforced by `.github/scripts/check-doc-budgets.mjs` in the CI guard job: deterministic, no LLM
   ([ADR-003](ADR-003-local-in-session-reviews.md), Law 5). Its `BUDGETS` constant must match this
   table; changing a number is a new ADR.
@@ -53,15 +54,18 @@ enforced in CI.**
 ### 2. STATE.md is the session brief
 
 - **Whole file, injected** by a `SessionStart` hook at startup, resume, clear and compact (in every
-  session where hooks run). The hook is committed to the repo: `.claude/hooks/session-state.sh`, wired in
-  `.claude/settings.json`. Repo-owned, so it reaches a fresh clone, a second engineer and non-loop
-  `claude -p` sessions. Subagents are not injected
-  (`SessionStart` is per session); spawn prompts carry the item ID instead.
-- **The hook never fails a session.** It always exits 0. If STATE.md were ever over 9,000 B it emits
-  whole lines up to 8,000 B plus a notice naming the overage, so total output stays under the 10,000-character
-  cap (past it the platform swaps the output for a path and a 2,000-character preview).
+  session where hooks run). **Not built in this PR: QS-T6 (a later PR) adds it.** The hook will be
+  committed to the repo as `.claude/hooks/session-state.sh`, wired in `.claude/settings.json`. Repo-owned,
+  so it will reach a fresh clone, a second engineer and non-loop `claude -p` sessions. Subagents will not
+  be injected (`SessionStart` is per session); spawn prompts carry the item ID instead.
+- **The hook will never fail a session** (QS-T6). It will always exit 0. If STATE.md were ever over
+  9,000 B it will emit whole lines up to 8,000 B plus a notice naming the overage, so total output stays
+  under the 10,000-character cap (past it the platform swaps the output for a path and a 2,000-character
+  preview).
 - **A repo that ships that hook owns STATE injection.** The user-level `SessionStart` and refresh hooks
-  stand down there: they keep their mtime marker and, on a change, emit a pointer instead of 8 KB.
+  stand down there: they keep their mtime marker and, on a change, emit a pointer instead of 8 KB. That
+  stand-down is already live at user level, keyed on the existence of `.claude/hooks/session-state.sh`, so
+  it takes effect the moment QS-T6 adds that file.
 - **Where hooks are off** (a loop session started with hooks disabled, `--bare`), nothing injects it, so the
   entry point reads `docs/STATE.md` explicitly. At ≤ 6 KiB that is cheap.
 - **Template** (section sizes are guidance; the hard cap is the file total). Replace, don't append:
@@ -143,8 +147,8 @@ enforced in CI.**
 
 ### 5. Rotation
 
-- `node scripts/queue-rows.mjs rotate` runs at `/sprint-close`, and whenever `/tidy-docs` reports QUEUE
-  at ≥ 80%. Rows with status `done` or `cancelled` leave Active and Blocked; Recently done keeps the
+- `node scripts/queue-rows.mjs rotate` is to run at `/sprint-close` (QS-T11, a later PR), and whenever
+  `/tidy-docs` reports QUEUE at ≥ 80% (QS-T10, a later PR). Until those land, run it by hand. Rows with status `done` or `cancelled` leave Active and Blocked; Recently done keeps the
   **newest 5** as one-liners. `queued`, `in-progress`, `blocked` and `deferred` stay.
 - Moved rows go to a **new** archive. The command refuses to overwrite an existing one (exit 2, nothing
   touched), rewrites QUEUE.md with every other line byte-identical, then runs `verify` itself and
@@ -187,8 +191,8 @@ is the only edit to it.
 
 ### Positive
 
-- Every interactive session starts with the whole open picture in ≤ 6 KiB instead of a truncated head that
-  never reached the open decisions or blockers.
+- Once the hook (QS-T6) lands, every interactive session starts with the whole open picture in ≤ 6 KiB
+  instead of a truncated head that never reached the open decisions or blockers.
 - Picking work costs one ≤ 20 KB read or a single grep, and the detail of any item is one grep away.
 - Rotation cannot lose a row: `verify` is mechanical, and the archive is the old file with whitespace
   stripped.
@@ -222,5 +226,5 @@ is the only edit to it.
 - `.claude/rules/planning-doc-homes.md` — the path-scoped rule that carries the caps day to day
 - [`../history/README.md`](../history/README.md) — snapshot-archive rules
 - `scripts/queue-rows.mjs` (`normalize`, `verify`, `rotate`, `residual`),
-  `.github/scripts/check-doc-budgets.mjs`, `.claude/hooks/session-state.sh` — the implementations of
-  sections 5, 1 and 2
+  `.github/scripts/check-doc-budgets.mjs` — the implementations of sections 5 and 1. Section 2's
+  `.claude/hooks/session-state.sh` is not built yet (QS-T6, a later PR).

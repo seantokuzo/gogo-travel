@@ -27,8 +27,8 @@ Besides phase archives, this directory holds two kinds of **snapshot archive**
 
 - **`QUEUE-<YYYY-MM-DD>.md`** — rows rotated out of `docs/QUEUE.md` (done/cancelled, and
   Recently done beyond the newest 5), or the first full snapshot of it. Written by
-  `queue-rows.mjs` (`normalize` for the first snapshot, `rotate` after that; `rotate` runs at
-  `/sprint-close`).
+  `queue-rows.mjs` (`normalize` for the first snapshot, `rotate` after that; `rotate` is to run at
+  `/sprint-close` once QS-T11 lands, and by hand until then).
 - **`STATE-<YYYY-MM-DD>.md`** — STATE.md narrative retired when the brief is rewritten.
 - **Naming:** the date is the UTC commit day; add `-2`, `-3` if that name is taken. One new file per
   rotation. **Self-indexing by date** (`ls docs/history/QUEUE-*.md docs/history/STATE-*.md`), so
