@@ -387,24 +387,34 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await settings.unmount();
   });
 
-  // Q2-186 duplicate-download pin. Falsification: delete the in-flight /
-  // `downloading` guard at the top of `startPackDownload` and BOTH racing
-  // instances call createPack -> 2 -> red. (The structural single-mount pins
-  // are `liveOfflinePackControllers` here + the real-tree file
-  // `src/__tests__/offline-pack-root-mount.test.tsx`.)
+  // Q2-186 duplicate-download pin. Both instances mount in the SAME commit
+  // (one component calling the hook twice — the pre-ruling pill + settings
+  // shape), so both effects pass the phase gate synchronously, both await the
+  // network, and both reach `startPackDownload` — only the latch stops the
+  // second. (Two SEQUENTIAL mounts would not exercise it: the first download's
+  // `downloading` phase already fails the second's `shouldAutoDownloadPack`.)
+  // Falsification: delete the in-flight / `downloading` guard at the top of
+  // `startPackDownload` and BOTH instances call createPack -> 2 -> red. The
+  // structural single-mount pins are `liveOfflinePackControllers` here + the
+  // real-tree file `src/__tests__/offline-pack-root-mount.test.tsx`.
   it("two controller instances racing one wifi activation still start ONE download (latch backstop)", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
-    const first = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
-    const second = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    const { unmount } = await renderHook(
+      () => {
+        useOfflinePackController(activeTrip());
+        useOfflinePackController(activeTrip());
+      },
+      { wrapper },
+    );
 
     await waitFor(() => expect(om.createPack).toHaveBeenCalledTimes(1));
     await act(flush);
     expect(om.createPack).toHaveBeenCalledTimes(1);
-    // The observable the single-mount pins read: two live instances is the bug.
+    // Both really ran: two network reads, two live instances (the observable
+    // the single-mount pins read — two is the bug, the latch is the backstop).
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(2);
     expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(2);
-    await first.unmount();
-    expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(1);
-    await second.unmount();
+    await unmount();
     expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
   });
 
