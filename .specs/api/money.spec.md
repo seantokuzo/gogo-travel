@@ -19,6 +19,14 @@
 > **Companion:** `.specs/client/money.spec.md` — the screens consuming these
 > endpoints. This file owns wire contracts + server behavior; that file owns
 > UX. They must never drift.
+>
+> **Round-2 rulings (2026-09-19):** Sean approved the Money group of the
+> round-2 spec pass wholesale (`.specs/OPEN-QUESTIONS.md` § Round 2 — Money,
+> Q2-001..Q2-055). Each ruling is written inline where it governs, tagged
+> `(Q2-NNN, ruled 2026-09-19)`; the OPEN-QUESTIONS rows stay as the decision
+> record. A "keep as shipped" ruling makes the shipped interpretation the
+> normative rule; where it contradicts an earlier sentence, that sentence is
+> amended in place.
 
 ---
 
@@ -85,7 +93,8 @@ Conventions inherited wholesale (not restated per endpoint):
   auto-fetched when online (free FX API — approved new dependency,
   candidates picked at build) with manual override always available; rates
   are never re-fetched after entry, and balances are always shown in trip
-  base currency.
+  base currency. The client fetches the rate through the F1 proxy
+  (R-money-31), never from a provider directly.
 - **R-money-7 (category taxonomy):** WHEN an expense or budget is written THE
   SYSTEM SHALL validate `category` against the shared `expense_category`
   enum. Resolved at `.specs/database/schema.spec.md`:§3.2
@@ -150,7 +159,15 @@ Conventions inherited wholesale (not restated per endpoint):
   when that debt is zero or negative and no explicit amount is given); the
   response SHALL include the universal link
   `https://<domain>/t/<tripId>/request/<requestId>` per the navigation spec
-  deep-link registry (§2.3), mirrored on the `gogo://` scheme.
+  deep-link registry (§2.3). Rulings (2026-09-19): an **explicit**
+  `amount_cents` is accepted at ANY debt level — zero, negative, below, or
+  above the current debt — because the `CONFLICT` arm above is worded for
+  the defaulting path only and balances stay truthful regardless, being
+  computed (Q2-015); the wire `created_by` is always the creditor, equal to
+  `to_user_id` — the entity carries no separate creator column (Q2-016);
+  and the wire `link` is the https form only — the `gogo://` mirror is
+  composed client-side from the shared app scheme (navigation spec §2.3),
+  since the wire carries exactly one `link` field (Q2-017).
 - **R-money-17 (minimum disclosure):** WHEN a request detail is read THE
   SYSTEM SHALL expose only: the requester's `UserProfile` (display name,
   avatar, payment handles — deliberately member-visible per contracts spec
@@ -161,7 +178,12 @@ Conventions inherited wholesale (not restated per endpoint):
   `status = 'settled'` in the same transaction; WHEN a request is read while
   the pairwise debt from → to has reached zero by any other path THE SYSTEM
   SHALL report it as resolved (derived flag) even if `status` is still
-  `'open'`.
+  `'open'`. `resolved` derives from the **live pairwise debt alone** — it is
+  true exactly when the directed debt from → to is zero or negative — and
+  is independent of the request's own `status`: no status ⇒ resolved rule
+  exists, so a request settled through S1 with residual debt reads
+  `status: 'settled'` with `resolved: false`, and both fields are truthful.
+  (Q2-014, ruled 2026-09-19)
 - **R-money-19 (entity approved):** The `settlement_requests` table is an
   **approved** entity-list addition — the §3.6 design lands verbatim in
   `.specs/database/schema.spec.md` §3.3 with its migration (one-source
@@ -172,6 +194,28 @@ Conventions inherited wholesale (not restated per endpoint):
   `.specs/client/navigation.spec.md`:§1 (Gate 2, 2026-07-09): v1 requires
   app install + an account (no web surface exists); this API's
   request-detail endpoint requires trip membership.
+- **R-money-30 (request-creation lock):** WHEN a settle-up request is
+  created THE SYSTEM SHALL take the trip row `FOR UPDATE` inside the
+  creating transaction before inserting the request — the same lock class
+  as the first-expense insert — so creation serializes against a racing
+  base-currency change (R-trips-22) and a request is never born carrying a
+  stale base currency. (Q2-020, ruled 2026-09-19)
+
+### FX-rate proxy
+
+- **R-money-31 (FX-rate proxy):** THE SYSTEM SHALL expose the FX-rate read F1
+  (§3.2) as a thin authenticated proxy — the client fetches OUR endpoint and
+  no provider key exists in the app. Rulings (2026-09-19): provider outage,
+  timeout, transport failure, or unparseable body → **503 `AI_UPSTREAM`**,
+  the envelope's only transient-upstream code, with no generic `UPSTREAM`
+  alias added (Q2-025); the provider's numeric rate renders to a decimal
+  string via fixed 8-fraction-digit rendering with trailing zeros trimmed,
+  and a value outside the `FxRate` envelope is an invalid provider body →
+  503, never cached (Q2-026); identity pairs (base = quote) pass through to
+  the provider with no local shortcut (Q2-027); the route is rate-limited at
+  **20 requests/minute per authenticated user** (Q2-028); and the provider
+  call times out at **4 s**, failing fast into the client's manual-rate
+  fallback (Q2-029; R-money-6 keeps manual override available always).
 
 ### Budgets
 
@@ -179,7 +223,8 @@ Conventions inherited wholesale (not restated per endpoint):
   set THE SYSTEM SHALL upsert the `(trip_id, category)` row (schema spec
   §3.3.15 unique) with `cap_cents ≥ 0` or `null` (= no cap, estimate only),
   `currency = trip.base_currency`; actual spend per category SHALL be
-  computed on read from expenses (effective base amounts), never stored.
+  computed on read from expenses (effective base amounts, at expense grain
+  — see G1, Q2-023), never stored.
   Resolved at `.specs/database/schema.spec.md`:§3.3.15 (Gate 2,
   2026-07-09): an optional **overall trip cap** exists alongside the
   per-category caps — it rides the same read/write surface as the `total`
@@ -255,7 +300,8 @@ Conventions inherited wholesale (not restated per endpoint):
 
 ### 3.1 Route inventory
 
-All routes trip-scoped; `Auth: Required` throughout (JWT — Gate-1 auth lock).
+All routes trip-scoped except F1 (the FX proxy); `Auth: Required` throughout
+(JWT — Gate-1 auth lock).
 
 | #   | Method + path                                      | Purpose                                        | Role                                  |
 | --- | -------------------------------------------------- | ---------------------------------------------- | ------------------------------------- |
@@ -274,6 +320,7 @@ All routes trip-scoped; `Auth: Required` throughout (JWT — Gate-1 auth lock).
 | G1  | `GET /trips/:tripId/budgets`                       | Budget rows + computed spend                   | member                                |
 | G2  | `PUT /trips/:tripId/budgets/:category`             | Upsert category cap                            | editor+                               |
 | A1  | `POST /trips/:tripId/ai/expense-estimate`          | AI per-category estimates                      | editor+ (writes budgets); cap-checked |
+| F1  | `GET /fx/rate`                                     | FX-rate proxy (global, not trip-scoped)        | any authenticated user (R-money-31)   |
 
 (Research names the flat path `POST /ai/expense-estimate`; pinned trip-scoped
 here because every grounding input — destination, dates, party size — and the
@@ -495,8 +542,12 @@ Gate 2 at the navigation spec; cancel: request creator).
 navigation registry's "missing/settled request" row).
 
 **Errors**: 409 `CONFLICT` — no positive debt and no explicit amount, or
-cancel of a non-open request; 404 non-member/missing; 400 debtor not a
-member / debtor = caller.
+cancel of a non-open request; 404 non-member/missing; 400
+`VALIDATION_FAILED` — debtor not a member, or debtor = caller (both map to
+the same 400; Q2-018, ruled 2026-09-19). Cancelling a request that is
+already `settled` or already `cancelled` is ONE 409 either way — cancel is
+**not** idempotent: a second cancel 409s rather than converging on 204
+(Q2-019, ruled 2026-09-19). Create runs under the R-money-30 trip-row lock.
 
 **Requirements covered**: R-money-16..19
 
@@ -526,12 +577,28 @@ editor+ write).
 `items` always contains every `expense_category` value (absent rows
 synthesized with nulls) so the client renders the full taxonomy.
 
+Computation rulings (2026-09-19): `spent_cents` is computed at **expense
+grain** — each non-deleted expense's full effective base amount counts under
+its category, the payer's own share and zero-share participants included,
+never a sum of non-payer shares (Q2-023); `total.ai_estimate_cents` is the
+sum of the non-null per-category `ai_estimate_cents`, and `null` exactly when
+every category is null (Q2-021).
+
 **PUT Request**: `{ cap_cents: Cents | null }` — upsert on
 `(trip_id, category)`; `null` clears the cap, preserving any AI estimate.
+For category rows the upsert's conflict arm re-stamps `currency` from
+`trips.base_currency` alongside `cap_cents` (same-value in every reachable
+state, self-healing if a row ever drifted) and never touches `ai_estimate_cents` /
+`ai_estimated_at` (Q2-022, ruled 2026-09-19).
 The overall cap rides the same verb with the `total` pseudo-category path
 segment (storage mechanism per schema spec §3.3.15, resolved Gate 2).
 
-**Errors**: 400 unknown category / negative cap; 403 viewer; 404 non-member.
+**Errors**: 400 `VALIDATION_FAILED` — negative cap, or an unknown
+`:category` (valid segments: the six categories and `total`); 403 viewer;
+404 non-member. The unknown-category check runs only AFTER the
+membership/role gate, so a non-member always receives the indistinguishable
+404 and never learns whether a category is valid (Q2-024, ruled
+2026-09-19; R-money-25).
 
 **Requirements covered**: R-money-20, R-money-25/26
 
@@ -583,6 +650,53 @@ party size = current member count, caller's `travel_style` (R-money-24).
 - [ ] Totals math per basis (fixtures incl. 1-night trip, solo trip)
 - [ ] Key changes with destination/style/season/schema-version; identical for
       two different users (R-db-10 anonymity)
+
+#### GET /fx/rate
+
+FX-rate proxy for expense entry (R-money-6, R-money-31) — the one
+non-trip-scoped money route. **Auth**: Required (any authenticated user;
+global, not membership-gated, yet still behind the app-wide auth guard — it
+is never an open proxy).
+
+**Request query**: `base`, `quote` — `CurrencyCode`s; the rate is
+`base → quote` in major units.
+
+**Response 200**:
+
+```
+{ base: CurrencyCode, quote: CurrencyCode,
+  rate: FxRate,        // decimal STRING, ≤ 8 fraction digits, never a float (Law #2) —
+                       //   captured verbatim into expenses.fx_rate at entry
+  as_of: ISODate }     // the provider's rate date
+```
+
+**Errors**: 400 `VALIDATION_FAILED` — the provider rejected the pair
+(unsupported currency: the caller's input, never cached); 429 `RATE_LIMITED`
+— over 20/min per user (Q2-028); 503 `AI_UPSTREAM` — provider outage,
+timeout, transport failure, unparseable body, or a rate outside the
+`FxRate` envelope (Q2-025, Q2-026). The provider's own error text never
+reaches the client body. Every 400/503 leaves the client on its manual-rate
+arm (R-money-6: manual override always available).
+
+**Caching**: at most one provider hit per pair per UTC day; only
+provider-confirmed rates are cached — error arms and unsupported pairs never
+are, so the cache is bounded by the provider's real currency matrix rather
+than by the code space a caller can spell.
+
+**Requirements covered**: R-money-6, R-money-31
+
+**Tests required**:
+
+- [ ] Happy path: provider rate → decimal string, `as_of` echoed;
+      unauthenticated → 401
+- [ ] Unsupported pair → 400, not cached; outage / timeout / unparseable body
+      → 503 `AI_UPSTREAM`, not cached
+- [ ] Out-of-envelope provider rate (≤ 0, ≥ 1e21, < 1e-8, > 10 integer
+      digits) → 503, never cached; a > 8-fraction-digit rate renders at 8
+- [ ] Identity pair (base = quote) reaches the provider — no local shortcut
+- [ ] 21st request inside a minute from one user → 429; another user
+      unaffected
+- [ ] Provider call aborts at 4 s into the 503 arm
 
 ### 3.3 Split computation (the pinned algorithm)
 
