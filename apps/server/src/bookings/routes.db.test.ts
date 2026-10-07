@@ -1974,7 +1974,7 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(dirtyCalls.at(-1)).toEqual([{ tripId: trip.id, day: "2026-09-03" }]);
   });
 
-  it("T-7.10 happy: explicit 'planned' on an idea equals the default; legal §3.2 moves apply (planned → booked, booked → booked no-op, booked → planned)", async () => {
+  it("T-7.10 happy: explicit 'planned' on an idea equals the default; legal §3.2 moves apply (planned → booked, booked → booked keeps status but still creates the item, booked → planned)", async () => {
     const { editor, trip } = await seedCollabTrip();
     const schedule = async (booking: Booking, status: string) => {
       const res = await scheduleBooking(trip.id, booking.id, editor.accessToken, {
@@ -1993,9 +1993,17 @@ describe.skipIf(!dockerAvailable)("T-7.1 bookings routes (integration)", () => {
     expect(promoted.status).toBe("booked");
     expect(promoted.items).toHaveLength(1);
     expect((await dbBooking(planned.id))?.status).toBe("booked");
-    // booked + booked: same-status is not a transition (no-op) — still booked.
+    // booked + booked: same-status is not a TRANSITION (status unchanged) —
+    // it is NOT a whole-call no-op: the item is still created. Falsification:
+    // an early `return { booking: current, items: [], … }` for
+    // `input.status === current.status` turns the two item asserts red.
     const booked = await seedTimelessBooking(trip.id, editor.accessToken, "booked");
-    expect((await schedule(booked, "booked")).status).toBe("booked");
+    const sameStatus = await schedule(booked, "booked");
+    expect(sameStatus.status).toBe("booked");
+    expect(sameStatus.items).toHaveLength(1);
+    expect(sameStatus.items[0]).toMatchObject({ kind: "booking", booking_id: booked.id });
+    expect(await dbItems(booked.id)).toHaveLength(1);
+    expect((await dbBooking(booked.id))?.status).toBe("booked");
     // booked → planned is a LEGAL §3.2 move ("didn't actually book"): an
     // EXPLICIT planned is honoured (omitted would have left it booked — see
     // the regression pin above).
