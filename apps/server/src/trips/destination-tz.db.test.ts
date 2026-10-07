@@ -29,6 +29,7 @@ import { createLocalJWKSet, generateKeyPair } from "jose";
 import type postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
 import { paginatedSchema } from "@gogo/shared/api/envelope";
+import { todayInZone } from "@gogo/shared/time";
 import {
   TripListItemSchema,
   TripSchema,
@@ -203,6 +204,43 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     });
   }
 
+  /**
+   * The trip a "serve the STORED pair" variant gets wrong (round-1 fix-verifier Adv 1): a
+   * coordless Osaka trip whose creator was in LA — stored 'device' hint America/Los_Angeles —
+   * with a BOOKED KIX flight into Asia/Tokyo. EFFECTIVE = Asia/Tokyo/'booking'; the stored pair
+   * (America/Los_Angeles/'device') must never reach the wire, or the client's
+   * `todayInZone(now, destination_tz)` lands on LA's day while the server judged the status on
+   * Tokyo's (the original B-30 disagreement, back on the list feed).
+   */
+  async function seedOutrankedDeviceHint(userId: string) {
+    const trip = await seedTripRow(userId, {
+      destinationName: "Osaka (custom)",
+      destinationTz: "America/Los_Angeles",
+      destinationTzSource: "device",
+      startDate: "2026-08-02",
+      endDate: "2026-08-02",
+    });
+    await seedFlight(trip.id, userId, {
+      startsAt: "2026-08-02T01:00:00Z",
+      arrivesTz: "Asia/Tokyo", // KIX
+      status: "booked",
+    });
+    return trip;
+  }
+
+  /**
+   * Whether the CLIENT, re-deriving "today" from the wire zone alone (what mobile's `isTripActive`
+   * does), would call this trip active. Server and client agree iff this equals `status === "active"`.
+   */
+  const clientCallsActive = (item: {
+    destination_tz: string;
+    start_date: string;
+    end_date: string;
+  }) => {
+    const today = todayInZone(clock, item.destination_tz);
+    return today >= item.start_date && today <= item.end_date; // ISO dates order lexicographically
+  };
+
   // ===========================================================================
   // The headline: east of UTC (Sean's device repro)
   // ===========================================================================
@@ -264,7 +302,7 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
   // Per-trip reconcile (one clock, several zones)
   // ===========================================================================
 
-  it("[list] one page, one clock, five rows: stored zones of each source, a LEGACY NULL row (derived lazily) and a coordless-with-flight row (booking) — each reconciled at ITS OWN today, wire zone + source per row, no updated_at moves", async () => {
+  it("[list] one page, one clock, six rows: stored zones of each source, a LEGACY NULL row (derived lazily), a coordless-with-flight row (booking) and a stored device hint a BOOKING outranks — each reconciled at ITS OWN today, wire zone + source per row (the effective pair, never the stored one), no updated_at moves", async () => {
     clock = new Date("2026-08-02T03:00:00.000Z"); // Tokyo Aug 2 12:00 · UTC Aug 2 · LA Aug 1 20:00
     const owner = await seedUser();
     const dates = { startDate: "2026-08-02", endDate: "2026-08-02" };
@@ -287,6 +325,8 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
       startsAt: "2026-08-02T01:00:00Z",
       arrivesTz: "Asia/Tokyo",
     });
+    // A STORED pair is present (LA/'device') and a booked KIX flight outranks it.
+    const outranked = await seedOutrankedDeviceHint(owner.userId);
 
     const page = PaginatedTripList.parse(await (await listTrips(owner.token)).json());
     const byId = new Map(page.items.map((item) => [item.id, item]));
@@ -299,13 +339,24 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     expect(wire(la.id)).toEqual(["America/Los_Angeles", "derived", "planning"]); // LA is still Aug 1
     expect(wire(legacy.id)).toEqual(["Asia/Tokyo", "derived", "active"]); // lazily derived, NOT "UTC"
     expect(wire(flightOnly.id)).toEqual(["Asia/Tokyo", "booking", "active"]); // booking zone, NOT "UTC"
+    // The EFFECTIVE pair, not the stored America/Los_Angeles/'device' one — and status judged in Tokyo
+    // (LA is still Aug 1 here, so an LA zone beside an 'active' status is the F1 disagreement).
+    expect(wire(outranked.id)).toEqual(["Asia/Tokyo", "booking", "active"]);
+    // The client's re-check, from the wire zone alone, must reproduce every row's server status.
+    expect(page.items).toHaveLength(6);
+    for (const item of page.items) {
+      expect(clientCallsActive(item), `${item.id} (${item.destination_tz})`).toBe(
+        item.status === "active",
+      );
+    }
 
     expect((await dbTrip(tokyo.id)).status).toBe("active");
     expect((await dbTrip(utc.id)).status).toBe("active");
     expect((await dbTrip(la.id)).status).toBe("planning");
     expect((await dbTrip(legacy.id)).status).toBe("active"); // stored status converged under the lazy zone
     expect((await dbTrip(flightOnly.id)).status).toBe("active");
-    for (const seeded of [tokyo, utc, la, legacy, flightOnly]) {
+    expect((await dbTrip(outranked.id)).status).toBe("active");
+    for (const seeded of [tokyo, utc, la, legacy, flightOnly, outranked]) {
       expect((await dbTrip(seeded.id)).updatedAt.toISOString()).toBe(
         seeded.updatedAt.toISOString(),
       );
@@ -313,8 +364,12 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     // The lazy zones are never written back:
     expect((await dbTrip(legacy.id)).destinationTz).toBeNull();
     expect((await dbTrip(flightOnly.id)).destinationTz).toBeNull();
+    // ...and the stored hint under the booking is never rewritten either:
+    expect(await storedOf(outranked.id)).toEqual(["America/Los_Angeles", "device"]);
     // Falsification: evaluate the whole page at one `today` → the rows cannot all hold;
-    // serialize the STORED column (P3) → legacy / flightOnly read "UTC"/"default", red.
+    // serialize the STORED column (P3) → legacy / flightOnly read "UTC"/"default", red;
+    // hand `toTripListItemWire` the STORED pair when one exists (fix-verifier Adv 1) → `outranked`
+    // reads America/Los_Angeles/device, red (wire pair AND the client re-check).
   });
 
   it("[get] a legacy NULL-stored zone with coordinates resolves lazily from them (Tokyo) — and is never written back", async () => {
@@ -687,6 +742,40 @@ describe.skipIf(!dockerAvailable)("B-30 destination-zone today (integration)", (
     expect(row.name).toBe("Renamed"); // it WAS a write
     expect([row.destinationTz, row.destinationTzSource]).toEqual([null, null]);
     // Falsification (P10): answer `stored ?? "UTC"` from the PATCH write path -> "UTC"/"default", red.
+  });
+
+  it("[patch] a rename on a trip whose stored 'device' hint a booking outranks (WRITE path) answers the EFFECTIVE Asia/Tokyo + 'booking' — not the stored LA/'device' pair — and judges status there", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z"); // Tokyo Aug 2 05:00 · LA Aug 1 13:00
+    const owner = await seedUser();
+    const trip = await seedOutrankedDeviceHint(owner.userId); // stored 'planning'; Tokyo says active
+    const patched = TripSchema.parse(
+      await (await patchTrip(trip.id, owner.token, { name: "Renamed" })).json(),
+    );
+    expect(sourcesOf(patched)).toEqual(["Asia/Tokyo", "booking"]);
+    expect(patched.status).toBe("active"); // Tokyo-today Aug 2 (LA's Aug 1 says planning)
+    expect(clientCallsActive(patched)).toBe(true); // the client's re-check agrees
+    const row = await dbTrip(trip.id);
+    expect(row.name).toBe("Renamed"); // it WAS a write
+    expect(row.status).toBe("active"); // stored status converged under the booking zone
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["America/Los_Angeles", "device"]);
+    // Falsification (fix-verifier Adv 1): return the STORED pair from the write path
+    // (`zone: storedZoneOf(row) ?? nextZone`) -> America/Los_Angeles/device, red.
+  });
+
+  it("[patch] a write-less body on that trip (WRITE-LESS path) answers the EFFECTIVE Asia/Tokyo + 'booking' and converges status without moving updated_at", async () => {
+    clock = new Date("2026-08-01T20:00:00.000Z");
+    const owner = await seedUser();
+    const trip = await seedOutrankedDeviceHint(owner.userId);
+    const patched = TripSchema.parse(await (await patchTrip(trip.id, owner.token, {})).json());
+    expect(sourcesOf(patched)).toEqual(["Asia/Tokyo", "booking"]);
+    expect(patched.status).toBe("active");
+    expect(clientCallsActive(patched)).toBe(true);
+    const row = await dbTrip(trip.id);
+    expect(row.status).toBe("active"); // drift converged
+    expect(row.updatedAt.toISOString()).toBe(trip.updatedAt.toISOString()); // write-less never bumps it
+    expect([row.destinationTz, row.destinationTzSource]).toEqual(["America/Los_Angeles", "device"]);
+    // Falsification: return the STORED pair from the write-less path
+    // (`zone: storedZoneOf(current) ?? reconciled.zone`) -> America/Los_Angeles/device, red.
   });
 
   it("[patch] a write-less body on a legacy NULL-zone row (WRITE-LESS path) answers Asia/Tokyo + 'derived' and converges status", async () => {
