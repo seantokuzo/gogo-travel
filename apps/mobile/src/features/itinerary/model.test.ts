@@ -1078,6 +1078,31 @@ describe("T-7.11 — overnight flights render Departs/Arrives point rows (R-itin
       // Departs is draggable, but the booking is day-locked: a cross-day drop is refused.
       expect(resolveDrop(rows, departsAt, rows.length - 1).kind).toBe("refused-day-lock");
     });
+
+    it("a same-day reorder on the departure day keeps the Departs row in its home-day order PUT", () => {
+      // `reorder.ts` excludes only the literal "check-out" from a day's order
+      // list; the Departs row must stay a REAL member of its home day's order
+      // (it owns the flight's sort_order). Dropping it would PUT an order
+      // missing the flight. Falsify (reorder.ts, NOT edited here): exclude
+      // `departs` at :100 → the commit's itemIds lose the flight → RED; at :48
+      // → the unchanged-order drop below is no longer a noop → RED.
+      const rows = twoDayRows();
+      const departsAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.checkpoint === "departs",
+      );
+      const lastDinnerAt = rows.findIndex(
+        (row) => row.type === "entry" && row.entry.itemId === OWN_DEPARTURE_DAY,
+      );
+      // Drag Last dinner above Departs: Jun 10's order becomes [dinner, flight].
+      expect(resolveDrop(rows, lastDinnerAt, departsAt)).toMatchObject({
+        kind: "commit",
+        day: "2027-06-10",
+        itemIds: [OWN_DEPARTURE_DAY, FLIGHT_ITEM_ID],
+      });
+      // CONTROL: dropping it back where it already is changes nothing — a noop,
+      // which only holds while the BEFORE list still contains the flight too.
+      expect(resolveDrop(rows, lastDinnerAt, lastDinnerAt)).toEqual({ kind: "noop" });
+    });
   });
 
   describe("R-itin-7 overlap chip belongs to the DEPARTURE day only", () => {
