@@ -631,7 +631,8 @@ photos.
   - **Distance (Q2-244):** distance-from-user is part of the detail
     composition (`place-detail-distance`, the R-map-17 label format): shown
     WHEN the location seam holds a position (puck active), absent
-    otherwise.
+    otherwise (the T-8.4 "currently unreachable" interim was closed by the
+    T-8.7 rider).
   - **Public-photos strip (Q2-246):** the PUBLIC photos-by-place strip (the
     Gate-2 companion in the Related note under R-map-26) is a SEPARATE
     surface from the this-trip photos strip, deferred WITH P-12 and unwired
