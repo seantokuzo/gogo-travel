@@ -632,9 +632,10 @@ segment (storage mechanism per schema spec §3.3.15, resolved Gate 2).
 **Errors**: 400 `VALIDATION_FAILED` — negative cap, or an unknown
 `:category` (valid segments: the six categories and `total`); 403 viewer;
 404 non-member. The unknown-category check runs only AFTER the
-membership/role gate, so a non-member always receives the indistinguishable
-404 and never learns whether a category is valid (Q2-024, ruled
-2026-09-19; R-money-25).
+membership/role gate, so a non-member with a schema-valid body always
+receives the indistinguishable 404 and never learns whether a category is
+valid (body validation runs before the gate, so a malformed body gets 400
+regardless of membership) (Q2-024, ruled 2026-09-19; R-money-25).
 
 **Requirements covered**: R-money-20, R-money-25/26
 
@@ -714,7 +715,9 @@ timeout, transport failure, unparseable body, or a rate outside the
 reaches the client body. Every 400/503 leaves the client on its manual-rate
 arm (R-money-6: manual override always available).
 
-**Caching**: at most one provider hit per pair per UTC day; only
+**Caching**: one cached provider-confirmed entry per pair per UTC day, held
+in-process (per server process) — concurrent misses are not coalesced, so
+simultaneous first requests for a pair may each reach the provider. Only
 provider-confirmed rates are cached — error arms and unsupported pairs never
 are, so the cache is bounded by the provider's real currency matrix rather
 than by the code space a caller can spell.
@@ -727,8 +730,9 @@ than by the code space a caller can spell.
       unauthenticated → 401
 - [ ] Unsupported pair → 400, not cached; outage / timeout / unparseable body
       → 503 `AI_UPSTREAM`, not cached
-- [ ] Out-of-envelope provider rate (≤ 0, ≥ 1e21, < 1e-8, > 10 integer
-      digits) → 503, never cached; a > 8-fraction-digit rate renders at 8
+- [ ] Out-of-envelope provider rate (≤ 0, ≥ 1e21, one that rounds to zero at
+      8 fraction digits — below roughly 5e-9 — or > 10 integer digits) → 503,
+      never cached; a > 8-fraction-digit rate renders at 8
 - [ ] Identity pair (base = quote) reaches the provider — no local shortcut
 - [ ] 21st request inside a minute from one user → 429; another user
       unaffected
