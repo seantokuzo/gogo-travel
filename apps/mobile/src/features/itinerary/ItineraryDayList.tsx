@@ -13,8 +13,9 @@
  * restoring the data, exactly the optimistic pattern `useDayOrder` runs.
  *
  * testIDs (§2.9): item cards `itinerary-list-item-{itemId}` — synthesized
- * check-in/check-out rows qualify with `-check-in`/`-check-out` (two rows,
- * one itemId; grammar-conforming qualifier, flagged for §2.9 sync). Day add
+ * point rows qualify with `-check-in`/`-check-out` (lodging) or
+ * `-departs`/`-arrives` (overnight flight, R-itin-36) (two rows, one itemId;
+ * grammar-conforming qualifier, flagged for §2.9 sync). Day add
  * rows `itinerary-day-add-{date}`; day headers `itinerary-day-header-{date}`
  * (new id, same flag); header add buttons `itinerary-day-header-add-{date}`
  * (B-11, same flag).
@@ -44,7 +45,13 @@ import { triggerHaptic } from "@/theme/haptics";
 
 import { LegChip } from "./legs/LegChip";
 import type { DayLeg } from "./legs/legs-model";
-import { formatDayHeader, statusBadgeTone, type DayEntry, type DayListRow } from "./model";
+import {
+  CHECKPOINT_LABELS,
+  formatDayHeader,
+  statusBadgeTone,
+  type DayEntry,
+  type DayListRow,
+} from "./model";
 
 const useStyles = createStyles((t) =>
   StyleSheet.create({
@@ -117,13 +124,14 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
       : `itinerary-list-item-${entry.itemId}-${entry.checkpoint}`;
   // B-18/B-23: the row discriminator joins the label — the container label
   // suppresses the Badge/caption subtree, so without it a lodging's check-in
-  // and check-out rows (and a rental's pickup/drop-off rows) announce the
-  // same bare title to VoiceOver. Same precedence as the grid
-  // (GridDayColumn): checkpoint first, never both — subtext is rental-only,
-  // checkpoint lodging-only.
+  // and check-out rows, an overnight flight's Departs and Arrives rows
+  // (R-itin-36), and a rental's pickup/drop-off rows announce the same bare
+  // title to VoiceOver. Same precedence as the grid (GridDayColumn):
+  // checkpoint first, never both — subtext is rental-only, checkpoint
+  // lodging/flight-only.
   const labelSuffix =
     entry.checkpoint !== null
-      ? ` ${entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}`
+      ? ` ${CHECKPOINT_LABELS[entry.checkpoint]}`
       : entry.subtext !== null
         ? ` ${entry.subtext}`
         : "";
@@ -131,7 +139,7 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
     <Card
       onPress={() => onOpen(entry)}
       onLongPress={() => {
-        // Check-out rows are render-only (model doc) — no lift, no haptic.
+        // Check-out / Arrives rows are render-only (model doc) — no lift, no haptic.
         if (!entry.draggable) return;
         triggerHaptic("dragLift");
         drag();
@@ -173,11 +181,7 @@ function EntryCard({ entry, overlapping, onOpen }: EntryCardProps) {
             />
           ) : null}
           {entry.checkpoint !== null ? (
-            <Badge
-              label={entry.checkpoint === "check-in" ? "Check-in" : "Check-out"}
-              tone="neutral"
-              size="sm"
-            />
+            <Badge label={CHECKPOINT_LABELS[entry.checkpoint]} tone="neutral" size="sm" />
           ) : null}
           {entry.plusOne ? <Badge label="+1" tone="neutral" size="sm" /> : null}
           {entry.status === "planned" || entry.status === "booked" ? (
