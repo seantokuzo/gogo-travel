@@ -196,6 +196,9 @@ contract-specific notes listed here:
   buttons from them). `PaymentHandles` groups `venmo_username?`, `cashtag?`,
   `paypalme_username?`, `zelle_handle?`, `zelle_display_name?` with
   normalization refinements (strip `@`/`$`, E.164-or-email for Zelle).
+  Rail handles are bounded 1–30 chars of `[A-Za-z0-9_.-]` AFTER prefix
+  stripping (the shared `normalizedHandle` chokepoint — auth-users spec
+  R-user-5 owns the client-mirror rule, **Q2-293**, ruled 2026-09-19).
   `UserPrefs`: `{ travel_style?: TravelStyle[], home_currency?: CurrencyCode,
 units?: 'metric' | 'imperial', notifications?:
 Partial<Record<NotificationCategory, boolean>> }` — an absent
@@ -220,6 +223,21 @@ Partial<Record<NotificationCategory, boolean>> }` — an absent
   Format stays free-form (1–100, no shape lock) — codes vary too much across
   categories (6-alnum GDS PNRs vs longer hotel/OTA confirmations) to
   constrain further v1. (Added 2026-09-07, B-20 — QA-wave spec sync, PR #51)
+  **B-20 Q1–Q3, ruled 2026-09-19 (Sean — round-2 spec pass):**
+  (**Q2-290**) the confirmation-code field stays free-form +
+  uppercase-normalized at the wire — NO 6-char (or any other shape) lock;
+  a lock is revisited only after B-9's airport/airline lookup work lands.
+  (**Q2-291**) `origin_iata` / `destination_iata` (top level and per
+  `segments[]` entry) stay `optionalString` on the wire for now; the
+  3-letter uppercase narrowing (`^[A-Z]{3}$`) is enforced **client-side
+  only** — the booking form's `iata` field kind auto-uppercases and gates at
+  save, scoped to DIRTY values so a stored non-conforming value (e.g. a
+  legacy `Narita`) never strands an unrelated edit; wire-side narrowing
+  rides B-9's client half. (**Q2-292**) `cabin_class` stays a free-form
+  `optionalString` — no server enum exists, and none is required; any
+  cabin-class chip/preset UI is client-only and writes that same free-text
+  value (the next itinerary touch MAY wire a server enum, but nothing is
+  blocked on it).
   `ScheduleBookingInput` (itinerary-bookings spec §3.4) gains an optional
   `status?: 'planned' | 'booked'` field (default `'planned'`, backward
   compatible) — Sean QA feature batch 2026-09-06 feature ④; see

@@ -172,7 +172,18 @@ exp}` (§3.2), and (b) an opaque **256-bit** random refresh token, TTL
   charset (alphanumeric + `-`/`_`/`.` per rail); `zelle_handle` must be an
   email or E.164 US phone, and setting it requires `zelle_display_name`
   (research: payer must be able to verify the recipient). `null` clears a
-  handle; absent fields are untouched.
+  handle; absent fields are untouched. **Length bound + client mirror
+  (Q2-293, ruled 2026-09-19):** each rail handle (`venmo_username`,
+  `cashtag`, `paypalme_username`) is 1–30 chars AFTER prefix stripping, and
+  the client SHALL enforce that same post-strip bound — a field whose input
+  `maxLength` is 31 so the typable `@`/`$` prefix fits SHALL still reject a
+  prefix-less 31-char value pre-submit with a field-level error, never let
+  it reach the 30-char write schema and surface as the generic save-failed
+  banner. **Code task** (low-cost, both screens that carry these fields —
+  the profile payment-handles section and the onboarding payment step —
+  ideally via one shared validator): the shipped client mirrors `maxLength`
+  only, so a 31-char prefix-less handle currently passes the client and
+  fails the server.
 - **R-user-6 (cashtag HEAD validation):** WHEN a `cashtag` is saved THE
   SYSTEM SHALL issue `HEAD https://cash.app/$<cashtag>`: 404 → reject 400
   `VALIDATION_FAILED` (`details.cashtag = 'not_found'`); 2xx/3xx → accept.
@@ -934,7 +945,9 @@ implementers.
 - **Apple server-to-server notifications** (credential revoked/email
   changed): additive later; `apple_credentials` doesn't preclude it.
 - **Object-storage provider choice + storage-side encryption/ACLs** — P-3
-  infra escalation (schema spec §3.7).
+  infra escalation (schema spec §3.7), **deferred to P-12 (trip photos)**
+  — reaffirmed 2026-09-19 (Q2-298); the `ObjectStorage` port stays
+  provider-agnostic and fails safe until then.
 - **Exact package versions** (`jose`, `expo-secure-store`,
   `expo-apple-authentication`) — pinned at P-3 via `npm view` + Context7
   (R-shared-13; CLAUDE.md § Before you code).

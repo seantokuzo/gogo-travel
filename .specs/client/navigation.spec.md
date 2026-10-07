@@ -430,6 +430,38 @@ Rules: modals never stack on modals (dismiss first); ConfirmDialog may sit
 over anything; back/swipe-back pops pushes, swipe-down dismisses modals —
 forms with dirty state intercept dismissal with a discard Confirm.
 
+**Date/time pickers (shared `PickerCard`, B-10/B-15 — rulings Q2-294 and
+Q2-295, 2026-09-19, Sean — round-2 spec pass).** On iOS, DateField/TimeField
+present the native picker inside the screen-anchored bottom-modal `PickerCard`
+(testIDs: §2.7 rule 4). On Android the native picker dialogs self-anchor and
+self-dismiss: `PickerCard` renders its children as-is — no card and no
+`{testID}-sheet-done` (`PickerCard.tsx:210`; `alwaysModal` is only for our own
+list pickers such as the timezone field).
+
+- **Seeded-date commit is Done-only (iOS) (Q2-294):** a CHANGED day commits and
+  closes immediately (`onValueChange`, `DateField.tsx:146-149`); the **Done**
+  affordance (`{testID}-sheet-done`) is the ONE committed-action path for the
+  _seeded_ (unchanged) date, because iOS inline pickers fire on value change
+  only — tapping the already-highlighted day does NOT commit.
+  Tap-the-highlighted-day-to-commit needs a custom calendar (or day-cell hit
+  detection) and is deliberately NOT adopted in v1 — no urgency; it would be
+  its own task if ever wanted. Consumers SHALL treat a same-value commit as a
+  no-op (compare before latch), so a standing field error survives an unchanged
+  Done — `DateField` itself always calls `onSelect`, and the guard is
+  per-consumer (e.g. `ExpenseForm.tsx` returns early on `date === spentAt`).
+  `(trips)/new.tsx` is a known gap: its start/end date field errors clear on an
+  unchanged Done.
+- **Time commits on first wheel settle (iOS spinner) (Q2-295):** the time
+  spinner commits as soon as the wheel settles (hour then minute = two
+  opens). A draft-until-Done time model is NOT adopted — it would change the
+  ScheduleSheet/IdeasBucket immediate-commit contract, so it is its own
+  contract-changing task if ever wanted, not a polish item.
+- **Android same-mode dialog flash-close race (picker follow-up ③ — NOT a
+  ruling):** pre-existing, determinized by B-15's exclusive-open slot;
+  press-time claim batching is the fix shape. It rides the **Android
+  pre-launch verification pass** (QUEUE row of that name), which stays open
+  for it — nothing in this section closes it.
+
 ### 2.7 testID convention (R-nav-22)
 
 Grammar — kebab-case, screen-prefixed:
