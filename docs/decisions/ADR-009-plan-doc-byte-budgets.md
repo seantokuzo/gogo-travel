@@ -11,7 +11,7 @@
 advisory", and none at all for QUEUE.md. Lines turned out to be a bad unit, and the docs outgrew every
 consumer. Measured at `4b0e5c4` (2026-10-06):
 
-- **`docs/QUEUE.md` is 756,763 B in 240 lines**, longest line 4,754 characters. Stripping Prettier's table
+- **`docs/QUEUE.md` is 756,763 B in 240 lines**, longest line 4,754 B (4,687 characters). Stripping Prettier's table
   padding (`node scripts/queue-rows.mjs normalize`) leaves 201,968 B (~202 KB). 34 `done` rows still sit in Active/Blocked, and Recently done holds 84 more.
 - **`docs/STATE.md` is 64,658 B in 997 lines.** A 997-line file "complied" with the 800–1000 line
   advisory. NEXT SESSION is a ~52 KB session log, and every In-flight bullet is already resolved.
@@ -67,7 +67,8 @@ enforced in CI.**
   stand-down is already live at user level, keyed on the existence of `.claude/hooks/session-state.sh`, so
   it takes effect the moment QS-T6 adds that file.
 - **Where hooks are off** (a loop session started with hooks disabled, `--bare`), nothing injects it, so the
-  entry point reads `docs/STATE.md` explicitly. At ≤ 6 KiB that is cheap.
+  entry point reads `docs/STATE.md` explicitly. QS-T8 (PR-C, a later PR) makes the loop do that, by changing
+  `DEFAULT_PROMPT` in `scripts/run-loop.sh`; until it lands, loop sessions do not. At ≤ 6 KiB the read is cheap.
 - **Template** (section sizes are guidance; the hard cap is the file total). Replace, don't append:
 
   | Section                         | Guidance  | Holds                                                                               |
@@ -159,7 +160,10 @@ enforced in CI.**
   restores both files if it fails.
 - **Lossless by construction.** `verify` checks that every normalized row of the old file is in the
   archive(s) as a multiset (a duplicated row cannot hide), that every ID cell survives, and, with
-  `--live`, that every live row is in the new index by ID or handle.
+  `--live`, that every live row is in the new index by ID or handle, **and** that each paired row is unchanged:
+  its section, its ID cell and every cell after the Title (status, priority, depends, ...) must be identical,
+  else `CHANGED live ...` and exit 1 (the Title is exempt: the index shortens it by design). A deliberate
+  status or priority edit therefore belongs in a separate sync commit made after the rotation, never inside one.
 - A closed row that still mentions open work (`scripts/queue-rows.mjs residual` lists them) gets a written
   disposition in the PR body before it leaves: covered by another item, a new short `queued` row, or none.
 - STATE is rotated by rewriting the brief and moving what left it to a new `docs/history/STATE-<date>.md`.
