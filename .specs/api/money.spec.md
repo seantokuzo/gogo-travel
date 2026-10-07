@@ -26,7 +26,9 @@
 > `(Q2-NNN, ruled 2026-09-19)`; the OPEN-QUESTIONS rows stay as the decision
 > record. A "keep as shipped" ruling makes the shipped interpretation the
 > normative rule; where it contradicts an earlier sentence, that sentence is
-> amended in place.
+> amended in place. **Three items are not ruled and stay open** as
+> `[NEEDS CLARIFICATION]` markers — Q2-030, Q2-031, Q2-046 (Sean picks
+> pending); their as-shipped behavior is the normative text meanwhile.
 
 ---
 
@@ -954,4 +956,7 @@ owned here (simplification off-by-default with one-tap toggle; settlement
 correction = recorder delete ≤ 24 h then counter-entry;
 `settlement_requests` entity approved; viewer participation per trips
 §3.2; member removal allowed with nonzero balance; split metadata =
-resolved cents only). Zero markers remain._
+resolved cents only). All Gate-2 markers are resolved (zero remained at
+Gate 2); round 2 (2026-09-19) leaves three markers open — Q2-030, Q2-031,
+Q2-046, Sean picks pending — and the spec is approvable once they are
+ruled._

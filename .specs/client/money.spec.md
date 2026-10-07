@@ -23,7 +23,9 @@
 > `(Q2-NNN, ruled 2026-09-19)`; the OPEN-QUESTIONS rows stay as the decision
 > record. A "keep as shipped" ruling makes the shipped interpretation the
 > normative rule; where it contradicts an earlier sentence, that sentence is
-> amended in place.
+> amended in place. **Three items are not ruled and stay open** as
+> `[NEEDS CLARIFICATION]` markers — Q2-030, Q2-031, Q2-046 (Sean picks
+> pending); their as-shipped behavior is the normative text meanwhile.
 
 ---
 
@@ -669,5 +671,7 @@ optional), taxonomy (fixed 6-value enum), FX (entry-time rate + manual
 override), expense deletion (soft-delete + audit) — schema spec;
 simplification (off by default, one-tap toggle) + split metadata (resolved
 cents only) — api money spec; universal-link domain (Sean purchasing) +
-non-member recipients (app + account required) — navigation spec. Zero
-markers remain._
+non-member recipients (app + account required) — navigation spec. All
+Gate-2 markers are resolved (zero remained at Gate 2); round 2 (2026-09-19)
+leaves three markers open — Q2-030, Q2-031, Q2-046, Sean picks pending —
+and the spec is approvable once they are ruled._
