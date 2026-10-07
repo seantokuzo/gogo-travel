@@ -300,8 +300,9 @@
   party rule (api money spec R-money-12) would reject any action they took
   (Q2-041); the request's creator sees the status and a cancel action via
   ConfirmDialog (Q2-002); the unknown-id EmptyState's path back is a
-  **same-tab `router.replace`** onto the money tab (Q2-042); and "who
-  settled, when" is a best-effort lookup of the linked settlement in the S2
+  **same-tab `router.replace`** onto the money tab (Q2-042). **Not yet
+  ruled (Q2-031 — pending):** "who settled, when" is a best-effort lookup of
+  the linked settlement in the S2
   first page — because the request wire carries no `settled_by` /
   `settled_at`, anything beyond the first page degrades to a generic
   resolved line, and that holds until/unless Q2-031 resolves to (a) and the
