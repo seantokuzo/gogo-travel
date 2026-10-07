@@ -407,9 +407,12 @@ initialTab(trip)   = tripIsActive(trip) ? 'today' : 'itinerary'   (R-nav-7/8)
   server does. Callers hand the helpers an INSTANT (`new Date()`), so every
   trip in a list is judged at its own day — the §2.2 entry redirect
   (`resolveEntryTarget`) and the optimistic status prediction on a settings
-  save use the same per-trip rule. The device-local day remains only for
-  genuinely device-local defaults outside this ruling (expense date default,
-  itinerary scroll-to-today — T-7.17).
+  save use the same per-trip rule. If the device cannot resolve the wire
+  zone, the client trusts the server's `status == 'active'` (judged on the
+  correct day) rather than re-checking on a degraded UTC day. The device-local
+  day remains for two defaults whose zone semantics are DEFERRED to T-7.17
+  (not yet ruled — the 2026-09-19 ruling covers trip status only): the expense
+  date default and the itinerary scroll-to-today.
 
 - Evaluated when `[tripId]/_layout` mounts. In-session manual tab choice is
   held in a per-trip, in-memory store slot — never persisted (R-nav-9), so
