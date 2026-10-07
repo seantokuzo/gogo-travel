@@ -228,6 +228,13 @@ batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
   respond `400 VALIDATION_FAILED`, never `404` — the 404-indistinguishable
   posture (R-ib-24) protects the existence of RESOURCES (trip, booking,
   item); a day string carries no existence to protect.
+- **R-ib-30 (no place names on the wire; Q2-074, ruled 2026-09-19):** WHEN
+  the composite itinerary read (R-ib-13) or a booking/item row crosses the
+  wire THE SYSTEM SHALL carry `place_id` only — no place name, in v1.
+  Resolving names is the maps-spine join, a later seam (it needs no new
+  invariant here); until it lands clients label an unnamed place with their
+  documented placeholders (client spec R-itin-47 and its siblings) and
+  never invent a name.
 
 ### Upstream resolutions (formerly blocking)
 

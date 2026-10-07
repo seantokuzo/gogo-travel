@@ -380,6 +380,38 @@ extension; this batch does not touch them.
   outside the §2.9 screen inventory by design and are recorded there as
   fallback-only.
 
+#### Plan-mode day list (T-7.4)
+
+- **R-itin-45 (section set + jump strip; Q2-071, Q2-075, ruled 2026-09-19):**
+  WHEN the day list builds its sections THE SYSTEM SHALL render EVERY day of
+  the trip's date range — in-range empty days included, each with its R-itin-1
+  "Add to this day" row — and add exactly one section per distinct
+  out-of-range day that has content. Out-of-range item days are SPARSE: an
+  item three weeks past the trip adds one section, never weeks of empty
+  filler. The horizontal day-jump strip (§2.2) renders at every trip length —
+  §2.2's "for long trips" is motivation, not a threshold.
+- **R-itin-46 (check-out row; Q2-073, ruled 2026-09-19):** WHEN a lodging
+  check-out point row (R-itin-31) renders THE SYSTEM SHALL place it FIRST in
+  its end-day section (it has no `sort_order` on that day; check-out-is-morning
+  makes first the deterministic position) and SHALL NOT make it draggable —
+  listing its id in the end-day day-order PUT would REASSIGN the spanning
+  item's `day` and misfile the stay (API R-ib-15/16). The scope of the
+  point-row mechanism (lodging; `flight` per R-itin-36; every other spanning
+  category one row plus a `+1` chip) is as R-itin-31's category scope note
+  states (Q2-072, ruled 2026-09-19).
+- **R-itin-47 (nameless place visit; Q2-074, ruled 2026-09-19):** WHEN a
+  `place_visit` item renders and no place name is available to the client
+  (v1: the composite itinerary read carries `place_id` only — API R-ib-30)
+  THE SYSTEM SHALL show the generic title "Place visit" on its list and grid
+  card — never a blank title or a raw id — until a place-name source exists
+  (the maps-spine join).
+- **R-itin-48 (refused reorder; Q2-076, ruled 2026-09-19):** WHEN the server
+  refuses a day-order PUT that the client did not itself prevent (e.g. stale
+  lock knowledge — the wire 400 carries no discriminating reason in v1) THE
+  SYSTEM SHALL roll back and show the ONE generic reorder ErrorBanner
+  (R-itin-2); the crafted day-lock hint of R-itin-3 is reserved for drops the
+  client itself prevents.
+
 ---
 
 ## 2. Design
@@ -416,7 +448,8 @@ rows, Sheet for pickers/modes) — zero new primitives.
 - **Day header**: weekday + date (`subheading`), item count (`caption`).
   Reserves a trailing slot for the weather bundle (out of scope). Tapping a
   day header in list mode scrolls; a horizontal day strip under the header
-  offers jump-to-day for long trips.
+  offers jump-to-day (rendered at every trip length — no threshold,
+  R-itin-45).
 - **Item card** (Card, pressable): leading category icon (booking) or
   place/custom glyph; title; `start–end` times (`caption`, or "No time");
   status Badge per R-itin-8; overlap warning chip per R-itin-7. Press →
@@ -621,6 +654,11 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Add-sheet option                                                                                                                                                                               | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                                                                 |
 | Day add row (empty day)                                                                                                                                                                        | `itinerary-day-add-{date}`                                                                                                                                                                                                             |
 | Day-header add button (every day, editors — B-11)                                                                                                                                              | `itinerary-day-header-add-{date}`                                                                                                                                                                                                      |
+| Day section header (PR #15 spec-sync)                                                                                                                                                          | `itinerary-day-header-{date}`                                                                                                                                                                                                          |
+| Day list root / header (T-7.4, PR #15 spec-sync)                                                                                                                                               | `itinerary-day-list` / `itinerary-header`                                                                                                                                                                                              |
+| Lodging check-in / check-out point row (R-itin-31, R-itin-46)                                                                                                                                  | `itinerary-list-item-{itemId}-check-in` / `-check-out`                                                                                                                                                                                 |
+| List-screen states (R-itin-28; PR #15 spec-sync)                                                                                                                                               | `itinerary-loading` (Skeleton) · `itinerary-empty` + CTA `itinerary-empty-add` · `itinerary-error` (no-cache ErrorBanner + retry) · `itinerary-refresh-error` (refetch failed over retained data)                                      |
+| Reorder notices (R-itin-3, R-itin-48)                                                                                                                                                          | `itinerary-reorder-hint` (client-prevented day-lock drop) / `itinerary-reorder-error` (generic refused/failed reorder)                                                                                                                 |
 | Day jump strip item                                                                                                                                                                            | `itinerary-day-jump-{date}`                                                                                                                                                                                                            |
 | Item card                                                                                                                                                                                      | `itinerary-list-item-{itemId}` (nav §2.7 example)                                                                                                                                                                                      |
 | Item card rental subtext (B-18, QA-wave sync)                                                                                                                                                  | `itinerary-list-item-{itemId}-subtext` (list); `itinerary-grid-item-{key}-subtext` (grid — `key` = `itemId` or `itemId-checkpoint`)                                                                                                    |
