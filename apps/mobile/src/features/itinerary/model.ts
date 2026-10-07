@@ -123,12 +123,34 @@ export function statusBadgeTone(status: BookingStatus): "accent" | "success" | "
 }
 
 /**
+ * The derived point-row vocabulary: a spanning lodging's `check-in`/`check-out`
+ * (R-itin-31) and, in LIST mode only, a spanning flight's `departs`/`arrives`
+ * (R-itin-36, T-7.11). The first of each pair renders on `item.day` and keeps
+ * the item's drag identity; the second renders on `end_day` and is render-only.
+ */
+export type Checkpoint = "check-in" | "check-out" | "departs" | "arrives";
+
+/**
+ * Caption text per point row. ONE source for the card Badge AND the a11y
+ * discriminator (B-23): the container label suppresses the Badge subtree, so
+ * the caption must be joined into `accessibilityLabel` or both rows of a pair
+ * announce the same bare title to VoiceOver.
+ */
+export const CHECKPOINT_LABELS: Record<Checkpoint, string> = {
+  "check-in": "Check-in",
+  "check-out": "Check-out",
+  departs: "Departs",
+  arrives: "Arrives",
+};
+
+/**
  * One renderable card row. A spanning lodging item projects to TWO entries
- * (check-in + check-out, R-itin-31) — `renderDay` is where the row shows,
+ * (check-in + check-out, R-itin-31), and — in list mode — so does a spanning
+ * flight (departs + arrives, R-itin-36): `renderDay` is where the row shows,
  * `homeDay` stays `item.day` (the day whose order owns the item).
  */
 export interface DayEntry {
-  /** Row identity — `itemId`, or `itemId-check-in`/`itemId-check-out`. */
+  /** Row identity — `itemId`, or `itemId-{check-in|check-out|departs|arrives}`. */
   rowKey: string;
   itemId: string;
   /** Set on `booking`-kind rows — both synthesized rows carry the SAME id, routing to one detail (R-itin-31). */
@@ -143,8 +165,8 @@ export interface DayEntry {
   icon: IconName;
   /** "09:00 – 11:30" · "09:00" · "No time" (§2.2 card anatomy). */
   timeLabel: string;
-  /** Check-in / Check-out marker caption on synthesized rows. */
-  checkpoint: "check-in" | "check-out" | null;
+  /** Point-row marker (check-in/out, departs/arrives) on synthesized rows; null otherwise. */
+  checkpoint: Checkpoint | null;
   /**
    * B-18: "Pickup" / "Drop off" caption on a rental's two derived point rows
    * (§3.3 plurality) — both otherwise render the bare booking title. Null on
@@ -152,7 +174,7 @@ export interface DayEntry {
    * booking's (item-owned, I-3): no caption beats a wrong one.
    */
   subtext: string | null;
-  /** Cross-midnight chip (§2.6): spanning non-lodging renders once with "+1". */
+  /** Cross-midnight chip (§2.6): a spanning item that is NOT split into point rows renders once with "+1". */
   plusOne: boolean;
   /** `planned`/`booked` Badge on booking rows (R-itin-8); null on others. */
   status: BookingStatus | null;
@@ -163,7 +185,7 @@ export interface DayEntry {
    * safe to locked.
    */
   dayLocked: boolean;
-  /** Check-out rows are render-only: listing their id in `end_day`'s order PUT would REASSIGN the item's day. */
+  /** Check-out / Arrives rows are render-only: listing their id in `end_day`'s order PUT would REASSIGN the item's day. */
   draggable: boolean;
 }
 
@@ -224,17 +246,49 @@ function entryBase(item: ItineraryItem, bookingsById: ReadonlyMap<string, Bookin
   };
 }
 
+export interface ProjectItemOptions {
+  /**
+   * LIST-mode projection (R-itin-36): a spanning FLIGHT also splits into
+   * Departs/Arrives point rows. Omitted/false ⇒ the lodging-only projection
+   * that `grid/model.ts` and `conflicts.ts` key their spanning-lodging
+   * detection on (`entries.length === 2` ⟺ spanning lodging) — a flight MUST
+   * keep projecting to one entry there, or the grid would draw it as a
+   * Check-in/Check-out lane instead of its clipped block with a "+1" tail
+   * (R-itin-36: grid mode is explicitly unchanged).
+   */
+  listMode?: boolean | undefined;
+}
+
+/**
+ * The point-row pair a spanning item of `category` splits into, or null when
+ * it renders as one row + "+1" chip. Lodging splits in EVERY projection
+ * (R-itin-31); flight only in list mode (R-itin-36). `train` shares flight's
+ * mechanical shape but is deliberately NOT named by R-itin-36 — it stays one
+ * row + "+1"; so does every other spanning category.
+ */
+function pointRowPair(
+  category: BookingCategory | null,
+  listMode: boolean,
+): { first: Checkpoint; second: Checkpoint } | null {
+  if (category === "lodging") return { first: "check-in", second: "check-out" };
+  if (category === "flight" && listMode) return { first: "departs", second: "arrives" };
+  return null;
+}
+
 /**
  * Project one item to its render entries:
  * - spanning LODGING booking (`end_day > day`) → check-in + check-out point
  *   rows (R-itin-31; §2.6 — nights between render nothing);
- * - any other spanning item → ONE row on `day` with a "+1" chip (§2.6
- *   cross-midnight rule, generalized to every non-lodging span);
+ * - spanning FLIGHT booking, LIST mode only (`options.listMode`) → departs +
+ *   arrives point rows, same mechanism, one DB row (R-itin-36);
+ * - any other spanning item (and a flight outside list mode) → ONE row on
+ *   `day` with a "+1" chip (§2.6 cross-midnight rule);
  * - everything else → one row.
  */
 export function projectItem(
   item: ItineraryItem,
   bookingsById: ReadonlyMap<string, Booking>,
+  options?: ProjectItemOptions,
 ): DayEntry[] {
   const base = entryBase(item, bookingsById);
   const spanning = item.end_day !== null && item.end_day > item.day;
@@ -251,23 +305,24 @@ export function projectItem(
     subtext: base.subtext,
   };
 
-  if (spanning && base.category === "lodging" && item.end_day !== null) {
+  const pair = pointRowPair(base.category, options?.listMode === true);
+  if (spanning && pair !== null && item.end_day !== null) {
     return [
       {
         ...common,
-        rowKey: `${item.id}-check-in`,
+        rowKey: `${item.id}-${pair.first}`,
         renderDay: item.day,
         timeLabel: item.start_time ?? "No time",
-        checkpoint: "check-in",
+        checkpoint: pair.first,
         plusOne: false,
         draggable: true,
       },
       {
         ...common,
-        rowKey: `${item.id}-check-out`,
+        rowKey: `${item.id}-${pair.second}`,
         renderDay: item.end_day,
         timeLabel: item.end_time ?? "No time",
-        checkpoint: "check-out",
+        checkpoint: pair.second,
         plusOne: false,
         draggable: false,
       },
@@ -478,11 +533,21 @@ export function buildDaySet(
 }
 
 /**
+ * R-itin-46 / R-itin-36: the second row of a point-row pair (lodging
+ * check-out, flight "Arrives") has no `sort_order` on its render day, so it
+ * leads that day's section — deterministic, and a morning check-out / an
+ * overnight arrival precedes the day's own activities by default.
+ */
+function leadsDay(entry: DayEntry): boolean {
+  return entry.checkpoint === "check-out" || entry.checkpoint === "arrives";
+}
+
+/**
  * The flat list model. Per day: header row, then that day's entries —
- * synthesized check-out rows FIRST (no sort_order on their render day;
- * check-out-is-morning heuristic, deterministic), then the day's own items
- * by `(sort_order, id)`, with a travel-time chip after any entry that starts
- * a computed leg. Days with no entries emit the empty-day add row.
+ * synthesized check-out / Arrives rows FIRST (no sort_order on their render
+ * day; check-out-is-morning heuristic, deterministic), then the day's own
+ * items by `(sort_order, id)`, with a travel-time chip after any entry that
+ * starts a computed leg. Days with no entries emit the empty-day add row.
  *
  * EVERY entry rendered on a day is a leg-endpoint candidate, including a
  * spanning lodging's synthesized check-out row. That mirrors the server:
@@ -506,7 +571,7 @@ export function buildDayRows(
 ): DayListRow[] {
   const byDay = new Map<ISODate, DayEntry[]>();
   for (const item of items) {
-    for (const entry of projectItem(item, bookingsById)) {
+    for (const entry of projectItem(item, bookingsById, { listMode: true })) {
       const bucket = byDay.get(entry.renderDay);
       if (bucket === undefined) byDay.set(entry.renderDay, [entry]);
       else bucket.push(entry);
@@ -526,8 +591,8 @@ export function buildDayRows(
   const rows: DayListRow[] = [];
   for (const date of buildDaySet(trip, byDay.keys())) {
     const entries = (byDay.get(date) ?? []).sort((a, b) => {
-      const aOut = a.checkpoint === "check-out" ? 0 : 1;
-      const bOut = b.checkpoint === "check-out" ? 0 : 1;
+      const aOut = leadsDay(a) ? 0 : 1;
+      const bOut = leadsDay(b) ? 0 : 1;
       if (aOut !== bOut) return aOut - bOut;
       if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
       return a.rowKey < b.rowKey ? -1 : a.rowKey > b.rowKey ? 1 : 0;
@@ -549,7 +614,12 @@ export function buildDayRows(
         type: "entry",
         key: entry.rowKey,
         entry,
-        overlapping: overlappingItemIds.has(entry.itemId),
+        // R-itin-7 overlap is analyzed on the item's HOME day (the departure
+        // day's clipped-at-midnight span, `conflicts.ts`) — an Arrives row on
+        // `end_day` must not inherit the chip for a collision that is not on
+        // its day. (Lodging never enters the set — its span is null — so
+        // check-out rows are unaffected.)
+        overlapping: entry.renderDay === entry.homeDay && overlappingItemIds.has(entry.itemId),
       });
       const leg = findLegFrom(entries, position, legIndex, queries, located, date);
       // Absent leg ⇒ nothing rendered (R-itin-6's "no chip" arm — never a
