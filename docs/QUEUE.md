@@ -112,7 +112,7 @@
 | — | **Shared-schema booking ordering pre-check (R-shared-7)**: deferred half of B-8's SECONDARY; B-26 shipped the field-mapping half | queued | P3 | — |
 | — | **Swap the `links.gogotravel.example` placeholder for the real domain**: `LINK_DOMAIN` + `app.json` `associatedDomains` (domain owned; P-14 swap) | queued | P3 | — |
 | — | **T-3.2 shared-schema advisories**: reject dot-only paypalme handles; trim-normalize `external_url` (carried from the closed T-3.2 row) | queued | P3 | — |
-| — | **Rental one-way zones**: car/moped one-way rentals have no pickup/dropoff zone fields, so a cross-zone one-way is rejected (B-9 also-consider) | queued | P3 | — |
+| — | **Rental one-way zones**: no zone fields (both ends `Z`), so a cross-zone one-way skews the instant; rejected only if dropoff wall time < pickup (B-9) | queued | P3 | — |
 
 ## Blocked
 
