@@ -151,12 +151,15 @@ cleanup
 # --- skill paths: run-loop.sh may only name skill files that exist ----------
 # Skills moved out of the old dot-agents dir into .claude/skills/ (2026-10). A
 # stale path in DEFAULT_PROMPT sends every chained session to a missing file.
-# Reads the REAL script and the REAL tree, not a sandbox.
-refs="$(grep -oE '\.claude/skills/[A-Za-z0-9_-]+/SKILL\.md' "$SRC" | sort -u)"
-check "run-loop.sh names a skill file" "yes" "$([ -n "$refs" ] && echo yes || echo no)"
-missing=""
-for p in $refs; do [ -f "$ROOT/$p" ] || missing="$missing $p"; done
-check "every skill file run-loop.sh names exists" "" "$missing"
+# Guards: DEFAULT_PROMPT names an existing skill file; every skill .md path is
+# well-formed and exists; no .agents path. Reads the REAL script and the REAL
+# tree, not a sandbox.
+dp="$(sed -n "s/^DEFAULT_PROMPT='Read \(\.claude\/skills\/[A-Za-z0-9_-]*\/SKILL\.md\), .*/\1/p" "$SRC")"
+check "DEFAULT_PROMPT opens with a skill file that exists" "yes" "$([ -n "$dp" ] && [ -f "$ROOT/$dp" ] && echo yes || echo no)"
+# A bare "SKILL.md" is prose shorthand in comments ("SKILL.md section 5"), not a path.
+refs="$(grep -oE '[A-Za-z0-9_./-]*[Ss][Kk][Ii][Ll][Ll][A-Za-z0-9_./-]*\.[Mm][Dd]' "$SRC" | grep -vx 'SKILL\.md' | sort -u)"
+missing=""; for p in $refs; do printf '%s' "$p" | grep -qxE '\.claude/skills/[A-Za-z0-9_-]+/SKILL\.md' && [ -f "$ROOT/$p" ] || missing="$missing $p"; done
+check "every skill .md path run-loop.sh names is well-formed and exists" "" "$missing"
 check "run-loop.sh has no dot-agents path" "0" "$(grep -c '[.]agents/' "$SRC" || true)"
 
 printf 'run-loop guard: %d passed, %d failed\n' "$pass" "$fail"
