@@ -670,9 +670,18 @@ it("empty (R-itin-40): an idea with no date stays untouched when the sheet is di
  * "bucket emptied while the request is in flight" state never commits and the
  * guard under test is never consulted. A deferred promise makes the
  * mid-flight render real, which is the only state the pre-fix code fails.
+ *
+ * `breakRefetch`: once the held request is rejected, every itinerary/bookings
+ * GET rejects too (NETWORK). The hook's `onError` invalidation then cannot
+ * restore the card from the server, so a green "the card is back" can ONLY
+ * come from the hook's own snapshot rollback (round-1 Adv 3 — with the
+ * refetch healthy, the refetch alone puts the card back and a deleted
+ * rollback still passes).
  */
-async function holdRequest(route: "schedule" | "status") {
+async function holdRequest(route: "schedule" | "status", opts?: { breakRefetch?: boolean }) {
   let rejectRequest!: (error: Error) => void;
+  let refetchBroken = false;
+  let brokenRefetches = 0;
   const hold: Responder = () =>
     new Promise<never>((_resolve, reject) => {
       rejectRequest = reject;
@@ -683,9 +692,26 @@ async function holdRequest(route: "schedule" | "status") {
   // Exactly ONE unscheduled booking — the first-use state whose optimistic
   // write empties the bucket.
   const idea = route === "schedule" ? ideaBooking() : ideaWithTimes();
+  const bookings = [...defaultBookings(), idea];
+  const defaults = itineraryApiOverrides({ bookings });
+  const refetchGuard =
+    (key: "GET /trips/:tripId/itinerary" | "GET /trips/:tripId/bookings"): Responder =>
+    (input) => {
+      if (!refetchBroken) return defaults[key]!(input);
+      brokenRefetches += 1;
+      return Promise.reject(new Error("NETWORK"));
+    };
   await renderBucket({
-    api: { bookings: [...defaultBookings(), idea] },
-    overrides: { [route === "schedule" ? SCHEDULE_ROUTE : STATUS_ROUTE]: hold },
+    api: { bookings },
+    overrides: {
+      [route === "schedule" ? SCHEDULE_ROUTE : STATUS_ROUTE]: hold,
+      ...(opts?.breakRefetch === true
+        ? {
+            "GET /trips/:tripId/itinerary": refetchGuard("GET /trips/:tripId/itinerary"),
+            "GET /trips/:tripId/bookings": refetchGuard("GET /trips/:tripId/bookings"),
+          }
+        : null),
+    },
   });
 
   await openSheet(idea.id, "planned");
@@ -696,7 +722,14 @@ async function holdRequest(route: "schedule" | "status") {
   // leaving the bucket IS the optimistic write, and every caller below
   // asserts from that mid-flight state.
   await waitFor(() => expect(screen.queryByTestId(`itinerary-ideas-item-${idea.id}`)).toBeNull());
-  return { reject: (error: Error) => rejectRequest(error), bookingId: idea.id };
+  return {
+    reject: (error: Error) => {
+      refetchBroken = opts?.breakRefetch === true;
+      rejectRequest(error);
+    },
+    brokenRefetches: () => brokenRefetches,
+    bookingId: idea.id,
+  };
 }
 
 it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the hook's)", async () => {
@@ -717,7 +750,7 @@ it("a failed schedule keeps the sheet open with the ErrorBanner (rollback is the
   await closeSheet();
 });
 
-it("a failed status PATCH keeps the sheet open with the ErrorBanner and rolls the card back (the known-times route has the same hold)", async () => {
+it("a failed status PATCH keeps the sheet open with the ErrorBanner and the card back in the bucket (the known-times route has the same hold; the rollback itself is pinned with a failing refetch below)", async () => {
   const { reject, bookingId } = await holdRequest("status");
 
   // MID-FLIGHT, the round-1 blocker's exact state on the NEW route: the only
@@ -799,9 +832,45 @@ it.each(["schedule", "status"] as const)(
   },
 );
 
+/**
+ * Round-1 Adv 3: the hook rollback, pinned against the REAL failure mode. With
+ * a healthy refetch the `onError` invalidation alone puts the card back, so
+ * the "card is back" assertions above stay green with both snapshot rollbacks
+ * deleted (probed). Here every GET rejects after the failure: the only thing
+ * that can restore the card AND its Idea badge is the hook's snapshot.
+ *
+ * Falsify: skip `qc.setQueryData(itineraryKey, ctx.previousItinerary)` /
+ * `qc.setQueryData(listKey, ctx.previousBookings)` in the route's hook ⇒ the
+ * optimistic placeholder row (and the advanced badge) stay ⇒ RED, per route.
+ */
+it.each(["schedule", "status"] as const)(
+  "the %s route's failure restores the card AND its Idea badge from the hook's snapshot even when the refetch cannot (GET rejects)",
+  async (route) => {
+    const { reject, bookingId, brokenRefetches } = await holdRequest(route, {
+      breakRefetch: true,
+    });
+    // MID-FLIGHT: optimistic — the card is out of the bucket (the helper
+    // waited for it).
+    expect(screen.queryByTestId(`itinerary-ideas-item-${bookingId}`)).toBeNull();
+
+    await act(async () => reject(new ApiRequestError(403, "FORBIDDEN", "not an editor")));
+    await waitFor(() =>
+      expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+    );
+    // Premise: the invalidation refetch really ran and really failed.
+    await waitFor(() => expect(brokenRefetches()).toBeGreaterThan(0));
+
+    expect(screen.getByTestId(`itinerary-ideas-item-${bookingId}`)).toBeOnTheScreen();
+    expect(screen.getByText("Idea")).toBeOnTheScreen(); // status badge rolled back too
+    expect(screen.queryByText("Needs a day")).toBeNull();
+
+    await closeSheet();
+  },
+);
+
 // --- error: server refusals map onto the owning field ----------------------
 
-it("error: a server 400 VALIDATION_FAILED with `details.fieldErrors.status` lands on the STATUS field — not a generic banner; the card rolls back", async () => {
+it("error: a server 400 VALIDATION_FAILED with `details.fieldErrors.status` lands on the STATUS field — not a generic banner; the card is back in the bucket", async () => {
   let rejectRequest!: (error: Error) => void;
   const idea = ideaBooking();
   await renderBucket({
