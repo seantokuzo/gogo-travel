@@ -111,7 +111,9 @@ enforced in CI.**
 
 - **Where new detail goes.** The row is the summary (about 60 words fit in 400 B). Longer material goes to
   the PR body once work starts, a `.specs/` spec if it is a requirement, an ADR or a STATE In-flight
-  bullet if it is a decision. There is no new detail mechanism.
+  bullet if it is a decision. There is no new detail mechanism. The durable **review record** is the PR
+  body's "Review record" section (dispositions, per the `review-loop` skill); the QUEUE row keeps a
+  one-line outcome, and `.tmp/` holds per-run working notes only.
 
 ### 4. `docs/history/` also holds snapshot archives
 
