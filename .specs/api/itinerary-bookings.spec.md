@@ -233,8 +233,8 @@ batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
   wire THE SYSTEM SHALL carry `place_id` only — no place name, in v1.
   Resolving names is the maps-spine join, a later seam (it needs no new
   invariant here); until it lands clients label an unnamed place with their
-  documented placeholders (client spec R-itin-47 and its siblings) and
-  never invent a name.
+  documented placeholders (client spec R-itin-47, R-itin-59) and never
+  invent a name.
 
 ### Upstream resolutions (formerly blocking)
 

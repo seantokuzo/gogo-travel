@@ -171,7 +171,7 @@ unaffected and keeps its existing day-sectioned form.
   (API R-ib-11).
 - **R-itin-23**: WHEN "Place visit" is being added THE SYSTEM SHALL offer
   the trip's saved places first, then spine search (places search endpoint —
-  maps/places spec seam); place ideas without a day are saved places by
+  maps/places spec seam; v1 ships spine search only — R-itin-59); place ideas without a day are saved places by
   design (navigation spec place-detail "add to day"), not day-less items —
   the schema requires every item to have a `day`.
 
@@ -463,6 +463,88 @@ extension; this batch does not touch them.
   row per column — flex-squeezed, no wrap — so the pinned header strip keeps
   a uniform, virtualization-stable height.
 
+#### Ideas bucket + add/edit flows (T-7.6)
+
+- **R-itin-55 (datetime composition; Q2-092, ruled 2026-09-19):** WHEN a
+  booking-detail datetime is composed for a field whose wire shape carries no
+  `*_tz` zone THE SYSTEM SHALL write it as `YYYY-MM-DDTHH:MM:00Z` — the client
+  has no destination-timezone database, so the wall values ride a `Z`
+  offset. Calendar placement is derived by SLICING the wall date/time
+  components (shared `wallDate`/`wallTime`, API §3.3), so placement is exact;
+  only the denormalized UTC instant (`starts_at`/`ends_at`) is approximate —
+  trip-internal sort, self-consistent. A datetime field with only one half
+  set is a field-level validation error ("Set both date and time, or clear
+  both."), never a silent drop. Zoned fields (flight/train `*_tz`, B-9)
+  compose with their real offset and require the zone — they never take the
+  `Z` path.
+- **R-itin-56 (bins; Q2-093, Q2-094, Q2-095, Q2-096, ruled 2026-09-19):** each
+  bin of §2.3 (Ideas, Cancelled — B-13's shared shape) SHALL default
+  collapsed and, expanded, cap its content at 45% of the window height with
+  internal scroll. The cancelled list is fetched EAGERLY — one bounded extra
+  `status=cancelled` read per itinerary mount — so a cancelled-only trip's bin
+  still appears (R-itin-12 makes the bin their only surface; a lazy fetch
+  would strand them invisible). Both bins render in BOTH view modes, grid
+  included — unscheduled and cancelled bookings have no other surface. A
+  cancelled card carries a neutral "Cancelled" badge, routes to
+  `booking-detail`, and is never schedulable (§3.2: cancelled is terminal).
+- **R-itin-57 (add-option ids; Q2-098, Q2-099, ruled 2026-09-19):** add-option
+  slugs are the kebab-case of the category — `car-rental`, `moped-rental`,
+  `place-visit` (plus `custom`) — matching §2.9's other kebab ids. The
+  in-form category step (the path for category-less prefills) reuses the
+  `itinerary-add-option-*` ids: the add Sheet and that step never co-mount.
+- **R-itin-58 (create prefill + chain failure; Q2-100, Q2-101, ruled
+  2026-09-19):** WHEN `item/new` opens with `?day=` alone THE SYSTEM SHALL NOT
+  write that day into the booking's details — it stays the create→schedule
+  target (R-ib-8); only day + time (a gap-tap) seeds the primary-start field,
+  which prevents phantom "00:00" times. WHEN a create→schedule chain fails
+  after the booking was created THE SYSTEM SHALL never fail silently: the
+  booking exists in Ideas, a warning banner ("Saved to your Ideas — adding it
+  to the day failed") shows, and Save swaps for Done — no duplicate-create
+  risk.
+- **R-itin-59 (place attach; Q2-102, Q2-103, Q2-114, ruled 2026-09-19):** the
+  place picker searches the places spine only — R-itin-23's "saved places
+  first" leg has no picker endpoint yet and is a flagged seam, not a silent
+  skip. WHEN an edit form opens on a record whose attached place has no name
+  on the wire (API R-ib-30) THE SYSTEM SHALL show a generic placeholder chip:
+  "Attached place" on a booking edit, "Selected place" on `ItemForm` edit —
+  two strings for one state, pending the maps-spine join; unify them into one
+  at the next touch of either (non-blocking).
+- **R-itin-60 (viewer gating; Q2-104, ruled 2026-09-19):** WHEN the member's
+  role is `viewer` THE SYSTEM SHALL hide the FAB, the empty-day add rows, and
+  the EmptyState CTA (R-ib-24 — no guaranteed-403 affordances); day headers
+  remain, and `item/new`, if reached by URL, renders a view-only notice
+  instead of the form.
+- **R-itin-61 (form fields; Q2-106, Q2-107, Q2-109, Q2-113, ruled
+  2026-09-19):** booking forms show exactly the §2.4 table's fields, plus
+  `activity.address` — the activity row's "venue/place" reads as covering the
+  venue name AND its address. `notes`, flight `segments` and `passenger_names`
+  exist in the detail shapes but stay off-form (capture and detail surfaces
+  own them). Kayak's "non-stop only" toggle (§2.7 caveat) is not exposed — it
+  is not in the §2.4 field table. Item forms (`place_visit`/`custom`) expose
+  no `end_day`; `title` is custom-only and the place is place_visit-only,
+  per API R-ib-26.
+- **R-itin-62 (edit semantics; Q2-105, Q2-108, ruled 2026-09-19):** the status
+  control honors §3.2 exactly: edit offers only legal targets (`booked` hides
+  `idea` — the deliberate two-step; `cancelled` renders as a static badge;
+  cancel/delete live on the detail screen, R-itin-26/39), and a status PATCH
+  fires only when status CHANGED — the matrix has no self-loops. Booking edit
+  sends whole-form LWW: `details` as one whole value, and price / currency /
+  confirmation / place as nullable fields that clear on each save when
+  emptied.
+- **R-itin-63 (deeplink integration; Q2-110, Q2-111, ruled 2026-09-19):** the
+  return host (`DeeplinkReturnHost`) mounts ONCE in the itinerary stack
+  layout — every deeplink-out surface (form, booking detail) lives in that
+  stack, and the recorded `{ partner, category, tripId, timestamp }` carries
+  its own `tripId`, so a cross-trip return still routes; lifting the mount to
+  trip/root chrome later needs no API change. The lodging deeplink `location`
+  falls back address → `property_name` → `trips.destination_name` (§2.7; the
+  property name is the better query when the address is empty).
+- **R-itin-64 (field widgets; Q2-115, Q2-116, ruled 2026-09-19):** WHEN the
+  SELECTED option chip of an enum detail field is tapped THE SYSTEM SHALL
+  clear the field (every detail field is optional and no "none" option
+  exists). WHEN a `TimeField` has no value THE SYSTEM SHALL open its picker
+  at 12:00 (noon) — a midnight default would hit the DST edges.
+
 ---
 
 ## 2. Design
@@ -527,7 +609,9 @@ an enhancement, not the contract). Cancelled bin
 header: "Cancelled" + count Badge + chevron; expanding it is the
 show-cancelled affordance (R-itin-12) — flat cancelled cards (no group
 labels; the bin header names them), never schedulable. Card press →
-`booking-detail` in both bins.
+`booking-detail` in both bins. Both bins default collapsed; expanded, each
+caps at 45% of window height with internal scroll, and both render in list
+AND grid modes (R-itin-56).
 
 ### 2.4 Add flows per category
 
@@ -541,7 +625,7 @@ FAB → add Sheet (10 options: 8 categories + place visit + custom) →
 | `train`        | carrier, train number, origin/destination stations, departs/arrives, coach, seat                            | Trainline (URN flow), Omio, Amtrak (plain)                   |
 | `car_rental`   | company, pickup/dropoff locations + times, vehicle class                                                    | Kayak Cars, Turo                                             |
 | `moped_rental` | company, pickup/dropoff locations + times, vehicle description, helmets                                     | — (manual entry v1; BikesBooking is v2 — research § verdict) |
-| `activity`     | provider, venue/place, starts/ends, ticket count/type, external URL                                         | Open external URL; Eventbrite browse (US-slug cities only)   |
+| `activity`     | provider, venue/place (+ `address`, R-itin-61), starts/ends, ticket count/type, external URL                | Open external URL; Eventbrite browse (US-slug cities only)   |
 | `restaurant`   | place/address, reserved at, party size, provider                                                            | — (no verified format in research; manual v1)                |
 | `other`        | description, starts/ends, external URL                                                                      | Open external URL                                            |
 | `place_visit`  | place picker (saved places → spine search, R-itin-23), day, times, notes                                    | —                                                            |
@@ -550,7 +634,8 @@ FAB → add Sheet (10 options: 8 categories + place visit + custom) →
 Common to booking types: status selector (idea/planned/booked), price +
 currency, confirmation code. Save routes: timeless → bucket; timed →
 auto-scheduled (API I-2); day-picked timeless → schedule endpoint. Editing
-opens the same modal prefilled (`?bookingId=` / `?itemId=`).
+opens the same modal prefilled (`?bookingId=` / `?itemId=`). Round-2 rulings
+on these flows: R-itin-55, R-itin-57..R-itin-64.
 
 **Flight-number lookup gating (B-9 client half, QA-wave sync):** the
 flight-number field's in-form airline inference fires no request the
@@ -663,9 +748,9 @@ is the documented shape when it activates).
 
 | Partner       | Category        | Constructed URL                                                                                                                                                                                | Field mapping / caveats                                                                                                                                                                               |
 | ------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Kayak Flights | flight          | `https://www.kayak.com/flights/{ORIG}-{DEST}/{YYYY-MM-DD}[/{YYYY-MM-DD}]` + optional `?fs=stops=0`                                                                                             | ORIG/DEST = form origin/destination IATA; second date only for round trips; `fs=stops=0` when a "non-stop only" form toggle is set. Enabled when both IATAs + depart date present (R-itin-21).        |
+| Kayak Flights | flight          | `https://www.kayak.com/flights/{ORIG}-{DEST}/{YYYY-MM-DD}[/{YYYY-MM-DD}]` + optional `?fs=stops=0`                                                                                             | ORIG/DEST = form origin/destination IATA; second date only for round trips; `fs=stops=0` only if a non-stop toggle exists (not in v1). Enabled when both IATAs + depart date present (R-itin-21).     |
 | Skyscanner    | flight          | `https://www.skyscanner.net/transport/flights/{orig}/{dest}/{yymmdd}/[{yymmdd}/]?adultsv2={adults}&cabinclass={cabin}&preferDirects={bool}`                                                    | Lowercase IATA; **`yymmdd`** dates (not ISO); `cabin` mapped from cabin-class field (economy/premiumeconomy/business/first; absent → economy, Q2-070); params are the officially documented set.      |
-| Airbnb        | lodging         | `https://www.airbnb.com/s/{location}/homes?checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&adults={adults}`                                                                                         | `location` = place/address field, else `trips.destination_name`. Research caveat repeated: app honoring params after universal-link is **UNTESTED — device-verify** before this button ships enabled. |
+| Airbnb        | lodging         | `https://www.airbnb.com/s/{location}/homes?checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&adults={adults}`                                                                                         | `location` = address → property name → `trips.destination_name`. Research caveat repeated: app honoring params after universal-link is **UNTESTED — device-verify** before this button ships enabled. |
 | Booking.com   | lodging         | `https://www.booking.com/searchresults.html?ss={q}&checkin={YYYY-MM-DD}&checkout={YYYY-MM-DD}&group_adults={adults}`                                                                           | `ss` = location query as Airbnb.                                                                                                                                                                      |
 | Expedia       | lodging         | `https://www.expedia.com/Hotel-Search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                             | Officially documented format.                                                                                                                                                                         |
 | Vrbo          | lodging         | `https://www.vrbo.com/search?destination={q}&startDate={YYYY-MM-DD}&endDate={YYYY-MM-DD}&adults={adults}`                                                                                      |                                                                                                                                                                                                       |
@@ -702,7 +787,7 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | View toggle (header)                                                                                                                                                                           | `itinerary-view-toggle`                                                                                                                                                                                                                |
 | FAB                                                                                                                                                                                            | `itinerary-fab-add`                                                                                                                                                                                                                    |
-| Add-sheet option                                                                                                                                                                               | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                                                                 |
+| Add-sheet option — kebab slugs (`car-rental`, `moped-rental`, `place-visit`); the in-form category step reuses these ids (Q2-098, Q2-099)                                                      | `itinerary-add-option-{category\|place-visit\|custom}`                                                                                                                                                                                 |
 | Day add row (empty day)                                                                                                                                                                        | `itinerary-day-add-{date}`                                                                                                                                                                                                             |
 | Day-header add button (every day, editors — B-11)                                                                                                                                              | `itinerary-day-header-add-{date}`                                                                                                                                                                                                      |
 | Day section header (PR #15 spec-sync)                                                                                                                                                          | `itinerary-day-header-{date}`                                                                                                                                                                                                          |
@@ -718,10 +803,13 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Mode sheet row                                                                                                                                                                                 | `itinerary-leg-{fromItemId}-mode-{mode}`                                                                                                                                                                                               |
 | Directions handoff                                                                                                                                                                             | `itinerary-leg-{fromItemId}-directions`                                                                                                                                                                                                |
 | Sort-by-time affordance                                                                                                                                                                        | `itinerary-sort-by-time-{date}`                                                                                                                                                                                                        |
+| Add sheet root (T-7.6, Q2-097)                                                                                                                                                                 | `itinerary-add-sheet`                                                                                                                                                                                                                  |
+| Ideas / Cancelled bin roots + Ideas list (T-7.6, Q2-097)                                                                                                                                       | `itinerary-ideas`, `itinerary-ideas-list`, `itinerary-cancelled`                                                                                                                                                                       |
 | Ideas section toggle                                                                                                                                                                           | `itinerary-ideas-toggle`                                                                                                                                                                                                               |
 | Ideas card                                                                                                                                                                                     | `itinerary-ideas-item-{bookingId}`                                                                                                                                                                                                     |
 | Ideas "Planned" / "Booked" (R-itin-11/40 — replaces "Add to day")                                                                                                                              | `itinerary-ideas-planned-{bookingId}` / `itinerary-ideas-booked-{bookingId}`                                                                                                                                                           |
 | Status-action Sheet (R-itin-41; internals extend the pre-existing `itinerary-ideas-schedule-sheet` family — `-input-day`, `-input-start-time`, `-input-end-time`, `-button-confirm`, `-error`) | `itinerary-ideas-schedule-sheet`                                                                                                                                                                                                       |
+| Ideas schedule-sheet internals (Q2-097 — the prefix is `itinerary-ideas-schedule-`, no `-sheet-`; root is the row above)                                                                       | `itinerary-ideas-schedule-input-day`, `-input-start-time`, `-input-end-time`, `-button-confirm`, `-error`                                                                                                                              |
 | Cancelled bin toggle (B-13 — replaces `itinerary-ideas-show-cancelled`)                                                                                                                        | `itinerary-cancelled-toggle`                                                                                                                                                                                                           |
 | Cancelled bin list                                                                                                                                                                             | `itinerary-cancelled-list`                                                                                                                                                                                                             |
 | Cancelled card                                                                                                                                                                                 | `itinerary-cancelled-item-{bookingId}`                                                                                                                                                                                                 |
@@ -740,9 +828,16 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Timezone switcher sheet + row                                                                                                                                                                  | `itinerary-timezone-switcher-sheet`, `itinerary-timezone-switcher-sheet-item-{tz}` (tz = `timeZoneSlug`, B-9 precedent)                                                                                                                |
 | Form inputs                                                                                                                                                                                    | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …)                                                                                                                             |
 | Date/time field derivations (every DateField/TimeField, B-10)                                                                                                                                  | `{fieldTestID}-picker`, `-error`, `-clear` (time); shared `PickerCard` modal card `{fieldTestID}-sheet` with `-sheet-done` / `-sheet-close` / `-sheet-scrim` (QA-wave sync — `-sheet-done` added post-B-15, was missing from this row) |
+| Item-form surface states (T-7.6, Q2-097)                                                                                                                                                       | `itinerary-item-new-error` (both forms' ErrorBanner), `-error-load`, `-loading`, `-viewer` (view-only notice, R-itin-60), `-uneditable`                                                                                                |
+| Create-chain notices (R-itin-58, Q2-097)                                                                                                                                                       | `itinerary-item-new-saved-to-ideas` (warning banner), `itinerary-item-new-button-done` (replaces Save)                                                                                                                                 |
+| Booking-form datetime field (Q2-097)                                                                                                                                                           | `itinerary-item-new-input-{field}-date` / `-time`; `-tz` (zoned fields only); `-error` (a caption on a raw AppText — NOT the DS Input's `{testID}-error` derivation)                                                                   |
+| Place picker (Q2-097)                                                                                                                                                                          | `itinerary-item-new-input-place` (query input) plus suffixes `-result-{placeId}`, `-clear`, `-error-search` (novel — no DS component derives it)                                                                                       |
+| Enum option chips (R-itin-64, Q2-115)                                                                                                                                                          | `itinerary-item-new-input-{field}-{option}`                                                                                                                                                                                            |
 | Form status segment                                                                                                                                                                            | `itinerary-item-new-segment-status-{status}`                                                                                                                                                                                           |
 | Form place attach                                                                                                                                                                              | `itinerary-item-new-button-place`                                                                                                                                                                                                      |
 | Form save                                                                                                                                                                                      | `itinerary-item-new-button-save`                                                                                                                                                                                                       |
+| Deeplink adults field + panel error banners (PR #14 spec-sync, R-itin-42)                                                                                                                      | `itinerary-item-new-input-adults` (form only) · `itinerary-item-new-error-deeplink` / `booking-detail-error-deeplink`                                                                                                                  |
+| Return-host fallback sheet (R-itin-44)                                                                                                                                                         | `booking-manual-add-sheet`, `-error`, `-input-title`, `-button-save`, `-button-cancel`                                                                                                                                                 |
 | Partner search (form)                                                                                                                                                                          | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`)                                            |
 | Booking detail actions                                                                                                                                                                         | `booking-detail-button-{edit\|cancel\|delete}`                                                                                                                                                                                         |
 | Confirmation copy                                                                                                                                                                              | `booking-detail-button-copy-confirmation`                                                                                                                                                                                              |
@@ -836,6 +931,12 @@ cut. **Depends on:** IB-1..IB-3 (API), NAV-1..NAV-6, DS-7..DS-9.
   state commits), because the exit-window tap route is closed by that Sheet
   guard; the pin's per-call-vs-hook-level discrimination is unchanged
   (Q2-090).
+- The R-nav-21 modal audit tolerates a Fragment-wrapped `Stack` in the
+  itinerary layout (the return host is non-route chrome; exactly one Stack
+  is still asserted), and the renderRouter return-host suite deliberately
+  skips the exit-timer drain — fake timers HOLD the exit callback, so
+  waiting for the unmount under fake timers is a hang, not hygiene
+  (documented in-file; Q2-112).
 
 ---
 
