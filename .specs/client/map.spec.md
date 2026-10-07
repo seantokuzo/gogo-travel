@@ -811,6 +811,7 @@ photos.
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`, `map-error`                                                                                                                             |
 | Map view / style   | `map-view`, `map-source-{saved,itinerary,photo,search}`, `map-layer-{saved,itinerary,photo}-{pin,cluster,cluster-count}`, `map-layer-itinerary-pin-label`, `map-layer-search-pin`                                                           |
+| Map overlays       | `map-top-overlay`, `map-search-overlay`                                                                                                                                                                                                     |
 | Attribution sheet  | `map-sheet-attribution`                                                                                                                                                                                                                     |
 | Locate dialogs     | `map-dialog-locate-rationale`, `map-dialog-locate-settings`, `map-dialog-locate-unavailable` (+ derived `-confirm` / `-cancel`)                                                                                                             |
 | Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26), `map-search-offline`, `map-search-error`                                   |
@@ -820,12 +821,18 @@ photos.
 | Place sheet status | `map-sheet-place-distance`, `map-sheet-place-badge-saved`, `map-sheet-place-error`, `map-sheet-place-action-error`                                                                                                                          |
 | Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
 | Detail status      | `place-detail-distance`, `place-detail-badge-saved`                                                                                                                                                                                         |
+| Detail states      | `place-detail-header`, `place-detail-loading`, `place-detail-missing`, `place-detail-error`, `place-detail-banner-offline`, `place-detail-banner-refresh`, `place-detail-banner-action`                                                     |
+| Detail content     | `place-detail-category`, `place-detail-note`, `place-detail-button-save-note`                                                                                                                                                               |
+| Detail fresh block | `place-detail-fresh`, `place-detail-fresh-attribution`, `place-detail-fresh-field-{key}`, `place-detail-fresh-tip-{index}` (tips carry no entity id)                                                                                        |
 | Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
 | Offline status     | `trip-settings-sheet-offline`, `offline-pack-status`, `offline-pack-past-offer`, `offline-pack-offline-notice`                                                                                                                              |
 
 **Round-2 testID notes (ids ruled 2026-09-19, except the Q2-240 naming pick,
-which is pending Sean)** — the ids above are the single inventory; these
-notes explain the entries the original inventory did not anticipate:
+which is pending Sean)** — the ids above are the inventory of shipped map
+and place-detail ids (the structural and state ids — overlays, detail
+states, content, fresh block — carry no round-2 ruling of their own; they
+complete the list). These notes explain the entries the original inventory
+did not anticipate:
 
 - **`map-pin-*` / `map-cluster-*` live in the GeoJSON feature's
   `properties.testID`, not in RN `testID` props (Q2-210):** style-layer pins
