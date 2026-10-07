@@ -431,8 +431,12 @@ list pickers such as the timezone field).
   only — tapping the already-highlighted day does NOT commit.
   Tap-the-highlighted-day-to-commit needs a custom calendar (or day-cell hit
   detection) and is deliberately NOT adopted in v1 — no urgency; it would be
-  its own task if ever wanted. A same-value Done is a full no-op (it does not
-  clear a standing field error).
+  its own task if ever wanted. Consumers SHALL treat a same-value commit as a
+  no-op (compare before latch), so a standing field error survives an unchanged
+  Done — `DateField` itself always calls `onSelect`, and the guard is
+  per-consumer (e.g. `ExpenseForm.tsx` returns early on `date === spentAt`).
+  `(trips)/new.tsx` is a known gap: its start/end date field errors clear on an
+  unchanged Done.
 - **Time commits on first wheel settle (iOS spinner) (Q2-295):** the time
   spinner commits as soon as the wheel settles (hour then minute = two
   opens). A draft-until-Done time model is NOT adopted — it would change the
