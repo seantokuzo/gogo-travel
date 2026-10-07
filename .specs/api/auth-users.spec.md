@@ -944,7 +944,9 @@ implementers.
 - **Apple server-to-server notifications** (credential revoked/email
   changed): additive later; `apple_credentials` doesn't preclude it.
 - **Object-storage provider choice + storage-side encryption/ACLs** — P-3
-  infra escalation (schema spec §3.7).
+  infra escalation (schema spec §3.7), **deferred to P-12 (trip photos)**
+  — reaffirmed 2026-09-19 (Q2-298); the `ObjectStorage` port stays
+  provider-agnostic and fails safe until then.
 - **Exact package versions** (`jose`, `expo-secure-store`,
   `expo-apple-authentication`) — pinned at P-3 via `npm view` + Context7
   (R-shared-13; CLAUDE.md § Before you code).
