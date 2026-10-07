@@ -106,6 +106,12 @@ null]`; it still appears in list surfaces by name. See R-map-26.
   coordinate-less custom place) THE SYSTEM SHALL NOT render the navigate
   control at all — never a URL built from `null` coordinates, never merely
   a `disabled` affordance.
+  **AMENDED (round-2, T-8.3 — ruled 2026-09-19):** v1 hands off through the
+  Google Maps URLs API only, with the place's coordinates as `destination`
+  and no `travelmode` parameter (Q2-232) — the T-7.5 directions ruling
+  applied verbatim. The Apple Maps variant is one question, decided once
+  with the T-7.5 directions item (Q2-125, itinerary spec §2.7); this rule
+  follows that ruling and does not re-litigate it.
 
 ### Place sheet & detail (`map/place/[placeId]`, root `place-detail-screen`)
 
@@ -153,9 +159,39 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   (no request on mount); WHEN permission is denied THE SYSTEM SHALL keep
   the map fully functional without the puck, and locate-me SHALL show a
   one-tap path to Settings — never a repeated prompt loop.
+  **AMENDED (round-2, T-8.3 — each ruled 2026-09-19):**
+  - **Rationale first (Q2-234):** WHEN locate-me is tapped before any grant
+    THE SYSTEM SHALL front the one system prompt with a ConfirmDialog
+    carrying the rationale copy (§2.6) — declining changes nothing. WHEN
+    the system prompt is then denied THE SYSTEM SHALL record the denial and
+    STOP: the Settings dialog waits for the user's NEXT locate tap — no
+    repeated prompt loop, and never surfaced unprompted. Every tap in the
+    denied state raises the Settings dialog (user-initiated and dismissible
+    each time, hence non-blocking).
+  - **Granted but the read fails (Q2-239):** WHEN permission is granted but
+    the position read rejects (Location Services off, or a transient GPS
+    fault) THE SYSTEM SHALL raise the Settings-hop dialog — Settings is the
+    actionable path for the services-off cause — and keep the map fully
+    functional without the puck. The dialog carries its own copy, distinct
+    from the denial's (Q2-266).
 - **R-map-17 (locate-me):** WHEN locate-me is tapped with permission
   granted THE SYSTEM SHALL animate the camera to the user with the trip
   pins still loaded (no layer reset).
+  **AMENDED (round-2, T-8.3 — each ruled 2026-09-19):**
+  - **Single shot (Q2-235):** each locate tap performs ONE position read
+    (`getCurrentPositionAsync`) — never a continuous `watchPositionAsync`;
+    the fly-to and the distance labels need a single fix, and live updates
+    are the SDK puck's own concern. The fly-to zoom is the fixed single-pin
+    zoom, 14.
+  - **Distance labels (Q2-235):** metric ("850 m", "1.2 km", "23 km"),
+    haversine on-device, never sent to the server. The unit cut branches on
+    the ROUNDED value so a label never misstates magnitude: 999.6 m renders
+    "1.0 km", never "1000 m"; the 10 km cut is a precision switch inside
+    the unit, so 9999.6 m renders "10.0 km".
+  - **Camera-intent store (Q2-236):** the locate fly-to hands the camera
+    its target through a consume-once intent store that is NOT trip-scoped —
+    an intent carries only the user's own location, so the worst case is a
+    misplaced viewport (contrast the trip-scoped pending-focus, §2.7).
 
 ### Offline tile packs (StylePack + TileRegion)
 
@@ -248,6 +284,31 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   WHILE the trip has none, see R-map-26 — the floor widens and the bound
   drops entirely, never a fixed 2-char request against no geo bound (a live
   server 400).
+  **AMENDED (round-2, T-8.3 — each ruled 2026-09-19):**
+  - **Geo bound (Q2-223):** the bound is the destination-region envelope —
+    the envelope of `regionCellsForDestination`, i.e. the exact spine-ingest
+    coverage (places spec §3.5) — NOT the live viewport. The viewport bias
+    named above applies once camera state is exposed to the search call
+    site, a one-call-site swap.
+  - **Antimeridian (Q2-224):** WHEN the destination sits within one cell of
+    ±180° THE SYSTEM SHALL search a clipped box — wrapped neighbor cells
+    are dropped — rather than issue two calls or error.
+  - **Request shape (Q2-226):** `trip_id` rides every map search (custom
+    places saved to this trip stay findable, R-places-8; membership is
+    server-checked); the client pins the page limit at 20.
+  - **Query key (Q2-225):** map search is its own query-key family, disjoint
+    from destination search — results are global spine rows, and the key is
+    suffixed with the tripId so per-trip custom-place visibility never
+    bleeds across trips.
+  - **Offline (Q2-231):** the proactive arm (device known offline) disables
+    the query outright — no spinner that never resolves — and the reactive
+    arm keys off the status-0 transport marker; both arms render the same
+    offline notice (`map-search-offline`), while real server errors keep the
+    retryable banner (`map-search-error`).
+  - **Result selection (Q2-229):** a result tap selects the FULL `Place`
+    row (the result may be unsaved) and first closes any open place sheet
+    before the sheet re-opens on the result; dismissing the sheet clears
+    every selection source, search included.
 
 - **R-map-26 (coordinate-less destination degrade), NEW — B-7 part 3
   (`B-7/nullable-custom-coords`, Sean ruling 2026-09-13):** WHILE a trip's
@@ -324,6 +385,15 @@ photos.
     independently (per-family counts). There is no dedup or merge across
     families; merging them stays a design alternative to revisit only if
     double pins read as clutter in QA.
+  - **Search family — RULED (Q2-228, ruled 2026-09-19):** the `search` pin
+    family (R-map-25 temporary pins) is NOT a member of the saved /
+    itinerary / photo `PinFamily` union — it has its own structural types
+    (and its own press classifier), so the three-family shell contract stays
+    closed.
+- **Overlay composition — RULED (Q2-230, ruled 2026-09-19):** the search bar
+  sits in the top overlay UNDER the day-filter strip (48 pt clearance); the
+  locate button (`map-button-locate`) sits bottom-right, stacked ABOVE the
+  attribution (i) button (R-map-6).
 - **Z-order (top→bottom):** selected pin → itinerary pins → saved pins →
   photo pins → clusters.
   **Honored per family — RULED (Q2-215, ruled 2026-09-19):** families stack
@@ -383,6 +453,10 @@ photos.
     2026-09-19).
   - Pin-glyph and cluster-count ink use `mapColors.clusterText` — no
     dedicated pin-ink token exists (Q2-212, ruled 2026-09-19).
+  - The search (R-map-25) temporary pin uses `mapColors.pinSelectedRing` —
+    the closest existing "transient highlight" token; no dedicated
+    search-pin color exists and no new token field is added (Q2-227, ruled
+    2026-09-19).
 - **Glyph day numbers — RULED (Q2-209, ruled 2026-09-19):** the pin glyph
   shows the 1-based day number for an in-range day; an out-of-range item
   (R-itin-1) shows its raw arithmetic number (0, -1, …), honest about
@@ -397,6 +471,10 @@ photos.
   save toggle, actions row — Add to day · Navigate · View in itinerary
   (itinerary pins only) · Details. One pin selected at a time; tapping the
   map dismisses (Sheet R-ds-19 mechanics).
+  **Always-mounted — RULED (Q2-237, ruled 2026-09-19):** the place sheet is
+  mounted for the life of the map screen with a NULLABLE place (closed =
+  `null`); exit-frame content retention is not used (it is a
+  `react-hooks/refs` lint violation).
 - **Detail screen** (push, `place-detail-screen`): everything above plus
   saved note editor (R-map-14), fresh premium fields block (hours/rating/
   photos/tips when present, with the Foursquare attribution row —
@@ -465,7 +543,10 @@ photos.
 - Locate-me states: off (no permission) → prompt; denied → Settings
   deeplink hint (once per session, non-blocking); granted → camera fly-to
   (R-map-17). Puck position is never sent to the server by this screen
-  (distance labels computed on-device).
+  (distance labels computed on-device). Per the R-map-16 amendment (Q2-234,
+  ruled 2026-09-19), "once per session, non-blocking" is realized as
+  "never unprompted": the Settings dialog appears only behind the user's own
+  locate tap and is dismissible each time.
 
 ### 2.7 Map ↔ itinerary linking mechanics
 
@@ -480,6 +561,10 @@ photos.
   newest) and trip-scoped — it carries `{ tripId, placeId }`, and a consume
   for a different trip discards AND clears it, so an interrupted jump can
   never surface trip A's place on trip B's map.
+  **Unresolvable focus — RULED (Q2-238, ruled 2026-09-19):** WHEN a pending
+  focus names a `placeId` the map has no pin for (it resolves to no
+  coordinate) THE SYSTEM SHALL present nothing — no improvised fallback row
+  or coordinate source.
 - Today screen's "open map" quick action reuses the same param contract
   (today spec consumes it).
 
@@ -488,11 +573,12 @@ photos.
 | Surface            | testIDs                                                                                                                                                                                                                                     |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`, `map-error`                                                                                                                             |
+| Locate dialogs     | `map-dialog-locate-rationale`, `map-dialog-locate-settings` (+ derived `-confirm` / `-cancel`)                                                                                                                                              |
 | Attribution sheet  | `map-sheet-attribution`                                                                                                                                                                                                                     |
-| Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26)                                                                             |
+| Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26), `map-search-offline`, `map-search-error`                                   |
 | Day filter         | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}`                                                                                                                                                               |
 | Pins/clusters      | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index)                                                                                       |
-| Place sheet        | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details`                                                                                                     |
+| Place sheet        | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details`, `map-sheet-place-distance`, `map-sheet-place-error`                                                |
 | Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
 | Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
 
@@ -510,6 +596,22 @@ anticipate:
 - **`map-error` (Q2-213):** the retry banner for an errored trip-data query;
   ErrorBanner derives `-retry` / `-dismiss` (§2.7 rule 4 of the navigation
   spec).
+- **Six ids beyond the original inventory (Q2-240):** `map-sheet-place-distance`
+  (the sheet's distance label, R-map-17), `map-sheet-place-error` (the
+  Navigate-failure banner), `map-search-offline` (the offline notice) and
+  `map-search-error` (the retryable error banner), and the two locate-me
+  dialogs `map-dialog-locate-rationale` / `map-dialog-locate-settings`.
+- **Dialog naming — the `map-dialog-locate-*` fork, PICKED (Q2-240):**
+  ConfirmDialog base ids take `dialog` in ELEMENT position —
+  `<screen>-dialog-<qualifier>`, the `<screen>-<element>[-<qualifier>]`
+  grammar's own shape (the photos spec's `photo-viewer-dialog-public` is the
+  same form) — so `map-dialog-locate-*` stands, children derive `-confirm` /
+  `-cancel` (navigation spec §2.7 rule 4). The `<qualifier>-dialog` suffix
+  form (the profile screen's three `profile-*-dialog` ids) is the outlier
+  and migrates to the element-position form repo-wide. Dialogs keyed by
+  their triggering control (e.g. `offline-pack-button-delete-confirm`)
+  derive from that control's id and are not dialog-named, so the fork does
+  not touch them.
 
 ### 2.9 Out of scope (explicit)
 
