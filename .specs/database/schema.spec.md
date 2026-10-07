@@ -1030,7 +1030,16 @@ composite. Beyond that, the deliberate composites and their justification:
   `.specs/api/auth-users.spec.md` §3.3, honoring these conventions
   (cross-reference: §3.3.28).
 - **Object-storage provider choice** (photos/avatars/documents/capture raw) —
-  P-3 infra escalation; schema stores provider-agnostic keys.
+  P-3 infra escalation; schema stores provider-agnostic keys. **Ruled
+  2026-09-19 (Q2-298, Sean — round-2 spec pass; deferral first set
+  2026-07-24):** the pick stays DEFERRED to P-12 (trip photos), the first
+  feature that actually blocks on it. Cloudflare R2 (zero egress,
+  S3-compatible) remains the standing recommendation. Until a provider is
+  picked the provider-agnostic `ObjectStorage` port ships and fails safe
+  (`UNCONFIGURED_OBJECT_STORAGE` — presign → 500, commit → 400). Picking
+  earlier is allowed if P-12 lands sooner than expected, but it is a
+  new-billed-service escalation (CLAUDE.md Autonomy Contract #3) and needs
+  an ADR.
 - **Weather provider selection** — build-phase escalation; `weather_cache` is
   provider-agnostic.
 - **Places bulk import tooling** (Overture/FSQ GeoParquet → Postgres) —
