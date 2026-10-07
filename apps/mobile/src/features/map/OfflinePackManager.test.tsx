@@ -7,7 +7,9 @@
  *    saved pack on a `past` trip;
  *  - stale: "Update available" + the drift explainer, refresh/delete present;
  *  - PROACTIVE offline degrade (R-map-22): the derived signal already true
- *    renders the notice without any press.
+ *    renders the notice without any press;
+ *  - Q2-186: the sheet body is a READER — mounting it never starts the
+ *    R-map-18 auto-download (the controller lives once at the trip layout).
  */
 import { screen } from "@testing-library/react-native";
 
@@ -22,17 +24,22 @@ import { makeActiveTrip, makePastTrip } from "@/test-utils/trip-fixtures";
 
 import { OfflinePackManager } from "./OfflinePackManager";
 import { clearPackAnnotationsForTests, writePackAnnotation } from "./offline-pack-annotation";
-import { resetOfflinePacksForTests } from "./offline-pack-controller";
+import { liveOfflinePackControllers, resetOfflinePacksForTests } from "./offline-pack-controller";
 import { packRegionKeyFor } from "./offline-packs";
 
 const LIGHT_STYLE = "mapbox://styles/mapbox/light-v11";
 
 interface OfflineManagerMock {
   getPack: jest.Mock;
+  createPack: jest.Mock;
 }
 const om = (
   jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
 ).__mock.offlineManager;
+const network = (
+  jest.requireMock("expo-network") as { __mock: { getNetworkStateAsync: jest.Mock } }
+).__mock;
+const WIFI = { type: "WIFI", isConnected: true, isInternetReachable: true };
 
 /**
  * Saved-pack device state = annotation AND the SDK pack it records
@@ -66,10 +73,28 @@ beforeEach(() => {
   resetOfflinePacksForTests();
   clearPackAnnotationsForTests();
   om.getPack.mockImplementation(async () => undefined);
+  network.getNetworkStateAsync.mockImplementation(async () => ({
+    type: "NONE",
+    isConnected: false,
+    isInternetReachable: false,
+  }));
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// Q2-186. Falsification: call `useOfflinePackController(trip)` from the
+// manager again and an ACTIVE trip on wifi auto-starts on mount -> red.
+it("READER only (Q2-186): mounting the sheet body on an active trip over wifi starts nothing and reads no network", async () => {
+  network.getNetworkStateAsync.mockImplementation(async () => WIFI);
+  await renderManager(makeActiveTrip(TEST_TRIP_ID));
+  await settle();
+
+  expect(screen.getByTestId("offline-pack-status")).toHaveTextContent("Not downloaded");
+  expect(om.createPack).not.toHaveBeenCalled();
+  expect(network.getNetworkStateAsync).not.toHaveBeenCalled();
+  expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
 });
 
 it("R-map-20: a PAST trip with a saved pack gets the non-blocking free-up-space offer", async () => {

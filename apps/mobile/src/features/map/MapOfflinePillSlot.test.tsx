@@ -10,7 +10,11 @@
  *    in the trip subtree, exactly what production produces) composes with
  *    pack state (R-map-22): saved map vs limited map;
  *  - the pill renders no blocking surface in any state (R-map-21: a View /
- *    one Pressable — never a modal, never a spinner overlay).
+ *    one Pressable — never a modal, never a spinner overlay);
+ *  - Q2-186: the pill is a READER — it never mounts the activation
+ *    controller (that lives once at the `[tripId]` layout), so an active trip
+ *    on wifi renders the pill WITHOUT starting a download or reading the
+ *    network.
  */
 import { fireEvent, screen } from "@testing-library/react-native";
 
@@ -24,7 +28,11 @@ import { makeActiveTrip } from "@/test-utils/trip-fixtures";
 
 import { MapOfflinePillSlot } from "./MapOfflinePillSlot";
 import { clearPackAnnotationsForTests, writePackAnnotation } from "./offline-pack-annotation";
-import { resetOfflinePacksForTests, useOfflinePackStore } from "./offline-pack-controller";
+import {
+  liveOfflinePackControllers,
+  resetOfflinePacksForTests,
+  useOfflinePackStore,
+} from "./offline-pack-controller";
 import { packNameFor, packRegionKeyFor } from "./offline-packs";
 
 interface OfflineManagerMock {
@@ -34,6 +42,14 @@ interface OfflineManagerMock {
 const om = (
   jest.requireMock("@rnmapbox/maps") as { __mock: { offlineManager: OfflineManagerMock } }
 ).__mock.offlineManager;
+
+const network = (
+  jest.requireMock("expo-network") as {
+    __mock: { getNetworkStateAsync: jest.Mock; addNetworkStateListener: jest.Mock };
+  }
+).__mock;
+const WIFI = { type: "WIFI", isConnected: true, isInternetReachable: true };
+const NO_CONNECTION = { type: "NONE", isConnected: false, isInternetReachable: false };
 
 const trip = () => makeActiveTrip(TEST_TRIP_ID);
 const LIGHT_STYLE = "mapbox://styles/mapbox/light-v11";
@@ -87,10 +103,27 @@ beforeEach(() => {
   clearPackAnnotationsForTests();
   om.createPack.mockImplementation(async () => undefined);
   om.getPack.mockImplementation(async () => undefined);
+  network.getNetworkStateAsync.mockImplementation(async () => NO_CONNECTION);
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+});
+
+// Q2-186. Falsification: call `useOfflinePackController(trip)` from the pill
+// again (the pre-ruling shape) and an ACTIVE trip on wifi starts a download
+// the moment the pill mounts -> createPack / getNetworkStateAsync fire -> red.
+it("READER only (Q2-186): an active trip on wifi renders the pill with NO download start, network read or controller", async () => {
+  network.getNetworkStateAsync.mockImplementation(async () => WIFI);
+  await renderPill();
+  await settle();
+
+  expect(om.createPack).not.toHaveBeenCalled();
+  expect(om.getPack).not.toHaveBeenCalled();
+  expect(network.getNetworkStateAsync).not.toHaveBeenCalled();
+  expect(network.addNetworkStateListener).not.toHaveBeenCalled();
+  expect(liveOfflinePackControllers(TEST_TRIP_ID)).toBe(0);
+  expect(screen.queryByTestId("map-pill-offline")).toBeNull();
 });
 
 it("hidden online — no pack, nothing to say (and nothing blocking the map)", async () => {
@@ -123,6 +156,8 @@ it("failed → retry pill; the tap starts a real download (R-map-21)", async () 
   await renderPill();
   await settle();
   expect(screen.getByText("Map save failed — tap to retry")).toBeOnTheScreen();
+  // a11y unchanged by the controller move: the retry pill is a labeled button.
+  expect(screen.getByRole("button", { name: "Map save failed — tap to retry" })).toBeOnTheScreen();
 
   await fireEvent.press(screen.getByTestId("map-pill-offline"));
   await settle();
