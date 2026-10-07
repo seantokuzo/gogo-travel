@@ -664,7 +664,11 @@ photos.
   non-cacheable query; its response's spine half is discarded). The
   `placeDetail` and `placeFresh` keys live OUTSIDE the trips query subtree:
   they are global, auth-only reads, so losing trip access never evicts
-  them.
+  them. Spine places are readable behind auth alone; a custom place's
+  privacy is the server's indistinguishable 404 (R-places-8), which every
+  reader of a retained `placeDetail` entry SHALL let outrank the cached
+  row (the `placeDetail` key doc in `query-client.ts`; the OFFLINE + STATES
+  note in `map/place/[placeId].tsx` — "`is404` OUTRANKS retained cache").
 - Fresh payload never enters Zustand, SQLite, MMKV, analytics, or console
   logging; render-only props. Enforced by review + a lint-level grep in
   CI (mirror of places spec PL-3 guard test).
@@ -674,7 +678,8 @@ photos.
   includes `package.json`, because a persister dependency is a violation
   before its first import. No TanStack persister exists in the app today
   (the P-8 offline posture is warm-session), so the guard fails the moment
-  one appears without the exclusion above landing in the same change.
+  one appears; that change must land the exclusion above AND deliberately
+  re-scope the guard's no-persister rule to assert it.
 - Offline/error/absent ⇒ block simply not rendered (R-map-10).
 
 ### 2.5 Offline pack lifecycle
