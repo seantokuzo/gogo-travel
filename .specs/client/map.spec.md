@@ -208,7 +208,8 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   (no request on mount); WHEN permission is denied THE SYSTEM SHALL keep
   the map fully functional without the puck, and locate-me SHALL show a
   one-tap path to Settings — never a repeated prompt loop.
-  **AMENDED (round-2, T-8.3 — each ruled 2026-09-19):**
+  **AMENDED (round-2, T-8.3/T-8.7 — Q2-234 and Q2-266 ruled 2026-09-19;
+  Q2-239 as shipped at T-8.3, superseded by Q2-266):**
   - **Rationale first (Q2-234):** WHEN locate-me is tapped before any grant
     THE SYSTEM SHALL front the one system prompt with a ConfirmDialog
     carrying the rationale copy (§2.6) — declining changes nothing. WHEN
@@ -217,12 +218,15 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
     repeated prompt loop, and never surfaced unprompted. Every tap in the
     denied state raises the Settings dialog (user-initiated and dismissible
     each time, hence non-blocking).
-  - **Granted but the read fails (Q2-239):** WHEN permission is granted but
-    the position read rejects (Location Services off, or a transient GPS
-    fault) THE SYSTEM SHALL raise the Settings-hop dialog — Settings is the
-    actionable path for the services-off cause — and keep the map fully
-    functional without the puck. The dialog carries its own copy, distinct
-    from the denial's (Q2-266, below).
+  - **Granted but the read fails (Q2-239 — as shipped at T-8.3, superseded
+    by Q2-266 below):** the T-8.3 build raised the denial's "Location is
+    off" dialog here; Q2-239's flagged alternative — distinct failure-arm
+    copy — is what the T-8.7 rider shipped and Q2-266 keeps. End state: WHEN
+    permission is granted but the position read rejects (Location Services
+    off, or a transient GPS fault) THE SYSTEM SHALL raise the
+    Settings-hop dialog with its own copy, distinct from the denial's
+    (Q2-266, below) — Settings is the actionable path for the services-off
+    cause — and keep the map fully functional without the puck.
   - **Unavailable-dialog copy (Q2-266):** title "Couldn't get your
     location"; body "Your location didn't come through — Location Services
     may be off, or the signal dropped. Check Settings, or try again in a
