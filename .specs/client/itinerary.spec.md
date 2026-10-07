@@ -736,9 +736,9 @@ extension; this batch does not touch them.
 - **R-itin-76 (required floor + indicator; Q2-182 ruled 2026-09-19; Q2-181
   — as shipped, Sean pick pending, below):** the booking form's required
   fields are DERIVED from the shared Zod schemas, never hand-listed (the form
-  probes
-  `BookingCreateSchema.shape` and the category's `BookingDetails` member with
-  `undefined` — Zod's own answer cannot disagree with the parse a save runs).
+  probes `BookingCreateSchema.shape` and the category's `BookingDetails`
+  member with `undefined` — Zod's own answer cannot disagree with the parse a
+  save runs).
   Today only `title` is required (`category` is route-supplied); every other
   field stays optional BY DESIGN — a flight with no departure time is savable
   (API R-ib-32; Q2-181 — as shipped; Sean pick pending: (a) keep as shipped /
