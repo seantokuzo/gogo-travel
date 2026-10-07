@@ -68,7 +68,7 @@ enforced in CI.**
   it takes effect the moment QS-T6 adds that file.
 - **Where hooks are off** (a loop session started with hooks disabled, `--bare`), nothing injects it, so the
   entry point reads `docs/STATE.md` explicitly. QS-T8 (PR-C, a later PR) makes the loop do that, by changing
-  `DEFAULT_PROMPT` in `scripts/run-loop.sh`; until then, loop sessions get STATE from today's user-level SessionStart hook while hooks run, and once SB-T4 (PR-C) turns hooks off, only via their prompt or CLAUDE.md's read-first line. At ≤ 6 KiB the read is cheap.
+  `DEFAULT_PROMPT` in `scripts/run-loop.sh`, in the same PR (PR-C) that turns loop-session hooks off (SB-T4), so on main a loop session always has one route to STATE. Before PR-C it gets STATE the way any session does, from whichever SessionStart hook is active. At ≤ 6 KiB the read is cheap.
 - **Template** (section sizes are guidance; the hard cap is the file total). Replace, don't append:
 
   | Section                         | Guidance  | Holds                                                                               |
