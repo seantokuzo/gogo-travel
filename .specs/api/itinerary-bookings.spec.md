@@ -117,14 +117,17 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
   THE SYSTEM SHALL append it with a gapped `sort_order` (last-in-day + 1024,
   schema §3.3.10); WHEN a day's order is PUT THE SYSTEM SHALL atomically
   reassign the listed items to that day with `sort_order = 1024 × position`;
-  ids in the list that do not resolve to an item of THIS trip — deleted
-  elsewhere, never existed, or belonging to another trip — SHALL all be
-  ignored identically (last-write-wins), with no status, body, or error code
-  that distinguishes a foreign id from a dead one (Q2-064, ruled 2026-09-19:
-  replaces the earlier "ids belonging to another trip SHALL be rejected
-  `VALIDATION_FAILED`", which was a cross-trip existence oracle on item
-  UUIDs — an ex-member could probe whether an item survived). Duplicate ids
-  in the list SHALL be rejected `VALIDATION_FAILED` (R-ib-28).
+  ids in the list that no longer exist SHALL be ignored (last-write-wins),
+  ids belonging to another trip SHALL be rejected `VALIDATION_FAILED`
+  (Q2-064 — as shipped; Sean pick pending: (a) fold foreign ids into the
+  dead-id LWW-ignore, or (b) reject unknown ids too — Rec: "Fold foreign ids
+  into the dead-id LWW-ignore, or reject unknown ids too — both close the
+  oracle; pick one and reword R-ib-15. Real alternative, security-flavored."
+  As shipped, a foreign id 400s while a dead id is ignored — a cross-trip
+  existence oracle on item UUIDs: an ex-member can probe whether an item
+  survived.) [NEEDS CLARIFICATION: Q2-064 — fold foreign ids into the
+  dead-id LWW-ignore, or reject unknown ids too?] Duplicate ids in the list
+  SHALL be rejected `VALIDATION_FAILED` (R-ib-28).
 - **R-ib-16 (booking-item field protection):** WHEN a `booking`-kind item's
   `day`/`end_day`/`start_time`/`end_time` are edited (`end_day` rides the
   protected set — it is booking-derived exactly as `day` is for a spanning
@@ -186,14 +189,20 @@ spec R-nav-15 posture). Reads: any role. Writes: `editor` or `owner`;
 
 Sean approved the round-2 spec-pass batch wholesale on 2026-09-19
 (`.specs/OPEN-QUESTIONS.md` § Round 2): each `Q2-NNN` rule below is the
-as-shipped interpretation made normative (or the named alternative where the
-batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
+as-shipped interpretation made normative. Items whose Rec named a real
+alternative — which approve-all did NOT decide (Q2-056, Q2-064, Q2-181) — are
+written as shipped, labelled "Sean pick pending", and carry a
+`[NEEDS CLARIFICATION]` marker. The OPEN-QUESTIONS rows stay as the decision
+record.
 
-- **R-ib-25 (`unscheduled=false`; Q2-056, ruled 2026-09-19):** WHEN the
-  bookings list is queried with `unscheduled=false` THE SYSTEM SHALL treat it
-  as no filter — identical to the parameter being absent. R-ib-10 defines
-  only `true`; the complement ("false = scheduled-only") is deliberately NOT
-  specced in v1 (a client that needs it asks for a new rule).
+- **R-ib-25 (`unscheduled=false`; Q2-056 — as shipped; Sean pick pending:
+  (a) bless as-is / (b) spec the complement "false = scheduled-only"):** WHEN
+  the bookings list is queried with `unscheduled=false` THE SYSTEM SHALL
+  treat it as no filter — identical to the parameter being absent. R-ib-10
+  defines only `true`. Rec: "Bless as-is, or spec the complement ("false =
+  scheduled-only") — real alternative, low urgency until a client wants it."
+  [NEEDS CLARIFICATION: Q2-056 — bless `unscheduled=false` as no-filter, or
+  spec "false = scheduled-only"?]
 - **R-ib-26 (direct-create field legality; Q2-057, Q2-058, ruled 2026-09-19):**
   WHEN an item is created directly THE SYSTEM SHALL reject `title` on a
   `place_visit` as a kind/field mismatch (`VALIDATION_FAILED` — a
@@ -240,16 +249,20 @@ batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
   detail resolves from the composite itinerary read (R-ib-13), whose default
   range covers every item by construction (§3.4), so an id absent from it is
   genuinely not found (a booking's detail has its own GET, §3.4).
-- **R-ib-32 (the required floor; Q2-181, ruled 2026-09-19):** WHEN a booking
-  is created THE SYSTEM SHALL require only `category` and `title` — every
-  `details` field is optional BY DESIGN (an `idea` may know nothing; capture
-  fills what it finds; the UI prompts for gaps), so a flight with no
-  departure time or a lodging with no check-in is savable. Any further floor
-  (e.g. flight ⇒ departure date + time) is a `@gogo/shared` schema change
-  every writer inherits — the capture pipeline included — and needs its own
-  ruling; cross-field ordering rules (`end ≥ start`) stay server-side
-  refiners, never on the `BookingDetails` shapes that double as Claude
-  structured output (contracts R-shared-7).
+- **R-ib-32 (the required floor; Q2-181 — as shipped; Sean pick pending:
+  (a) keep as shipped / (b) a real floor):** WHEN a booking is created THE
+  SYSTEM SHALL require only `category` and `title` — every `details` field is
+  optional BY DESIGN (an `idea` may know nothing; capture fills what it
+  finds; the UI prompts for gaps), so a flight with no departure time or a
+  lodging with no check-in is savable. Rec: "Keep as shipped unless a real
+  floor is wanted (e.g. flight ⇒ departure date+time). If so, it's a
+  shared-schema change everyone inherits — a real alternative." Any further
+  floor is a `@gogo/shared` schema change every writer inherits (the capture
+  pipeline included); cross-field ordering rules (`end ≥ start`) stay
+  server-side refiners, never on the `BookingDetails` shapes that double as
+  Claude structured output (contracts R-shared-7).
+  [NEEDS CLARIFICATION: Q2-181 — keep `title` as the only required field, or
+  add a floor (e.g. flight ⇒ departure date+time)?]
 
 ### Upstream resolutions (formerly blocking)
 
@@ -627,15 +640,14 @@ cross-day drag is one call) **except** `booking`-kind items with
 booking-derived days, which are rejected (R-ib-16).
 
 **Response 200**: `{ items: ItineraryItem[] }` — the day's resulting ordered
-items (`sort_order = 1024 × position`, R-ib-15). Ids that do not resolve to an
-item of this trip — deleted elsewhere, never existed, or another trip's — are
-ignored identically (LWW, R-ib-15; no signal distinguishes them); unlisted
-items on the day are untouched (R-ib-28); side effect: legs dirty for `:day`
-and any source days.
+items (`sort_order = 1024 × position`, R-ib-15). Missing ids ignored (LWW,
+R-ib-15); unlisted items on the day are untouched (R-ib-28); side effect: legs
+dirty for `:day` and any source days.
 
-**Errors**: 400 VALIDATION_FAILED (duplicate ids; derived-day booking item
-pulled across days; a pulled spanning item whose result is structurally
-invalid, R-ib-28; malformed `:day`, R-ib-29) · 401 · 403 · 404.
+**Errors**: 400 VALIDATION_FAILED (id from another trip — as shipped, Q2-064
+pick pending at R-ib-15; duplicate ids; derived-day booking item pulled across
+days; a pulled spanning item whose result is structurally invalid, R-ib-28;
+malformed `:day`, R-ib-29) · 401 · 403 · 404.
 
 **Requirements covered**: R-ib-15, R-ib-16, R-ib-18, R-ib-19, R-ib-24, R-ib-28, R-ib-29
 
@@ -643,7 +655,7 @@ invalid, R-ib-28; malformed `:day`, R-ib-29) · 401 · 403 · 404.
 
 - [ ] Reorder assigns 1024-gapped values; response reflects post-state
 - [ ] Cross-day pull works for custom/place_visit/timeless-booking items; rejected for timed-booking items
-- [ ] Deleted-elsewhere ids silently ignored; foreign-trip ids ignored with a byte-identical response (Q2-064 — no cross-trip existence oracle)
+- [ ] Deleted-elsewhere ids silently ignored; foreign-trip ids 400 (as shipped — Q2-064 pick pending at R-ib-15)
 - [ ] Unlisted items on the day survive; duplicate ids 400; spanning pull keeps `end_day`, inverted span 400 (R-ib-28)
 - [ ] Malformed `:day` 400 `VALIDATION_FAILED`, not 404 (R-ib-29)
 - [ ] Concurrent PUTs: last write wins, no partial interleave (transaction)
