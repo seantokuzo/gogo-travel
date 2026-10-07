@@ -101,8 +101,8 @@
   rows, scrollable 00–24), with each timed item drawn as a block positioned
   and sized by `start_time`/`end_time`; tapping a block opens its detail.
   While the timezone switcher is visible the block is positioned by its
-  CONVERTED time in the active zone (R-itin-80), and on a multi-zone trip
-  the first tap focuses the block (R-itin-81; opening gesture per NC-3)
+  CONVERTED time in the active zone (R-itin-80), and a tap on a grid
+  element follows R-itin-81 (NC-3); bucket opens and routing are unchanged
   (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-14**: WHEN a time range on a day has no items THE SYSTEM SHALL
   leave it visibly empty, and tapping an empty slot SHALL open the add flow
@@ -204,9 +204,9 @@ unaffected and keeps its existing day-sectioned form.
   copy affordance (`mono` type role), price, source label
   (manual/email/share/deeplink return), linked place row → map tab, linked
   expenses row (money-spec seam), and scheduled day/time row → jumps to the
-  itinerary position. On a multi-zone trip the opening gesture is set by
-  R-itin-81 (NC-3 — the first tap focuses); routing is unchanged
-  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
+  itinerary position. While the timezone switcher is visible, a tap on a
+  list row / grid element follows R-itin-81 (NC-3); bucket opens and
+  routing are unchanged (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-25**: WHEN the booking's category has partner deeplinks (§2.7)
   THE SYSTEM SHALL render deeplink-out buttons on the detail screen with the
   same construction + recording rules as R-itin-21/22.
@@ -220,9 +220,10 @@ unaffected and keeps its existing day-sectioned form.
   SHALL push the `itinerary-item` screen (navigation spec §2.4): title/place
   link, day + times, notes, edit (reopens the form modal) and delete
   (ConfirmDialog); tapping a `booking`-kind item routes to `booking-detail`
-  instead — booking content is never duplicated across two screens. On a
-  multi-zone trip the opening gesture is set by R-itin-81 (NC-3 — the
-  first tap focuses); routing is unchanged (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
+  instead — booking content is never duplicated across two screens. While
+  the timezone switcher is visible, a tap on a list row / grid element
+  follows R-itin-81 (NC-3); bucket opens and routing are unchanged
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 
 ### States, offline, testIDs
 
@@ -505,7 +506,9 @@ whose Rec named a real alternative — which approve-all did NOT decide
 (Q2-056, Q2-064, Q2-125, Q2-181) — are written as shipped, labelled "as
 shipped; Sean pick pending", and carry a `[NEEDS CLARIFICATION]` marker. This
 file's 2 open markers are Q2-125 (R-itin-67) and Q2-181 (R-itin-76); the
-other two live in `.specs/api/itinerary-bookings.spec.md`. The spec is
+other two live in `.specs/api/itinerary-bookings.spec.md`; the 2026-10-06
+T-7.17 amendment adds NC-1..NC-6 (R-itin-38, R-itin-79..82), so 8 in
+total — see the trace paragraph. The spec is
 approvable once all are ruled. Grouped by source task. R-itin-33..41 above
 are the separately signed-off P-7 extension; this batch does not touch them.
 
@@ -962,9 +965,9 @@ rows, Sheet for pickers/modes) — zero new primitives.
 - **Item card** (Card, pressable): leading category icon (booking) or
   place/custom glyph; title; `start–end` times (`caption`, or "No time");
   status Badge per R-itin-8; overlap warning chip per R-itin-7. Press →
-  detail (R-itin-24/27); on a multi-zone trip the first press focuses the
-  card (R-itin-81, NC-3) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06). Long-press → drag
-  (R-itin-2/3).
+  detail (R-itin-24/27); while the timezone switcher is visible, a tap on a
+  list row follows R-itin-81 (NC-3); bucket opens and routing are unchanged
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06). Long-press → drag (R-itin-2/3).
 - **Travel-time chip** (between cards): mode icon + "18 min" (`caption`),
   default mode per R-itin-5. Tap → mode Sheet: one row per computed leg
   (walk/drive/cycle/transit — absent modes simply missing) + "Directions"
