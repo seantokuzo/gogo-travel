@@ -236,9 +236,16 @@ export function isStatusActionOffered(status: BookingStatus, target: StatusActio
 /**
  * The ONE home of the same-status rule: tapping the status a booking already
  * holds ("Booked" on a booked card, "Planned" on a planned one) gives it a day
- * without changing its status. The request builder and the sheet's copy
- * (`statusActionCopy`) both read it here, so the label can never say "Add to
- * day" while the request carries a status, or the reverse.
+ * without changing its status. The request builder (`scheduleStatusToSend`)
+ * and the sheet's copy (`statusActionCopy`) both read it here, so the two
+ * cannot drift apart on what counts as "same".
+ *
+ * The invariant is "never a wrong write", NOT "label ⇔ `status` key": the
+ * label and the wire status legitimately diverge with no wrong write — idea +
+ * Planned reads "Mark as Planned" yet omits `status` (the server's omitted
+ * path is `idea → planned`), and a sheet opened on an idea + Booked tap
+ * against a live row that has since become booked omits `status` and says so
+ * with a banner.
  */
 export function isSameStatusAction(booking: Booking, target: StatusActionTarget): boolean {
   return target === booking.status;

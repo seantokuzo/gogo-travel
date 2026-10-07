@@ -678,7 +678,10 @@ it("empty (R-itin-40): an idea with no date stays untouched when the sheet is di
  * refetch healthy, the refetch alone puts the card back and a deleted
  * rollback still passes).
  */
-async function holdRequest(route: "schedule" | "status", opts?: { breakRefetch?: boolean }) {
+async function holdRequest(
+  route: "schedule" | "status",
+  opts?: { breakRefetch?: boolean; target?: "planned" | "booked" },
+) {
   let rejectRequest!: (error: Error) => void;
   let refetchBroken = false;
   let brokenRefetches = 0;
@@ -714,7 +717,7 @@ async function holdRequest(route: "schedule" | "status", opts?: { breakRefetch?:
     },
   });
 
-  await openSheet(idea.id, "planned");
+  await openSheet(idea.id, opts?.target ?? "planned");
   if (route === "schedule") await pickDay();
   await fireEvent.press(screen.getByTestId("itinerary-ideas-schedule-button-confirm"));
   // `onMutate` awaits two cancelQueries before writing, so the optimistic
@@ -828,6 +831,46 @@ it.each(["schedule", "status"] as const)(
 
     // Settled ⇒ the gate releases and the chrome works again.
     expect(screen.getByTestId("itinerary-ideas-schedule-sheet-close")).not.toBeDisabled();
+    await closeSheet();
+  },
+);
+
+/**
+ * Round-1 verifier O2/O4: the sheet's copy is keyed to the TAP-TIME booking,
+ * and nothing pinned it. The optimistic write flips the LIVE row's status
+ * (idea → booked) the instant the request leaves, so a copy derived from the
+ * live row would turn "Mark … as Booked" into "Add … to a day" mid-flight
+ * (booked + Booked reads as same-status). The collab-race pin cannot tell the
+ * two apart — its live row is still `idea` there — so this one HOLDS the
+ * request genuinely in flight, waits for the optimistic flip (the card leaving
+ * the bucket IS that write), and reads the sheet mid-flight.
+ *
+ * Falsify, each on its own: the confirm label from `liveBooking ?? action.booking`
+ * (O2) ⇒ "Add to day"; the title from it (O4) ⇒ `Add "…" to a day` ⇒ RED.
+ * The deferred promise is released in `finally` (a throw above must not wedge
+ * the file) and stragglers are rejected by `afterEach`.
+ */
+it.each([
+  ["schedule", "TeamLab Planets"],
+  ["status", "Sumo tournament"],
+] as const)(
+  "the %s route's sheet keeps the TAP-TIME copy ('Mark … as Booked') mid-flight, after the optimistic write flipped the live row to booked",
+  async (route, title) => {
+    const { reject } = await holdRequest(route, { target: "booked" });
+    try {
+      // Mid-flight, post-flip: the card has left the bucket; the sheet reads the
+      // snapshot copy, not the live (now booked) row's same-status copy.
+      expect(screen.getByText(`Mark "${title}" as Booked`)).toBeOnTheScreen();
+      expect(screen.queryByText(`Add "${title}" to a day`)).toBeNull();
+      const confirm = screen.getByTestId("itinerary-ideas-schedule-button-confirm");
+      expect(confirm.props.accessibilityLabel).toBe("Mark as Booked");
+      expect(confirm.props.accessibilityState).toMatchObject({ busy: true });
+    } finally {
+      await act(async () => reject(new ApiRequestError(403, "FORBIDDEN", "not an editor")));
+    }
+    await waitFor(() =>
+      expect(screen.getByTestId("itinerary-ideas-schedule-error")).toBeOnTheScreen(),
+    );
     await closeSheet();
   },
 );

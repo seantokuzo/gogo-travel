@@ -152,9 +152,11 @@ function StatusActionForm({
     const request = buildStatusActionRequest(booking, target, form);
     if (request === null) {
       // `blocked` already disables confirm for an invalid form, so a null
-      // here means the LIVE row no longer offers this action (a collaborator
-      // advanced it while the sheet was open — never demote). Say so; a
-      // button that silently does nothing reads as frozen.
+      // here is not a form error. Usually the LIVE row no longer offers this
+      // action (a collaborator advanced it while the sheet was open — never
+      // demote); it can also be the wire schema's safeParse refusing the
+      // candidate. Either way nothing is sent: say so, because a button that
+      // silently does nothing reads as frozen.
       onUnavailable();
       return;
     }
