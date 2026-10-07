@@ -307,14 +307,20 @@ export interface PlacesExactTierMatchParams {
  *      pre-change tier-only query ........................... 0.06 ms
  *      this query, creator with 500 custom rows ............. 1.6 ms
  *      this query, creator with 5,500 custom rows ........... 7.7 ms
- *    Custom places are hand-created one row per user action, the endpoint
- *    is per-user rate-limited (RATE_LIMITS.placesSearch, 120/min) and
- *    debounced, and the cost lands only on the caller's own request. A
- *    partial `(created_by, fold(name)) WHERE source = 'custom'` index would
- *    make the arm O(log n) but costs a migration + per-write maintenance
- *    for a creator size nobody has today. REVISIT if custom-place counts
- *    per creator reach the tens of thousands (note: `POST /places` has no
- *    per-user cap today) — the index is additive, no query change needed.
+ *    The cost is CALLER-CONTROLLED (O(the caller's own custom rows)) but
+ *    runs on SHARED DB compute: `POST /places` has no rate limiter (only
+ *    search has `searchLimiter`, RATE_LIMITS.placesSearch, 120/min), there
+ *    is no per-user custom-place cap, and there is no prod
+ *    `statement_timeout`, so one user can inflate their own creator scan.
+ *    The same lever already exists via the trigram arm, which ALSO pays a
+ *    cross-user cost (stranger custom rows are fetched, then
+ *    visibility-filtered) — this arm adds no new class of amplification.
+ *    A partial `(created_by, fold(name)) WHERE source = 'custom'` index
+ *    would make the arm O(log n) but costs a migration + per-write
+ *    maintenance for a creator size nobody has today. REVISIT if
+ *    custom-place counts per creator reach the tens of thousands, or when a
+ *    `POST /places` limiter/cap lands — the index is additive, no query
+ *    change needed.
  *  - No bbox/near — `routes.ts` only reaches this arm when both geo bounds
  *    are absent; a short `q` WITH a geo bound keeps using the existing
  *    geo-bounded arm (`placesSearchQuery`), unaffected. `coarse_category`
