@@ -151,11 +151,20 @@ cleanup
 # --- skill paths: run-loop.sh may only name skill files that exist ----------
 # Skills moved out of the old dot-agents dir into .claude/skills/ (2026-10). A
 # stale path in DEFAULT_PROMPT sends every chained session to a missing file.
-# Guards: DEFAULT_PROMPT names an existing skill file; every skill .md path is
-# well-formed and exists; no .agents path. Reads the REAL script and the REAL
-# tree, not a sandbox.
-dp="$(sed -n "s/^DEFAULT_PROMPT='Read \(\.claude\/skills\/[A-Za-z0-9_-]*\/SKILL\.md\), .*/\1/p" "$SRC")"
-check "DEFAULT_PROMPT opens with a skill file that exists" "yes" "$([ -n "$dp" ] && [ -f "$ROOT/$dp" ] && echo yes || echo no)"
+# Reads the REAL script and the REAL tree, not a sandbox. Guards:
+#  - DEFAULT_PROMPT= is assigned exactly once (bash uses the LAST assignment, so a
+#    second line would silently override the one inspected here);
+#  - that line opens "Read <path>" where <path> (up to the first space or comma) is
+#    exactly .claude/skills/autonomous-loop/SKILL.md, the skill run-loop exists to
+#    load, so a real-but-wrong skill fails; and that file exists;
+#  - every skill .md path run-loop.sh names is well-formed and exists;
+#  - no .agents path.
+# Not guarded: the rest of the prompt text (the amendment-1 STATE/QUEUE wording).
+dp_n="$(grep -c '^DEFAULT_PROMPT=' "$SRC" || true)"
+dp="$(sed -n "s/^DEFAULT_PROMPT='Read \([^ ,]*\)[ ,].*/\1/p" "$SRC")"
+dp_ok="$([ -n "$dp" ] && [ -f "$ROOT/$dp" ] && echo yes || echo no)"
+check "DEFAULT_PROMPT is assigned once, opens with the autonomous-loop skill path, and it exists" \
+  "1 .claude/skills/autonomous-loop/SKILL.md yes" "$dp_n $dp $dp_ok"
 # A bare "SKILL.md" is prose shorthand in comments ("SKILL.md section 5"), not a path.
 refs="$(grep -oE '[A-Za-z0-9_./-]*[Ss][Kk][Ii][Ll][Ll][A-Za-z0-9_./-]*\.[Mm][Dd]' "$SRC" | grep -vx 'SKILL\.md' | sort -u)"
 missing=""; for p in $refs; do printf '%s' "$p" | grep -qxE '\.claude/skills/[A-Za-z0-9_-]+/SKILL\.md' && [ -f "$ROOT/$p" ] || missing="$missing $p"; done
