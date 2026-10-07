@@ -8,7 +8,8 @@
  * camera-intent, photo-visibility, place-lookup, offline-packs (+ the
  * annotation/controller pair behind the offlineManager seam, T-8.5 — the
  * controller is mounted ONCE per trip by the `[tripId]` layout, surfaces read
- * `useOfflinePackState`, Q2-186). UI:
+ * `useOfflinePackState`, Q2-186; the effect-bearing hook is deliberately NOT
+ * on this barrel — `OfflinePackController` is the only public mount path). UI:
  * the day-filter strip, attribution sheet, place sheet, search overlay,
  * locate button, offline-pack manager. Seams: MapPlaceSheetSlot (FILLED,
  * T-8.3), MapOfflinePillSlot (FILLED, T-8.5), pending-focus (T-8.4
@@ -169,7 +170,6 @@ export {
   runOrphanPackSweep,
   startPackDownload,
   syncPackStateFromAnnotation,
-  useOfflinePackController,
   useOfflinePackState,
   useOfflinePackStore,
 } from "./offline-pack-controller";

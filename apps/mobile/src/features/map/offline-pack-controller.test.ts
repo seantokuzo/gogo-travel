@@ -50,6 +50,7 @@ import {
   type OfflinePackTrip,
   type PackDownloadTarget,
 } from "./offline-pack-controller";
+import * as barrel from "./index";
 import { packBoundsFor, packNameFor, packRegionKeyFor } from "./offline-packs";
 
 type MockFn = jest.Mock;
@@ -915,5 +916,18 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     expect(bystander.result.current).toEqual({ phase: "none" }); // still nobody's download
     await bystander.unmount();
     await unmount();
+  });
+});
+
+// PR #98 round 1 (architecture A2): "nothing else may mount the controller" is
+// otherwise only a comment. The effect-bearing hook stays OFF the feature
+// barrel so the `<OfflinePackController />` component is the only public mount
+// path (tests import the hook from the module path). Falsification: re-export
+// `useOfflinePackController` from `./index` -> red.
+describe("feature barrel — the single public mount path", () => {
+  it("exports OfflinePackController + the read-only state hook, NOT the effect-bearing hook", () => {
+    expect(typeof barrel.OfflinePackController).toBe("function");
+    expect(typeof barrel.useOfflinePackState).toBe("function");
+    expect("useOfflinePackController" in barrel).toBe(false);
   });
 });
