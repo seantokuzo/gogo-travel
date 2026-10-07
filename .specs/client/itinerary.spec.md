@@ -100,10 +100,17 @@
   as horizontally-paged columns against a shared vertical hour axis (1-hour
   rows, scrollable 00–24), with each timed item drawn as a block positioned
   and sized by `start_time`/`end_time`; tapping a block opens its detail.
+  While the timezone switcher is visible the block is positioned by its
+  CONVERTED time in the active zone (R-itin-80), and on a multi-zone trip
+  the first tap focuses the block (R-itin-81; opening gesture per NC-3)
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-14**: WHEN a time range on a day has no items THE SYSTEM SHALL
   leave it visibly empty, and tapping an empty slot SHALL open the add flow
   prefilled with that day and the slot's time rounded to 30 min (gap →
   action, the pattern HN users explicitly ask for — competitors § call #4).
+  While the timezone switcher is visible and the slot's location zone
+  differs from the active zone, the prefill follows R-itin-80 (NC-6)
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-15**: WHEN two or more blocks overlap in time THE SYSTEM SHALL
   render them side-by-side (never occluded) with an overlap Badge on each —
   overlaps are surfaced, never hidden or rejected (API R-ib-17). The Badge
@@ -117,7 +124,9 @@
   first day (or today's column when the trip is active and today is in
   range) with the 08:00–20:00 band initially visible. ("First day" is the
   first column of the grid's day set — an earlier out-of-range item day wins
-  over the trip's first day; R-itin-51.)
+  over the trip's first day; R-itin-51.) While the timezone switcher is
+  visible "today" is `todayInZone(now, activeZone)`, not the device-local
+  day (R-itin-80) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 
 ### Calendar view density (3-day / month / trip-span)
 
@@ -195,7 +204,9 @@ unaffected and keeps its existing day-sectioned form.
   copy affordance (`mono` type role), price, source label
   (manual/email/share/deeplink return), linked place row → map tab, linked
   expenses row (money-spec seam), and scheduled day/time row → jumps to the
-  itinerary position.
+  itinerary position. On a multi-zone trip the opening gesture is set by
+  R-itin-81 (NC-3 — the first tap focuses); routing is unchanged
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-25**: WHEN the booking's category has partner deeplinks (§2.7)
   THE SYSTEM SHALL render deeplink-out buttons on the detail screen with the
   same construction + recording rules as R-itin-21/22.
@@ -209,7 +220,9 @@ unaffected and keeps its existing day-sectioned form.
   SHALL push the `itinerary-item` screen (navigation spec §2.4): title/place
   link, day + times, notes, edit (reopens the form modal) and delete
   (ConfirmDialog); tapping a `booking`-kind item routes to `booking-detail`
-  instead — booking content is never duplicated across two screens.
+  instead — booking content is never duplicated across two screens. On a
+  multi-zone trip the opening gesture is set by R-itin-81 (NC-3 — the
+  first tap focuses); routing is unchanged (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 
 ### States, offline, testIDs
 
@@ -299,30 +312,153 @@ unaffected and keeps its existing day-sectioned form.
   R-itin-7 overlap analysis runs on the departure day only (clipped at
   midnight); arrival-day collisions are not analysed in either mode (T-7.11).
 
-### Calendar timezone switcher (Sean QA feature batch 2026-09-06, feature ②)
+### Calendar timezone switcher (Sean QA feature batch 2026-09-06, feature ②; effect superseded by T-7.17 — Sean UX story 2026-09-19)
 
-- **R-itin-37 (population + labeling)**: WHEN the itinerary tab renders THE
-  SYSTEM SHALL offer a per-trip timezone switcher, populated from the
-  DISTINCT set of `departs_tz`/`arrives_tz` values across the trip's
-  `flight` and `train` bookings ONLY (B-9's IANA catalog — the only
-  categories carrying a stored IANA zone today; `lodging`/other categories
-  carry a UTC-offset instant with no named zone, and there is no `ferry`
-  booking category — see "what we deliberately did not spec"), each
-  city-labeled via the existing `zoneCityLabel`/`describeZoneAt` machinery
-  ("Athens — GMT+2", never a bare offset — same convention as
-  `TimeZoneField`). WHEN the derived set has fewer than 2 distinct zones
-  THE SYSTEM SHALL hide the switcher entirely (nothing to switch between).
-- **R-itin-38 (effect + default)** (Ruled 2026-09-13, Sean — PR #71
-  Question #1: option (a), display-only, no math, confirmed): WHEN a zone
-  is selected THE SYSTEM SHALL show it as an informational header label near the
-  R-itin-9 view toggle ("Times shown in {city} — GMT±X") with NO effect on
-  any rendered item time (itinerary items are trip-local wall-clock by
-  design, §3.3 — there is nothing to convert); selection persists locally
-  per trip (same pattern as R-itin-9/33) and is visible in both list and
-  grid mode. Default selection: the zone of the trip's current landing day
-  (R-itin-17's today-if-active-and-in-range rule) when it maps to a
-  derived zone, else the first (chronologically) travel item's departure
-  zone.
+- **R-itin-37 (zone set, labels, control)** (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06): WHEN the itinerary
+  tab renders THE SYSTEM SHALL derive the trip's ZONE SET as the distinct union of (a) the
+  trip's effective `destination_tz` (B-30 — never null on the wire) and (b) every
+  `departs_tz`/`arrives_tz` on the trip's `flight` and `train` bookings whose status is
+  `planned` or `booked` (idea and cancelled bookings put nothing on the calendar, R-itin-8),
+  keeping only ids that pass the shared shape-and-engine gate (`isValidTimeZone`,
+  `@gogo/shared` `time.ts`) AND resolve on the device's engine (`isKnownTimeZone`, B-9) —
+  exact-id de-duplication, no alias folding. `lodging` and every other category contribute
+  no zone of their own (no schema change); their times convert through R-itin-78's location
+  timeline. Each zone SHALL be city-labeled through `describeTimeZone`
+  (`add-edit/zoned-time.ts`) — "Tokyo — GMT+9", never a bare offset — with the offset taken
+  at the reference date (the R-itin-17/51 landing day); offset-identical zones (Tokyo/Seoul)
+  stay distinct rows. Order: the destination zone first; then the remaining zones by first
+  use in departure order (a leg's departure zone before its arrival zone); then zones carried
+  only by bookings without times, alphabetically by city. WHEN the zone set has fewer than 2
+  zones THE SYSTEM SHALL hide the switcher entirely and every itinerary time SHALL render
+  exactly as it did before T-7.17 (a tap opens detail, R-itin-81). Otherwise THE SYSTEM SHALL
+  render the switcher in BOTH list and grid mode as ONE compact pressable chip — clock icon
+  (`time-outline`), the active zone's label, a chevron — in a toolbar row directly under the
+  PageHeader (§2.6b), at least `touchTarget` tall, accessibilityRole `button`,
+  accessibilityLabel "Time zone: {city}, {GMT±X}", hint "Shows this trip's time zones".
+  Tapping it SHALL open a DS Sheet listing every zone in the set as one row ("{city} —
+  GMT±X"; subtitle the IANA id; the destination row additionally captioned "Trip
+  destination"), the active row check-marked with `accessibilityState.selected`. Selecting a
+  different row SHALL close the Sheet and make that zone active (R-itin-38); selecting the
+  active row SHALL close the Sheet with no change. ("Railway accessible" in the T-7.17 story
+  is read as "readily accessible": one tap from either view mode, never behind a menu,
+  VoiceOver-complete per R-itin-30.)
+- **R-itin-38 (effect, default, persistence)** (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06)
+  (replaces the 2026-09-13 "display-only, no math" ruling, PR #71 Q1): WHILE the switcher is visible THE
+  SYSTEM SHALL render every itinerary time shown in the list (R-itin-79) and the grid
+  (R-itin-80) in exactly ONE active zone, converting each time from its source zone
+  (R-itin-78); the chip SHALL always name the active zone. [NEEDS CLARIFICATION: NC-1 — is
+  there a no-conversion "Local times" mode, and what does the tab show on open? (a) No such
+  mode: one active zone always, default the trip's `destination_tz` — on a Tokyo trip an
+  LAX→NRT flight's Departs row reads "03:35 (+1)" instead of the ticket's "11:35"; tapping it
+  (R-itin-81) shows it in LA time. (b) "Local times" is the default and a Sheet row: each
+  item in its own zone (today's airport-local rendering, schema §3.4.1); picking a zone,
+  focusing an item or following days converts. (c) As (a), plus every converted flight/train
+  time keeps its ticket-local time as a secondary caption ("03:35 (+1) · 11:35 LAX"). Rec
+  (a) — literal to "show all times for the trip in each time zone", and the focus/follow
+  mechanics assume one zone is always active; (c) if the non-ticket default reads as a
+  B-8-class regression.] Default active zone when the tab opens: the trip's `destination_tz`
+  when it is in the zone set, else the set's first zone. WHEN the active zone leaves the zone
+  set (its booking was deleted, cancelled or re-zoned) THE SYSTEM SHALL fall back to the
+  default. One active zone per trip, shared by list and grid. [NEEDS CLARIFICATION: NC-5 —
+  does the active zone survive a cold start? (a) Session-only: an in-memory per-trip slot
+  (R-nav-9's tab-memory precedent, `navigation/tab-memory.ts`), reset on sign-out; a cold
+  launch re-applies the default. (b) MMKV per trip (`gogo.itineraryTimeZone.{tripId}`, the
+  R-itin-9/33 pattern the 2026-09-13 text specified). Rec (a) — focus and follow now change
+  the zone as a side effect of ordinary taps and paging, so persisting it reopens a trip in
+  whatever zone the last tap left behind.] Conversion is display arithmetic in the client
+  only: it SHALL NOT change any stored value, request or wire shape, and it works offline
+  over cached data (R-itin-29). Booking detail (R-itin-71), item detail, add/edit forms, the
+  Ideas/Cancelled bins, the Month view (R-itin-35 renders no times), travel-time chips and
+  the Today tab are unaffected and keep native wall times.
+- **R-itin-78 (source zone of each time)** (NEW 2026-10-06 — T-7.17): WHEN a displayed
+  itinerary time is converted THE SYSTEM SHALL read its stored wall value (`day`/`end_day` +
+  `start_time`/`end_time`, API §3.3 — unchanged) in its SOURCE zone:
+  - `flight`/`train` booking item — start in the booking's `departs_tz`, end in its
+    `arrives_tz`, only while that edge's wall still equals the booking's `departs_at` /
+    `arrives_at` wall (an item-owned edit, I-3, falls to the next rule — the
+    `rentalCheckpointSubtext` precedent). A booking zone the device cannot resolve SHALL NOT
+    be re-attributed: that item renders native.
+  - every other item (lodging, rentals, activity, restaurant, other, place visit, custom) —
+    the LOCATION-TIMELINE zone at that wall time: the zone the traveller is in, derived from
+    the trip's planned/booked flight/train legs that carry both times and both zones — the
+    first leg's departure zone before it departs, each leg's arrival zone from its arrival
+    until the next leg departs. Where two segments both contain the wall time (an eastbound
+    date-line replay) the EARLIER segment wins; where none does (westbound date-line / in
+    flight) the last segment that started at or before it wins. A trip with no such leg uses
+    its `destination_tz`.
+  - A source zone equal to the active zone SHALL show the stored wall verbatim (no engine
+    round trip — a DST-gap wall such as 02:30 never re-renders as 03:30).
+  - Wall + zone are authoritative; a stored offset is ignored (B-9's composition is
+    deterministic, so every B-9-written row round-trips; a legacy `Z`-stamped row converts
+    from its wall + attributed zone).
+  - IF any timed edge of an item cannot be converted (unresolvable zone; an engine
+    `isIntlFaithful` rejects) THEN the WHOLE item SHALL render native — never half-converted,
+    never a guessed instant (B-9 R1 posture). An untimed item (`start_time` null) keeps its
+    stored day and renders native.
+- **R-itin-79 (list under conversion)** (NEW — T-7.17): [NEEDS CLARIFICATION: NC-2 — where
+  does a converted item sit in the list? (a) In its STORED day section and `sort_order`
+  position; each converted time carries a relative-day suffix when its converted date differs
+  from the section day. (b) Re-bucketed into its converted day, ordered by converted time,
+  with drag-reorder and "Sort day by time" disabled while any item is converted. Rec (a) —
+  the list stays the editing surface (R-itin-2/3/7/48 unchanged; a day-order PUT can never
+  carry a converted day), a focus tap never reflows the list, and under NC-1 (a) option (b)
+  would be live on every multi-zone trip.] Under (a): THE SYSTEM SHALL keep stored day
+  sections, `sort_order`, drag (R-itin-2/3), overlap chips and "Sort day by time" (R-itin-7,
+  evaluated on stored walls) exactly as today, and render each converted time as `HH:MM`
+  followed — when its converted date differs from the row's section day — by " (+N)" /
+  " (-N)", spoken to VoiceOver as "next day" / "previous day" / "N days later|earlier". Point
+  rows convert their own edge: Departs/check-in the start, Arrives/check-out the end
+  (R-itin-31/36). A row with any converted edge SHALL NOT also carry the §2.6 "+1" chip (the
+  suffixes say it); a row with no converted edge renders byte-identically to today.
+- **R-itin-80 (grid under conversion)** (NEW — T-7.17): WHILE the switcher is visible THE
+  SYSTEM SHALL lay out every timed block, checkpoint indicator (R-itin-31) and spanning lane
+  segment (R-itin-52) by its CONVERTED day and time — an item whose converted start falls on
+  another date renders in that date's column; a converted span that crosses midnight takes
+  R-itin-52's clipped block + "+1" tail; a converted date outside the trip range adds a
+  sparse column (R-itin-45). Block metadata — title, icon, status, rental "Pickup"/"Drop off"
+  subtext (B-18), day lock — SHALL still derive from the NATIVE item. Overlap split and badges
+  (R-itin-15/53) are computed on converted positions. The R-itin-17/51 landing "today" SHALL
+  be `todayInZone(now, activeZone)` (`@gogo/shared` `time.ts`, B-30), replacing the
+  device-local day the navigation spec's B-30 note leaves to T-7.17. WHEN an empty slot is
+  tapped (R-itin-14/50) whose location zone (R-itin-78, at the slot's instant) differs from
+  the active zone THE SYSTEM SHALL [NEEDS CLARIFICATION: NC-6 — (a) prefill the add form with
+  the slot converted into that location zone, so the saved item lands exactly under the
+  tapped slot (tapping 14:00 on a Tokyo day while viewing LA time prefills the next day,
+  06:00); (b) prefill the tapped day and time verbatim (the form reads 14:00; the saved item
+  then renders at a different slot); (c) render those slots inert, like a viewer's
+  (R-itin-50). Rec (a) — the gap → action promise is positional, and the form always edits
+  the local time the traveller will live.]
+- **R-itin-81 (focusable items)** (NEW — T-7.17): WHILE the switcher is visible, WHEN the user
+  taps a list row or a grid block, all-day chip, lane segment or checkpoint indicator THE
+  SYSTEM SHALL highlight it (2pt `border.focus` outline; `accessibilityState.selected`) and
+  make ITS zone active: a flight/train row or "Departs" row → its start edge's source zone
+  (R-itin-78); an "Arrives" row → its end edge's; a lodging check-in row, lane segment or
+  check-in indicator → the start edge's, check-out → the end edge's; any other item → its
+  start edge's (untimed → the timeline zone at 00:00 of its day). An item whose zone is
+  unresolvable is highlighted and the zone stays unchanged. One focus at a time; it clears
+  when another item is focused, the active zone changes any other way, the view mode toggles,
+  or the screen unmounts. An automatic zone change (this requirement or R-itin-82) SHALL be
+  announced to VoiceOver ("Times now shown in {city} time"). [NEEDS CLARIFICATION: NC-3 — how
+  does a user OPEN an item now that one tap focuses? (a) Tapping the already-focused item
+  opens its detail (R-itin-24/27); VoiceOver double-tap follows the same two steps, plus a
+  custom action "Open details" that opens in one. (b) One tap focuses AND opens the detail;
+  the highlight and new zone are waiting on return. (c) Focus lives on a separate affordance
+  (the card's time text / a small zone tag); a card tap opens detail as today. Rec (a) — the
+  story's literal "one tap highlights it"; the cost is a second tap to open, on multi-zone
+  trips only.] WHEN the switcher is hidden (fewer than 2 zones) a tap SHALL open detail
+  directly, exactly as today.
+- **R-itin-82 (calendar follows the days)** (NEW — T-7.17): WHILE grid mode is active and the
+  switcher is visible, WHEN a horizontal page or scroll settles (momentum end — never per
+  frame), the density changes (R-itin-33), or a Month cell tap lands on Day (R-itin-35), THE
+  SYSTEM SHALL compute the FIRST visible column's location zone — the R-itin-78 timeline zone
+  at 00:00 of that date ("first day priority if changes") — and [NEEDS CLARIFICATION: NC-4 —
+  (a) switch to it only when it DIFFERS from the first-visible-day zone at the previous settle
+  (edge-triggered: paging through Tokyo days after picking LA keeps LA; paging into Seoul days
+  switches); the grid's first render is a baseline, not a follow event; (b) set it on every
+  settle (a manual pick lasts until the next page); (c) follow only while a "Follow the days"
+  row is selected in the Sheet; a manual pick or focus turns following off. Rec (a) — it is
+  "when we switch view to days at a specific location"; (b) fights every manual pick; (c)
+  adds a mode to explain.] List scrolling and the list's day-jump strip never switch zones.
 
 ### Ideas flow rework (Sean QA feature batch 2026-09-06, feature ④)
 
@@ -450,7 +586,9 @@ are the separately signed-off P-7 extension; this batch does not touch them.
   test-renderer artifact). WHEN the member's role is
   `viewer` (R-ib-24) THE SYSTEM SHALL render the slots as inert grid lines —
   no slot Pressables, no slot testIDs; read affordances (blocks, chips,
-  lanes) stay pressable.
+  lanes) stay pressable. While the timezone switcher is visible and the
+  slot's location zone differs from the active zone, the prefilled day and
+  time follow R-itin-80 (NC-6) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-51 (landing band + column; Q2-079, Q2-080, ruled 2026-09-19):**
   the "08:00–20:00 band initially visible" of R-itin-17 is realized as
   `hourHeight = viewportHeight / 12`, clamped to 44–96pt — exact inside the
@@ -460,7 +598,9 @@ are the separately signed-off P-7 extension; this batch does not touch them.
   R-itin-45) — so a trip that has ended but has an item dated today lands on
   today — else the FIRST column of that set: the trip's first day, or an
   earlier out-of-range item day when one exists (`initialDayIndex` returns
-  the earliest column).
+  the earliest column). While the timezone switcher is visible "today" is
+  `todayInZone(now, activeZone)`, not the device-local day (R-itin-80)
+  (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 - **R-itin-52 (spanning lane segments; Q2-081, Q2-083, Q2-088, ruled
   2026-09-19):** WHEN a spanning booking renders in the grid's all-day lane
   (R-itin-31, §2.6) THE SYSTEM SHALL draw it as abutting per-column segments
@@ -822,7 +962,9 @@ rows, Sheet for pickers/modes) — zero new primitives.
 - **Item card** (Card, pressable): leading category icon (booking) or
   place/custom glyph; title; `start–end` times (`caption`, or "No time");
   status Badge per R-itin-8; overlap warning chip per R-itin-7. Press →
-  detail (R-itin-24/27). Long-press → drag (R-itin-2/3).
+  detail (R-itin-24/27); on a multi-zone trip the first press focuses the
+  card (R-itin-81, NC-3) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06). Long-press → drag
+  (R-itin-2/3).
 - **Travel-time chip** (between cards): mode icon + "18 min" (`caption`),
   default mode per R-itin-5. Tap → mode Sheet: one row per computed leg
   (walk/drive/cycle/transit — absent modes simply missing) + "Directions"
@@ -956,19 +1098,39 @@ schema §3.3.10):
   OTHER category whose auto-item spans days (`train`, `activity`,
   `car_rental`/`moped_rental` two-point spans, `other`) keeps the
   original one-row-plus-"+1"-chip treatment in both modes — R-itin-36
-  names `flight` only.
+  names `flight` only. While the timezone switcher is visible the grid's
+  clipping and "+1" tail are evaluated in the active zone (R-itin-80), and a
+  list row with a converted edge drops the "+1" chip for R-itin-79's
+  (+N)/(-N) suffixes (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
 
-### 2.6b Calendar timezone switcher (R-itin-37/38, feature ②)
+### 2.6b Calendar timezone switcher (R-itin-37/38, R-itin-78..82 — feature ②, T-7.17)
 
-A button in the PageHeader trailing slot (beside the view toggle and the
-§2.5b density control), city-labeled with the currently-selected zone
-("Athens — GMT+2") or hidden entirely per R-itin-37's <2-zones rule.
-Tapping opens a Sheet listing every derived zone (same row shape as
-`TimeZoneField`'s picker — city + "GMT±X" computed at the zone's
-description-date, B-9 precedent) plus a static "Trip default" entry that
-re-applies R-itin-38's default rule. Selecting a row closes the Sheet and
-updates the header label only — R-itin-38's display-only effect, ruled
-2026-09-13.
+(superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06) — placement, the Sheet
+contents and the effect below replace the 2026-09-13 PageHeader-button / "Trip default" /
+header-label-only design.
+
+**Placement.** A compact chip — clock icon, "{city} — GMT±X", chevron — in a toolbar row
+directly under the PageHeader, in both view modes (it may share the row with the §2.5b
+density control in grid mode — T-7.16's layout call). Not a PageHeader trailing action:
+`PageHeaderAction` is icon-only and `trailing` renders at most two
+(`components/PageHeader.tsx:24-31,119-121`), so it cannot carry the label. Hidden when the
+zone set has < 2 zones.
+
+**Sheet.** DS `Sheet`, title "Time zone", one `ListItem` row per zone in R-itin-37 order,
+title "{city} — GMT±X", subtitle the IANA id (+ " · Trip destination"), trailing checkmark
+on the active row; rows in a `FlatList` (the Sheet is not inside a ScrollView). Dismiss via
+the Sheet's close button.
+
+**Effect.** One active zone per trip feeds a pure placement map
+(`features/itinerary/timezone/`): list rows read converted labels (R-itin-79), the grid
+reads converted geometry (R-itin-80), and native items still supply every non-time field.
+Focus (R-itin-81) and follow (R-itin-82) change the active zone through the same state as a
+Sheet pick.
+
+**Modules.** `features/itinerary/timezone/` — `convert.ts` (zone math on B-9's
+`zoned-time.ts`, never `Intl` directly), `timeline.ts` (location timeline, source-zone
+attribution, placements, focus zones), `timezone-switcher-model.ts` (zone set, labels,
+default), `TimezoneSwitcher.tsx`, `zone-selection.ts` (active-zone state), `index.ts`.
 
 ### 2.7 Deeplink-out URL construction (exact — every row cites research)
 
@@ -1095,8 +1257,9 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Grid density segment (R-itin-33, feature ③)                                                                                                                                                    | `itinerary-density-segment-{day\|3-day\|month\|trip-span}`                                                                                                                                                                             |
 | Month view day cell (R-itin-35)                                                                                                                                                                | `itinerary-month-day-{date}`                                                                                                                                                                                                           |
 | Month view spanning bar (derived, same booking-detail routing)                                                                                                                                 | `itinerary-month-span-{bookingId}-{date}`                                                                                                                                                                                              |
-| Timezone switcher button (R-itin-37, feature ②; absent when hidden)                                                                                                                            | `itinerary-timezone-switcher`                                                                                                                                                                                                          |
-| Timezone switcher sheet + row                                                                                                                                                                  | `itinerary-timezone-switcher-sheet`, `itinerary-timezone-switcher-sheet-item-{tz}` (tz = `timeZoneSlug`, B-9 precedent)                                                                                                                |
+| Timezone switcher chip (R-itin-37; absent when hidden)                                                                                                                                         | `itinerary-timezone-switcher`; label text `itinerary-timezone-switcher-label`                                                                                                                                                          |
+| Timezone switcher sheet + row                                                                                                                                                                  | `itinerary-timezone-switcher-sheet` (close `-close`), `itinerary-timezone-switcher-sheet-item-{tz}` (tz = `timeZoneSlug`, B-9 precedent)                                                                                               |
+| Focused item (R-itin-81)                                                                                                                                                                       | no new id — `accessibilityState.selected` on the existing `itinerary-list-item-*`, `itinerary-grid-item-*`, `itinerary-grid-allday-*`, `itinerary-grid-span-*` ids                                                                     |
 | Form inputs                                                                                                                                                                                    | `itinerary-item-new-input-{field}` (kebab field: `title`, `day`, `start-time`, `price`, `confirmation`, …)                                                                                                                             |
 | Date/time field derivations (every DateField/TimeField, B-10)                                                                                                                                  | `{fieldTestID}-picker`, `-error`, `-clear` (time); shared `PickerCard` modal card `{fieldTestID}-sheet` with `-sheet-done` / `-sheet-close` / `-sheet-scrim` (QA-wave sync — `-sheet-done` added post-B-15, was missing from this row) |
 | Item-form surface states (T-7.6, Q2-097)                                                                                                                                                       | `itinerary-item-new-error` (both forms' ErrorBanner), `-error-load`, `-loading`, `-viewer` (view-only notice, R-itin-60), `-uneditable`                                                                                                |
@@ -1152,17 +1315,24 @@ convention (tokens §2.9).
   mechanism and is a natural follow-up (sleeper trains genuinely cross
   midnight) but is deliberately not built this batch — a queued `T-N`/`B-N`
   row if wanted, not silent scope.
-- **Lodging/ferry contribution to the timezone switcher** — R-itin-37 is
-  scoped to `flight`/`train`'s stored `departs_tz`/`arrives_tz` only.
+- **Lodging/ferry contribution to the timezone switcher** — R-itin-37's
+  zone set is flight/train `departs_tz`/`arrives_tz` plus the trip's
+  `destination_tz` (B-30) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
   `lodging` details carry a UTC-offset instant with no named IANA zone
   (schema §3.4.1), and there is no `ferry` booking category — either gap
   would need a schema change (a new `places.tz`-style column, or a new
   category enum value + migration), which this spec deliberately does not
   propose (Autonomy Contract #6 — scope/schema changes are Sean's call,
-  not an improvisation this batch).
-- **Live timezone conversion** — R-itin-38 is display-only (Ruled
-  2026-09-13, Sean — PR #71 Question #1); converting every item's time
-  into the selected zone (the rejected option (b)) is out of scope.
+  not an improvisation this batch). Lodging TIMES do convert, through
+  R-itin-78's location timeline, without a zone of their own.
+- **Conversion outside the itinerary list/grid** — booking/item detail
+  (R-itin-71), forms, Ideas/Cancelled bins, Month (R-itin-35), Today and
+  notifications keep native wall times (R-itin-38) (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
+- **Device/home zone in the zone set** — T-7.17 says 'destination time
+  zones'; not populated.
+- **Alias canonicalisation** — exact-id de-dup only (the
+  `time-zone-catalog.ts` 'deliberately NOT widened' posture).
+- **Month-view day re-bucketing** — Month counts items on stored days.
 
 ---
 
@@ -1229,4 +1399,8 @@ R-itin-35 (month view's exact shape) and R-itin-38 (timezone-switcher
 selection effect) — both **Ruled 2026-09-13, Sean** (PR #71 Questions
 #1/#2, both confirmed the recommended default). Gate-2 and feature-batch
 markers are all resolved; round 2 (2026-09-19) leaves 2 open — Q2-125, Q2-181,
-Sean picks pending (R-itin-67, R-itin-76) — approvable once ruled._
+Sean picks pending (R-itin-67, R-itin-76) — approvable once ruled. R-itin-38's 2026-09-13 ruling is superseded by T-7.17 (Sean UX story
+2026-09-19, QUEUE T-7.17). The 2026-10-06 amendment opens NC-1..NC-6 here and NC-7
+in `.specs/client/trips.spec.md` R-tripui-29; the "all resolved" line above is
+amended accordingly (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06) and this file now
+carries 8 open markers (Q2-125, Q2-181, NC-1..NC-6)._
