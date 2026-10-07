@@ -148,6 +148,22 @@ export function gridColumnLayout(
  * starts past `dayCount - visibleColumns` and shows blank space where the
  * trip has already ended (today = last day of a 3-day window lands on days
  * N-2..N, with today still on screen).
+ *
+ * NATIVE-CLAMP DEPENDENCY (Trip-span past the floor): the clamp counts WHOLE
+ * columns, so when the pager isn't an exact multiple of the column width it
+ * overshoots the true max scroll offset by the partial column — e.g. 390pt
+ * window, 60 days: 53 * 44 = 2332 vs the real max 60 * 44 - 342 = 2298. Only
+ * the platform ScrollView's own clamp of a programmatic scroll to its content
+ * bounds hides that (iOS Fabric, `RCTScrollViewComponentView.mm` `scrollTo:`
+ * — checked at RN 0.86.2, honored unless `scrollToOverflowEnabled`); with it
+ * the viewport pins to the content end and the leftmost column is a partial
+ * one (34pt of the 44pt column 52 here). This is deliberately NOT clamped
+ * again in JS: 3-day overshoots by at most its 2pt rounding remainder, Day has
+ * ALWAYS relied on the same native clamp (landing on the last day overshoots
+ * by the 8% peek), and a partial column is cosmetic — a trip that doesn't fit
+ * has to cut a column somewhere. If a platform ever stops clamping, the
+ * symptom is blank space past the last day on first paint, and the fix is an
+ * exact `contentWidth - pager` offset clamp here.
  */
 export function clampLandingIndex(
   density: GridSurfaceDensity,

@@ -568,6 +568,14 @@ describe("GridSurface density (R-itin-33/34)", () => {
       expect(pager().props.initialScrollIndex).toBe(0);
     });
 
+    // NATIVE-CLAMP DEPENDENCY: this pins the JS-side WHOLE-column clamp
+    // (`60 - visibleColumns`), which overshoots the true max scroll offset by
+    // the partial column whenever the pager isn't a multiple of the column
+    // width (390pt/60 days: landing offset 2332 vs max 2298). The device is
+    // right only because the platform ScrollView clamps a programmatic scroll
+    // to its content bounds (iOS Fabric `RCTScrollViewComponentView.mm`
+    // `scrollTo:`), leaving the leftmost column partial (34pt of 44pt here —
+    // cosmetic). Jest can't see that clamp; see `clampLandingIndex`'s docstring.
     it("Trip-span past the floor: today = the last day lands on the last full window", async () => {
       await renderGrid({ trip: liveTrip(59, 0), items: [], density: "trip-span" });
       expect(pager().props.initialScrollIndex).toBe(60 - visibleColumns());
