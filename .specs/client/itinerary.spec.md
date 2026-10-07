@@ -412,8 +412,8 @@ extension; this batch does not touch them.
   `place_visit` item renders and no place name is available to the client
   (v1: the composite itinerary read carries `place_id` only — API R-ib-30)
   THE SYSTEM SHALL show the generic title "Place visit" on its list and grid
-  card — never a blank title or a raw id — until a place-name source exists
-  (the maps-spine join).
+  card — never a blank title — until a place-name source exists (the
+  maps-spine join).
 - **R-itin-48 (refused reorder; Q2-076, ruled 2026-09-19):** WHEN the server
   refuses a day-order PUT that the client did not itself prevent (e.g. stale
   lock knowledge — the wire 400 carries no discriminating reason in v1) THE
@@ -435,9 +435,9 @@ extension; this batch does not touch them.
   tap's `locationY` within its hour row (24 pressable hour slots per day sit
   behind the blocks); a press event carrying no location data (some
   assistive-tech paths) prefills `HH:00`. WHEN the member's role is
-  `viewer` (R-ib-24) THE SYSTEM SHALL render the slots as inert grid lines — no slot
-  Pressables, no slot testIDs; read affordances (blocks, chips, lanes) stay
-  pressable.
+  `viewer` (R-ib-24) THE SYSTEM SHALL render the slots as inert grid lines —
+  no slot Pressables, no slot testIDs; read affordances (blocks, chips,
+  lanes) stay pressable.
 - **R-itin-51 (landing band + column; Q2-079, Q2-080, ruled 2026-09-19):**
   the "08:00–20:00 band initially visible" of R-itin-17 is realized as
   `hourHeight = viewportHeight / 12`, clamped to 44–96pt — exact inside the
