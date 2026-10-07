@@ -877,17 +877,21 @@ did not anticipate:
   ConfirmDialog base ids take `dialog` in ELEMENT position
   (`map-dialog-locate-rationale` / `-settings` / `-unavailable`), and
   children derive `-confirm` / `-cancel` (navigation spec §2.7 rule 4). The
-  profile screen's three `profile-*-dialog` ids use the trailing form, and
-  the photos spec's `photo-viewer-dialog-public` uses the element-position
-  form — two live conventions; the repo-wide pick is Sean's. Dialogs keyed
+  profile screen's three `profile-*-dialog` ids use the trailing form,
+  while the money screen's `settle-request-dialog-cancel` (the cancel-request
+  ConfirmDialog base) and the photos spec's `photo-viewer-dialog-public` use
+  the element-position form — two live conventions; the repo-wide pick is
+  Sean's. The `__DEV__`-only gallery ids (`g-dialog`, `g-destructive-dialog`)
+  are a dev harness and are EXCLUDED from the pick. Dialogs keyed
   by their triggering control (e.g. `offline-pack-button-delete-confirm`)
   derive from that control's id and are not dialog-named, so the fork does
   not touch them. [NEEDS CLARIFICATION: Q2-240 — pick the ConfirmDialog
   testID naming convention to apply repo-wide: (a) element-position
   `<screen>-dialog-<qualifier>` (keeps `map-dialog-locate-*`; renames the
   three `profile-*-dialog` ids) or (b) trailing `<qualifier>-dialog`
-  (renames the three `map-dialog-locate-*` ids and the photos spec's
-  `photo-viewer-dialog-public`)]
+  (renames the three `map-dialog-locate-*` ids, the money screen's
+  `settle-request-dialog-cancel` with its derived `-confirm` / `-cancel`
+  children, and the photos spec's `photo-viewer-dialog-public`)]
 
 ### 2.9 Out of scope (explicit)
 
