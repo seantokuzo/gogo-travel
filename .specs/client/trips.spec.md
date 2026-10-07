@@ -210,34 +210,47 @@ place_id` link (part-2 review finding, parked); see the P-8 follow-up
   destination (R-tripui-24) has no coordinates THE SYSTEM SHALL render a "Time zone" field
   (B-9 `TimeZoneField`; `trip-new-input-timezone` / `trip-settings-input-timezone`) beneath
   the destination. The effective-zone chain, zone provenance and reset semantics are owned by
-  `.specs/api/trips.spec.md` §3.4 (B-30) — this requirement is the client surface only. The
-  create form SHALL prefill the field with the device zone (`deviceZoneHint()`,
-  `features/trips/destination-zone.ts` — B-30's silent hint made visible): WHILE the field is
-  untouched the create ships it as `destination_tz` + `destination_tz_source: 'device'` (a
-  hint the server ranks below booking zones, as B-30 ships today), and once the user
-  explicitly picks a zone the create ships it as `destination_tz` with source `'user'`
-  (durable, rank 1). Settings SHALL show the trip's current effective `destination_tz` and
-  list the trip's flight/train zones ("On this trip" — R-itin-37's zone set minus the
-  destination) above the full catalog; an explicit pick SHALL ride `buildTripPatch` as
-  `destination_tz` (source `'user'`, never `'device'`), with or without a destination change.
-  WHILE the stored zone's source is `'user'` or `'device'` the settings field SHALL offer an
-  "Automatic" row that sends `destination_tz: null` (clears the stored zone, re-derives, no
-  source key — §3.4). A destination WITH coordinates SHALL show no field — the server derives its zone
-  (B-30). [NEEDS CLARIFICATION: NC-7 — (a) the field
-  appears only for coordinate-less destinations, with the device-zone prefill sent as the
-  `'device'` hint while untouched and as `'user'` once picked (the above); (b) an
-  always-visible "Time zone" row for every destination (effective zone shown, overridable,
-  "Automatic" resets); (c) as (a) but no prefill — nothing ships `'device'`, and the user
-  must pick before Save enables. Sub-choice under (a)/(c): WHEN a destination later GAINS
-  coordinates while a user zone is stored, (i) the field hides and the user zone persists
-  unseen (B-30's rank 1 is durable; no reset path in the UI) or (ii) the field stays visible
-  as an exception to the line above WHILE `destination_tz_source === 'user'`, so "Automatic"
-  can still clear it. Rec (a) with
-  (ii) — device hint when untouched, user when picked, field shown whenever the source is
-  `'user'`. Privacy note (Law 3-adjacent): the device-zone prefill — already sent silently by
-  B-30 as a `'device'` hint (PR #99 `features/trips/destination-zone.ts` `deviceZoneHint()`)
-  — shares the creator's home zone with every trip member; (a) makes it visible and
-  editable, (c) avoids it.]
+  `.specs/api/trips.spec.md` §3.4 (B-30) and its §3.3 PATCH /trips/:tripId rules (`null`
+  clears both stored columns and re-derives, no source beside it) — this requirement is the
+  client surface only. The create form SHALL prefill the field with the device zone
+  (`deviceZoneHint()`, `features/trips/destination-zone.ts` — B-30's silent hint made visible;
+  the field is empty when it returns `undefined`, NC-7): WHILE the field is untouched the
+  create ships it as `destination_tz` + `destination_tz_source: 'device'` (a hint the server
+  ranks below booking zones, as B-30 ships today), and once the user explicitly picks a zone
+  the create ships it as `destination_tz` with source `'user'` (durable, rank 1). Settings
+  SHALL show the trip's current effective `destination_tz` and list the trip's flight/train
+  zones ("On this trip" — R-itin-37's zone set minus the destination) above the full catalog —
+  EXCEPT on a pending move from a destination WITH coordinates to a coordinate-less one
+  (R-tripui-24's effective destination), where the save clears the old derived zone: the
+  field then prefills with `deviceZoneHint()` instead, which untouched goes out as the
+  `'device'` hint (B-30's existing real→null path, kept) and, once the user explicitly picks
+  a zone, as `'user'`. An explicit pick SHALL ride `buildTripPatch` as `destination_tz`
+  (source `'user'`, never `'device'`), with or without a destination change; a pick equal to a
+  non-`'user'` effective zone still ships `'user'` (the diff compares zone and source, not the
+  zone alone). WHILE `Trip.destination_tz_source` is `'user'` or `'device'` (the wire carries
+  the EFFECTIVE source — a stored `'device'` hint under a booking reads `'booking'`) the
+  settings field SHALL offer an "Automatic" row that sends `destination_tz: null` (clears the
+  stored zone, re-derives, no source key — §3.3 PATCH). A destination WITH coordinates SHALL
+  show no field — the server derives its zone (B-30). [NEEDS CLARIFICATION: NC-7 — (a) the
+  field appears only for coordinate-less destinations, with the device-zone prefill sent as
+  the `'device'` hint while untouched and as `'user'` once picked (the above); WHEN
+  `deviceZoneHint()` returns `undefined` (a non-IANA-shaped device zone) the field is empty
+  and, under (a), Save stays enabled with nothing sent, so the server falls through booking →
+  UTC (rec); (b) an always-visible "Time zone" row for every destination (effective zone
+  shown, overridable, "Automatic" resets); (c) as (a) but no prefill — nothing ships
+  `'device'`, and the user must pick before Save enables (also the empty-hint case).
+  Sub-choice under (a)/(c): WHEN a destination later GAINS coordinates while a user zone is
+  stored, (i) the field hides and the user zone persists unseen (B-30's rank 1 is durable; no
+  reset path in the UI) or (ii) the field stays visible as an exception to the line above
+  WHILE `destination_tz_source === 'user'`, so "Automatic" can still clear it. Consequence of
+  "Automatic": on a coordinate-less trip with no flight/train bookings, clearing a `'device'`
+  hint resolves to `UTC` (`'default'`, B-30) — (iii) offer "Automatic" only while the source
+  is `'user'`, since a device hint is already the lowest-ranked guess. Rec (a) with (ii) —
+  device hint when untouched, user when picked, field shown whenever the source is `'user'`,
+  "Automatic" for `'user'` and `'device'` as drafted. Privacy note (Law 3-adjacent): the
+  device-zone prefill — already sent silently by B-30 as a `'device'` hint (PR #99
+  `features/trips/destination-zone.ts` `deviceZoneHint()`) — shares the creator's home zone
+  with every trip member; (a) makes it visible and editable, (c) avoids it.]
 - **R-tripui-27 (status-override client surface — Q2-288 — as shipped; Sean
   pick pending: (a) surface an owner-only archive/status-override control on
   the client / (b) leave it API-only):** AS SHIPPED, THE SYSTEM renders NO
