@@ -15,13 +15,32 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import test, { mock } from "node:test";
-import { fileURLToPath } from "node:url";
-
 import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import test, { mock } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+// A dynamic import, so a canary can be armed first. If importing the module RUNS the check (the
+// entry-point test below is always true), it calls `process.exit` during THIS file's own import:
+// the runner then sees a clean exit with one test instead of fifty-odd, and the suite is green.
+// The exit handler turns that into a loud failure.
+let moduleLoaded = false;
+process.on("exit", () => {
+  if (!moduleLoaded) {
+    console.error("check-doc-budgets.mjs ran the check (and exited the process) when imported");
+    process.exitCode = 1;
+  }
+});
+const {
   BUDGETS,
   checkBudgets,
   formatViolation,
@@ -31,7 +50,8 @@ import {
   MAX_LINE_ANNOTATIONS,
   parseArgs,
   safeAnnotationPath,
-} from "./check-doc-budgets.mjs";
+} = await import("./check-doc-budgets.mjs");
+moduleLoaded = true;
 
 const SCRIPT = fileURLToPath(new URL("./check-doc-budgets.mjs", import.meta.url));
 
@@ -681,6 +701,112 @@ test("CLI: the done-condition fixture — a 7000 B STATE exits 1 with the annota
       result.stderr,
       /^::error file=docs\/STATE\.md::7000 bytes > budget 6144 \(ADR-009\)\./m,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The entry-point check: "was this file run, or imported?"
+//
+// It used to be `process.argv[1].endsWith("check-doc-budgets.mjs")`: a renamed copy
+// (or any launcher that does not end in that exact name) exited 0 with NO output, a
+// false green that is indistinguishable from "all budgets hold". The obvious fix,
+// `import.meta.url === pathToFileURL(process.argv[1]).href`, fails the same silent
+// way through a symlink or macOS's `/var` -> `/private/var` alias: node realpaths
+// the main module for `import.meta.url` but leaves `argv[1]` as typed. The check
+// must compare REALPATHS of both. Each test below names the mutant that turns it red:
+//   endsWith(...)                       -> renamed copy, symlink named otherwise, the
+//                                          importer named like the script
+//   import.meta.url === pathToFileURL(argv[1]).href -> symlinks, the /var alias
+//   always true                         -> the import-has-no-side-effects test
+//   always false                        -> every CLI test in this file
+// ---------------------------------------------------------------------------
+
+/** A throwaway directory for launcher files (links, copies, importers), apart from the fixture root. */
+function withBinDir(fn) {
+  const bin = mkdtempSync(join(tmpdir(), "doc-budgets-bin-"));
+  try {
+    return fn(bin);
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}
+const launch = (script, ...args) =>
+  spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+const OVER_BUDGET = () => ({
+  [STATE]: stateOf(7000),
+  [QUEUE]: `${QUEUE_HEAD}| a |\n`,
+});
+/** The one violation a 7,000 B STATE makes, as an exit code plus output: what a silent exit 0 would hide. */
+function assertRanAndFlagged(result, where) {
+  assert.equal(result.status, 1, `${where}: exit ${result.status}, stderr: ${result.stderr}`);
+  assert.match(
+    result.stderr,
+    /^::error file=docs\/STATE\.md::7000 bytes > budget 6144 \(ADR-009\)\./m,
+    where,
+  );
+  assert.equal(result.stderr.match(/::error/g).length, 1, `${where}: ${result.stderr}`);
+}
+
+test("CLI entry: a renamed copy of the script still runs (the check is not a filename match)", () => {
+  withRoot(OVER_BUDGET(), (root) =>
+    withBinDir((bin) => {
+      const copy = join(bin, "other-name.mjs");
+      copyFileSync(SCRIPT, copy);
+      assertRanAndFlagged(launch(copy, "--root", root), "renamed copy");
+      // ...and its usage-error path (exit 2) is reached too, not skipped.
+      const bad = launch(copy, "--bogus");
+      assert.equal(bad.status, 2, bad.stderr);
+      assert.match(bad.stderr, /usage: node \.github\/scripts\/check-doc-budgets\.mjs/);
+    }),
+  );
+});
+
+test("CLI entry: launched through a symlink, under its own name or another, it still runs", () => {
+  withRoot(OVER_BUDGET(), (root) =>
+    withBinDir((bin) => {
+      for (const name of ["check-doc-budgets.mjs", "link.mjs"]) {
+        const link = join(bin, name);
+        symlinkSync(SCRIPT, link);
+        assertRanAndFlagged(launch(link, "--root", root), `symlink ${name}`);
+      }
+    }),
+  );
+});
+
+// macOS only in practice: os.tmpdir() is `/var/folders/...`, whose realpath is `/private/var/...`.
+const TMP_IS_ALIASED = realpathSync(tmpdir()) !== resolve(tmpdir());
+test(
+  "CLI entry: launched under the `/var` alias of its real `/private/var` path, it still runs",
+  { skip: TMP_IS_ALIASED ? false : "tmpdir() is not a symlinked alias on this platform" },
+  () => {
+    withRoot(OVER_BUDGET(), (root) =>
+      withBinDir((bin) => {
+        const copy = join(bin, "check-doc-budgets.mjs"); // same name: only the alias differs
+        copyFileSync(SCRIPT, copy);
+        assert.notEqual(realpathSync(copy), copy, "precondition: argv[1] is not the real path");
+        assertRanAndFlagged(launch(copy, "--root", root), `alias ${copy}`);
+      }),
+    );
+  },
+);
+
+test("CLI entry: importing the module has no side effects (no output, no exit), whatever the importer is called", () => {
+  withBinDir((bin) => {
+    // `check-doc-budgets.mjs` as the IMPORTER's name is the endsWith false positive: argv[1] ends
+    // with the script's name though the module being run is something else.
+    for (const name of ["importer.mjs", "check-doc-budgets.mjs"]) {
+      const importer = join(bin, name);
+      writeFileSync(
+        importer,
+        `import ${JSON.stringify(pathToFileURL(SCRIPT).href)};\nprocess.stdout.write("imported\\n");\n`,
+      );
+      const result = launch(importer);
+      assert.deepEqual(
+        [result.status, result.stdout, result.stderr],
+        [0, "imported\n", ""],
+        `importer ${name}`,
+      );
+    }
   });
 });
 

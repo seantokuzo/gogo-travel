@@ -33,7 +33,7 @@
  * The fix is never to raise a number here. Raise one only by amending ADR-009
  * in the same change. The test pins the literals so that cannot happen quietly.
  */
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -261,8 +261,26 @@ export function parseArgs(argv) {
   return root === undefined ? {} : { root };
 }
 
+/**
+ * Was this file the process entry point (run, not imported)? Compares the REAL paths of this module and
+ * `argv[1]`: node resolves symlinks for `import.meta.url` but leaves `argv[1]` as typed, so a plain URL
+ * compare misses a symlinked launcher and macOS's `/var` -> `/private/var` alias, and a filename match
+ * (`endsWith("check-doc-budgets.mjs")`) misses a renamed copy. Each of those would exit 0 with no output,
+ * which reads as "all budgets hold". Same form as scripts/queue-rows.mjs.
+ */
+const invokedDirectly = (() => {
+  try {
+    return (
+      process.argv[1] !== undefined &&
+      realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+    );
+  } catch {
+    return false;
+  }
+})();
+
 // `node check-doc-budgets.mjs` runs the check; importing it (the test) does not.
-if (process.argv[1] && process.argv[1].endsWith("check-doc-budgets.mjs")) {
+if (invokedDirectly) {
   let options;
   try {
     options = parseArgs(process.argv.slice(2));
