@@ -219,6 +219,7 @@ unaffected and keeps its existing day-sectioned form.
   itinerary (items, bookings, last-computed legs) from cache (offline-spec
   seam; PLANNING § Cross-cutting) and SHALL disable deeplink-out buttons
   with an offline hint; mutation queuing is the offline spec's contract.
+  Derivation + precedence rules: R-itin-72.
 - **R-itin-30**: WHEN any screen in this spec renders THE SYSTEM SHALL carry
   testIDs per the navigation-spec §2.7 grammar on its root and every
   interactive element, per the §2.9 inventory.
@@ -638,6 +639,92 @@ extension; this batch does not touch them.
   from cache rather than taking props — a cold deep link fetches them and the
   notice appears when the data lands, never blocking the form.
 
+#### Booking/item detail + offline degrade (T-7.9)
+
+- **R-itin-70 (status + destructive actions; Q2-152, Q2-153, Q2-154, Q2-157,
+  ruled 2026-09-19):** WHEN Cancel succeeds THE SYSTEM SHALL leave the user ON
+  the `booking-detail` screen — the Cancelled badge and the now-empty
+  transition set ARE the confirmation; WHEN Delete succeeds THE SYSTEM SHALL
+  pop (the row is gone and the next refetch would 404). `cancelled` is
+  terminal in the UI as on the wire (API §3.2): no status buttons and no
+  Cancel button — but Delete still works (API §3.4 DELETE has no status
+  precondition). Status actions render as plain buttons, not a segmented
+  control (the form already owns the status segment): the list excludes the
+  current status and `cancelled`. ConfirmDialog ids derive `-confirm` /
+  `-cancel` from the TRIGGERING button's id (§2.9), the trip-settings
+  precedent.
+- **R-itin-71 (detail rendering; Q2-158, Q2-159, Q2-160, Q2-161, Q2-162,
+  Q2-163, Q2-175, ruled 2026-09-19):** empty detail fields are OMITTED from the
+  render, not shown dashed (an email-captured booking fills 3 of 8 fields —
+  five "—" rows would bury the three that matter). Detail datetimes render as
+  destination WALL time — sliced via `wallDate`/`wallTime`, never through
+  `Date`, so a Tokyo 10:00 departure never shifts to the phone's zone. The
+  schedule row collapses plurality into one line — `car_rental`/`moped_rental`
+  have two items and lodging spans days — naming the earliest day plus
+  "through {day}" / "N calendar entries"; the jump targets the earliest item's
+  day. A zero-item booking gets a non-pressable "Not on the calendar" row
+  (copy differs for an idea vs a cancelled booking) rather than a hidden one —
+  the absence is information. The place and expenses rows jump to the TAB
+  (map / money), not to a screen inside it: place-detail and expense creation
+  belong to the maps and money specs (§2.10) and no place names are on the
+  wire yet (API R-ib-30); the expenses row always renders, even with zero
+  linked expenses (it is the money-spec seam, and its subtitle says where it
+  goes rather than claiming a count). An untimed item reads "No time set"
+  (`itemWhenLabel`), never an empty row.
+- **R-itin-72 (offline degrade; Q2-166, Q2-167, Q2-168, Q2-169, Q2-170, and
+  Q2-069 — T-7.8's deferred R-itin-29 posture, resolved here; ruled
+  2026-09-19):** refines R-itin-29. Offline is DERIVED from transport
+  failures (`ApiRequestError` status 0 is the only source of status 0 in the
+  app), not independently measured — so a surface whose data is still fresh
+  (5-minute `staleTime`) can be offline without knowing it, and the
+  deeplink-disable arm engages one request late; R-itin-29's cache-render
+  arm needs no signal at all. A true connectivity signal is offline-spec
+  scope, not this surface's. Offline OUTRANKS a refresh error and shows no
+  retry over retained data (the no-cache branch keeps its retry — it is the
+  only way forward there). The offline banner fires TRIP-WIDE, including when
+  this tab's own reads are cached and happy but the `[tripId]` guard's read
+  failed — "the active trip is offline" is a trip property, not a per-query
+  one. Offline disables deeplink-out buttons but never materializes an
+  OMITTED URL (e.g. Eventbrite outside a covered US city has no URL to build
+  online either), and the offline hint outranks the "Needs …" field hint when
+  both are true.
+- **R-itin-73 (detail deeplink panel; Q2-171, Q2-172, ruled 2026-09-19):** the
+  deeplink panel stays VISIBLE for viewers on `booking-detail` — a partner
+  search is not an API write, so R-ib-24 does not reach it; every actual
+  write affordance stays hidden, and (as shipped) a viewer's tap writes no
+  return-prompt record, so the prompt cannot dead-end them into a form they
+  may not use. The detail surface builds its panel input through the FORM's
+  `stateFromDetails` → `deeplinkInputFor` mapping, never a second
+  detail→panel mapping, so the two surfaces cannot build different URLs from
+  the same booking.
+- **R-itin-74 (navigation seams; Q2-164, Q2-165, Q2-173, Q2-174, Q2-178,
+  Q2-179, Q2-180, ruled 2026-09-19):** the `?day=` return jump retargets LIST
+  mode only — never the grid's own column state (the grid's landing is
+  R-itin-51's); in grid mode the param is consumed without dispatching, which
+  beats yanking the user's persisted view mode, and it is consumed after
+  handling so a later grid→list toggle cannot jump to a stale day. The param is
+  narrowed by `typeof` at the boundary; membership in the trip's day set is
+  the real guard. A `booking`-kind item opened at `item/[itemId]` hands off
+  with `router.replace`, never `push` (a push leaves a bounce-back stack
+  entry), rendering a neutral hold for the frame before it lands. Item detail
+  resolves from the composite read — the API has no per-item GET (API
+  R-ib-31) — and a missing id renders "Item not found", never an error.
+  Cross-tab navigation (place / expenses rows) goes through the
+  `jumpToTripTab` helper, which walks up to the navigator that declares the
+  tab and DEGRADES to a no-op (reporting the miss) instead of throwing; it
+  records the manual tab selection (`rememberTab`) exactly as a tab-bar press
+  does (R-nav-9). The booking-detail missing state is TERMINAL — a blank,
+  mangled or 404 id renders "Booking not found" with no retry — while other
+  pre-data errors get a retry banner; item detail mirrors it (a fresh 404
+  outranks retained cache).
+- **R-itin-75 (copy affordance; Q2-176, Q2-177, ruled 2026-09-19):** the
+  confirmation-code copy affordance flips to "Copied" and STAYS for the life of
+  the screen — no timed revert (a timer whose only job is to un-say something
+  true); it resets only when the code itself changes. The clipboard engine is
+  RN core `Clipboard` behind a one-file seam (`theme/clipboard.ts`);
+  `expo-clipboard` / `@react-native-clipboard/clipboard` would be a NEW
+  dependency — an Autonomy Contract #3 escalation, reported and not taken.
+
 ---
 
 ## 2. Design
@@ -955,6 +1042,12 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Deeplink adults field + panel error banners (PR #14 spec-sync, R-itin-42)                                                                                                                      | `itinerary-item-new-input-adults` (form only) · `itinerary-item-new-error-deeplink` / `booking-detail-error-deeplink`                                                                                                                  |
 | Return-host fallback sheet (R-itin-44)                                                                                                                                                         | `booking-manual-add-sheet`, `-error`, `-input-title`, `-button-save`, `-button-cancel`                                                                                                                                                 |
 | Partner search (form)                                                                                                                                                                          | `itinerary-item-new-button-search-{partner}` (`kayak`, `skyscanner`, `airbnb`, `booking`, `expedia`, `vrbo`, `trainline`, `omio`, `amtrak`, `kayak-cars`, `turo`, `eventbrite`, `external`)                                            |
+| Booking detail status actions (T-7.9, Q2-155)                                                                                                                                                  | `booking-detail-button-status-{status}`                                                                                                                                                                                                |
+| Booking detail read surface (Q2-156)                                                                                                                                                           | `booking-detail-status`, `-price`, `-source`, `-confirmation`, `-field-{key}` (key kebab-cased: `-field-flight-number`)                                                                                                                |
+| Booking detail states (Q2-156)                                                                                                                                                                 | `booking-detail-loading`, `-error`, `-missing` (terminal, R-itin-74), `-banner-{offline\|refresh\|action}`                                                                                                                             |
+| Item detail read surface + states (T-7.9, Q2-156)                                                                                                                                              | `itinerary-item-when`, `-notes`, `-row-place`, `-loading`, `-error`, `-missing`, `-banner-{offline\|refresh\|action}`                                                                                                                  |
+| Index offline banner (R-itin-72; Q2-156)                                                                                                                                                       | `itinerary-banner-offline`                                                                                                                                                                                                             |
+| Detail ConfirmDialogs (Q2-157 — derived from the TRIGGERING button)                                                                                                                            | `booking-detail-button-{cancel\|delete}-confirm` / `-cancel`; `itinerary-item-button-delete-confirm` / `-cancel`                                                                                                                       |
 | Booking detail actions                                                                                                                                                                         | `booking-detail-button-{edit\|cancel\|delete}`                                                                                                                                                                                         |
 | Confirmation copy                                                                                                                                                                              | `booking-detail-button-copy-confirmation`                                                                                                                                                                                              |
 | Detail deeplink buttons                                                                                                                                                                        | `booking-detail-button-deeplink-{partner}`                                                                                                                                                                                             |

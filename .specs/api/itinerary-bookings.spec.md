@@ -235,6 +235,11 @@ batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
   invariant here); until it lands clients label an unnamed place with their
   documented placeholders (client spec R-itin-47, R-itin-59) and never
   invent a name.
+- **R-ib-31 (no per-item GET; Q2-174, ruled 2026-09-19):** THE SYSTEM SHALL
+  NOT expose a `GET …/itinerary/items/:itemId` endpoint in v1 — an item's
+  detail resolves from the composite itinerary read (R-ib-13), whose default
+  range covers every item by construction (§3.4), so an id absent from it is
+  genuinely not found (a booking's detail has its own GET, §3.4).
 
 ### Upstream resolutions (formerly blocking)
 
