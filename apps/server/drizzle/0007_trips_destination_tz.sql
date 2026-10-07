@@ -26,6 +26,8 @@
 --   ALTER TABLE "trips" DROP COLUMN "destination_tz";
 -- Dropping loses user-entered zones (derived ones recompute), so the status rule
 -- falls back to the UTC day again until rows are re-derived.
+-- ROLLOUT: amended in place pre-merge (journal `when` 1791335782372 -> 1791344081677, no 0008): a DB that applied the EARLIER
+-- 0007 (destination_tz only) fails 42701 until that column and its drizzle.__drizzle_migrations row (created_at 1791335782372) are dropped; see PR #99.
 ALTER TABLE "trips" ADD COLUMN "destination_tz" text;--> statement-breakpoint
 ALTER TABLE "trips" ADD COLUMN "destination_tz_source" text;--> statement-breakpoint
 ALTER TABLE "trips" ADD CONSTRAINT "trips_destination_tz_ck" CHECK ("trips"."destination_tz" IS NULL OR length("trips"."destination_tz") BETWEEN 1 AND 64);--> statement-breakpoint
