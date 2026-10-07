@@ -1,6 +1,6 @@
 # ADR-008: Feature-ledger amendment protocol — append a superseding note, never edit the step
 
-**Status:** Accepted (ruled by Sean 2026-09-19 — round-2 spec pass, Q2-296, approve-all; written back 2026-10-06)
+**Status:** Accepted in direction (Sean, 2026-09-19 — round-2 spec pass, Q2-296, approve-all; the Rec read "needs an actual product call, not a rubber-stamp"). The concrete `amendments` key shape below is the write-back agent's design within that direction, **pending Sean's eyeball**; written back 2026-10-06.
 **Date:** 2026-09-19
 **Supersedes:** none
 **Superseded by:** none
@@ -55,9 +55,9 @@ A ledger verification step that is unsatisfiable or incorrect as written is
    which other ledger entries carry it (for F-001: F-007 `CentsSchema`, F-004
    CHECKs) and verifying the claim against them. Reviewers judge non-weakening;
    **each amendment needs Sean's explicit ruling** — this ADR approves the
-   _protocol_ and the F-001 correction itself (B-1), whose replacement wording is
-   reviewed for non-weakening in B-1's PR (a reviewer or judge `human-decides`
-   routes it to Sean). Any later amendment needs its own ruling.
+   _protocol_ only. F-001's replacement wording needs Sean's sign-off in B-1's
+   PR before `passes` flips (a reviewer or judge `human-decides` routes it
+   there). Every later amendment needs its own ruling.
 5. **Mechanics preserve the audit trail.** Amendments are applied by **text
    insertion, not a JSON re-parse/re-emit** (Law #8's escape-style note). Insert
    the `amendments` key **between `verification` and `passes`** so the diff is
@@ -88,7 +88,8 @@ A ledger verification step that is unsatisfiable or incorrect as written is
 
 ### Positive
 
-- B-1 unblocks: F-001 gets honest, executable verification without touching the
+- B-1 gets a path (once Sean confirms the key shape and the Law #8 wording is
+  amended): F-001 gets honest, executable verification without touching the
   original step.
 - A reusable, reviewable procedure — the next wrong step costs a PR, not an
   argument about Law #8.
@@ -100,6 +101,11 @@ A ledger verification step that is unsatisfiable or incorrect as written is
   two-step lookup. Acceptable: the ledger is read by agents and reviewers, and the
   original step staying visible is the point.
 - Each amendment costs a Sean ruling. Intended friction — it is Law #8.
+- Law #8's current wording (`CLAUDE.md` Law #8; `docs/PLANNING.md` § P-2 tamper
+  rule) says removing or editing ledger entries is forbidden; read literally,
+  adding an `amendments` key inside an entry is an edit. The Law #8 wording
+  amendment is a Sean-gated `CLAUDE.md` edit outside this ADR's PR and must land
+  before B-1, or any reviewer applying Law #8 literally will block it.
 
 ### Neutral
 
@@ -110,6 +116,7 @@ A ledger verification step that is unsatisfiable or incorrect as written is
 ## Links
 
 - Law #8 — `CLAUDE.md`; `$schema_note` in `feature-ledger.json`
-- B-1 (QUEUE) — the F-001 amendment is its build task
+- B-1 (QUEUE) — the F-001 amendment is its build task; stays `blocked` on
+  Sean confirming this shape and the Law #8 wording amendment landing first
 - `docs/history/PHASE-003-foundations.md` § Ledger — the 2026-07-16 probe
 - `.specs/OPEN-QUESTIONS.md` Round 2, Q2-296
