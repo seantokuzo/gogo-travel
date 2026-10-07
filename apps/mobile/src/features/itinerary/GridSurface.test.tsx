@@ -498,8 +498,15 @@ describe("GridSurface density (R-itin-33/34)", () => {
 
     it("a 60-day trip is virtualized, not mounted wholesale (never ScrollView + map)", async () => {
       await renderGrid({ trip: tripOfDays(60), items: [], density: "trip-span" });
+      // Header strip (its own FlatList)…
       expect(dayHeaders().length).toBeGreaterThan(0);
       expect(dayHeaders().length).toBeLessThan(60);
+      // …AND the pager, which is the heavy list (24 slot Pressables per
+      // column) and has its own windowing props — the header count alone
+      // cannot see the pager mounting everything (round-1 probe 6d).
+      const pagerColumns = screen.queryAllByTestId(/^itinerary-grid-slot-.*-10$/);
+      expect(pagerColumns.length).toBeGreaterThan(0);
+      expect(pagerColumns.length).toBeLessThan(60);
     });
 
     it("Trip-span stays continuous on a trip that fits too (no snap at any length)", async () => {
