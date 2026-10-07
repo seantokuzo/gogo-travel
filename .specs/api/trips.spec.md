@@ -283,9 +283,17 @@ spec adds to those modules: `TripListItem`, `TripUpdate.expect_updated_at`,
 Create a trip; creator becomes owner in the same transaction. **Auth**: Required
 
 **Request** — `TripCreate`:
-`{ name, destination_name, destination_lat, destination_lng, start_date,
-end_date, base_currency?, theme? }`
-(`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
+`{ name, destination_name, destination_lat, destination_lng,
+destination_tz?, start_date, end_date, base_currency?, theme? }`
+(**Amended B-30 (2026-10-06):** `destination_tz?` is an optional explicit
+IANA zone for the destination — shape-checked by the schema (IANA-shaped,
+≤ 64 chars) and resolved against the server's `Intl` (an id it cannot
+resolve → 400 `VALIDATION_FAILED`, `details.destination_tz`). It wins over
+the zone the server derives from `destination_lat/lng`; the mobile create
+form sends the device zone for a coordinate-less custom destination (no
+other source exists) and never for a pick with coordinates. See §3.4
+"Timezone note" for the effective-zone chain.
+`base_currency` defaults to `'USD'` per schema §3.3.4; client pre-fills
 from `UserPrefs.home_currency` — client spec. Dates are required at
 creation. **Amended B-7 part 3 (2026-09-13):** the destination is
 structured — picked from the Overture-backed place search OR a
@@ -300,10 +308,12 @@ about nullability); this is the corrected statement. Omitting either key
 entirely still 400s (R-trips-3 amendment) — see R-trips-23.)
 
 **Response 201** — `Trip & { role: 'owner' }` (`destination_lat`/`lng` may
-be `null`, B-7 part 3)
+be `null`, B-7 part 3; `destination_tz` is the EFFECTIVE zone, never null,
+B-30)
 
 **Errors**: 400 `VALIDATION_FAILED` — bad shapes, `start_date > end_date`,
-exactly one of `destination_lat`/`destination_lng` present (B-7 part 3).
+exactly one of `destination_lat`/`destination_lng` present (B-7 part 3),
+`destination_tz` not IANA-shaped or not resolvable (B-30).
 
 **Requirements covered**: R-trips-3, R-trips-23
 
@@ -319,6 +329,15 @@ exactly one of `destination_lat`/`destination_lng` present (B-7 part 3).
       → 201 with `null` destination coordinates, never `(0, 0)` —
       `apps/server/src/trips/routes.db.test.ts`
 - [ ] B-7 part 3: exactly one of `destination_lat`/`destination_lng` present → 400
+- [ ] B-30: a Kyoto trip with `start_date = end_date` = the destination's
+      today, created at an instant where the UTC date lags Tokyo's, is born
+      `active` and the response carries `destination_tz: "Asia/Tokyo"`; a
+      Los Angeles trip ending "today" is still `active` after UTC rolls
+      over — `apps/server/src/trips/destination-tz.db.test.ts`
+- [ ] B-30: explicit `destination_tz` wins over the derived zone and is
+      stored as given; coordinate-less + explicit zone stores it;
+      coordinate-less with no zone and no bookings → effective `UTC`, column
+      stays NULL; an unresolvable explicit zone → 400, no row
 
 ---
 
@@ -367,8 +386,16 @@ Update trip fields (partial). **Auth**: Required (per-field per §3.2)
 
 **Request** — `TripUpdate`:
 `{ name?, destination_name?, destination_lat?, destination_lng?,
-start_date?, end_date?, theme?, base_currency?, status?,
+destination_tz?, start_date?, end_date?, theme?, base_currency?, status?,
 expect_updated_at? }`
+— `destination_tz` (B-30): an explicit IANA zone; editor-writable. When the
+body moves the destination coordinates WITHOUT it, the server re-derives the
+zone from the new coordinates (a real→`null` move clears the stored zone —
+the old zone described the old place; the client ships the device zone
+beside it). With it, the explicit value wins. An unrelated PATCH, or a
+resubmit of IDENTICAL coordinates, leaves the stored zone alone
+(value-diff, not key-presence). Status is re-derived under the zone the
+patch leaves behind.
 — `base_currency` owner-only, rejected with 409 once the first expense
 exists (R-trips-22); `status` owner-only manual override (§3.4, resolved
 Gate 2); `expect_updated_at` is the optional §3.5 (rule 2) conflict
@@ -645,10 +672,33 @@ derived_status(today, start_date, end_date) =
   today >  end_date                     → 'past'
 ```
 
-Timezone note: the nav spec evaluates active-ness client-side in the
-user's tz (nav §2.5); the server MUST use the same `@gogo/shared` helper
-with an explicit `today` input so the two surfaces agree on the boundary
-day.
+Timezone note (**amended B-30, Sean ruling 2026-09-19**): a trip's "today"
+is the calendar day AT ITS DESTINATION — not the server's UTC day, not the
+viewing device's day. Server and client both compute it per trip with ONE
+`@gogo/shared` helper, `todayInZone(now, trip.destination_tz)`, and feed it
+to `derived_status` as the explicit `today`, so the two surfaces agree on the
+boundary day for every viewer in every zone. The wire `Trip.destination_tz`
+is the EFFECTIVE zone — never null — resolved server-side, first hit wins:
+
+1. EXPLICIT — a `destination_tz` sent on create/PATCH (validated against the
+   server's `Intl`; stored as given);
+2. DERIVED — from `destination_lat/lng` via `@photostructure/tz-lookup`
+   (stored at create; re-derived on PATCH when the coordinates move and no
+   explicit zone rides along; derived lazily at read for legacy rows with a
+   NULL stored zone);
+3. BOOKING — read time only: the earliest flight/train booking's
+   `arrives_tz` (else `departs_tz`) that the server's `Intl` resolves;
+4. `UTC`.
+
+Steps 3–4 never write: only 1–2 put a value in `trips.destination_tz`.
+`todayInZone` never throws — an unknown / non-IANA-shaped zone, or an engine
+answer more than a day from UTC's, degrades to the UTC date. Consequences:
+`reconcileStoredStatuses` evaluates each row at ITS OWN `today` (one list page
+can hold trips on different calendar days); the leg-staleness sweep widens its
+SQL prefilter by ±1 day (UTC−12…UTC+14) and re-decides each candidate at its
+own `today`. Accuracy: the zone derivation is gated against `geo-tz` on the
+UTC offset (`destination-tz.accuracy.test.ts`); a user overrides a wrong
+derivation with an explicit zone.
 
 Resolved at `.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
 2026-07-09): status is date-derived, with manual owner override allowed —

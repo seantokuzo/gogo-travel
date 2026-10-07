@@ -392,10 +392,24 @@ category) / dismiss.
 
 ```
 tripIsActive(trip) = trip.status == 'active'
-                     && today ∈ [trip.startDate, trip.endDate]   (user's tz)
+                     && today ∈ [trip.startDate, trip.endDate]
+                     where today = todayInZone(now, trip.destination_tz)
+                                   (the trip's DESTINATION zone — B-30)
 
 initialTab(trip)   = tripIsActive(trip) ? 'today' : 'itinerary'   (R-nav-7/8)
 ```
+
+- **Destination zone, not the device's (B-30, Sean ruling 2026-09-19):** a
+  trip's `today` is the calendar day at its destination, computed with the
+  SAME `@gogo/shared` helper (`todayInZone`) and the SAME effective
+  `trip.destination_tz` the server evaluates its status with (trips spec §3.4
+  "Timezone note"), so a device in any zone sees the trip exactly as the
+  server does. Callers hand the helpers an INSTANT (`new Date()`), so every
+  trip in a list is judged at its own day — the §2.2 entry redirect
+  (`resolveEntryTarget`) and the optimistic status prediction on a settings
+  save use the same per-trip rule. The device-local day remains only for
+  genuinely device-local defaults outside this ruling (expense date default,
+  itinerary scroll-to-today — T-7.17).
 
 - Evaluated when `[tripId]/_layout` mounts. In-session manual tab choice is
   held in a per-trip, in-memory store slot — never persisted (R-nav-9), so

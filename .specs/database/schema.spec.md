@@ -323,6 +323,7 @@ tables have `updated_at` — immutable ledger tables `settlements`,
 | `destination_name` | `text`         | no   | —                   | Display string ("Tokyo, Japan")                                                                                                                                                                                                                                                                     |
 | `destination_lat`  | `numeric(9,6)` | yes  | —                   | Map centering, weather, AI grounding. NULL when picked from a coordinate-less custom place (B-7 part 3, note below) — the pair moves together, never independently                                                                                                                                  |
 | `destination_lng`  | `numeric(9,6)` | yes  | —                   |                                                                                                                                                                                                                                                                                                     |
+| `destination_tz`   | `text`         | yes  | —                   | IANA zone a trip's "today" is evaluated in (B-30, note below). Only a user-entered or coordinate-derived zone is ever stored; NULL = nothing stored, reads resolve the effective zone lazily and never write it. `trips_destination_tz_ck`: length 1..64                                            |
 | `start_date`       | `date`         | no   | —                   | Required at creation (note below)                                                                                                                                                                                                                                                                   |
 | `end_date`         | `date`         | no   | —                   |                                                                                                                                                                                                                                                                                                     |
 | `status`           | `trip_status`  | no   | `'planning'`        | Effective status; date-derived unless overridden (R-db-19)                                                                                                                                                                                                                                          |
@@ -332,7 +333,7 @@ tables have `updated_at` — immutable ledger tables `settlements`,
 | `theme`            | `text`         | yes  | —                   | Trip accent key into `packages/tokens` — colors small trip-scoped accents only, never a whole-app re-skin (tokens spec Gate-2 theme-scope resolution); null = app default                                                                                                                           |
 | `created_by`       | `uuid`         | no   | —                   | FK → `users.id` ON DELETE RESTRICT. Immutable creator; _ownership_ lives in `trip_members.role`                                                                                                                                                                                                     |
 
-- **Checks:** `start_date <= end_date`; `base_currency = upper(base_currency)`; `budget_cap_cents >= 0`; `trips_destination_coords_pair_ck` — `(destination_lat IS NULL) = (destination_lng IS NULL)` (B-7 part 3)
+- **Checks:** `start_date <= end_date`; `base_currency = upper(base_currency)`; `budget_cap_cents >= 0`; `trips_destination_coords_pair_ck` — `(destination_lat IS NULL) = (destination_lng IS NULL)` (B-7 part 3); `trips_destination_tz_ck` — `destination_tz IS NULL OR length(destination_tz) BETWEEN 1 AND 64` (B-30, migration `0007`)
 - **Indexes:** FK index on `created_by`. Trip lists are queried through `trip_members(user_id)` — no extra index here.
 - Trip dates are **required at creation** — unlocks season/AI/tile triggers
   unconditionally; date-less trips are deferred (a future nullability
@@ -354,8 +355,22 @@ tables have `updated_at` — immutable ledger tables `settlements`,
   the only pickable place at exactly `(0, 0)` was a part-2 placeholder —
   from `(0, 0)` to NULL. (Resolved 2026-07-09, Gate 2; amended 2026-09-13,
   B-7 part 3)
+- **Destination zone (B-30, 2026-10-06; Sean ruling 2026-09-19):**
+  `destination_tz` is the IANA zone a trip's "today" is evaluated in — the
+  day at the destination, on server and client alike (trips spec §3.4
+  "Timezone note"). The column holds ONLY a user-entered zone or the zone
+  derived from `destination_lat/lng` (`@photostructure/tz-lookup`, in-process,
+  no network) — written at create and re-derived on PATCH when the coordinates
+  move without an explicit zone. NULL means "nothing stored": legacy rows
+  (migration `0007` is DDL only — no backfill) and coordinate-less
+  destinations nobody gave a zone. Reads resolve the EFFECTIVE zone lazily —
+  derive from the coordinates, else the earliest flight/train booking's
+  `arrives_tz`/`departs_tz` (bookings §3.4.1 JSONB), else `UTC` — and NEVER
+  write it back, so a booking edit can't be remembered as a stale destination.
+  The wire `Trip.destination_tz` is that effective zone, never null.
 - `status` transitions: date-derived (planning → active on `start_date`,
-  active → past after `end_date`) with manual override allowed — override
+  active → past after `end_date`; evaluated at the trip's destination day —
+  B-30) with manual override allowed — override
   wins until cleared (R-db-19; mechanism above).
   (Resolved 2026-07-09, Gate 2)
 

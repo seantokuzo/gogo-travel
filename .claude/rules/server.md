@@ -19,4 +19,5 @@ paths: ["apps/server/**"]
 - No `console.log` (boot banner in `index.ts` is the lone exception). New logic ⇒ new vitest tests, happy path + error/edge.
 - 🟡 **The shared PG test container migrates its TEMPLATE database ONCE per vitest process** (T-S3.3, PR #44 — this is what retired `--no-file-parallelism`). In watch mode, editing `drizzle/` does NOT re-migrate the template: restart the watcher or every suite clones a stale schema.
 - Migration for every schema change once the DB exists (Law #6).
+- 🔴 **A trip's "today" is per-trip, at its DESTINATION zone — `todayInZone` (`@gogo/shared/time`) via `trips/status.ts` `tripToday(now, effectiveZone)`; never `new Date()` / UTC-date math for status** (B-30, Sean ruling 2026-09-19). The zone is the EFFECTIVE one (`trips/destination-tz.ts`: explicit → derived from coords → booking tz → UTC; only the first two are ever written) and the wire `destination_tz` carries that same zone. One clock for a whole list is the bug.
 - Done = root gate green: `pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
