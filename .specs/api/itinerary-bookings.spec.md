@@ -240,6 +240,16 @@ batch recommended one). The OPEN-QUESTIONS rows stay as the decision record.
   detail resolves from the composite itinerary read (R-ib-13), whose default
   range covers every item by construction (§3.4), so an id absent from it is
   genuinely not found (a booking's detail has its own GET, §3.4).
+- **R-ib-32 (the required floor; Q2-181, ruled 2026-09-19):** WHEN a booking
+  is created THE SYSTEM SHALL require only `category` and `title` — every
+  `details` field is optional BY DESIGN (an `idea` may know nothing; capture
+  fills what it finds; the UI prompts for gaps), so a flight with no
+  departure time or a lodging with no check-in is savable. Any further floor
+  (e.g. flight ⇒ departure date + time) is a `@gogo/shared` schema change
+  every writer inherits — the capture pipeline included — and needs its own
+  ruling; cross-field ordering rules (`end ≥ start`) stay server-side
+  refiners, never on the `BookingDetails` shapes that double as Claude
+  structured output (contracts R-shared-7).
 
 ### Upstream resolutions (formerly blocking)
 

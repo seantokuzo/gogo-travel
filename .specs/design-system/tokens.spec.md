@@ -562,9 +562,16 @@ interface InputProps {
   keyboardType?: KeyboardTypeOptions;
   autoComplete?: string;
   returnKeyType?: string;
+  required?: boolean; // marker beside the label + ", required" in the a11y name
   testID: string;
 }
 ```
+
+`required` (Q2-182, ruled 2026-09-19) renders a danger-colored `*` beside the
+label (`{testID}-required`) and appends `", required"` to the field's
+accessibility name. Callers pass a DERIVED flag (the itinerary forms derive it
+from the shared Zod schemas, client itinerary spec R-itin-76); the component
+is a renderer, never a policy. The `* Required` legend is the screen's.
 
 Label always visible (no placeholder-as-label). Error text is announced via
 `accessibilityLiveRegion`/AT focus.

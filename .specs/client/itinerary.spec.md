@@ -725,6 +725,34 @@ extension; this batch does not touch them.
   `expo-clipboard` / `@react-native-clipboard/clipboard` would be a NEW
   dependency — an Autonomy Contract #3 escalation, reported and not taken.
 
+#### Booking-form validation UX (PR #67)
+
+- **R-itin-76 (required floor + indicator; Q2-181, Q2-182, ruled
+  2026-09-19):** the booking form's required fields are DERIVED from the
+  shared Zod schemas, never hand-listed (the form probes
+  `BookingCreateSchema.shape` and the category's `BookingDetails` member with
+  `undefined` — Zod's own answer cannot disagree with the parse a save runs).
+  Today only `title` is required (`category` is route-supplied); every other
+  field stays optional BY DESIGN — a flight with no departure time is savable
+  (API R-ib-32). What the schema cannot express is not marked: conditional
+  pairs (price requires currency, API R-ib-12) and client composition rules
+  (R-itin-55's both-halves rule, the zone requirement) surface as field-level
+  errors at save. The indicator is a danger-colored `*` beside the label, a
+  "* Required" legend rendered only when the derived set is non-empty, and
+  `", required"` appended to the field's accessibility name (DS `Input`
+  `required` prop, tokens §2.9).
+- **R-itin-77 (error surfacing; Q2-183, Q2-184, ruled 2026-09-19):** WHEN a
+  save is refused and every reason maps onto a field THE SYSTEM SHALL name
+  those fields in the banner ONCE — "These fields need attention: Name,
+  Currency." / "Name needs attention — see the message under it." — rather
+  than repeating each message in the banner and under the field; a reason no
+  control owns appears in the banner verbatim. Raw Zod / server validation
+  text is shown AS-IS (it can read developer-ish, e.g. "Too small: expected
+  string to have >=1 characters"; a server message is the envelope's
+  human-readable `error.message`, clamped to 300 characters) until a per-rule
+  copy table is written — that table is a spec artefact, not something the
+  client invents.
+
 ---
 
 ## 2. Design
@@ -816,7 +844,7 @@ Common to booking types: status selector (idea/planned/booked), price +
 currency, confirmation code. Save routes: timeless → bucket; timed →
 auto-scheduled (API I-2); day-picked timeless → schedule endpoint. Editing
 opens the same modal prefilled (`?bookingId=` / `?itemId=`). Round-2 rulings
-on these flows: R-itin-55, R-itin-57..R-itin-64.
+on these flows: R-itin-55, R-itin-57..R-itin-64, R-itin-76..R-itin-77.
 
 **Flight-number lookup gating (B-9 client half, QA-wave sync):** the
 flight-number field's in-form airline inference fires no request the
@@ -1036,6 +1064,7 @@ Screens: `itinerary` (index, both view modes), `itinerary-item`,
 | Booking-form datetime field (Q2-097)                                                                                                                                                           | `itinerary-item-new-input-{field}-date` / `-time`; `-tz` (zoned fields only); `-error` (a caption on a raw AppText — NOT the DS Input's `{testID}-error` derivation)                                                                   |
 | Place picker (Q2-097)                                                                                                                                                                          | `itinerary-item-new-input-place` (query input) plus suffixes `-result-{placeId}`, `-clear`, `-error-search` (novel — no DS component derives it)                                                                                       |
 | Enum option chips (R-itin-64, Q2-115)                                                                                                                                                          | `itinerary-item-new-input-{field}-{option}`                                                                                                                                                                                            |
+| Required-field legend + markers (PR #67, Q2-182)                                                                                                                                               | `itinerary-item-new-required-legend` · `{inputTestID}-required` (DS Input marker, derived)                                                                                                                                             |
 | Form status segment                                                                                                                                                                            | `itinerary-item-new-segment-status-{status}`                                                                                                                                                                                           |
 | Form place attach                                                                                                                                                                              | `itinerary-item-new-button-place`                                                                                                                                                                                                      |
 | Form save                                                                                                                                                                                      | `itinerary-item-new-button-save`                                                                                                                                                                                                       |
