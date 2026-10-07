@@ -10,6 +10,7 @@
  *   normalize <file>                       padding-trimmed copy to stdout (whitespace-only change)
  *   verify --before <f> --after <f>... [--live <f>]
  *                                          prove nothing was lost: rows (multiset), IDs, live rows
+ *                                          (--live: present AND their carried cells unchanged)
  *   rotate --queue <f> --archive <path> [--keep 5] [--dry-run]
  *                                          move closed rows into a NEW archive, then self-verify
  *   residual <file>                        closed rows whose text still mentions open work
@@ -45,6 +46,12 @@
  *     equals its handle, else (with a `WARN`) by an index row whose Title *cell* contains the handle.
  *     A malformed row in any section but `Recently done`, in `before` or the index, is an `ERROR`
  *     and fails the run.
+ *   - `verify --live` is also a SAME-MOMENT re-index check: for every before -> index pair it compares
+ *     the section and every cell after the Title (status, priority, depends/owner, ...), printing
+ *     `CHANGED live <handle-or-ID> (before L<b> -> index L<i>) <column>: "<old>" -> "<new>"` for each
+ *     difference and failing the run. The Title is exempt (the index shortens it by design). So
+ *     "present" proves the row survived and "unchanged" proves its cells did; a deliberate status or
+ *     priority change belongs in a separate sync commit made AFTER the rotation, never inside one.
  *   - `residual` is a substring match, so `pends` also fires on "depends" and `still` on "distilled".
  *     It over-reports on purpose: every hit is a prompt to check, not a verdict.
  */
@@ -72,11 +79,15 @@ const SEPARATOR_CELL = /^:?-+:?$/;
 const HANDLE_CODE_POINTS = 40;
 const MISSING_ROW_CHARS = 100;
 const WARN_TITLE_CHARS = 60;
+const CHANGED_CELL_CHARS = 100;
 
 const USAGE = [
   "usage: node scripts/queue-rows.mjs <command> ...",
   "  normalize <file>",
   "  verify --before <file> --after <file>... [--live <file>]",
+  "      --live: every live row is present AND its section and every cell after the Title",
+  "      are unchanged (a same-moment re-index check; a deliberate status change is a",
+  "      separate sync commit, not part of a rotation)",
   "  rotate --queue <file> --archive <path> [--keep 5] [--dry-run]",
   "  residual <file>",
   "",
@@ -303,27 +314,66 @@ const isOpenIndexRow = (r) => r.section !== "Recently done" && !r.malformed && !
  * a different row whose Title merely starts the same way.
  * @param {Row[]} required live `before` rows
  * @param {Row[]} candidates index data rows that are live (`isOpenIndexRow`)
+ * @returns {{missingLive: Row[], fallbacks: {required: Row, found: Row}[], pairs: {required: Row, found: Row}[]}}
+ *   `pairs` is every before-row -> index-row pairing (fallback ones included), in before-file order.
  */
 function matchLive(required, candidates) {
   const taken = new Set();
-  const claim = (match) => {
+  const pairs = [];
+  const claim = (r, match) => {
     const hit = candidates.find((c) => !taken.has(c) && match(c));
-    if (hit !== undefined) taken.add(hit);
+    if (hit !== undefined) {
+      taken.add(hit);
+      pairs.push({ required: r, found: hit });
+    }
     return hit;
   };
   const byId = required.filter((r) => r.id !== null);
   const byHandle = required.filter((r) => r.id === null && r.handle !== "");
   const missingLive = required.filter((r) => r.id === null && r.handle === "");
-  for (const r of byId) if (claim((c) => c.id === r.id) === undefined) missingLive.push(r);
-  const loose = byHandle.filter((r) => claim((c) => c.handle === r.handle) === undefined);
+  for (const r of byId) if (claim(r, (c) => c.id === r.id) === undefined) missingLive.push(r);
+  const loose = byHandle.filter((r) => claim(r, (c) => c.handle === r.handle) === undefined);
   const fallbacks = [];
   for (const r of loose) {
-    const found = claim((c) => titleOf(c).includes(r.handle));
+    const found = claim(r, (c) => titleOf(c).includes(r.handle));
     if (found === undefined) missingLive.push(r);
     else fallbacks.push({ required: r, found });
   }
   missingLive.sort((a, b) => a.line - b.line);
-  return { missingLive, fallbacks };
+  pairs.sort((a, b) => a.required.line - b.required.line);
+  return { missingLive, fallbacks, pairs };
+}
+
+/**
+ * `--live` is a same-moment re-index check: a paired row must still carry the cells it had. Compares the
+ * section and every cell after the Title (status, priority, depends/owner, ...); the Title is exempt
+ * because the index shortens it by design. Differences come back in before-file order, section first,
+ * then by column. A missing cell (a dropped or shorter column) reads as the empty string.
+ * @param {{required: Row, found: Row}[]} pairs
+ * @returns {string[]} `CHANGED live ...` lines
+ */
+function changedCellLines(pairs) {
+  const clip = (s) =>
+    Array.from(s).length > CHANGED_CELL_CHARS ? firstChars(s, CHANGED_CELL_CHARS) + "…" : s;
+  const out = [];
+  for (const { required: b, found: i } of pairs) {
+    const diffs = [];
+    if (b.section !== i.section) diffs.push(["section", b.section, i.section]);
+    for (let k = 2; k < Math.max(b.cells.length, i.cells.length); k++) {
+      const was = b.cells[k] ?? "";
+      const now = i.cells[k] ?? "";
+      if (was !== now) {
+        const column = b.header?.cells[k] ?? i.header?.cells[k] ?? `column ${k + 1}`;
+        diffs.push([column, was, now]);
+      }
+    }
+    for (const [column, was, now] of diffs) {
+      out.push(
+        `CHANGED live ${b.handle} (before L${b.line} -> index L${i.line}) ${column}: "${clip(was)}" -> "${clip(now)}"`,
+      );
+    }
+  }
+  return out;
 }
 
 /**
@@ -365,6 +415,7 @@ export function verifyLossless({ before, afters, live }) {
     ...missingIds.map((id) => `MISSING id ${id}`),
   ];
   const warnings = [];
+  const changes = [];
   let ok = missingRows.length === 0 && missingIds.length === 0;
 
   // (3) live: every live before row is still in the live index.
@@ -372,7 +423,8 @@ export function verifyLossless({ before, afters, live }) {
     const liveRows = beforeRows.filter((r) => !r.closed);
     const liveParsed = parseQueue(live);
     const liveData = dataRows(liveParsed);
-    const { missingLive, fallbacks } = matchLive(liveRows, liveData.filter(isOpenIndexRow));
+    const { missingLive, fallbacks, pairs } = matchLive(liveRows, liveData.filter(isOpenIndexRow));
+    changes.push(...changedCellLines(pairs));
     summary.push(
       `live: required=${liveRows.length} present=${liveRows.length - missingLive.length}`,
     );
@@ -405,9 +457,9 @@ export function verifyLossless({ before, afters, live }) {
     for (const r of liveRows)
       if (r.handle !== "") seen.set(r.handle, (seen.get(r.handle) ?? 0) + 1);
     for (const [handle, n] of seen) if (n > 1) warnings.push(`WARN duplicate handle ${handle}`);
-    ok = ok && missingLive.length === 0 && errors.length === 0;
+    ok = ok && missingLive.length === 0 && changes.length === 0 && errors.length === 0;
   }
-  return { ok, lines: [...summary, ...errors, ...missing, ...warnings] };
+  return { ok, lines: [...summary, ...errors, ...missing, ...changes, ...warnings] };
 }
 
 // --- rotate -------------------------------------------------------------------------------

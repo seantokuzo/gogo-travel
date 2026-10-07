@@ -426,7 +426,7 @@ describe("verifyLossless", () => {
     "| --- | --- | --- | --- | --- |",
     "| T-1.1 | **Alpha** live thing | queued | P1 | — |",
     "| — | **Charlie handle** unlabeled | in-progress | P3 | — |",
-    "| B-5 | **Echo** parked | deferred | P4 | — |",
+    "| B-5 | **Echo** parked | DEFERRED | P4 | — |",
     "",
     "## Blocked",
     "",
@@ -719,7 +719,7 @@ describe("verifyLossless", () => {
       "| --- | --- | --- | --- | --- |",
     ];
     const parked = (...rows) => join$(...PARKED_HEAD, ...rows);
-    const ECHO = "| B-5 | **Echo** parked | deferred | P4 | — |";
+    const ECHO = "| B-5 | **Echo** parked | DEFERRED | P4 | — |";
     /** `verify --before BASE --after BASE --live <liveText>` through the CLI (what T4 runs). */
     const verifyLive = (liveText) => {
       const s = sandbox(BASE);
@@ -787,13 +787,17 @@ describe("verifyLossless", () => {
       assert.match(r.stdout, /^live: required=5 present=5$/m);
       assert.doesNotMatch(r.stdout, /^(MISSING|ERROR)/m);
     });
-    it("a row moved to an unknown section is live whatever its status cell says (rc 0)", () => {
+    // A row MOVED into an unknown section is still live (present), whatever its status cell says; the move
+    // itself is reported as a CHANGED `section` (and `Status`, when the cell differs), hence rc 1.
+    it("a row moved to an unknown section is live whatever its status cell says (present; the move is a CHANGED)", () => {
       for (const status of ["deferred", "queued", "blocked", "done", "cancelled", "DONE"]) {
         const r = verifyLive(
           live.replace(ECHO, "") + parked(`| B-5 | **Echo** parked | ${status} | P4 | — |`),
         );
-        assert.equal(r.status, 0, `${status}: ${r.stdout}`);
-        assert.match(r.stdout, /^live: required=4 present=4$/m, status);
+        assert.match(r.stdout, /^live: required=4 present=4$/m, `${status}: ${r.stdout}`);
+        assert.doesNotMatch(r.stdout, /^(MISSING|ERROR)/m, status);
+        assert.match(r.stdout, /^CHANGED live B-5 .* section: "Active" -> "Parked"$/m, status);
+        assert.equal(r.status, 1, `${status}: ${r.stdout}`);
       }
     });
     it("the section, not the cell, decides: the same done row in Active is closed (MISSING), under ## Parked it is live", () => {
@@ -802,7 +806,8 @@ describe("verifyLossless", () => {
       assert.equal(inActive.status, 1, inActive.stdout);
       assert.match(inActive.stdout, /^MISSING live B-5$/m);
       const underParked = verifyLive(live.replace(ECHO, "") + parked(cell));
-      assert.equal(underParked.status, 0, underParked.stdout);
+      assert.match(underParked.stdout, /^live: required=4 present=4$/m, underParked.stdout);
+      assert.doesNotMatch(underParked.stdout, /^(MISSING|ERROR)/m, underParked.stdout);
     });
 
     // --- a malformed row cannot be trusted: ERROR in every section but Recently done, and never a match ---
@@ -835,7 +840,7 @@ describe("verifyLossless", () => {
       assert.doesNotMatch(ok.stdout, /^ERROR/m);
     });
     it("a malformed row never satisfies a required live row: its ERROR comes with a MISSING (Parked and Active)", () => {
-      const extra = "| B-5 | **Echo** parked | deferred | P4 | — | extra |";
+      const extra = "| B-5 | **Echo** parked | DEFERRED | P4 | — | extra |";
       for (const text of [
         live.replace(ECHO, "") + parked(extra), // 6 cells under the 5-cell Parked header
         live.replace(ECHO, extra), // 6 cells under the 5-cell Active header
@@ -860,7 +865,7 @@ describe("verifyLossless", () => {
     it("the handle must be in the Title cell: Depends-on or Blocker mentions do not count (CLI rc 1)", () => {
       const s = sandbox(BASE);
       const dropped = without(live, ["Charlie handle"]);
-      const echo = "| B-5 | **Echo** parked | deferred | P4 | — |";
+      const echo = "| B-5 | **Echo** parked | DEFERRED | P4 | — |";
       const foxtrot = "| B-4 | **Foxtrot** stuck | blocked | P1 | Sean |";
       const bad = [
         // Charlie dropped; its handle survives only in another row's Depends-on cell...
@@ -887,8 +892,8 @@ describe("verifyLossless", () => {
     // --- the --live index is itself checked ---
     it("a malformed Active/Blocked row in the --live index is an ERROR and fails (CLI rc 1)", () => {
       const sixCells = live.replace(
-        "| B-5 | **Echo** parked | deferred | P4 | — |",
-        "| B-5 | **Echo** parked | deferred | P4 | — | extra |",
+        "| B-5 | **Echo** parked | DEFERRED | P4 | — |",
+        "| B-5 | **Echo** parked | DEFERRED | P4 | — | extra |",
       );
       const r = verifyLossless({ before: BASE, afters: [BASE], live: sixCells });
       assert.equal(r.ok, false, r.lines.join("\n"));
@@ -906,18 +911,167 @@ describe("verifyLossless", () => {
       );
     });
     it("a malformed row in the --live index's Recently done is tolerated (status is fixed by section)", () => {
-      const tolerant = index(
-        [
-          row("T-1.1", "**Alpha** live thing"),
-          row("—", "**Charlie handle** unlabeled", "in-progress"),
-          row("B-5", "**Echo** parked", "deferred"),
-          row("B-4", "**Foxtrot** stuck", "blocked"),
-        ],
-        ["| T-9 | **Nine** one | 2026-01-09 | extra |"],
-      );
+      const tolerant = live + join$(...DONE_HEAD, "| T-9 | **Nine** one | 2026-01-09 | extra |");
       const r = verifyLossless({ before: BASE, afters: [BASE], live: tolerant });
       assert.equal(r.ok, true, r.lines.join("\n"));
       assert.equal(r.lines.filter((l) => l.startsWith("ERROR")).length, 0);
+    });
+
+    // --- carried cells: `--live` is a SAME-MOMENT re-index check (round-1 finding) ---
+    // A reviewer edited a copy of the real index ("P-6 phase QA" blocked -> queued, P-13 P1 -> P0, P-13's
+    // dependency changed) and `verify --live` still said 102/102, rc 0: pairing proved the row EXISTS, not
+    // that its cells survived. Every cell after the Title (and the section) of each paired row must be
+    // identical; the Title is exempt because the index shortens it by design.
+    // Falsification: delete the comparison in `verifyLossless` (or pair without returning the pairs) and
+    // every test here that expects a CHANGED line goes red, while the identity and title-only ones stay green.
+    describe("carried cells", () => {
+      const HEAD = [
+        "## Active",
+        "",
+        "| ID | Title | Status | Priority | Depends on |",
+        "| --- | --- | --- | --- | --- |",
+      ];
+      const beforeText = join$(
+        ...HEAD,
+        "| P-13 | **Phase 13** polish, wire the settings screen and ship it | queued | P1 | P-12 |",
+        "| — | **P-6 phase QA** run the simulator pass on a device | blocked | P2 | P-5 |",
+        "| T-1.1 | **Alpha** untouched | queued | P3 | — |",
+      );
+      const P13 = "| P-13 | **Phase 13** polish | queued | P1 | P-12 |";
+      const P6 = "| — | **P-6 phase QA** simulator | blocked | P2 | P-5 |";
+      const T11 = "| T-1.1 | **Alpha** | queued | P3 | — |";
+      // Shortened Titles, every other cell as it was: what a faithful re-index looks like.
+      const faithful = join$(...HEAD, P13, P6, T11);
+      /** `verify --before B --after B --live <indexText>` through the CLI. */
+      const verifyIndex = (indexText, before = beforeText) => {
+        const s = sandbox(before);
+        const file = join(s.dir, "index.md");
+        writeFileSync(file, indexText);
+        return cli(["verify", "--before", s.queue, "--after", s.queue, "--live", file]);
+      };
+      const changed = (stdout) => stdout.split("\n").filter((l) => l.startsWith("CHANGED"));
+
+      it("identity: a faithful re-index (Titles shortened, every other cell kept) has no CHANGED, rc 0", () => {
+        const r = verifyIndex(faithful);
+        assert.equal(r.status, 0, r.stdout);
+        assert.deepEqual(changed(r.stdout), []);
+        assert.match(r.stdout, /^live: required=3 present=3$/m);
+        // And before = after = live, the literal identity run.
+        const same = verifyIndex(beforeText, beforeText);
+        assert.equal(same.status, 0, same.stdout);
+        assert.deepEqual(changed(same.stdout), []);
+      });
+      it("three edited cells (status, priority, depends) are three CHANGED lines and rc 1, though every row is present", () => {
+        const edited = faithful
+          .replace(P6, P6.replace("| blocked |", "| queued |"))
+          .replace(P13, P13.replace("| P1 |", "| P0 |").replace("| P-12 |", "| — |"));
+        assert.notEqual(edited, faithful, "fixture edits must apply");
+        const r = verifyIndex(edited);
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(
+          r.stdout,
+          /^live: required=3 present=3$/m,
+          "the rows are all there: only cells moved",
+        );
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live P-13 (before L5 -> index L5) Priority: "P1" -> "P0"',
+          'CHANGED live P-13 (before L5 -> index L5) Depends on: "P-12" -> "—"',
+          'CHANGED live P-6 phase QA (before L6 -> index L6) Status: "blocked" -> "queued"',
+        ]);
+        assert.doesNotMatch(r.stdout, /^(MISSING|ERROR)/m);
+      });
+      it("the library verdict agrees: ok is false and the CHANGED lines come after MISSING and before WARN", () => {
+        const edited = faithful.replace(T11, T11.replace("| P3 |", "| P0 |"));
+        const r = verifyLossless({ before: beforeText, afters: [beforeText], live: edited });
+        assert.equal(r.ok, false, r.lines.join("\n"));
+        assert.deepEqual(r.lines.slice(2), [
+          "live: required=3 present=3",
+          'CHANGED live T-1.1 (before L7 -> index L7) Priority: "P3" -> "P0"',
+        ]);
+      });
+      it("the Title alone changing is never a CHANGED (the index shortens Titles by design)", () => {
+        const r = verifyIndex(
+          faithful.replace("**Phase 13** polish", "**Phase 13** a different, shorter"),
+        );
+        assert.equal(r.status, 0, r.stdout);
+        assert.deepEqual(changed(r.stdout), []);
+      });
+      it("an ID-less row paired by its exact handle is compared too", () => {
+        const r = verifyIndex(faithful.replace(P6, P6.replace("| P2 |", "| P1 |")));
+        assert.equal(r.status, 1, r.stdout);
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live P-6 phase QA (before L6 -> index L6) Priority: "P2" -> "P1"',
+        ]);
+      });
+      it("a row paired only by the substring fallback is compared too (WARN and CHANGED both print)", () => {
+        const abbreviated = P6.replace(
+          "**P-6 phase QA** simulator",
+          "P-6 phase QA, abbreviated",
+        ).replace("| blocked |", "| queued |");
+        const r = verifyIndex(faithful.replace(P6, abbreviated));
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(r.stdout, /^WARN live handle "P-6 phase QA"/m);
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live P-6 phase QA (before L6 -> index L6) Status: "blocked" -> "queued"',
+        ]);
+      });
+      it("moving a live row to another section is a CHANGED on `section`, even with every cell kept", () => {
+        const parked = [
+          "",
+          "## Parked",
+          "",
+          "| ID | Title | Status | Priority | Depends on |",
+          "| --- | --- | --- | --- | --- |",
+          T11,
+        ];
+        const moved = join$(...HEAD, P13, P6, ...parked);
+        const r = verifyIndex(moved);
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(r.stdout, /^live: required=3 present=3$/m);
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live T-1.1 (before L7 -> index L12) section: "Active" -> "Parked"',
+        ]);
+      });
+      it("an index table that dropped a column shows the lost cell as the empty string", () => {
+        const slim = join$(
+          "## Active",
+          "",
+          "| ID | Title | Status | Priority |",
+          "| --- | --- | --- | --- |",
+          "| P-13 | **Phase 13** polish | queued | P1 |",
+          "| — | **P-6 phase QA** simulator | blocked | P2 |",
+          "| T-1.1 | **Alpha** | queued | P3 |",
+        );
+        const r = verifyIndex(slim);
+        assert.equal(r.status, 1, r.stdout);
+        assert.deepEqual(changed(r.stdout), [
+          'CHANGED live P-13 (before L5 -> index L5) Depends on: "P-12" -> ""',
+          'CHANGED live P-6 phase QA (before L6 -> index L6) Depends on: "P-5" -> ""',
+          'CHANGED live T-1.1 (before L7 -> index L7) Depends on: "—" -> ""',
+        ]);
+      });
+      it("a long cell is clipped to 100 characters with an ellipsis, so one line stays readable", () => {
+        const long = "x".repeat(250);
+        const r = verifyIndex(faithful.replace(P13, P13.replace("| P-12 |", `| ${long} |`)));
+        assert.equal(r.status, 1, r.stdout);
+        const [line] = changed(r.stdout);
+        assert.ok(line.includes(`"${"x".repeat(100)}…"`), line);
+        assert.ok(!line.includes("x".repeat(101)), line);
+      });
+      it("a row that is gone is MISSING, not CHANGED (nothing was paired)", () => {
+        const r = verifyIndex(without(faithful, ["| T-1.1 "]));
+        assert.equal(r.status, 1, r.stdout);
+        assert.match(r.stdout, /^MISSING live T-1.1$/m);
+        assert.deepEqual(changed(r.stdout), []);
+      });
+      it("without --live, edited cells are not this check's business (rows and IDs only)", () => {
+        const s = sandbox(beforeText);
+        const after = join(s.dir, "after.md");
+        writeFileSync(after, faithful.replace(P13, P13.replace("| P1 |", "| P0 |")));
+        const r = cli(["verify", "--before", s.queue, "--after", after]);
+        // The edited P-13 row is not byte-equal, so the row multiset check (not CHANGED) reports it.
+        assert.doesNotMatch(r.stdout, /^CHANGED/m);
+      });
     });
   });
 });
@@ -1340,7 +1494,7 @@ describe("CLI (real process)", () => {
         "| --- | --- | --- | --- | --- |",
         "| T-1.1 | Alpha | queued | P1 | \u2014 |",
         "| \u2014 | **Charlie handle** unlabeled | in-progress | P3 | \u2014 |",
-        "| B-5 | Echo | deferred | P4 | \u2014 |",
+        "| B-5 | Echo | DEFERRED | P4 | \u2014 |",
         "",
         "## Blocked",
         "",
@@ -1367,6 +1521,12 @@ describe("CLI (real process)", () => {
 });
 
 describe("CLI (in-process)", () => {
+  it("the usage text says --live also checks that carried cells are unchanged (a same-moment re-index check)", () => {
+    // Falsification: drop the `--live` explanation from USAGE and this goes red.
+    const { stderr } = cli(["verify"]);
+    assert.match(stderr, /--live[^\n]*\n[^\n]*unchanged/, stderr);
+    assert.match(stderr, /same-moment/, stderr);
+  });
   it("usage errors are exit 2, name the problem, and print the usage text", () => {
     const base = ["rotate", "--queue", "q", "--archive", "a"];
     for (const [args, why] of [
