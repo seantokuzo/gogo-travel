@@ -12,8 +12,11 @@
  *  - R-map-20 hygiene: ceiling purge (past-only, unknown-safe), delete, the
  *    once-per-session orphan sweep;
  *  - the controller hook's R-map-18 wifi gate: wifi starts, cellular defers
- *    then resumes on the wifi event, planning/annotated trips never start,
- *    the deferred listener is removed on unmount;
+ *    then resumes on the wifi event, planning/annotated trips never start;
+ *  - the deferred wait (PR #98 round 1): ONE never-removed native network
+ *    listener fanned out to waiting controllers (iOS cancels its NWPathMonitor
+ *    when the last JS listener goes), an AppState -> active re-read while
+ *    waiting, and the unmount withdrawal;
  *  - Q2-186 single-controller scope: ONE `useOfflinePackController` per trip
  *    (surfaces read `useOfflinePackState`, effect-free), `liveOfflinePackControllers`
  *    pins the count, two racing instances still start ONE download, and a
@@ -23,6 +26,7 @@ import { ThemeProvider } from "@gogo/tokens/react";
 import { act, renderHook, waitFor } from "@testing-library/react-native";
 import type { ReactNode } from "react";
 import { createElement } from "react";
+import { AppState } from "react-native";
 
 import { TEST_TRIP_ID, TRIP_B_ID } from "@/test-utils/ids";
 import { makeActiveTrip, makePlanningTrip } from "@/test-utils/trip-fixtures";
@@ -368,6 +372,17 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
   const cellular = { type: "CELLULAR", isConnected: true, isInternetReachable: true };
   const none = { type: "NONE", isConnected: false, isInternetReachable: false };
 
+  /** The controller's AppState subscriptions, captured by behavior (map-screen test idiom). */
+  let appStateSubs: { handler: (state: string) => void; remove: jest.Mock }[] = [];
+  beforeEach(() => {
+    appStateSubs = [];
+    jest.spyOn(AppState, "addEventListener").mockImplementation((_type, handler) => {
+      const sub = { handler: handler as (state: string) => void, remove: jest.fn() };
+      appStateSubs.push(sub);
+      return sub as unknown as ReturnType<typeof AppState.addEventListener>;
+    });
+  });
+
   it("active trip on wifi auto-starts exactly once — ONE controller, the pill AND settings readers both mounted", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => wifi);
     const root = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
@@ -499,7 +514,10 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await act(async () => listener(wifi)); // wifi finally
     await act(flush);
     expect(om.createPack).toHaveBeenCalledTimes(1);
-    expect(remove).toHaveBeenCalledTimes(1);
+    // Started -> the controller stops WAITING (AppState subscription), but the
+    // native listener is never removed (iOS monitor — see `awaitNetworkEvents`).
+    expect(appStateSubs[0].remove).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
     await unmount();
   });
 
@@ -669,16 +687,121 @@ describe("useOfflinePackController — R-map-18 activation trigger", () => {
     await unmount();
   });
 
-  it("the deferred wifi listener is removed on unmount — no leak", async () => {
-    const remove = jest.fn();
+  // PR #98 round 1 (blocking): expo-network's iOS module cancels its ONE
+  // NWPathMonitor when the last JS listener is removed, and a cancelled
+  // monitor never restarts — so per-controller subscribe/unsubscribe left the
+  // NEXT deferred wait on a dead monitor. The fan-out keeps ONE native
+  // subscription, never removed. Falsification: restore per-controller
+  // `addNetworkStateListener` / `remove` in `awaitNetworkEvents` -> the second
+  // wait subscribes again and the first withdrawal removes -> red.
+  it("sequential deferred waits (install, remove, install) share ONE native listener that is NEVER removed", async () => {
     network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const remove = jest.fn();
     network.addNetworkStateListener.mockImplementation(() => ({ remove }));
-    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), {
-      wrapper,
-    });
-    await waitFor(() => expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1));
+
+    const first = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1);
+    await first.unmount(); // withdraws the wait — must NOT cycle the native listener
+    expect(remove).not.toHaveBeenCalled();
+
+    const second = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(2); // the second controller really waited
+    expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+
+    // The surviving native callback still reaches the SECOND controller.
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(wifi));
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+    await second.unmount();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  // Falsification: dispatch to only the first waiter (or hold one callback)
+  // and trip B never hears the wifi event -> createPack x1 -> red.
+  it("one native wifi event fans out to EVERY waiting controller (two trips) through the single listener", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const { unmount } = await renderHook(
+      () => {
+        useOfflinePackController(activeTrip());
+        useOfflinePackController(makeActiveTrip(TRIP_B_ID));
+      },
+      { wrapper },
+    );
+    await act(flush);
+    expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1);
+
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(wifi));
+    await act(flush);
+    expect(
+      om.createPack.mock.calls.map(([pack]) => (pack as { name: string }).name).sort(),
+    ).toEqual([packNameFor(TEST_TRIP_ID), packNameFor(TRIP_B_ID)].sort());
     await unmount();
-    expect(remove).toHaveBeenCalled();
+  });
+
+  // R-map-18's "next wifi + app-active window": a wifi change while the app is
+  // backgrounded delivers no event to a suspended JS thread, so a waiting
+  // controller re-reads the network on every AppState -> active. Falsification:
+  // drop the AppState subscription -> no subscription is ever made (red at the
+  // first assertion); fire the re-read on ANY state -> the background /
+  // inactive transitions re-read (getNetworkStateAsync x1 assertion) -> red.
+  it("AppState -> active while waiting re-reads the network and starts on wifi; other transitions don't", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(appStateSubs).toHaveLength(1);
+    const [sub] = appStateSubs;
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(1);
+
+    await act(async () => sub.handler("background"));
+    await act(async () => sub.handler("inactive"));
+    await act(flush);
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(1); // not a foreground
+
+    // Foreground, still cellular: re-read, keep waiting.
+    await act(async () => sub.handler("active"));
+    await act(flush);
+    expect(network.getNetworkStateAsync).toHaveBeenCalledTimes(2);
+    expect(om.createPack).not.toHaveBeenCalled();
+    expect(sub.remove).not.toHaveBeenCalled();
+
+    // Wifi came up while backgrounded (no native event): the next foreground starts it.
+    network.getNetworkStateAsync.mockImplementation(async () => wifi);
+    await act(async () => sub.handler("active"));
+    await act(flush);
+    expect(om.createPack).toHaveBeenCalledTimes(1);
+    expect(sub.remove).toHaveBeenCalledTimes(1); // started -> stop waiting
+    await unmount();
+  });
+
+  // Falsification: drop `finishWaiting()` from the effect cleanup -> the
+  // AppState subscription leaks (remove never called) -> red.
+  it("unmount withdraws the wait: AppState subscription removed, native listener left alone, a later wifi event starts nothing", async () => {
+    network.getNetworkStateAsync.mockImplementation(async () => cellular);
+    const remove = jest.fn();
+    network.addNetworkStateListener.mockImplementation(() => ({ remove }));
+    const { unmount } = await renderHook(() => useOfflinePackController(activeTrip()), { wrapper });
+    await act(flush);
+    expect(appStateSubs).toHaveLength(1);
+    await unmount();
+    expect(appStateSubs[0].remove).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+
+    const listener = network.addNetworkStateListener.mock.calls[0][0] as (
+      event: typeof wifi,
+    ) => void;
+    await act(async () => listener(wifi));
+    await act(flush);
+    expect(om.createPack).not.toHaveBeenCalled();
   });
 
   // Q2-186 adversarial: switching trips (the trip switcher REPLACES the

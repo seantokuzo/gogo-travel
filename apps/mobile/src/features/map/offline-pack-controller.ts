@@ -37,6 +37,7 @@ import type { Paginated, TripListItem, TripStatus } from "@gogo/shared";
 import { useTheme } from "@gogo/tokens/react";
 import type { InfiniteData } from "@tanstack/react-query";
 import { useEffect, useMemo } from "react";
+import { AppState } from "react-native";
 import { create } from "zustand";
 
 import { queryClient, queryKeys } from "@/data/query-client";
@@ -119,6 +120,53 @@ let orphanSweepDone = false;
 /** Mounted `useOfflinePackController` instances per trip — the single-mount pin's observable. */
 const liveControllers = new Map<string, number>();
 
+// ---------------------------------------------------------------------------
+// Network fan-out (ONE native listener, never removed)
+// ---------------------------------------------------------------------------
+
+/** What a waiting controller needs from a network event / state read. */
+type NetworkSnapshot = { type?: string; isConnected?: boolean };
+
+/** Controllers currently deferred ("waiting for the next wifi window"). */
+const networkWaiters = new Set<(event: NetworkSnapshot) => void>();
+let nativeNetworkListening = false;
+
+/**
+ * Register a waiter for network-state events and return its withdrawal.
+ *
+ * WHY one never-removed native subscription (PR #98 round 1, blocking): on
+ * iOS, expo-network 57's `NetworkModule.swift` holds ONE `NWPathMonitor`
+ * created at module init, `start`ed when the JS listener count goes 0 -> 1
+ * (`OnStartObserving`) and `cancel`led when it drops to 0
+ * (`OnStopObserving`). A cancelled `NWPathMonitor` never delivers again
+ * (review-lane Swift probe: 0 path updates after cancel -> start, 1 for a
+ * fresh monitor), so removing the LAST JS listener — which every controller
+ * cleanup (trip leave, trip switch, theme flip) used to do — left the NEXT
+ * deferred wait on a dead monitor: "defer and retry on the next wifi" silently
+ * never retried. `getNetworkStateAsync()` is unaffected (it builds a temporary
+ * monitor per call). Android is unaffected. Candidate upstream expo-network
+ * bug — NOT patched here.
+ *
+ * So the native listener is created on first need and left alone for the
+ * life of the JS runtime; controllers join/leave THIS set, never the native
+ * subscription. (One idle path monitor for the app's lifetime is the cost;
+ * it only wakes on real path changes.)
+ */
+function awaitNetworkEvents(onEvent: (event: NetworkSnapshot) => void): () => void {
+  networkWaiters.add(onEvent);
+  if (!nativeNetworkListening) {
+    nativeNetworkListening = true;
+    Network.addNetworkStateListener((event) => {
+      // Snapshot: a waiter that finishes (and withdraws) mid-dispatch must not
+      // perturb the iteration.
+      for (const waiter of [...networkWaiters]) waiter(event);
+    });
+  }
+  return () => {
+    networkWaiters.delete(onEvent);
+  };
+}
+
 /**
  * How many controller instances are mounted for the trip right now. The
  * contract is `1` for any trip with a mounted `[tripId]` shell (`0` outside
@@ -133,6 +181,8 @@ export function resetOfflinePacksForTests(): void {
   useOfflinePackStore.setState({ packs: {} });
   inFlight.clear();
   orphanSweepDone = false;
+  networkWaiters.clear();
+  nativeNetworkListening = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,11 +481,15 @@ function usePackInputs(trip: OfflinePackTrip) {
  * `liveOfflinePackControllers` pins the count.
  *
  * Wifi gate (R-map-18): on wifi → download now; connected-but-not-wifi or
- * offline → defer, re-checking on every network-state change while the
- * controller stays mounted ("next wifi + app-active window"). The deferred
- * listener is removed on unmount — no leak. A download already in flight
- * survives the unmount (module-level latch + SDK listener): leaving or
- * switching trips never cancels it.
+ * offline → defer ("next wifi + app-active window"): the controller joins the
+ * module's network fan-out (`awaitNetworkEvents` — ONE never-removed native
+ * listener, see there for the iOS NWPathMonitor reason) AND re-reads
+ * `getNetworkStateAsync()` on every AppState -> `active` (a wifi change while
+ * backgrounded delivers no event to a suspended JS thread). Unmount withdraws
+ * the wait (set membership + AppState subscription) — no leak, and the native
+ * listener is untouched. A download already in flight survives the unmount
+ * (module-level latch + SDK listener): leaving or switching trips never
+ * cancels it.
  *
  * Auto-download reads the phase IMPERATIVELY (not a dep): a manual delete
  * flips state to `none`, and re-running the effect on that change would
@@ -471,18 +525,34 @@ export function useOfflinePackController(trip: OfflinePackTrip): void {
       styleUrl,
     };
     let cancelled = false;
-    let subscription: { remove: () => void } | undefined;
+    let stopWaiting: (() => void) | undefined;
+    const finishWaiting = (): void => {
+      stopWaiting?.();
+      stopWaiting = undefined;
+    };
+    // One handler for every network signal while deferred (native event,
+    // AppState re-read): wifi -> start (if still armed) and stop waiting.
+    const onNetwork = (state: NetworkSnapshot): void => {
+      if (cancelled || !isWifiState(state)) return;
+      if (
+        shouldAutoDownloadPack({ tripStatus: status, phase: offlinePackStateFor(tripId).phase })
+      ) {
+        startPackDownload(target);
+      }
+      finishWaiting();
+    };
     const deferUntilWifi = (): void => {
-      subscription = Network.addNetworkStateListener((event) => {
-        if (!isWifiState(event)) return;
-        if (
-          shouldAutoDownloadPack({ tripStatus: status, phase: offlinePackStateFor(tripId).phase })
-        ) {
-          startPackDownload(target);
-        }
-        subscription?.remove();
-        subscription = undefined;
+      if (stopWaiting !== undefined) return;
+      const withdraw = awaitNetworkEvents(onNetwork);
+      const appState = AppState.addEventListener("change", (nextState) => {
+        if (nextState !== "active") return;
+        // A failed re-read leaves the wait in place (the next event/foreground retries).
+        void Network.getNetworkStateAsync().then(onNetwork, () => undefined);
       });
+      stopWaiting = () => {
+        withdraw();
+        appState.remove();
+      };
     };
     void Network.getNetworkStateAsync().then(
       (state) => {
@@ -503,7 +573,7 @@ export function useOfflinePackController(trip: OfflinePackTrip): void {
     );
     return () => {
       cancelled = true;
-      subscription?.remove();
+      finishWaiting();
     };
   }, [tripId, status, styleUrl, regionKey, coords]);
 }
