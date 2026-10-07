@@ -335,7 +335,12 @@ photos.
   R-map-9/10), linked itinerary items, this-trip photos strip, tour-guide
   entry (R-map-13), spine attribution footer (`place-detail-attribution`).
 - Sheet fetches spine data only (cheap, offline-capable); the detail
-  screen requests `?fresh=true` (§2.4).
+  screen requests `?fresh=true` (§2.4) — **in v1 it never does** (Q2-205,
+  ruled 2026-09-19): the places spec's Gate-2 resolution ("`fresh` never
+  requested in v1") outranks this section's literal wording, so the
+  fetch-fresh client contract (§2.4) ships built and tested behind a
+  structural dormancy flag (a bare call issues no request), flipped post-MVP
+  with the ADR-005 entitlement seam.
 
 ### 2.4 Fetch-fresh client contract (R-map-9)
 

@@ -162,6 +162,11 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   (config; trip → alert → disable `fresh`, spine-only responses continue) —
   FSQ spend is metered per call and sits outside the AI kill-switch, so it
   gets its own guard in the same spirit.
+  **Dormant in v1 — RULED (Q2-204, ruled 2026-09-19):** the premium-detail
+  feature — the FSQ client, the `resolveEntitlements` read (R-places-12), and
+  these rate guards — ships deferred WITH the integration (Gate 2), not
+  built now. No premium call executes in v1, so the per-user 429 is
+  unreachable until the integration lands.
 
 ### Saved places
 
@@ -172,7 +177,37 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
 - **R-places-16 (save-once semantics):** WHEN a place is saved to a trip it
   is already saved to THE SYSTEM SHALL return 409 `CONFLICT` (unique
   `(trip_id, place_id)`, schema §3.3.8) — clients may treat it as
-  idempotent success (map spec R-map-11).
+  idempotent success (map spec R-map-11). The 409 carries
+  `details: { reason: "already_saved" }` (Q2-198, ruled 2026-09-19),
+  mirroring the custom-place-delete 409's `{ reason, … }` precedent
+  (R-places-10).
+
+  **Saved-place conventions — RULED (T-8.1, PR #21; each ruled 2026-09-19):**
+  - **List order (Q2-195):** THE SYSTEM SHALL return a trip's saved places
+    ordered `created_at DESC, id DESC` — the keyset codec's canonical order,
+    deterministic for cursor stability (the spec pins pagination, not
+    order).
+  - **List cap (Q2-196):** `limit` defaults to 100 and is capped at 100 (the
+    schema bound IS the cap); a larger pin set paginates by `cursor`.
+  - **Note (Q2-197):** `note` is capped at 2000 characters — the repo's
+    notes-like-prose bound — on the create body, the PATCH body, AND the
+    read shape; an empty string is allowed; `null` is the "no note"
+    representation.
+  - **Boundary validation (Q2-201):** WHEN a POST body's `place_id` is
+    malformed THE SYSTEM SHALL answer 400 `VALIDATION_FAILED` (the shared
+    schema's boundary door — a value that can never name a real place
+    reveals nothing); WHEN the `:savedPlaceId` PATH param is malformed THE
+    SYSTEM SHALL fold it into the indistinguishable 404.
+  - **Mutation authz (Q2-202):** PATCH and DELETE on a saved place perform
+    NO separate place-visibility re-check — the row's presence in the trip
+    IS the grant (trip content already exposes the place to every member).
+  - **POST visibility check (Q2-203):** the POST's place-visibility check
+    runs on the bare client, in no transaction (under READ COMMITTED a
+    lock-free transaction adds no guarantee). The races are closed by
+    constraint instead: a place hard-deleted between check and insert fires
+    the place FK and maps onto the same canonical 404; a duplicate save
+    fires the `(trip_id, place_id)` unique constraint and maps onto the 409
+    above.
 
 ### Attribution
 
@@ -184,6 +219,12 @@ source_id)` (schema R-db-6) and SHALL NOT delete any `places` row as part
   (map spec R-map-6 renders the Mapbox side). Exact wording/logo rules are
   verified against each provider's current policy at implementation — never
   from training data.
+  **Registry coverage in v1 — RULED (Q2-199, ruled 2026-09-19):** the
+  registry is NOT yet widened with `foursquare_api` / `mapbox` entries — each
+  is added by the integration that can honestly verify that provider's
+  wording (the FSQ hosted-API integration, deferred at Gate 2; the Mapbox
+  side on the map surface). The schema half ships now: every `fresh` block's
+  `attribution` field is part of the `FreshPlaceDetails` contract.
 
 ### Resolved questions (Gate 2, 2026-07-09)
 
@@ -307,6 +348,12 @@ fields: { hours?, open_now?, rating?, price_level?, photos?: string[],
 tips?: Array<{ text, created_at }>, website?, phone? } }`. Field-exact
   mapping from FSQ responses pinned at implementation against current FSQ
   docs (fields are Premium-tier: hours/rating/photos/tips — research).
+  **Field types are contract placeholders — RULED (Q2-200, ruled
+  2026-09-19):** the caps and ranges the wire schema ships (`hours` a
+  display string ≤ 500 chars, `rating` 0–10, `price_level` 1–4, `photos` URL
+  strings, arrays ≤ 20, every string/datetime length-capped — FSQ is an
+  untrusted upstream) are placeholders pending the real FSQ integration,
+  which finalizes them against current FSQ docs.
 - **§3.2.3 Coarse categories** — shared pure mapping
   `coarseCategory(source, category)` → `'food' | 'drink' | 'lodging' |
 'attraction' | 'culture' | 'outdoors' | 'shopping' | 'nightlife' |
@@ -317,6 +364,9 @@ tips?: Array<{ text, created_at }>, website?, phone? } }`. Field-exact
 - **§3.2.4 Attribution registry** (R-places-17) — shared config:
   `ATTRIBUTION: Record<'overture' | 'fsq_os' | 'foursquare_api' | 'mapbox',
 { text, url, logo_required }>`; strings verified at implementation.
+  **v1 ships the spine keys only (Q2-199, ruled 2026-09-19):** `overture`
+  and `fsq_os` are populated; `foursquare_api` and `mapbox` widen with the
+  integrations that can verify their wording (R-places-17).
 
 ### 3.3 Endpoints
 
@@ -399,6 +449,23 @@ fresh_unavailable_reason?: 'no_fsq_id' | 'not_entitled' | 'upstream_error' |
 AND entitled AND the FSQ call succeeded within budget. Response served with
 `Cache-Control: no-store` whenever `fresh` was requested (R-places-11).
 
+**Fresh-request semantics — RULED (T-8.1, PR #21; each ruled 2026-09-19):**
+
+- **v1 reason codes (Q2-192):** WHEN `fresh=true` is requested THE SYSTEM
+  SHALL answer `fresh_unavailable_reason: 'no_fsq_id'` for any place whose
+  `source` is not `fsq_os`, and `'disabled'` for an `fsq_os` place while no
+  Foursquare integration is deployed (R-places-14's disable semantics). No
+  FSQ call is attempted in v1; the client renders nothing either way (map
+  spec §2.4).
+- **`fresh=false` is "not requested" (Q2-193):** it carries no
+  `Cache-Control: no-store` header and no `fresh_unavailable_reason` —
+  "whenever `fresh` was requested" means `fresh=true`.
+- **`no-store` covers every response to a fresh-requesting call (Q2-194):**
+  WHEN `fresh=true` was sent THE SYSTEM SHALL serve the
+  `Cache-Control: no-store` header on EVERY response to that call,
+  including the 404 arm. The header depends only on the caller-supplied
+  parameter, so it is never an existence oracle.
+
 **Errors**: 404 `NOT_FOUND` — unknown id, or a custom place invisible to
 the caller (R-places-8 posture); 429 `RATE_LIMITED` — per-user daily fresh
 cap (R-places-14)
@@ -461,10 +528,11 @@ by saved places / itinerary items / bundles (RESTRICT surfaced cleanly);
 
 List a trip's saved places. **Auth**: Required (member)
 
-**Request** (query): `cursor?`, `limit?` (default 100 — map wants the full
-pin set in one page for typical trips)
+**Request** (query): `cursor?`, `limit?` (default 100, max 100 — map wants
+the full pin set in one page for typical trips; larger sets paginate, Q2-196)
 
-**Response 200**: `Paginated<SavedPlaceWithPlace>`
+**Response 200**: `Paginated<SavedPlaceWithPlace>`, ordered
+`created_at DESC, id DESC` (Q2-195)
 
 **Errors**: 404 — non-member posture
 
@@ -481,19 +549,22 @@ pin set in one page for typical trips)
 
 Save a place to a trip. **Auth**: Required (owner/editor)
 
-**Request**: `{ place_id: Uuid, note?: string }`
+**Request**: `{ place_id: Uuid, note?: string }` — `note` ≤ 2000 chars, an
+empty string allowed (Q2-197)
 
 **Response 201**: `SavedPlaceWithPlace`
 
-**Errors**: 409 `CONFLICT` — already saved (R-places-16); 404 — non-member
-posture, or `place_id` unknown/invisible; 403 — viewer role
+**Errors**: 409 `CONFLICT` — already saved (R-places-16), with
+`details: { reason: "already_saved" }` (Q2-198); 400 `VALIDATION_FAILED` —
+malformed `place_id` or over-cap `note` (Q2-201); 404 — non-member posture,
+or `place_id` unknown/invisible; 403 — viewer role
 
 **Requirements covered**: R-places-15, R-places-16
 
 **Tests required**:
 
 - [ ] Happy path: save with/without note; `created_by = caller`
-- [ ] Error cases: duplicate → 409; unknown place → 404
+- [ ] Error cases: duplicate → 409 (`reason: "already_saved"`); unknown place → 404; malformed `place_id` → 400
 - [ ] Authz: viewer → 403; non-member → 404
 
 ---
@@ -502,11 +573,14 @@ posture, or `place_id` unknown/invisible; 403 — viewer role
 
 Edit the note. **Auth**: Required (owner/editor)
 
-**Request**: `{ note: string | null }`
+**Request**: `{ note: string | null }` — `note` ≤ 2000 chars, an empty
+string allowed, `null` = no note (Q2-197). No separate place-visibility
+re-check (Q2-202).
 
 **Response 200**: `SavedPlaceWithPlace`
 
-**Errors**: 404 — non-member posture / unknown id; 403 — viewer
+**Errors**: 404 — non-member posture / unknown id (a malformed
+`:savedPlaceId` folds here, Q2-201); 403 — viewer
 
 **Requirements covered**: R-places-15
 
@@ -519,11 +593,13 @@ Edit the note. **Auth**: Required (owner/editor)
 
 ### DELETE /trips/:tripId/saved-places/:savedPlaceId
 
-Unsave. **Auth**: Required (owner/editor)
+Unsave. **Auth**: Required (owner/editor). No separate place-visibility
+re-check (Q2-202).
 
 **Response 204**
 
-**Errors**: 404 — non-member posture / unknown id; 403 — viewer
+**Errors**: 404 — non-member posture / unknown id (a malformed
+`:savedPlaceId` folds here, Q2-201); 403 — viewer
 
 **Requirements covered**: R-places-15
 
@@ -592,7 +668,7 @@ Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
 - [ ] Ingest job on a fixture GeoParquet: idempotent re-run (row counts stable), refresh window respected, failure path marks region `failed` and preserves data (PL-1)
 - [ ] Cross-source dedup fixture: same venue from both sources yields one row, priority respected (PL-1)
-- [ ] Grep-level guard: no code path writes `FreshPlaceDetails` fields to any Drizzle table or logger (PL-3)
+- [ ] Grep-level guard: no code path writes `FreshPlaceDetails` fields to any Drizzle table or logger (PL-3 — ships WITH the deferred FSQ integration: v1 has no `FreshPlaceDetails` producer to guard, Q2-204)
 
 ---
 
