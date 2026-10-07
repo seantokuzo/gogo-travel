@@ -4,6 +4,11 @@
 > approval (P-2 gate 3). Not approvable until zero `[NEEDS CLARIFICATION]`
 > markers remain.
 >
+> **Round-2 write-back (Q2 items, 2026-09-19 / 2026-10-06):** Q2-240 still
+> open — the ConfirmDialog testID naming, one `[NEEDS CLARIFICATION]` marker
+> in §2.8, Sean pick pending. Q2-185 (pin-coverage structural closure) is
+> also unruled but carries no spec text.
+>
 > **Sources:** `.specs/research/maps-places.md` (Mapbox SDK facts: offline
 > StylePacks/TileRegions, 750-pack ceiling, clustering, attribution
 > requirement, MarkerView budget), `.specs/client/navigation.spec.md`
@@ -943,4 +948,5 @@ resolved at Gate 2 (2026-07-09): 2 at the schema spec (status derived +
 override; destination structured with guaranteed coords), 1 owned here
 (map discovery → spine-backed search bar, R-map-25); the public-photos
 surface resolved at the schema spec (place detail sheet only, photos spec
-renders it). Zero markers remain._
+renders it). One marker remains (Q2-240 — Sean pick pending); Q2-185 is
+also unruled but carries no spec text._
