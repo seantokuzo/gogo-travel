@@ -500,8 +500,10 @@ action; ghost/secondary buttons default to none.
 same result a gesture also produces fires the TAP vocabulary (`actionLight`),
 not the gesture's (`dragLift`/`dragDrop`) — e.g. the itinerary "Sort by time"
 button (client itinerary spec R-itin-68), whose gesture twin is the drag
-reorder. Both map to the same `impactAsync(Light)` feel; the vocabulary is
-just the correct one. The max-one-per-action rule still holds.
+reorder. `actionLight` and `dragDrop` map to the same `impactAsync(Light)`
+(the gesture's `dragLift` is `impactAsync(Medium)`), so the feel at commit is
+the same; the tap vocabulary is just the correct one for a tap. The
+max-one-per-action rule still holds.
 
 ### 2.9 Core component inventory
 
