@@ -290,8 +290,10 @@ base_currency?, theme? }`
 `destination_tz_source?: 'user' | 'device'` carry an optional destination zone
 and its CLAIMED provenance. Source absent or `'user'` is a person's choice: the
 schema checks its shape (IANA-shaped, ≤ 64 chars) and the server checks it
-against its zone allow-list, storing the canonical modern spelling
-(`asia/tokyo` → `Asia/Tokyo`) — an unlisted id (`SystemV/*`, `Japan`, `EST`,
+against its zone allow-list, storing the allow-list's canonical spelling
+(`asia/tokyo` → `Asia/Tokyo`; modern for every id the coordinate lookup can
+return, the engine's own spelling for an engine-only alias — `europe/kiev` →
+`Europe/Kiev`, never rewritten to `Europe/Kyiv`) — an unlisted id (`SystemV/*`, `Japan`, `EST`,
 `Zulu`, …) → 400 `VALIDATION_FAILED`, `details.destination_tz`. A user zone
 wins the whole chain and is durable. Source `'device'` is only a HINT (the
 mobile create form sends the device zone for a coordinate-less custom
@@ -705,8 +707,10 @@ rung that produced it, resolved server-side by ONE pure resolver, first hit
 wins (**zone provenance**, round-1 decision):
 
 1. USER — a zone a person chose (`destination_tz`, source absent/`'user'`;
-   allow-listed, stored in canonical modern spelling, durable — a coordinates
-   edit never overwrites it; only `destination_tz: null` clears it);
+   allow-listed, stored in the allow-list's canonical spelling (modern for
+   tz-lookup ids, the engine's own for engine-only aliases such as
+   `Europe/Kiev`), durable — a coordinates edit never overwrites it; only
+   `destination_tz: null` clears it);
 2. DERIVED — from `destination_lat/lng` via `@photostructure/tz-lookup`
    (stored at create; re-derived on PATCH when the coordinates move; derived
    lazily at read for legacy rows with nothing stored);

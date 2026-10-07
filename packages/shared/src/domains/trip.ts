@@ -36,8 +36,10 @@ export type DestinationTz = z.infer<typeof DestinationTzSchema>;
  * provenance), best rank first — the resolver's chain on the server:
  *  - `user`     — entered by a person (T-7.17's picker); never auto-overwritten
  *  - `derived`  — computed from `destination_lat/lng` (tz-lookup)
- *  - `booking`  — read-time: the earliest non-cancelled flight/train's
- *                 `arrives_tz` (else `departs_tz`); never stored
+ *  - `booking`  — read-time, never stored: among NON-CANCELLED flight/train
+ *                 bookings the best one (booked > planned > idea, then the
+ *                 earliest `starts_at`); its `arrives_tz`, else its
+ *                 `departs_tz`. ("Earliest" can be a connecting leg.)
  *  - `device`   — the creator's device zone, sent as a HINT for a
  *                 coordinate-less destination; ranks BELOW a booking zone
  *  - `default`  — `UTC`; nothing else was available; never stored
@@ -106,9 +108,10 @@ export const TripSchema = z.object({
    * The EFFECTIVE destination zone (B-30) — NEVER null on the wire. A trip's
    * "today" is the calendar day in this zone (`todayInZone`), evaluated
    * identically by server and client. Resolved server-side, best first:
-   * user-entered → derived from `destination_lat/lng` → the earliest
-   * non-cancelled flight/train booking's `arrives_tz`/`departs_tz` → the
-   * creator's device-zone hint → `"UTC"`. `destination_tz_source` says which.
+   * user-entered → derived from `destination_lat/lng` → a non-cancelled
+   * flight/train booking (booked > planned > idea, then the earliest
+   * `starts_at`; its `arrives_tz`, else its `departs_tz`) → the creator's
+   * device-zone hint → `"UTC"`. `destination_tz_source` says which.
    */
   destination_tz: DestinationTzSchema,
   /** Which rung of the chain produced `destination_tz` (see `DESTINATION_TZ_SOURCES`). */

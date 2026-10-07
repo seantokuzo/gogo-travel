@@ -25,6 +25,13 @@
  * rejects — so a canonical-through-the-engine store would hand clients ids
  * they resolve worse than the input.
  *
+ * SPELLING CAVEAT: "modern" holds only for ids tz-lookup can return (its
+ * spelling wins the case-fold: `asia/kolkata` -> `Asia/Kolkata`, `europe/kyiv`
+ * -> `Europe/Kyiv`). An id the allow-list has ONLY via the engine's own list is
+ * stored as the running engine spells it — `europe/kiev` -> `Europe/Kiev`,
+ * `asia/calcutta` -> `Asia/Calcutta` — which is the spelling a flight booking's
+ * `arrives_tz` carries. An alias is never rewritten to its modern name.
+ *
  * Final sanity gate: the engine must still resolve the canonical id
  * (`isValidTimeZone`), so a runtime without a zone never stores it.
  */
@@ -62,8 +69,10 @@ export function allowedZoneNames(): readonly string[] {
 }
 
 /**
- * The canonical (modern IANA) spelling of `input`, or `null` when it is not an
- * allowed zone. Case-insensitive; never throws; ≤ 64 chars (the column cap).
+ * The allow-list's canonical spelling of `input` (modern IANA for a tz-lookup
+ * id; the engine's own spelling for an engine-only alias such as `Europe/Kiev`
+ * — see SPELLING CAVEAT above), or `null` when it is not an allowed zone.
+ * Case-insensitive; never throws; ≤ 64 chars (the column cap).
  */
 export function canonicalizeZone(input: string): string | null {
   if (input.length === 0 || input.length > TIME_ZONE_ID_MAX_CHARS) return null;

@@ -232,7 +232,8 @@ export function createTripsRouter(deps: TripsRouterDeps): Hono<RequestVars> {
 
       // B-30 zone provenance (destination-tz.ts — the ONE write resolver, shared
       // with PATCH): a user-chosen zone must be on the allow-list
-      // (zone-canon.ts) and is stored in its canonical modern spelling → 400
+      // (zone-canon.ts) and is stored in the allow-list's canonical spelling
+      // (modern for tz-lookup ids, the engine's own for an engine-only alias) → 400
       // otherwise; a 'device' hint is only a low-rank fallback and an
       // unusable one is ignored; coordinates derive; nothing storable → NULL.
       const zoneWrite = resolveZoneWrite({
