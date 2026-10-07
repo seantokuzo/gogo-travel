@@ -668,7 +668,7 @@ Depends on DB-1 (schema) + SH-1 (shared) having landed.
 
 - [ ] Ingest job on a fixture GeoParquet: idempotent re-run (row counts stable), refresh window respected, failure path marks region `failed` and preserves data (PL-1)
 - [ ] Cross-source dedup fixture: same venue from both sources yields one row, priority respected (PL-1)
-- [ ] Grep-level guard: no code path writes `FreshPlaceDetails` fields to any Drizzle table or logger (PL-3 — ships WITH the deferred FSQ integration: v1 has no `FreshPlaceDetails` producer to guard, Q2-204)
+- [ ] Grep-level guard: no code path writes `FreshPlaceDetails` fields to any Drizzle table or logger (PL-3)
 
 ---
 
