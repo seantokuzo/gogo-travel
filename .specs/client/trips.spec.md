@@ -4,6 +4,11 @@
 > DRAFT — pending Sean approval. Not approvable until zero
 > `[NEEDS CLARIFICATION]` markers remain (own + repeated upstream).
 >
+> **Round-2 write-back (2026-09-19 rulings, PR #93):** R-tripui-25..28 added
+> and §2.1/§2.5/§2.7/§2.8 amended. **Q2-288 still open** — one
+> `[NEEDS CLARIFICATION]` marker remains (R-tripui-27, status-override client
+> surface; Sean pick pending).
+>
 > **Sources:** `.specs/api/trips.spec.md` (CANONICAL for authz — §3.2
 > matrix — and endpoint shapes), `.specs/client/navigation.spec.md`
 > (CANONICAL for routes, deep links, modal conventions §2.6, testID grammar
@@ -499,4 +504,5 @@ city/locality subset), 6 inherited (§2.2 — dates required; structured
 destination; ownership transfer; multi-use invites; universal-link domain;
 profile = trip-list header avatar); the API spec's 3 markers (viewer
 participation, base-currency lock, trip visibility dropped) resolved
-there. Zero markers remain._
+there. One marker remains (round-2 write-back): Q2-288 — status-override
+client surface, Sean pick pending (R-tripui-27)._
