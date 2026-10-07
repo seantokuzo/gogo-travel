@@ -1,7 +1,8 @@
 # GoGo Travel — Active State
 
-> Session brief: read whole at session start (hook-injected where hooks run; loop sessions read it
-> explicitly). **Hard cap 6,144 bytes** (CI `check-doc-budgets`,
+> Session brief: read whole at session start (hook-injected where hooks run; where they're off, via
+> CLAUDE.md's read-first line or the loop prompt; QS-T8 will make the loop read it explicitly).
+> **Hard cap 6,144 bytes** (CI `check-doc-budgets`,
 > [ADR-009](decisions/ADR-009-plan-doc-byte-budgets.md)). Replace, don't append. Narrative, session
 > logs, resolved decisions → `docs/history/STATE-<date>.md`. Locked → ADR. Work items → `docs/QUEUE.md`.
 

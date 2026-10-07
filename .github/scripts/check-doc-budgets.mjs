@@ -2,10 +2,10 @@
 /**
  * Guard: the plan docs stay inside their BYTE budgets (ADR-009).
  *
- * WHY THIS EXISTS. `docs/STATE.md` is injected at interactive session start
- * (ADR-009); loop sessions read it explicitly. `docs/QUEUE.md` is read to pick
- * the next task. Both had grown without bound (STATE 64 KB / 997 lines, QUEUE
- * 756 KB, lines up to 4,754 chars): sessions paid for them in context, and the
+ * WHY THIS EXISTS. `docs/STATE.md` is injected at session start by the SessionStart
+ * hook where hooks run (ADR-009); QS-T8 will make loop sessions read it explicitly.
+ * `docs/QUEUE.md` is read to pick the next task. Both had grown without bound
+ * (STATE 64 KB / 997 lines, QUEUE 756 KB, lines up to 4,754 chars): sessions paid for them in context, and the
  * hook's output cap silently truncated the part that mattered. Nothing in the
  * toolchain noticed. A written "keep it short" rule is not a guard; this is.
  *
