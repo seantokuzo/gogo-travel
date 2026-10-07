@@ -261,6 +261,22 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   coordinates THE SYSTEM SHALL stand the WHOLE pack machine down (state
   pinned `none`, no fingerprint, no network listener, no SDK touch) rather
   than attempt a download the region grid cannot compute — see R-map-26.
+  **AMENDED (round-2, T-8.5 — each ruled 2026-09-19):**
+  - **Arms only from `none` (Q2-272):** auto-download starts only WHEN the
+    pack state is `none`. A `stale` pack (style or region drift) requires a
+    manual refresh — packs never auto-refresh (§2.5 trigger 3 outranks a
+    loose reading of "no `ready`/current pack"); a `failed` pack requires
+    the user's retry (R-map-21), never a silent loop.
+  - **`failed` is session-scoped (Q2-274):** a failed state lives in the
+    store only (not annotated); after a restart an incomplete download reads
+    `none`, so the next wifi window re-attempts it, while in-session the
+    retry affordances own it.
+  - **Unusable destination (Q2-280):** WHEN the destination coordinates are
+    unusable (NaN — the region grid throws on them) THE SYSTEM SHALL stand
+    the WHOLE pack machine down: no fingerprint, no effects, state pinned
+    `none` — the same posture as the coordinate-less stand-down above.
+  - **"Unmetered wifi" (Q2-284):** defined in §2.5 (Connectivity
+    detection).
 - **R-map-19 (manual management UI):** WHEN the user opens trip settings →
   Offline map (`trip-settings-list-item-offline` → section testIDs
   `offline-pack-*`) THE SYSTEM SHALL show pack state (`none / downloading
@@ -269,6 +285,11 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   size-estimate ConfirmDialog), refresh (`offline-pack-button-refresh` —
   packs don't auto-update; research), delete (`offline-pack-button-delete`,
   ConfirmDialog).
+  **AMENDED (round-2, T-8.5 — ruled 2026-09-19):** the cellular-data
+  ConfirmDialog fronts refresh and retry downloads too, not only a first
+  download (Q2-283) — they cost the same data; each dialog is keyed by its
+  triggering button (navigation spec §2.7 rule 4). The management surface
+  is the trip-settings Offline-map sheet (`trip-settings-sheet-offline`).
 - **R-map-20 (pack hygiene / 750 ceiling):** WHEN a trip is deleted or the
   user leaves it THE SYSTEM SHALL delete its packs; WHEN a trip
   transitions to `past` THE SYSTEM SHALL offer pack deletion
@@ -276,6 +297,24 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   download would approach the device tile-region ceiling (750 cumulative —
   research) THE SYSTEM SHALL first purge packs of `past` trips
   (oldest-first) — the ceiling is never user-visible as a failure.
+  **AMENDED (round-2, T-8.5 — each ruled 2026-09-19):**
+  - **Past-trip offer (Q2-276):** "offer pack deletion on `active → past`"
+    ships as a non-blocking OFFER LINE (`offline-pack-past-offer`) on the
+    pack-management surfaces — there is no background status-transition
+    observer to hang a modal off — so it renders wherever pack management
+    is visible: a past trip with a saved pack shows it, an active trip never
+    does. The ceiling purge backstops a user who never opens a management
+    surface.
+  - **Delete/leave hygiene (Q2-278):** pack deletion rides `exitToTripList`
+    — the only exit surface for both the delete and leave flows, including
+    leave's converged-404 arm — and is fire-and-forget, so cleanup never
+    blocks navigation.
+  - **Orphan sweep (Q2-273):** the sweep targets only UNACCOUNTED packs
+    (`trip-*` with no local MMKV annotation); a paginated trip list can
+    never safely be the sweep's source of truth, since sweeping against a
+    cached first page would delete page-2 trips' live packs. Documented
+    gap: a pack for a trip deleted remotely on another device persists
+    locally until the delete/leave hook or sweep conditions catch it.
 - **R-map-21 (download failure):** WHEN a pack download fails THE SYSTEM
   SHALL mark the pack `failed` with a retry action in the pill and
   management UI (`offline-pack-button-retry`) and keep the map fully
@@ -623,16 +662,52 @@ photos.
   `regionCellsForDestination(destination_lat, destination_lng)` from
   `@gogo/shared` — the exact cells the POI ingestion used (places spec
   §3.5). One definition of "the destination area" everywhere.
+  **Envelope at the antimeridian and poles — RULED (Q2-270, ruled
+  2026-09-19):** neighbor cells that wrap are shifted ±360° back beside the
+  center cell so the box stays contiguous (longitude may then exceed ±180 —
+  the standard GeoJSON cross-antimeridian box); neighbors a pole drops
+  (8 → 5 cells) simply do not extend the envelope. (Contrast map search,
+  which CLIPS a wrapped box — R-map-25, Q2-224.) Native acceptance of a
+  longitude past ±180 is a phase-QA check; a rejection degrades that
+  destination to `failed` + retry per R-map-21.
 - **Naming/versioning:** TileRegion id `trip-{tripId}`; StylePack keyed by
   style URL + version. Zoom range z6–z15 (config; size estimated via the
   SDK's estimate API before download and shown in the ConfirmDialog /
   management UI; bounds verified at implementation — never guessed).
+  **Size estimate — RULED (Q2-271, ruled 2026-09-19):** the Mapbox SDK
+  (10.3.5) exposes NO size-estimate API, so the size shown before download
+  is a deterministic slippy-tile-count × 12 KB approximation
+  (`ESTIMATED_TILE_BYTES`, config), labeled `~` everywhere it appears; phase
+  QA calibrates the constant against a real download.
+  **`setTileCountLimit` is never called — RULED (Q2-277, ruled
+  2026-09-19):** Mapbox's terms forbid it, so the limit is not touched —
+  enforced structurally: the jest mock omits the method, so any code path
+  that reaches it faults loudly under test.
 - **State machine (client store, per trip):**
   `none → downloading(progress) → ready(size, completed_at)`;
   `ready → stale` when style version or destination/region changed;
   `any → failed(error)` with retry (R-map-21). State derives from
   `offlineManager` queries + a small MMKV record — the SDK is the source
   of truth, MMKV is the annotation (trip ↔ pack mapping, completed_at).
+  **State-machine rulings (T-8.5 — each ruled 2026-09-19):**
+  - **Completion (Q2-279):** a pack is complete when the SDK reports
+    `percentage >= 100` — the SDK's own example contract; the numeric
+    `state` enum values are native constants a full module mock cannot
+    carry.
+  - **Style URL and theme (Q2-275):** a pack downloads the CURRENT theme's
+    style URL; a theme flip marks it `stale` ("style changed") in the
+    management UI ONLY — the pill never nags and refresh stays manual.
+    Offline in the other scheme still renders the downloaded style's tiles.
+  - **Ready display (Q2-285):** the ready state's size/date derive from the
+    MMKV annotation FIRST (synchronous first frame — the no-flash posture)
+    and are verified against the SDK asynchronously; drift self-corrects.
+  - **Reconcile (Q2-282):** WHEN the SDK holds a pack for the current trip
+    with no annotation THE SYSTEM SHALL remove it (the same unaccounted-pack
+    policy as the sweep — the SDK is the source of truth for existence);
+    an annotation whose pack has vanished is cleared.
+  - **Pill visibility (Q2-281):** the offline pill (`map-pill-offline`)
+    hides for the online settled states (`none` / `ready` / `stale`) — it is
+    informational-plus-retry only; stale nudges live in the management UI.
 - **Triggers:** (1) auto at activation on wifi (R-map-18; "activation" =
   effective status flips to `active` — derived + override, resolved
   Gate 2); (2) manual from management UI (R-map-19); (3) refresh action
@@ -642,10 +717,18 @@ photos.
   those mutations); prompt on `active → past`; before any new download,
   enumerate regions and purge past-trip packs oldest-first if count nears
   the ceiling (threshold config, e.g. 700). Orphan sweep on app start:
-  packs whose `trip-{id}` no longer matches a local trip are removed.
+  packs whose `trip-{id}` no longer matches a local trip are removed —
+  read as UNACCOUNTED packs (no MMKV annotation), per the R-map-20
+  amendment (Q2-273); the past-trip "prompt" is the non-blocking offer line
+  (Q2-276), and delete/leave hygiene is fire-and-forget on `exitToTripList`
+  (Q2-278).
 - **Connectivity detection:** wifi check via the network state API at
   trigger time + listener while deferred (R-map-18); implementation pinned
   at P-3 (`expo-network` expected, verified then).
+  **"Unmetered wifi" — RULED (Q2-284, ruled 2026-09-19):** the wifi gate is
+  `NetworkStateType.WIFI` with `isConnected` — iOS exposes no metered-ness
+  signal, and the wifi/cellular split satisfies the data-plan rationale of
+  R-map-18.
 
 ### 2.6 Location (foreground-only)
 
@@ -696,9 +779,9 @@ photos.
 | Surface            | testIDs                                                                                                                                                                                                                                     |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`, `map-error`                                                                                                                             |
-| Locate dialogs     | `map-dialog-locate-rationale`, `map-dialog-locate-settings`, `map-dialog-locate-unavailable` (+ derived `-confirm` / `-cancel`)                                                                                                             |
 | Map view / style   | `map-view`, `map-source-{saved,itinerary,photo,search}`, `map-layer-{saved,itinerary,photo}-{pin,cluster,cluster-count}`, `map-layer-itinerary-pin-label`, `map-layer-search-pin`                                                           |
 | Attribution sheet  | `map-sheet-attribution`                                                                                                                                                                                                                     |
+| Locate dialogs     | `map-dialog-locate-rationale`, `map-dialog-locate-settings`, `map-dialog-locate-unavailable` (+ derived `-confirm` / `-cancel`)                                                                                                             |
 | Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26), `map-search-offline`, `map-search-error`                                   |
 | Day filter         | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}`                                                                                                                                                               |
 | Pins/clusters      | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index)                                                                                       |
@@ -707,6 +790,7 @@ photos.
 | Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
 | Detail status      | `place-detail-distance`, `place-detail-badge-saved`                                                                                                                                                                                         |
 | Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
+| Offline status     | `trip-settings-sheet-offline`, `offline-pack-status`, `offline-pack-past-offer`, `offline-pack-offline-notice`                                                                                                                              |
 
 **Round-2 testID rulings (ruled 2026-09-19)** — the ids above are the single
 inventory; these notes explain the entries the original inventory did not
@@ -735,6 +819,15 @@ anticipate:
   (Q2-244), and the search source / layer ids. `map-view` is the MapView's
   own testID; the `map-source-*` and `map-layer-*` ids are Mapbox style ids
   following the shell convention, not RN `testID` props.
+- **Offline-pack status ids (T-8.5, PR #27 spec-sync inputs):**
+  `trip-settings-sheet-offline` (the management sheet, house
+  `trip-settings-sheet-*` grammar — opened by
+  `trip-settings-list-item-offline`), `offline-pack-status` (the state
+  line), `offline-pack-past-offer` (the R-map-20 offer line, Q2-276) and
+  `offline-pack-offline-notice` (the R-map-22 degrade notice). The
+  ConfirmDialog children of download / refresh / retry / delete derive from
+  the triggering button's id (`offline-pack-button-download-confirm` /
+  `-cancel`, and so on — Q2-283).
 - **Dialog naming — the `map-dialog-locate-*` fork, PICKED (Q2-240):**
   ConfirmDialog base ids take `dialog` in ELEMENT position —
   `<screen>-dialog-<qualifier>`, the `<screen>-<element>[-<qualifier>]`
