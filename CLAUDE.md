@@ -65,7 +65,7 @@ Everything reversible AND in-spec runs without asking.
 
 ## Before you code
 
-1. Read the relevant `.specs/` contract and `.agents/skills/` for the domain.
+1. Read the relevant `.specs/` contract and any project skill in `.claude/skills/` for the domain.
 2. Engineers: your charter is your agent definition (`.claude/agents/<role>.md`) — it is already your system prompt.
 
 ## Tech stack
@@ -145,7 +145,7 @@ anything behind sign-in.
 
 `bash scripts/run-loop.sh start|resume|stop|status`. The escalation triggers above
 still apply inside the loop — write `.loop/pivot` to stop and ask. Sentinels,
-Stop-hook contract, and discipline: `.agents/skills/autonomous-loop/SKILL.md`.
+Stop-hook contract, and discipline: `.claude/skills/autonomous-loop/SKILL.md`.
 
 ## What NOT to do
 

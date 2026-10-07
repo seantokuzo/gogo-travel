@@ -6,7 +6,7 @@
 # is ON" switch — the Stop hook (`.claude/hooks/autonomous-handoff.sh`) also keys
 # off this file.
 #
-# Sentinel protocol (full spec: .agents/skills/autonomous-loop/SKILL.md):
+# Sentinel protocol (full spec: .claude/skills/autonomous-loop/SKILL.md):
 #   .loop/state.json     — schema; presence = autonomous mode ON
 #   .loop/next-prompt.md — instructions for the next session in the chain
 #   .loop/done           — chain complete, exit cleanly + cleanup
@@ -41,7 +41,7 @@ SETTINGS_FILE=".claude/settings.json"
 # under `set -u`.
 PERM_FLAGS=()
 
-DEFAULT_PROMPT='Read .agents/skills/autonomous-loop/SKILL.md, then read docs/QUEUE.md and CLAUDE.md. You are running in autonomous mode. Execute the next available work item per the sentinel discipline. Honor opt-out signals.'
+DEFAULT_PROMPT='Read .claude/skills/autonomous-loop/SKILL.md, then read docs/QUEUE.md and CLAUDE.md. You are running in autonomous mode. Execute the next available work item per the sentinel discipline. Honor opt-out signals.'
 
 now_iso() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -109,7 +109,7 @@ SAFETY
 
 SETUP REQUIRED ONCE
   Add the Stop hook to `.claude/settings.json`. See:
-    .agents/skills/autonomous-loop/SKILL.md  (section: "Required hook setup")
+    .claude/skills/autonomous-loop/SKILL.md  (section: "Required hook setup")
 EOF
 }
 
@@ -131,7 +131,7 @@ $SETTINGS_FILE with at minimum:
   }
 }
 
-Full setup instructions: .agents/skills/autonomous-loop/SKILL.md
+Full setup instructions: .claude/skills/autonomous-loop/SKILL.md
 EOF
     exit 1
   fi
@@ -150,7 +150,7 @@ Add this to your settings (merge with existing "hooks" block if present):
   }
 }
 
-Full setup instructions: .agents/skills/autonomous-loop/SKILL.md
+Full setup instructions: .claude/skills/autonomous-loop/SKILL.md
 EOF
     exit 1
   fi
@@ -468,7 +468,7 @@ run_chain() {
     increment_session_count
 
     # Check terminal sentinels in priority order: done > pivot > blocked.
-    # Canonical spec: .agents/skills/autonomous-loop/SKILL.md § "Priority ordering".
+    # Canonical spec: .claude/skills/autonomous-loop/SKILL.md § "Priority ordering".
     # Keep this order in sync with .claude/hooks/autonomous-handoff.sh.
     if [ -e "$LOOP_DIR/done" ]; then
       echo "✅ Loop complete."

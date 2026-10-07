@@ -1,6 +1,7 @@
 ---
 name: autonomous-loop
 description: Sentinel-file protocol and session-end discipline for the gogo-travel autonomous chain mode. Read at the START of every autonomous-mode session and before writing any sentinel.
+disable-model-invocation: true
 ---
 
 # Autonomous Loop — Sentinel Protocol and Discipline
@@ -217,7 +218,7 @@ CONTEXT:
 
 RE-READ:
 
-- .agents/skills/autonomous-loop/SKILL.md (sentinel protocol)
+- .claude/skills/autonomous-loop/SKILL.md (sentinel protocol)
 - CLAUDE.md (project conventions)
 - docs/QUEUE.md (current work queue)
 - docs/STATE.md (recent state)
@@ -258,7 +259,7 @@ Before trusting the loop with real work, run this once:
 2. **Install the hook.** Confirm `.claude/settings.json` contains the Stop hook stanza (see §14).
 3. **Start the loop:**
    ```bash
-   scripts/run-loop.sh start --prompt "Read .agents/skills/autonomous-loop/SKILL.md, then docs/QUEUE.md. Execute P-99 to completion. Honor sentinel discipline."
+   scripts/run-loop.sh start --prompt "Read .claude/skills/autonomous-loop/SKILL.md, then docs/QUEUE.md. Execute P-99 to completion. Honor sentinel discipline."
    ```
 4. **Watch:** the wrapper logs to stderr and to `.loop/log.txt`. You should see two iterations, then `✅ Loop complete.`
 5. **Verify cleanup:** `.loop/` is gone, `FOO.tmp` is gone, `docs/QUEUE.md` shows `P-99` tasks marked `done` (revert this commit before doing real work).

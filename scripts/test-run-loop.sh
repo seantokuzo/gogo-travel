@@ -148,5 +148,16 @@ check "max_chain cap exits 2" "2" "$rc"
 check "max_chain stops at 20" "20" "$(state session_count)"
 cleanup
 
+# --- skill paths: run-loop.sh may only name skill files that exist ----------
+# Skills moved out of the old dot-agents dir into .claude/skills/ (2026-10). A
+# stale path in DEFAULT_PROMPT sends every chained session to a missing file.
+# Reads the REAL script and the REAL tree, not a sandbox.
+refs="$(grep -oE '\.claude/skills/[A-Za-z0-9_-]+/SKILL\.md' "$SRC" | sort -u)"
+check "run-loop.sh names a skill file" "yes" "$([ -n "$refs" ] && echo yes || echo no)"
+missing=""
+for p in $refs; do [ -f "$ROOT/$p" ] || missing="$missing $p"; done
+check "every skill file run-loop.sh names exists" "" "$missing"
+check "run-loop.sh has no dot-agents path" "0" "$(grep -c '[.]agents/' "$SRC" || true)"
+
 printf 'run-loop guard: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

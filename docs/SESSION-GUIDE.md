@@ -124,5 +124,5 @@ current task, write the handoff, suggest a fresh session.
 
 `bash scripts/run-loop.sh start` — chains fresh `claude -p` sessions gated by
 `.loop/` sentinels (`done` / `pivot` / `blocked` / `next-prompt.md`). Discipline
-doc: `.agents/skills/autonomous-loop/SKILL.md`. The Stop hook enforces sentinel
+doc: `.claude/skills/autonomous-loop/SKILL.md`. The Stop hook enforces sentinel
 hygiene. Use for well-specced phase execution; don't use for planning/spikes.

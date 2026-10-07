@@ -26,7 +26,7 @@ Commit/push current work · flip the `docs/QUEUE.md` row · update `docs/STATE.m
 
 ## Where it goes
 
-- **Autonomous** (`.loop/` present): write `.loop/next-prompt.md` (non-empty = the chain continues), or exactly one terminal sentinel (`done`/`pivot`/`blocked`). Canonical spec: `.agents/skills/autonomous-loop/SKILL.md` when present.
+- **Autonomous** (`.loop/` present): write `.loop/next-prompt.md` (non-empty = the chain continues), or exactly one terminal sentinel (`done`/`pivot`/`blocked`). Canonical spec: `.claude/skills/autonomous-loop/SKILL.md` when present.
 - **Interactive:** post the note in chat and leave STATE updated.
 
 See `docs/SESSION-GUIDE.md` "Handoff between sessions".
