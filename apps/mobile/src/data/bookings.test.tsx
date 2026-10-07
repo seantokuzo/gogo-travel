@@ -33,17 +33,23 @@ import { apiClient } from "@/auth";
 import {
   byBookingListOrder,
   optimisticScheduleItemId,
+  optimisticStatusItemId,
   useBooking,
   useCancelledBookings,
   useCreateBooking,
   useDeleteBooking,
   useScheduleBooking,
+  useSetBookingStatus,
   useTripBookings,
   useUpdateBooking,
 } from "@/data/bookings";
 import { queryKeys } from "@/data/query-client";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
-import { makeBooking as makeWireBooking, makeItineraryItem } from "@/test-utils/itinerary-fixtures";
+import {
+  makeBooking as makeWireBooking,
+  makeItineraryItem,
+  rentalBooking,
+} from "@/test-utils/itinerary-fixtures";
 import { makeTestQueryClient } from "@/test-utils/render";
 
 function spyRequest(): jest.Mock {
@@ -602,6 +608,393 @@ it("useScheduleBooking failure restores BOTH snapshots and invalidates (stale-pr
   expect(list?.items[0]?.status).toBe("idea");
   expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
   expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// T-7.15 — Ideas bucket status actions: `useScheduleBooking` forwards the
+// T-7.10 `status` field; `useSetBookingStatus` is the known-times PATCH route.
+// Every mid-flight assertion below holds the request GENUINELY in flight (a
+// deferred promise settled in `finally`, after the asserts) — a pre-settled
+// promise flushes the optimistic write and the rollback in one notify batch
+// and the intermediate state never commits (mobile.md vacuous-pin taxonomy).
+// ---------------------------------------------------------------------------
+
+/** The B-16 known-times fixture: an `idea` carrying date/times (derived `starts_at` known). */
+function ideaWithKnownTimes(overrides?: Partial<Booking>): Booking {
+  return makeWireBooking({
+    id: BOOKING_ID,
+    category: "activity",
+    status: "idea",
+    title: "Sumo tournament",
+    details: {
+      category: "activity",
+      starts_at: "2027-03-02T14:30:00+09:00",
+      ends_at: "2027-03-02T16:00:00+09:00",
+    },
+    starts_at: "2027-03-02T05:30:00.000Z",
+    ends_at: "2027-03-02T07:00:00.000Z",
+    ...overrides,
+  });
+}
+
+function requestBody(): unknown {
+  const call = (apiClient.request as unknown as jest.Mock).mock.calls[0] as
+    [unknown, { body?: unknown }] | undefined;
+  return call?.[1].body;
+}
+
+describe("useScheduleBooking forwards the T-7.10 `status` (T-7.15)", () => {
+  // Falsify: have `scheduleTargetStatus` ignore the explicit status (the
+  // pre-T-7.15 `idea → planned` blanket write) ⇒ the mid-flight badge reads
+  // "planned" ⇒ RED.
+  it("idea + status 'booked': the body carries it verbatim and the optimistic badge lands on BOOKED mid-flight", async () => {
+    const client = makeTestQueryClient();
+    const idea = makeWireBooking({ id: BOOKING_ID, status: "idea", starts_at: null });
+    seedBookingList(client, [idea]);
+    seedItinerary(client, []);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+
+    const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY, status: "booked" } });
+    });
+    try {
+      expect(requestBody()).toEqual({ day: DAY, status: "booked" });
+      const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+      expect(list?.items[0]?.status).toBe("booked");
+      // …and the card really is in flight (the placeholder is the optimistic move).
+      const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(read?.items.map((item) => item.id)).toEqual([optimisticScheduleItemId(BOOKING_ID)]);
+    } finally {
+      await act(async () => resolvers.forEach((resolve) => resolve({ ...idea, items: [] })));
+    }
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  it("a timeless PLANNED card + status 'booked' advances planned → booked mid-flight (not only idea cards)", async () => {
+    const client = makeTestQueryClient();
+    const planned = makeWireBooking({ id: BOOKING_ID, status: "planned", starts_at: null });
+    seedBookingList(client, [planned]);
+    seedItinerary(client, []);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+
+    const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY, status: "booked" } });
+    });
+    try {
+      const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+      expect(list?.items[0]?.status).toBe("booked");
+    } finally {
+      await act(async () => resolvers.forEach((resolve) => resolve({ ...planned, items: [] })));
+    }
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  // The pre-change path: the hook adds nothing the caller didn't send, so an
+  // omitted `status` reaches the server omitted ("omitted ⇒ unchanged").
+  it("omitted status stays OMITTED on the wire (the byte-identical pre-change request)", async () => {
+    const client = makeTestQueryClient();
+    const booked = makeWireBooking({ id: BOOKING_ID, status: "booked", starts_at: null });
+    seedBookingList(client, [booked]);
+    seedItinerary(client, []);
+    spyRequest().mockResolvedValue({ ...booked, items: [] });
+
+    const { result } = await renderHook(() => useScheduleBooking(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY } });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(requestBody()).toEqual({ day: DAY });
+    expect(requestBody()).not.toHaveProperty("status");
+  });
+
+  it("failure with an explicit status rolls the badge back (booked → idea) and invalidates, after a genuinely in-flight request", async () => {
+    const client = makeTestQueryClient();
+    const idea = makeWireBooking({ id: BOOKING_ID, status: "idea", starts_at: null });
+    seedBookingList(client, [idea]);
+    seedItinerary(client, []);
+    const rejecters: ((error: Error) => void)[] = [];
+    spyRequest().mockImplementation(
+      () => new Promise((_resolve, reject) => rejecters.push(reject)),
+    );
+    const onMutationError = jest.fn();
+
+    const { result } = await renderHook(
+      () => useScheduleBooking(TEST_TRIP_ID, { onMutationError }),
+      { wrapper: makeWrapper(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, input: { day: DAY, status: "booked" } });
+    });
+    try {
+      const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+      expect(list?.items[0]?.status).toBe("booked"); // mid-flight, not yet rolled back
+    } finally {
+      await act(async () => rejecters.forEach((reject) => reject(new Error("400"))));
+    }
+    await waitFor(() => expect(onMutationError).toHaveBeenCalledTimes(1));
+    const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+    expect(list?.items[0]?.status).toBe("idea");
+    expect(
+      client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID))?.items,
+    ).toEqual([]);
+    expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  });
+});
+
+describe("useSetBookingStatus — the known-times status-only PATCH (T-7.15 / R-itin-41)", () => {
+  // Falsify: send the schedule endpoint instead (the pre-T-7.15 route) or add
+  // day/times to the body ⇒ the descriptor/body pin goes RED.
+  it("PATCHes exactly `{ status }` — no day/times — and the B-16 fixture lands optimistically then reconciles to the server post-state", async () => {
+    const client = makeTestQueryClient();
+    const idea = ideaWithKnownTimes();
+    const existing = makeItineraryItem({ id: OTHER_ITEM_ID, day: DAY, sort_order: 1024 });
+    seedBookingList(client, [idea]);
+    seedItinerary(client, [existing]);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const onMutationSuccess = jest.fn();
+
+    const { result } = await renderHook(
+      () => useSetBookingStatus(TEST_TRIP_ID, { onMutationSuccess }),
+      { wrapper: makeWrapper(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, status: "booked" });
+    });
+
+    const serverItem = makeItineraryItem({
+      id: SERVER_ITEM_ID,
+      kind: "booking",
+      booking_id: BOOKING_ID,
+      title: null,
+      day: DAY,
+      start_time: "14:30",
+      end_time: "16:00",
+      sort_order: 2048,
+    });
+    const postState: BookingWithItems = { ...idea, status: "booked", items: [serverItem] };
+    try {
+      // Endpoint identity + body: the status PATCH, status ONLY.
+      expect(apiClient.request).toHaveBeenCalledWith(bookingEndpoints.updateBooking, {
+        params: { tripId: TEST_TRIP_ID, bookingId: BOOKING_ID },
+        body: { status: "booked" },
+      });
+      // Optimistic arm: badge on the target; the I-2 placeholder derived from the
+      // booking's own details (wall values of the LOCAL strings) after the day's tail.
+      const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+      expect(list?.items[0]?.status).toBe("booked");
+      const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(
+        read?.items.find((item) => item.id === optimisticStatusItemId(BOOKING_ID, 0)),
+      ).toMatchObject({
+        kind: "booking",
+        booking_id: BOOKING_ID,
+        day: DAY,
+        end_day: null,
+        start_time: "14:30",
+        end_time: "16:00",
+        sort_order: 2048,
+      });
+      expect(read?.items).toHaveLength(2); // the existing row is untouched
+    } finally {
+      await act(async () => resolvers.forEach((resolve) => resolve(postState)));
+    }
+    await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledWith(postState));
+
+    // Settled: placeholder gone, real item in, list row + detail reconciled.
+    const settled = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+    expect(settled?.items.map((item) => item.id).sort()).toEqual(
+      [OTHER_ITEM_ID, SERVER_ITEM_ID].sort(),
+    );
+    expect(client.getQueryData(queryKeys.tripBooking(TEST_TRIP_ID, BOOKING_ID))).toEqual(postState);
+    const reconciled = client.getQueryData<Paginated<Booking>>(
+      queryKeys.tripBookings(TEST_TRIP_ID),
+    );
+    expect("items" in (reconciled?.items[0] ?? {})).toBe(false);
+    // Fan-out parity with useUpdateBooking: the booking root + composite read.
+    expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  });
+
+  it("the placeholders mirror the §3.3 derivation: a car rental lands TWO point rows (pickup + drop-off), a lodging ONE spanning row", async () => {
+    const client = makeTestQueryClient();
+    const rental = rentalBooking({ id: BOOKING_ID, status: "idea" });
+    seedBookingList(client, [rental]);
+    seedItinerary(client, []);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+
+    const { result } = await renderHook(() => useSetBookingStatus(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, status: "planned" });
+    });
+    try {
+      const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(read?.items.map((item) => [item.id, item.day, item.start_time])).toEqual([
+        [optimisticStatusItemId(BOOKING_ID, 0), "2027-03-01", "09:00"],
+        [optimisticStatusItemId(BOOKING_ID, 1), "2027-03-02", "17:30"],
+      ]);
+    } finally {
+      await act(async () => resolvers.forEach((resolve) => resolve({ ...rental, items: [] })));
+    }
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Lodging: one spanning row (check-in day, check-out as end_day).
+    const lodging = makeWireBooking({
+      id: BOOKING_ID,
+      category: "lodging",
+      status: "idea",
+      details: {
+        category: "lodging",
+        check_in: "2027-03-01T15:00:00+09:00",
+        check_out: "2027-03-03T11:00:00+09:00",
+      },
+      starts_at: "2027-03-01T06:00:00.000Z",
+    });
+    const lodgingClient = makeTestQueryClient();
+    seedBookingList(lodgingClient, [lodging]);
+    seedItinerary(lodgingClient, []);
+    const lodgingResolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => lodgingResolvers.push(r)));
+    const second = await renderHook(() => useSetBookingStatus(TEST_TRIP_ID), {
+      wrapper: makeWrapper(lodgingClient),
+    });
+    await act(async () => {
+      second.result.current.mutate({ bookingId: BOOKING_ID, status: "booked" });
+    });
+    try {
+      const read = lodgingClient.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(read?.items).toHaveLength(1);
+      expect(read?.items[0]).toMatchObject({ day: "2027-03-01", end_day: "2027-03-03" });
+    } finally {
+      await act(async () =>
+        lodgingResolvers.forEach((resolve) => resolve({ ...lodging, items: [] })),
+      );
+    }
+    await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
+  });
+
+  // The control arm of the placeholder pins: planned → booked has its items
+  // already and the server leaves them be (§3.2 matrix note) — badge only.
+  it("planned → booked on a booking that already has items advances the badge ONLY (no placeholder rows)", async () => {
+    const client = makeTestQueryClient();
+    const planned = ideaWithKnownTimes({ status: "planned" });
+    const own = makeItineraryItem({
+      id: OTHER_ITEM_ID,
+      kind: "booking",
+      booking_id: BOOKING_ID,
+      title: null,
+      day: DAY,
+      start_time: "14:30",
+    });
+    seedBookingList(client, [planned]);
+    seedItinerary(client, [own]);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+
+    const { result } = await renderHook(() => useSetBookingStatus(TEST_TRIP_ID), {
+      wrapper: makeWrapper(client),
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, status: "booked" });
+    });
+    try {
+      const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+      expect(list?.items[0]?.status).toBe("booked");
+      const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(read?.items).toEqual([own]);
+    } finally {
+      await act(async () =>
+        resolvers.forEach((resolve) => resolve({ ...planned, status: "booked", items: [own] })),
+      );
+    }
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+
+  // Falsify: drop the snapshot restore from `onError` ⇒ the placeholder +
+  // badge survive the failure ⇒ RED (asserted after a REAL in-flight window).
+  it("failure restores BOTH snapshots, invalidates, and rides the hook-level seam (rolled back after a genuinely in-flight request)", async () => {
+    const client = makeTestQueryClient();
+    const idea = ideaWithKnownTimes();
+    const existing = makeItineraryItem({ id: OTHER_ITEM_ID, day: DAY, sort_order: 1024 });
+    seedBookingList(client, [idea]);
+    seedItinerary(client, [existing]);
+    const rejecters: ((error: Error) => void)[] = [];
+    spyRequest().mockImplementation(
+      () => new Promise((_resolve, reject) => rejecters.push(reject)),
+    );
+    const onMutationError = jest.fn();
+    const failure = new Error("403");
+
+    const { result } = await renderHook(
+      () => useSetBookingStatus(TEST_TRIP_ID, { onMutationError }),
+      { wrapper: makeWrapper(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, status: "planned" });
+    });
+    try {
+      // Mid-flight: the optimistic write is visible…
+      const mid = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+      expect(mid?.items).toHaveLength(2);
+      expect(onMutationError).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => rejecters.forEach((reject) => reject(failure)));
+    }
+    await waitFor(() => expect(onMutationError).toHaveBeenCalledWith(failure));
+
+    // …and rolled back.
+    const read = client.getQueryData<ItineraryRead>(queryKeys.tripItinerary(TEST_TRIP_ID));
+    expect(read?.items).toEqual([existing]);
+    const list = client.getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID));
+    expect(list?.items[0]?.status).toBe("idea");
+    expect(client.getQueryState(queryKeys.tripItinerary(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(queryKeys.tripBookings(TEST_TRIP_ID))?.isInvalidated).toBe(true);
+  });
+
+  it("hook-level onMutationSuccess fires for BOTH of two in-flight calls (superseded-call law)", async () => {
+    const client = makeTestQueryClient();
+    const first = ideaWithKnownTimes();
+    const second = ideaWithKnownTimes({ id: OTHER_ITEM_ID });
+    seedBookingList(client, [first, second]);
+    seedItinerary(client, []);
+    const resolvers: ((value: BookingWithItems) => void)[] = [];
+    spyRequest().mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const onMutationSuccess = jest.fn();
+
+    const { result } = await renderHook(
+      () => useSetBookingStatus(TEST_TRIP_ID, { onMutationSuccess }),
+      { wrapper: makeWrapper(client) },
+    );
+    await act(async () => {
+      result.current.mutate({ bookingId: BOOKING_ID, status: "planned" });
+    });
+    await act(async () => {
+      result.current.mutate({ bookingId: OTHER_ITEM_ID, status: "booked" });
+    });
+    try {
+      expect(resolvers).toHaveLength(2);
+    } finally {
+      await act(async () => {
+        resolvers[0]?.({ ...first, status: "planned", items: [] });
+        resolvers[1]?.({ ...second, status: "booked", items: [] });
+      });
+    }
+    await waitFor(() => expect(onMutationSuccess).toHaveBeenCalledTimes(2));
+  });
 });
 
 // ---------------------------------------------------------------------------
