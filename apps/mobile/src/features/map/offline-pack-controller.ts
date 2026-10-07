@@ -27,6 +27,18 @@
  * the network listener / reconcile / orphan-sweep work from multiplying.
  * `liveOfflinePackControllers` is the test-observable that pins it.
  *
+ * Deferred-wifi wait and expo-network (candidate UPSTREAM bug, PR #98 round
+ * 1): on iOS, expo-network 57 (`ios/NetworkModule.swift`) keeps ONE
+ * `NWPathMonitor`, starts it when the JS listener count goes 0 -> 1 and
+ * CANCELS it when the count returns to 0 — and a cancelled monitor never
+ * delivers again. A per-controller `addNetworkStateListener` / `remove()`
+ * therefore silently kills every later wait. Hence `awaitNetworkEvents`: ONE
+ * module-level native subscription, created on first need and NEVER removed,
+ * fanned out to the waiting controllers (+ an AppState -> active re-read).
+ * Do not "tidy" it back into per-effect subscribe/unsubscribe, and do not
+ * patch the package in this repo. The simulator cannot switch network type,
+ * so the real-device proof is the PR's Device QA item.
+ *
  * ToS: `setTileCountLimit` is NEVER called (readiness brief headline 4 —
  * bypassing the ceiling violates the Mapbox ToS). Hygiene (R-map-20 purge +
  * orphan sweep) keeps the device under the 750-region ceiling instead.
