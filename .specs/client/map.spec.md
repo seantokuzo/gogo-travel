@@ -261,6 +261,22 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   coordinates THE SYSTEM SHALL stand the WHOLE pack machine down (state
   pinned `none`, no fingerprint, no network listener, no SDK touch) rather
   than attempt a download the region grid cannot compute — see R-map-26.
+  **AMENDED (Q2-186, ruled 2026-10-06, Sean) — activation mount:** THE
+  SYSTEM SHALL mount the offline-pack controller (`useOfflinePackController`)
+  at the trip-scoped root layout (`[tripId]/_layout`), so that WHEN a trip's
+  effective status flips to `active` the wifi-gated auto-download triggers
+  regardless of which of the trip's surfaces is mounted — map tab, trip
+  settings, or any other. The map status pill and the management sheet are
+  presentation consumers of the pack state; neither owns the trigger, and a
+  download starts at most once per activation however many surfaces read
+  pack state. The stand-down rules (the coordinate-less and
+  unusable-destination stand-downs below, R-map-21) and the
+  arms-only-from-`none` rule are unchanged — mounting at the root changes
+  WHERE the flip is observed, never WHEN a download is allowed. The trip
+  shell's lifetime is the observation window: a flip while no surface of
+  that trip is mounted is acted on the moment the shell next mounts. This
+  closes the one-visit-late gap (a trip that flipped `active` before the map
+  tab or settings mounted used to download only on the NEXT visit).
   **AMENDED (round-2, T-8.5 — each ruled 2026-09-19):**
   - **Arms only from `none` (Q2-272):** auto-download starts only WHEN the
     pack state is `none`. A `stale` pack (style or region drift) requires a
@@ -357,7 +373,9 @@ save`, `map-sheet-place-button-save`) THE SYSTEM SHALL apply the change
   `.specs/database/schema.spec.md`:§3.3.4 `trips.status` (Gate 2,
   2026-07-09): status is date-derived with manual owner override (override
   wins until cleared); the auto-download trigger follows the effective
-  status.
+  status. **Mount point (Q2-186, ruled 2026-10-06, Sean):** the controller
+  that observes the flip is mounted at the trip-scoped root layout, not on
+  a particular surface — see R-map-18.
 - Destination coordinates — Resolved at
   `.specs/database/schema.spec.md`:§3.3.4 `trips` (Gate 2, 2026-07-09):
   destination input is structured (Overture-backed search), so
@@ -710,7 +728,9 @@ photos.
     informational-plus-retry only; stale nudges live in the management UI.
 - **Triggers:** (1) auto at activation on wifi (R-map-18; "activation" =
   effective status flips to `active` — derived + override, resolved
-  Gate 2); (2) manual from management UI (R-map-19); (3) refresh action
+  Gate 2 — observed by the controller mounted at the trip-scoped root
+  layout, whichever surface is showing, Q2-186); (2) manual from management
+  UI (R-map-19); (3) refresh action
   re-downloads with the same id (replaces — packs never auto-refresh;
   research).
 - **Hygiene (R-map-20):** delete pack on trip delete/leave (hooked to
@@ -887,6 +907,7 @@ Depends on: NAV-1 (routes), DS-9 (Sheet), PL-2/PL-4 (endpoints), and the
 - [ ] Save on already-saved place (409 stub) lands in saved state, no error UI (MAP-3)
 - [ ] Locate-me before grant prompts once; denied path shows Settings hint, no re-prompt; no background location keys in the built plist (MAP-4)
 - [ ] Activation on wifi starts download exactly once; cellular defers then resumes on wifi event; failure → retry works; delete-trip removes pack; past-trip purge frees count before new download (MAP-5)
+- [ ] Activation observed with only a non-map, non-settings trip surface mounted (e.g. Today) starts the wifi-gated download exactly once, and later mounting the map tab or settings starts no second one (root-layout mount, R-map-18 / Q2-186) (MAP-5)
 - [ ] Airplane-mode E2E inside a downloaded region: tiles + pins + sheet work; search/fresh entry points show offline notice (MAP-5)
 - [ ] Itinerary → map focuses pin + opens sheet once, param not re-consumed; map → itinerary lands on item detail with tab stacks intact (MAP-6)
 
