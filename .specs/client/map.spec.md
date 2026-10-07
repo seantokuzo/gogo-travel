@@ -46,11 +46,33 @@ null]`; it still appears in list surfaces by name. See R-map-26.
   SYSTEM SHALL show only that day's itinerary pins (saved-place and photo
   pins remain, dimmed) and recenter the camera to fit them; default is All
   days.
+  **AMENDED (round-2, T-8.2 — each ruled 2026-09-19):**
+  - **Span-aware days (Q2-219):** a multi-day itinerary item (an `end_day`
+    span, e.g. lodging) stays pinned on EVERY day it covers under the day
+    filter (`dayIndex ≤ filter ≤ endDayIndex`), wearing its check-in day's
+    color and glyph throughout, so "only that day's itinerary pins" reads
+    as "items covering that day". This is a deliberate SUPERSET of the
+    itinerary's check-in/check-out-only point-row treatment (R-itin-31:
+    nights between render nothing in list mode); the map/grid divergence
+    is ruled intentional.
+  - **"All" and empty subsets (Q2-207):** WHEN "All" is re-selected THE
+    SYSTEM SHALL refit the camera to all pins; WHEN the selected day has no
+    pins THE SYSTEM SHALL move the camera nowhere.
+  - **Chip range (Q2-208):** the chips span only the trip's own date range
+    (`dayIndex` 0..N-1); items outside it (R-itin-1) still pin under "All"
+    but get no chip — a negative-index chip id would fork the §2.7
+    kebab-case testID grammar.
 - **R-map-4 (pin tap → sheet):** WHEN a saved-place or itinerary pin is
   tapped THE SYSTEM SHALL present the place sheet (`map-sheet-place`,
   design-system Sheet — navigation spec: "Sheet over map (small) / PUSH
   (full detail)"); WHEN a photo pin is tapped THE SYSTEM SHALL open the
   photo viewer (cross-tab push, navigation spec `photo-viewer`).
+  **AMENDED (round-2, Q2-217, ruled 2026-09-19):** the photo-pin family is
+  empty in production until P-12 feeds it with located photos, but the
+  press is wired now — it cross-tab pushes the viewer (tab jump first),
+  never the place sheet and never a silent no-op (the T-8.2 shell's no-op
+  was a placeholder, retired by the T-8.7 integration rider); the viewer
+  screen itself is a placeholder until P-12.
 - **R-map-5 (photo-pin privacy):** WHEN photo pins are rendered THE SYSTEM
   SHALL include only photos the viewer may see per the shared
   `canViewPhoto` helper (own photos + `trip`/`public` visibility) — a
@@ -62,6 +84,15 @@ null]`; it still appears in list surfaces by name. See R-map-26.
   (research: "attribution/wordmark required"); spine attribution strings
   come from the shared registry (places spec §3.2.4) via the attribution
   info sheet (`map-button-attribution`).
+  **AMENDED (round-2, T-8.2 — each ruled 2026-09-19):**
+  - **SDK ornaments (Q2-216):** the Mapbox logo sits bottom-left at token
+    spacing and the SDK attribution control is offset 96 pt right of it.
+    The exact fit is a phase-QA visual check (ornaments need a live
+    style), not a spec-pinned pixel value.
+  - **Attribution (i) button (Q2-222):** the tappable info opener
+    (`map-button-attribution`) sits bottom-RIGHT — the SDK ornaments own
+    bottom-left — and every later bottom-corner control (locate-me, R-map-16)
+    composes around it, never on top of it.
 - **R-map-7 (theming):** WHEN the app theme scheme is light/dark THE
   SYSTEM SHALL load the matching custom map style (§2.2) and derive all
   pin/route colors from `Theme` — no literal colors (tokens spec R-ds-7;
@@ -272,17 +303,46 @@ photos.
   view + EmptyState overlay ("Add places to see them here",
   `map-empty-state`). Day-filter changes animate camera to fit the subset
   (R-map-3).
+  - **Zero-span fit — RULED (Q2-206, ruled 2026-09-19):** a fit whose
+    envelope has zero span (a single pin, or N pins at one coordinate — the
+    common first-use state of a saved place that is also scheduled) centers
+    on that coordinate at fixed zoom 14 rather than fitting a degenerate
+    envelope.
+  - **World arm — RULED (Q2-214, ruled 2026-09-19):** the world-empty
+    EmptyState (`map-empty-state`) renders only when there are no pins AND
+    no usable destination coordinates; the coordinate-less-destination copy
+    is R-map-26's.
 - **Pin rendering:** one GeoJSON `ShapeSource` per layer family
   (saved / itinerary / photo) with `cluster=true` (SDK-native clustering —
   research) + `SymbolLayer`/`CircleLayer` styling. `MarkerView` (RN views,
   ~100 on-screen budget — research) is reserved for the selected pin and
   photo thumbnails at high zoom; everything else is style-layer rendered
   so 500-pin trips stay cheap.
+  - **Double pin — RULED (Q2-221, ruled 2026-09-19):** a place that is both
+    saved AND scheduled renders in BOTH families — the itinerary pin sits
+    exactly atop its saved twin and, zoomed out, each family clusters
+    independently (per-family counts). There is no dedup or merge across
+    families; merging them stays a design alternative to revisit only if
+    double pins read as clutter in QA.
 - **Z-order (top→bottom):** selected pin → itinerary pins → saved pins →
   photo pins → clusters.
+  **Honored per family — RULED (Q2-215, ruled 2026-09-19):** families stack
+  photo → saved → itinerary bottom-up, and within a family the cluster
+  bubble and count sit below that family's unclustered pins. A strict
+  global "clusters below every pin" ordering is unreachable with
+  per-family clustered sources and is not required.
 - **Data:** pins derive from the TQ-cached trip bundle (saved places list,
   itinerary items with place coords, photos list) — no map-specific
   endpoint; offline renders from the persisted cache (R-map-1/22).
+  - **Saved-places pagination — RULED (Q2-220, ruled 2026-09-19):** the
+    client follows `nextCursor` to exhaustion, bounded at 10 pages (1000
+    pins — twice the 500-pin sizing above), so a runaway cursor terminates
+    and a trip with more than 100 saved places never silently truncates.
+  - **Loading and errors — RULED (Q2-213, ruled 2026-09-19):** the map has
+    no blocking loading UI — the basemap itself is the loading surface and
+    pins hydrate in. WHEN a trip-data query errors THE SYSTEM SHALL show a
+    retry banner (`map-error`, ErrorBanner `-retry`) while the screen stays
+    interactive.
 
 ### 2.2 Map style & colors (delegated here by tokens spec §2.10)
 
@@ -321,6 +381,14 @@ photos.
   - `pinSelectedRing` is `border.focus` — the theme's existing "this is
     selected" affordance; no dedicated color exists (Q2-191, ruled
     2026-09-19).
+  - Pin-glyph and cluster-count ink use `mapColors.clusterText` — no
+    dedicated pin-ink token exists (Q2-212, ruled 2026-09-19).
+- **Glyph day numbers — RULED (Q2-209, ruled 2026-09-19):** the pin glyph
+  shows the 1-based day number for an in-range day; an out-of-range item
+  (R-itin-1) shows its raw arithmetic number (0, -1, …), honest about
+  sitting outside the trip window. Its color wraps by Euclidean modulo
+  (`dayColors[((dayIndex % 8) + 8) % 8]`) so a negative index never
+  yields an undefined lookup.
 
 ### 2.3 Place sheet vs detail screen
 
@@ -407,6 +475,11 @@ photos.
 - Itinerary → map (R-map-24): navigate to map tab with
   `{ focusPlaceId }` param; map screen effect selects pin + opens sheet +
   centers camera; param consumed once (no re-trigger on tab revisit).
+  **Pending-focus semantics — RULED (Q2-218, ruled 2026-09-19):** the
+  pending map-focus is last-set-wins (a rapid double-send collapses to the
+  newest) and trip-scoped — it carries `{ tripId, placeId }`, and a consume
+  for a different trip discards AND clears it, so an interrupted jump can
+  never surface trip A's place on trip B's map.
 - Today screen's "open map" quick action reuses the same param contract
   (today spec consumes it).
 
@@ -414,13 +487,29 @@ photos.
 
 | Surface            | testIDs                                                                                                                                                                                                                                     |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`                                                                                                                                          |
+| Map root           | `map-screen`, `map-button-locate`, `map-button-attribution`, `map-pill-offline`, `map-empty-state`, `map-error`                                                                                                                             |
+| Attribution sheet  | `map-sheet-attribution`                                                                                                                                                                                                                     |
 | Search (R-map-25)  | `map-search-input`, `map-search-list-item-{placeId}`, `map-pin-search-{placeId}`, `map-search-clear`, `map-search-notice-no-destination` (B-7 part 3, R-map-26)                                                                             |
 | Day filter         | `map-day-filter`, `map-day-filter-chip-all`, `map-day-filter-chip-{dayIndex}`                                                                                                                                                               |
 | Pins/clusters      | `map-pin-saved-{placeId}`, `map-pin-itinerary-{itemId}`, `map-pin-photo-{photoId}`, `map-cluster-{clusterId}` (stable entity ids, never render index)                                                                                       |
 | Place sheet        | `map-sheet-place`, `map-sheet-place-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-view-itinerary`, `-button-details`                                                                                                     |
 | Detail screen      | `place-detail-screen`, `place-detail-button-save`, `-button-add-to-day`, `-button-navigate`, `-button-tour-guide`, `place-detail-input-note`, `place-detail-list-item-{itemId}`, `place-detail-photo-{photoId}`, `place-detail-attribution` |
 | Offline management | `offline-pack-button-download`, `-button-refresh`, `-button-delete`, `-button-retry` (+ ConfirmDialog children derive `-confirm`/`-cancel` per tokens spec); `offline-pack-notice-no-location` (B-7 part 3, R-map-26)                       |
+
+**Round-2 testID rulings (ruled 2026-09-19)** — the ids above are the single
+inventory; these notes explain the entries the original inventory did not
+anticipate:
+
+- **`map-pin-*` / `map-cluster-*` live in the GeoJSON feature's
+  `properties.testID`, not in RN `testID` props (Q2-210):** style-layer pins
+  are not React views, so the inventory ids are the stable feature handles;
+  cluster ids are SDK-synthesized and not RN-assertable.
+- **`map-sheet-attribution` (Q2-211):** grammar-derived for the R-map-6 info
+  sheet — the original inventory named only its opener,
+  `map-button-attribution`.
+- **`map-error` (Q2-213):** the retry banner for an errored trip-data query;
+  ErrorBanner derives `-retry` / `-dismiss` (§2.7 rule 4 of the navigation
+  spec).
 
 ### 2.9 Out of scope (explicit)
 
