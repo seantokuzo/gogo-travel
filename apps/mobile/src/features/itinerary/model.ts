@@ -469,6 +469,21 @@ function isLocated(item: ItineraryItem, bookingsById: ReadonlyMap<string, Bookin
  * putting it lower would read as travel time out of the unlocated item, which
  * is the one thing it is not. Both endpoint titles ride the accessibility
  * label so the pairing is never ambiguous to a screen reader.
+ *
+ * [NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip] — an overnight
+ * flight's "Arrives" row (R-itin-36) is a render-only copy of the flight item,
+ * and the server's `itemChainDays` chains a spanning item on `end_day` too, so
+ * legs touching it exist in the composite read and never rendered before this
+ * row did. A flight carries ONE `place_id` and the spec is silent on which
+ * airport it means, so a chip anchored on the ARRIVAL row would be measured
+ * from/to the wrong end half the time (e.g. a "42 h drive" under Arrives
+ * from the DEPARTURE airport). Built conservatively: an Arrives row is never a
+ * chip endpoint — neither the FROM row nor the TO row. The scan semantics are
+ * otherwise untouched (a located Arrives row still STOPS the scan; it just
+ * draws nothing). The Departs row is unchanged (it is the flight's pre-split
+ * row), and so is every lodging row. Options pending Sean: (a) lodging-parity
+ * chips from Arrives (needs a rule for which airport `place_id` means) /
+ * (b) suppressed — built.
  */
 function findLegFrom(
   own: readonly DayEntry[],
@@ -480,6 +495,7 @@ function findLegFrom(
 ): DayLeg | null {
   const from = own[position];
   if (from === undefined) return null;
+  if (from.checkpoint === "arrives") return null;
   // O(1) early-out: nothing starts here, so the walk below cannot find
   // anything. The no-legs day — today's shipped configuration — is exactly
   // the case that would otherwise scan to the end of the day per entry.
@@ -491,8 +507,10 @@ function findLegFrom(
     const options = index.byPair.get(legPairKey(from.itemId, to.itemId));
     // A same-place pair (all modes 0s/0m) has no travel to report — no chip,
     // and no scanning past it either: it IS the next hop, it just has nothing
-    // to say (`isNoTravelLeg`).
-    if (options !== undefined && !isNoTravelLeg(options)) {
+    // to say (`isNoTravelLeg`). An Arrives row never ends a chip either (see
+    // the NEEDS CLARIFICATION note above) — but it still falls through to the
+    // located-stop below, so the scan semantics are exactly as before.
+    if (options !== undefined && to.checkpoint !== "arrives" && !isNoTravelLeg(options)) {
       const defaultMode = pickDefaultMode(options);
       if (defaultMode !== null) {
         return {

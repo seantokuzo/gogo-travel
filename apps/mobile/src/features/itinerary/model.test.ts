@@ -1220,3 +1220,101 @@ describe("T-7.11 — overnight flights render Departs/Arrives point rows (R-itin
     });
   });
 });
+// ---------------------------------------------------------------------------
+// T-7.11 round 1 (A1) — Arrives rows anchor no travel-time chip
+// ---------------------------------------------------------------------------
+
+describe("[NEEDS CLARIFICATION: T-7.11 Arrives-row travel-time chip]", () => {
+  // The spec is silent on which airport a flight's single `place_id` means, and
+  // the server chains a spanning item on `end_day` too, so legs touching the
+  // Arrives row exist in the composite read. Until Sean rules, an Arrives row
+  // is never a chip endpoint — option (b). Options: (a) lodging-parity chips
+  // from Arrives (needs a rule for which airport `place_id` means) /
+  // (b) suppressed — BUILT. Falsify: delete the `from.checkpoint === "arrives"`
+  // guard (from-pin red) or the `to.checkpoint !== "arrives"` clause (to-pin red).
+  const TWO_DAYS = { start_date: "2027-06-10", end_date: "2027-06-11" };
+  const DEPARTURE_STOP = "aaaaaaae-aaaa-4aaa-8aaa-aaaaaaaaaaae";
+  const ARRIVAL_STOP = "aaaaaaaf-aaaa-4aaa-8aaa-aaaaaaaaaaaf";
+
+  /** The red-eye with a `place_id` attached — LOCATED, so the server chains it. */
+  function locatedFlight() {
+    const { item, booking } = flightFixture(RED_EYE_JFK_LHR, "BA 178 JFK→LHR");
+    const located = { ...booking, place_id: PLACE_ID };
+    return { item, byId: new Map([[located.id, located]]) };
+  }
+
+  function stop(id: string, day: string, sortOrder: number) {
+    return makeItineraryItem({
+      id,
+      kind: "place_visit",
+      place_id: PLACE_ID,
+      title: null,
+      day,
+      start_time: "09:00",
+      sort_order: sortOrder,
+    });
+  }
+
+  it("FROM: no chip hangs off the Arrives row (the '42 h drive from the departure airport' scenario); Departs still anchors its chip", () => {
+    const { item, byId } = locatedFlight();
+    const items = [
+      item,
+      stop(DEPARTURE_STOP, "2027-06-10", 2048),
+      stop(ARRIVAL_STOP, "2027-06-11", 2048),
+    ];
+    const legs = [
+      // CONTROL — a leg from the flight on its DEPARTURE day renders as it always did.
+      makeTravelLeg(FLIGHT_ITEM_ID, DEPARTURE_STOP, "driving"),
+      // The scenario: the SAME flight → a stop on the ARRIVAL day.
+      makeTravelLeg(FLIGHT_ITEM_ID, ARRIVAL_STOP, "driving", {
+        duration_seconds: 42 * 3600,
+      }),
+    ];
+    const rows = buildDayRows(TWO_DAYS, items, byId, { legs });
+    expect(rows.map(rowLabel)).toEqual([
+      "day:2027-06-10",
+      `entry:${FLIGHT_ITEM_ID}-departs`,
+      `leg:${FLIGHT_ITEM_ID}->${DEPARTURE_STOP}`,
+      `entry:${DEPARTURE_STOP}`,
+      "day:2027-06-11",
+      `entry:${FLIGHT_ITEM_ID}-arrives`,
+      `entry:${ARRIVAL_STOP}`,
+    ]);
+  });
+
+  it("TO: no chip ENDS on the Arrives row (a check-out → flight pair stays absent); a stop → Departs chip still renders", () => {
+    const { item: flightItem, byId: flightMap } = locatedFlight();
+    const hotel = defaultItineraryItems().find((i) => i.id === ITEM_LODGING_ID);
+    if (hotel === undefined) throw new Error("fixture missing lodging item");
+    // sort_order 512 < the flight's 1024: the check-out row precedes Arrives on
+    // Jun 11, so the pair (hotel → flight) is a forward scan that ends ON Arrives.
+    const stay = {
+      ...hotel,
+      day: "2027-06-09",
+      end_day: "2027-06-11",
+      sort_order: 512,
+    };
+    const items = [stay, flightItem, stop(DEPARTURE_STOP, "2027-06-10", 512)];
+    const legs = [
+      // CONTROL — a stop → Departs leg on the departure day renders as it always did.
+      makeTravelLeg(DEPARTURE_STOP, FLIGHT_ITEM_ID, "driving"),
+      // The pair: the lodging's check-out row → the flight's Arrives row.
+      makeTravelLeg(ITEM_LODGING_ID, FLIGHT_ITEM_ID, "driving"),
+    ];
+    const byId = new Map([...bookingsById(), ...flightMap]);
+    const rows = buildDayRows({ start_date: "2027-06-09", end_date: "2027-06-11" }, items, byId, {
+      legs,
+    });
+    expect(rows.map(rowLabel)).toEqual([
+      "day:2027-06-09",
+      `entry:${ITEM_LODGING_ID}-check-in`,
+      "day:2027-06-10",
+      `entry:${DEPARTURE_STOP}`,
+      `leg:${DEPARTURE_STOP}->${FLIGHT_ITEM_ID}`,
+      `entry:${FLIGHT_ITEM_ID}-departs`,
+      "day:2027-06-11",
+      `entry:${ITEM_LODGING_ID}-check-out`,
+      `entry:${FLIGHT_ITEM_ID}-arrives`,
+    ]);
+  });
+});
