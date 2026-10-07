@@ -113,6 +113,7 @@
 | — | **Swap the `links.gogotravel.example` placeholder for the real domain**: `LINK_DOMAIN` + `app.json` `associatedDomains` (domain owned; P-14 swap) | queued | P3 | — |
 | — | **T-3.2 shared-schema advisories**: reject dot-only paypalme handles; trim-normalize `external_url` (carried from the closed T-3.2 row) | queued | P3 | — |
 | — | **Rental one-way zones**: no zone fields (both ends `Z`), so a cross-zone one-way skews the instant; rejected only if dropoff wall time < pickup (B-9) | queued | P3 | — |
+| — | **CI script entry checks fail silent under rename**: check-nul-bytes/-place-fresh-persistence `endsWith` argv gate; rename exits 0; use queue-rows realpath form | queued | P3 | — |
 
 ## Blocked
 
