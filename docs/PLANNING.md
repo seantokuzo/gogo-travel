@@ -517,9 +517,13 @@ pnpm test && pnpm build`
     `depends_on: [S0, PR #99]` (`isValidTimeZone`, `todayInZone`,
     `Trip.destination_tz`); otherwise parallel with T-7.13/T-7.14/T-7.15
     (T-7.21 starts after c2). Rulings: c1 none; c2/c3 assume NC-1 (a) or
-    (c) — rule NC-1 before c2 starts. Prep: brief `/Users/seansimpson/Documents/code/dev/gogo-travel/.tmp/t712-t717-spec.md`
-    (§2 Conversion utilities, Interfaces — gitignored, lives in the main
-    checkout).
+    (c) — rule NC-1 before c2 starts. The Sheet's destination caption reads
+    "Trip destination (from your first flight)" when `Trip.destination_tz_source`
+    is `booking` (R-itin-37; a connecting-leg limit of B-30's chain), so
+    `deriveTripZones` takes the destination's source alongside `destinationTz`
+    (extends the brief's `DeriveTripZonesInput`). Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
     (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
   - **T-7.13** (mobile) — owns
     `apps/mobile/src/features/itinerary/grid/constants.ts`,
@@ -539,8 +543,8 @@ pnpm test && pnpm build`
     `apps/mobile/src/data/` hook file wraps the schedule/status mutations
     - tests. `depends_on: [T-7.10]` (needs the server's optional `status`
       field to exist for real integration, not a mock).
-  - **T-7.16** (mobile, Wave 3, SOLE owner of the screen file — no other
-    task in this batch touches it) — owns
+  - **T-7.16** (mobile, Wave 3, sole owner of the screen file in Wave 3 —
+    T-7.20 (Wave 4, strictly after) also edits it) — owns
     `apps/mobile/src/app/[tripId]/itinerary/index.tsx` (mounts
     `TimezoneSwitcher` + `DensitySegment`, routes Month density to
     `MonthSurface`) + its screen test. `depends_on: [T-7.12, T-7.13,
@@ -573,9 +577,9 @@ T-7.14]`. Signed-off scope unchanged; **two notes for its brief**
 ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     today's behaviour. `depends_on: [T-7.11, T-7.12 c1+c2]`. Parallel with
     T-7.19 (file-disjoint), T-7.16, T-7.21. Branch
-    `P-7/T-7-18-list-zoned`. Prep: brief `/Users/seansimpson/Documents/code/dev/gogo-travel/.tmp/t712-t717-spec.md`
-    (§2 Conversion utilities, Interfaces — gitignored, lives in the main
-    checkout).
+    `P-7/T-7-18-list-zoned`. Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
   - **T-7.19** (mobile; grid lays out converted times + focusable blocks +
     follow callback; rulings needed: **NC-3**, NC-1 only if its option
     (c)) — owns `apps/mobile/src/features/itinerary/GridSurface.tsx`,
@@ -585,9 +589,9 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     prop; `GridSurface` uses `zoned.landingToday` when present, else
     `localTodayISO()` (single-zone trips keep today's landing).
     `depends_on: [T-7.13, T-7.12 c1+c2]`. Parallel with T-7.18 and T-7.14
-    (`month/` only). Branch `P-7/T-7-19-grid-zoned`. Prep: brief `/Users/seansimpson/Documents/code/dev/gogo-travel/.tmp/t712-t717-spec.md`
-    (§2 Conversion utilities, Interfaces — gitignored, lives in the main
-    checkout).
+    (`month/` only). Branch `P-7/T-7-19-grid-zoned`. Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
   - **T-7.20** (mobile; active-zone state + screen wiring; rulings needed:
     **NC-1, NC-4, NC-5, NC-6**) — owns NEW `timezone/zone-selection.ts` +
     `zone-selection.test.ts`, `timezone/index.ts`,
@@ -597,18 +601,24 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `apps/mobile/src/__tests__/itinerary-timezone-flow.test.tsx`.
     **Serial** — `depends_on: [T-7.16, T-7.18, T-7.19, T-7.12 c3, PR #99]`;
     nothing else touches `index.tsx`. Branch `P-7/T-7-20-zone-wiring`.
-    Prep: brief `/Users/seansimpson/Documents/code/dev/gogo-travel/.tmp/t712-t717-spec.md`
-    (§2 Conversion utilities, Interfaces — gitignored, lives in the main
-    checkout).
+    Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
   - **T-7.21** (mobile; coordinate-less destination time zone, create +
-    settings; rulings needed: **NC-7**) — two commits. c1 owns
+    settings; rulings needed: **NC-7**) — two commits. Zone chain and
+    provenance are PR #99's contract (`.specs/api/trips.spec.md` §3.4:
+    user > derived > booking > device hint > UTC). c1 owns
     `apps/mobile/src/features/itinerary/add-edit/TimeZoneField.tsx` +
     `TimeZoneField.test.tsx` (`suggestions` / `suggestionsLabel` props,
-    an "On this trip" section). c2 owns
-    `apps/mobile/src/app/(trips)/new.tsx`,
+    an "On this trip" section, plus an optional "Automatic" row that
+    selects `null`, testID `{testID}-automatic`). c2 owns
+    `apps/mobile/src/app/(trips)/new.tsx` (untouched prefill from PR #99's
+    `deviceZoneHint()` ships `destination_tz_source: 'device'`; an explicit
+    pick ships `'user'`),
     `apps/mobile/src/app/[tripId]/more/settings.tsx`,
     `apps/mobile/src/data/trip-settings.ts` + `trip-settings.test.tsx`
-    (`buildTripPatch` emits a zone-only `destination_tz`),
+    (`buildTripPatch` emits `destination_tz` for an explicit pick — source
+    `'user'` — and `destination_tz: null` for "Automatic"),
     `apps/mobile/src/__tests__/trip-new-screen.test.tsx`,
     `apps/mobile/src/__tests__/trip-settings-form.test.tsx`. `depends_on:
 [PR #98, PR #99, T-7.12 c2]` (PR #98/#99 both edit `settings.tsx`;
@@ -617,8 +627,8 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `P-7/T-7-21-destination-zone-field`.
 - **Wave plan** (amended — T-7.17; T-7.12 is now gated on S0 + PR #99 and
   the T-7.17 split adds T-7.18..T-7.21): **Now** — S0 (docs) ∥ the open
-  PR reviews (#98, #99, #103; T-7.10/T-7.11 = #100/#101 have merged); Sean
-  rules NC-1..NC-7 in one batch.
+  PR reviews (#98, #99; T-7.10/T-7.11/T-7.13 = #100/#101/#103 have merged);
+  Sean rules NC-1..NC-7 in one batch.
   **Wave 1** (parallel worktrees) — T-7.10 ∥ T-7.11 ∥ T-7.13 ∥ T-7.12
   (c1→c2→c3, ONE agent, after S0 + PR #99 merged; NC-1 ruled before c2).
   **Wave 2** (parallel worktrees, all file-disjoint) — T-7.14 ∥ T-7.15 ∥
@@ -749,14 +759,23 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     is a model, not the engine (ADR-006 prod-shaped).
   - T-7.21: c1 — no `suggestions` → every existing `TimeZoneField` test
     unchanged · suggestions render first and are pickable · an
-    unacceptable suggestion is dropped. c2 — a coordless create shows the
-    field prefilled with the device zone and picking `Asia/Seoul` sends
-    `destination_tz: "Asia/Seoul"` · a create WITH coordinates shows no
-    field and no `destination_tz` key · a coordless settings save that
-    changes only the zone PATCHes exactly `{ destination_tz }` plus
-    `expect_updated_at` · the settings suggestions are
-    `deriveTripZones(...)` minus the destination · ACT gate prints `0` ·
-    mutation-verify.
+    unacceptable suggestion is dropped · the "Automatic" row (when
+    offered) reports `null`. c2 — a coordless create shows the field
+    prefilled with the device zone and, UNTOUCHED, sends `destination_tz` =
+    that zone + `destination_tz_source: 'device'` · an explicit pick of
+    `Asia/Seoul` sends `destination_tz: "Asia/Seoul"` +
+    `destination_tz_source: 'user'` · a create WITH coordinates shows no
+    field and no `destination_tz` / `destination_tz_source` keys · a
+    coordless settings save that changes only the zone PATCHes exactly
+    `{ destination_tz }` (source `'user'` or absent — never `'device'`) plus
+    `expect_updated_at` · "Automatic" PATCHes `destination_tz: null` with no
+    source key · a stored user zone on a trip whose destination has since
+    gained coordinates keeps the field visible and "Automatic" resets it
+    (NC-7 sub-choice (ii), the recommendation; (i) hides it) · the settings
+    suggestions are `deriveTripZones(...)` minus the destination · ACT gate
+    prints `0` · mutation-verify (ship `'user'` for the untouched prefill →
+    RED; drop the `null` branch → RED; hide the field once coordinates exist
+    → RED under (ii)).
 
 ### P-8 — Maps, saved places & offline tile packs
 
