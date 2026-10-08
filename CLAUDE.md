@@ -122,10 +122,11 @@ status enum, and the three-artifact spec shape all live in
 Every functional PR gets one — **run `/review-loop`; the fix loop is
 `/address-comments`.** (`/review` is Claude Code's built-in alias of `/code-review` —
 not part of this pipeline; use `/review-loop`.)
-Review records are **local-only** (ADR-003): no verdict sticky, nothing about a
-review posted to GitHub (CI stays; that's CI, not review). The panel is picked
-from the diff, not fixed. Project brief — priorities, path → specialist map,
-what NOT to flag: `.claude/rules/review.md`.
+Reviews run **locally in-session** (ADR-003): no verdict sticky, no review comments,
+no GitHub App. The durable record is the PR body's "Review record" section (ADR-009,
+Sean 2026-10-06); CI stays as CI. The panel is picked from the diff, not fixed.
+Project brief — priorities, path → specialist map, what NOT to flag:
+`.claude/rules/review.md`.
 
 ## Quality Gates (before any task counts as done)
 

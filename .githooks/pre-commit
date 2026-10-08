@@ -78,6 +78,11 @@ allowlisted() {
     return 0
   fi
 
+  # Snapshot archives (ADR-009): QUEUE-<date>[-N].md / STATE-<date>[-N].md in history
+  if [[ "$f" =~ ^docs/history/(QUEUE|STATE)-[0-9]{4}-[0-9]{2}-[0-9]{2}(-[0-9]+)?\.md$ ]]; then
+    return 0
+  fi
+
   return 1
 }
 

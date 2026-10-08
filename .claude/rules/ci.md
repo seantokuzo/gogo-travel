@@ -4,7 +4,7 @@ paths: [".github/workflows/**"]
 
 # CI Rules
 
-You're editing CI. Hard rules — the `guard` job enforces the first THREE
+You're editing CI. Hard rules — the `guard` job enforces the first FOUR
 mechanically; don't fight it.
 
 - **No `schedule:`/`cron:` triggers, ever** (ADR-003). Push / pull_request /
@@ -18,11 +18,14 @@ mechanically; don't fight it.
   `gh pr diff` (T-7.5 shipped a 182-line module past five review lanes that
   could not see a line of it) and BSD `grep` exits 1 in silence. tsc/eslint
   pass regardless. Write the escape, never the byte.
+- **Plan-doc byte budgets** (ADR-009) — `.github/scripts/check-doc-budgets.mjs`:
+  STATE ≤ 6144 B; QUEUE ≤ 20480 B, no line over 400 B; required headings. A
+  failure means rotate or trim the doc, never raise the cap (a new ADR does that).
 - **A workflow COMMENT must never contain the literal trigger keys the guard greps for** (P-4). The guard scans all of `.github/workflows/` and will match its own prose — that is why the existing steps assemble the patterns from split parts. Do the same, or phrase around them.
 - **Gate per CLAUDE.md § Quality Gates**; note `lint` includes `lint:root`
   (root configs + `.github/scripts/` — nothing else lints those). The guard
   job also runs `node --test .github/scripts/*.test.mjs` — the NUL guard's exit
-  contract and the place-persistence check. (The review aggregator was retired
+  contract, the place-persistence check and the budget guard. (The review aggregator was retired
   2026-09-07; its script/test are unreferenced leftovers.)
 - **The DB constraint suite must RUN in CI, never skip**: `CI=true` makes the
   Docker-down path hard-fail (T-3.3). ubuntu-latest has a native Docker

@@ -9,14 +9,16 @@ paths: [".claude/rules/review.md.by-path-only"]
 The project half of the `review-loop` skill (its canonical home). Extends that
 skill, never contradicts it. Reviewers get this file as a **path**, not contents.
 
-## Records are LOCAL — nothing is posted to GitHub
+## Reviews run LOCALLY — no stickies, no review comments; the record is the PR body
 
 **As of 2026-08-01 ([ADR-003](../../docs/decisions/ADR-003-local-in-session-reviews.md)):
-no verdict sticky, no `gh api …/comments` posting, no required PR-comment replies.**
-PR #13's sticky was the last one. The aggregator's output lives ONLY in
+no verdict sticky, no `gh api …/comments` posting, no required PR-comment replies,
+no GitHub App.** PR #13's sticky was the last one. The aggregator's output lives ONLY in
 `.tmp/review*/round-<N>/VERDICT.md` for the run's duration; the durable record is
-the QUEUE "Recently done" row narrative. CI (Guard/Verify) stays on GitHub —
-that's CI, not review.
+the PR body's "Review record" section (a section of the description, not a comment
+or a sticky; Sean, 2026-10-06), and the QUEUE row keeps a one-line outcome
+([ADR-009](../../docs/decisions/ADR-009-plan-doc-byte-budgets.md)). CI (Guard/Verify)
+stays on GitHub — that's CI, not review.
 
 ## The aggregator is RETIRED (decision, 2026-09-07 — reverses an earlier call)
 
@@ -53,8 +55,8 @@ them is a loose end, not a blocker (QUEUE row).
 
 Per round, each specialist writes `.tmp/review/round-<N>/<specialist>.md`; use
 `.tmp/review-<pr>/` when two PRs' rounds run concurrently. `.tmp/` is gitignored —
-these are the record for the run's duration only. The durable record is the QUEUE
-"Recently done" row narrative.
+these are per-run working notes only. The durable record is the PR body's "Review
+record" section; the QUEUE row keeps a one-line outcome.
 
 ## 🔴 Mutation probes SERIALIZE the tree (PR #17 R2, 2026-08-02)
 

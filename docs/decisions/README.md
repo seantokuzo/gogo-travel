@@ -34,6 +34,7 @@ answered here.
 | [ADR-006](ADR-006-testing-strategy-overhaul.md)  | Testing strategy overhaul — four layers above unit tests                | Accepted |
 | [ADR-007](ADR-007-maestro-e2e-lane.md)           | Maestro is the E2E lane — local-first, Release simulator build          | Accepted |
 | [ADR-008](ADR-008-ledger-amendment-protocol.md)  | Ledger amendment protocol — append a superseding note, not an edit      | Proposed |
+| [ADR-009](ADR-009-plan-doc-byte-budgets.md)      | Plan-doc byte budgets — STATE brief, QUEUE index, snapshot archives     | Accepted |
 
 ## See also
 

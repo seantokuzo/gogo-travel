@@ -19,6 +19,30 @@ patterns worth repeating, surprises worth remembering, surviving follow-ups.
 - **Not auto-loaded.** Archives are reference material; load them explicitly (a new
   phase that resembles an old one, an ADR codifying a lesson, a retrospective).
 
+## Snapshot archives
+
+Besides phase archives, this directory holds two kinds of **snapshot archive**
+([ADR-009](../decisions/ADR-009-plan-doc-byte-budgets.md)). They keep `docs/QUEUE.md` and
+`docs/STATE.md` inside their byte budgets without losing anything:
+
+- **`QUEUE-<YYYY-MM-DD>.md`** — rows rotated out of `docs/QUEUE.md` (done/cancelled, and
+  Recently done beyond the newest 5), or the first full snapshot of it. Written by
+  `queue-rows.mjs` (`normalize` for the first snapshot, `rotate` after that; `rotate` is to run at
+  `/sprint-close` once QS-T11 lands, and by hand until then).
+- **`STATE-<YYYY-MM-DD>.md`** — STATE.md narrative retired when the brief is rewritten.
+- **Naming:** the date is the UTC commit day; add `-2`, `-3` if that name is taken. One new file per
+  rotation. **Self-indexing by date** (`ls docs/history/QUEUE-*.md docs/history/STATE-*.md`), so
+  this README has no per-file rows for them.
+- **Append-only, stricter than phase archives:** never edited after merge, not even to fix a link.
+  `.prettierignore` keeps the bytes verbatim; the pre-commit allowlist accepts them as new files.
+- **Grep-only, never read whole.** Find an item by ID, or by its handle when it has none:
+
+  ```bash
+  grep -nE '^\| B-30 +\|' docs/history/QUEUE-*.md
+  grep -nF '<handle>' docs/history/QUEUE-*.md
+  grep -n '<ID or phrase>' docs/history/STATE-*.md
+  ```
+
 ## Index
 
 | ID                                                   | Title                                 | Status                                           |

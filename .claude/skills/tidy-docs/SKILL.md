@@ -86,7 +86,7 @@ For every `P-NNN-*.md` in `docs/history/`, verify `PLANNING.md` has a correspond
 
 ## Step 5 — QUEUE "Recently done" trim suggestion
 
-Open `docs/QUEUE.md`, locate the "Recently done" section. If it has more than 5 entries, propose trimming the oldest. Concise summaries can move to PLANNING.md status updates if not already there; full notes already live in `docs/history/`, so nothing is lost.
+Open `docs/QUEUE.md`, locate the "Recently done" section. If it has more than 5 entries, propose rotating, never hand-deleting: rows added after the last snapshot are archived nowhere, so a hand-trim loses them. Propose `node scripts/queue-rows.mjs rotate --queue docs/QUEUE.md --archive docs/history/QUEUE-$(date -u +%F).md --dry-run` first, then the same command without `--dry-run` once the preview is right. It writes a new archive and self-verifies ([ADR-009](../../../docs/decisions/ADR-009-plan-doc-byte-budgets.md) §5). Archives are append-only and `rotate` refuses to overwrite one (exit 2, even on `--dry-run`): if `docs/history/QUEUE-<date>.md` already exists (a second rotation the same UTC day), use `-2`, then `-3`, … (`QUEUE-<date>-2.md`).
 
 ## Step 6 — Output report
 
@@ -108,7 +108,7 @@ Markdown, posted as the response. Stay under ~80 lines unless drift is significa
 - `docs/history/P-002-foo.md` exists, no `done` row in PLANNING.md
 
 📋 QUEUE trim suggestions
-- "Recently done" has 8 entries; trim oldest 3
+- "Recently done" has 8 entries; rotate (dry-run first)
 ```
 
 If everything is clean: `✨ Plan-doc hygiene clean — nothing to tidy.`
