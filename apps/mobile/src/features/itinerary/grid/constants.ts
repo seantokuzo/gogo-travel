@@ -14,6 +14,22 @@ export const GUTTER_WIDTH = 48;
 export const COLUMN_FRACTION = 0.92;
 
 /**
+ * R-itin-34 (T-7.13) — the density mechanism varies ONLY the simultaneous
+ * day-column count/width; the hour timeline below is untouched.
+ *
+ * - Day:       one column at `COLUMN_FRACTION` of the window (the peek above).
+ * - 3-day:     exactly this many columns share the window, no snap-peek.
+ * - Trip-span: every trip day at once, each at least `MIN_COLUMN_WIDTH`; a
+ *              trip too long for that floor scrolls horizontally, continuously.
+ *
+ * `MIN_COLUMN_WIDTH` is the 44pt touch-target floor (the same 44 as
+ * `MIN_HOUR_HEIGHT`): a 7-day trip still fits a 360pt-wide phone
+ * ((360 - GUTTER_WIDTH) / 7 = 44.6), longer trips scroll.
+ */
+export const THREE_DAY_COLUMNS = 3;
+export const MIN_COLUMN_WIDTH = 44;
+
+/**
  * R-itin-17: the 08:00–20:00 band is initially visible — 12 hour rows fill
  * the viewport, so the hour height derives from the measured body height
  * (clamped for usability on very short/tall viewports; the band goal yields

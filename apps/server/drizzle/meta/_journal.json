@@ -50,6 +50,13 @@
       "when": 1789413601125,
       "tag": "0006_destination_tier_name_fold_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1791344081677,
+      "tag": "0007_trips_destination_tz",
+      "breakpoints": true
     }
   ]
 }

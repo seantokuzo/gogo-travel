@@ -94,10 +94,10 @@ import {
   deleteTripPack,
   OfflinePackManager,
   offlinePackSummary,
-  useOfflinePackController,
+  useOfflinePackState,
 } from "@/features/map";
 import { LEAVE_TRIP_CONFIRM, memberActionErrorMessage } from "@/features/members";
-import { DateField } from "@/features/trips";
+import { DateField, deviceZoneHint } from "@/features/trips";
 import { useTripContext } from "@/navigation/trip-context";
 
 const CONFLICT_NOTICE = "Updated by someone else — review and re-save.";
@@ -129,17 +129,16 @@ function themeLabelFor(key: string | null): string {
 
 /**
  * Offline map row + management sheet (T-8.5 / R-map-19) — its OWN component
- * because `useOfflinePackController` re-renders its subscriber on every
- * distinct download percent (unthrottled on Android): owning the hook here
- * scopes those ticks to this row + sheet instead of the whole settings tree
- * (round-1 perf finding). Mounting the row still mounts the controller — the
- * R-map-18 settings mount point is unchanged (the Sheet is an RN Modal, so
- * its tree position is presentation-neutral).
+ * because `useOfflinePackState` re-renders its subscriber on every distinct
+ * download percent (unthrottled on Android): owning the hook here scopes
+ * those ticks to this row + sheet instead of the whole settings tree
+ * (round-1 perf finding). The row is a READER (Q2-186) — the R-map-18
+ * activation controller is mounted once at the trip root, not here.
  */
 function OfflineMapRow() {
   const trip = useTripContext();
   const [sheetOpen, setSheetOpen] = useState(false);
-  const packState = useOfflinePackController(trip);
+  const packState = useOfflinePackState(trip);
   return (
     <>
       <ListItem
@@ -384,6 +383,11 @@ export default function TripSettingsScreen() {
             destination_name: selectedPlace.name,
             destination_lat: selectedPlace.lat,
             destination_lng: selectedPlace.lng,
+            // B-30: moving to a coordinate-less custom place clears the
+            // server's derived zone — `buildTripPatch` ships the device zone
+            // as a 'device' HINT with it (only for a real→null move; a no-op
+            // otherwise; never a user's explicit choice).
+            ...(selectedPlace.lat === null ? (deviceZoneHint() ?? {}) : {}),
           }
         : {}),
     });

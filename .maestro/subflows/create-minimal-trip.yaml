@@ -4,19 +4,36 @@
 # destination picker's search-and-pick UX). Called from a signed-in
 # trip-list-screen (post session-door.yaml).
 #
-# DATES: TODAY for BOTH start and end (schema-valid — TripCreateSchema's
-# date-order rule is "start_date must be on or before end_date", never
-# "strictly before" — packages/shared/src/domains/trip.ts:71). This is
-# deliberate, not a shortcut: a brand-new start-date picker has no context
-# yet and seeds on `new Date()` (today); the end-date picker's context
-# becomes the just-committed start date — i.e. also today. Both pickers
-# therefore commit via their PickerCard's Done button on their UNMODIFIED
-# seed, with ZERO calendar-grid navigation — no dependence on the native
-# inline UIDatePicker's month-grid accessibility layout, which this suite
-# has no verified way to drive to an arbitrary month (see
-# `add-flight-dateline.yaml` for where that IS unavoidable and is handled
-# separately). A same-day trip is a real, valid trip (a 1-day trip), not a
-# degenerate case.
+# DATES (B-30): START = D, END = D+1, where D is the host's local "today".
+#
+# Why not the old same-day trip (start = end = D)? Since B-30 a trip's
+# "today" is the calendar day at its DESTINATION (`todayInZone(now,
+# trip.destination_tz)` — trips spec §3.4 timezone note), not the device's.
+# The Kyoto destination below resolves to Asia/Tokyo (UTC+9), so a trip whose
+# whole window is the host's D is only "today at the destination" for the
+# few hours when Tokyo's date equals the host's — for a PDT host (UTC-7)
+# that is 00:00-07:59 local, i.e. red for the other 16 hours. END = D+1
+# makes the window [D, D+1], which contains the destination's today K for
+# EVERY host zone whose offset is at or below Tokyo's: K - D is 0 or 1
+# there (K = D+1 once the host's clock is 9h-minus-its-offset past
+# midnight, else K = D), so the trip is ACTIVE at any time of day. A host
+# EAST of Tokyo (UTC+10..+14, e.g. Auckland) can see K = D-1 and would need
+# a different destination — out of scope for this lane (Sean's Mac is PDT).
+#
+# HOW: the start picker still commits its unmodified `new Date()` seed via
+# the PickerCard's Done button (a brand-new field has no context yet — zero
+# calendar navigation). The end picker's context is the just-committed start
+# (D), so its inline calendar opens on D's month; tapping the D+1 day cell
+# commits AND closes it (DateField: a CHANGED day fires onValueChange, which
+# commits & closes — Done is only needed for the unmodified seed). The day
+# number comes from `subflows/end-date-plus-one.js` (Maestro `runScript`, ES5;
+# `new Date(y, m, d + 1)` does the month/year/leap-day rollover), and when D
+# is the last day of its month one `DatePicker.NextMonth` tap precedes the
+# day cell — the same selectors `create-trip-golden.yaml` drives (`text:
+# "^15$"` after `DatePicker.NextMonth`, device-QA-verified S-4 T5,
+# 2026-09-14). Day 1..9 cells use the same `^<n>$` shape; that single-digit
+# match is exercised by the first door run after this change, not before
+# (this edit was not run on a simulator).
 #
 # DESTINATION: the caller supplies a query (env DESTINATION_QUERY) verified
 # ahead of time to return EXACTLY ONE spine result for this seed
@@ -85,14 +102,29 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: "trip-new-input-dates-start-sheet-done"
+# ── end date = D+1 (see DATES above). The script runs AFTER the start date is
+# committed and immediately before the end picker opens, so D here is the
+# same day the start committed (a midnight crossing inside those few seconds
+# would at worst make END = D+2 — still a valid, still-active trip) ─────────
+- runScript: end-date-plus-one.js
 - tapOn:
     id: "trip-new-input-dates-end"
 - extendedWaitUntil:
     visible:
-      id: "trip-new-input-dates-end-sheet-done"
+      id: "trip-new-input-dates-end-sheet"
     timeout: 10000
+- runFlow:
+    when:
+      true: ${output.endRollsMonth === "true"}
+    commands:
+      - tapOn:
+          id: "DatePicker.NextMonth"
 - tapOn:
-    id: "trip-new-input-dates-end-sheet-done"
+    text: "^${output.endDayOfMonth}$"
+- extendedWaitUntil:
+    notVisible:
+      id: "trip-new-input-dates-end-sheet"
+    timeout: 10000
 - tapOn:
     id: "trip-new-button-create"
 - extendedWaitUntil:

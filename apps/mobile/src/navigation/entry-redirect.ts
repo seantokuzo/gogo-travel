@@ -8,13 +8,16 @@
  *                             today tab; none viewed → /(trips)    (R-nav-23)
  *   else                    → /(trips)                             (R-nav-5)
  *
+ * "Active" is per trip at its destination day (`isTripActive`, B-30) —
+ * `now` is an instant, never a precomputed date.
+ *
  * "Most-recently-viewed" is the ONE-slot MMKV stamp (spec §2.2). With ≥2
  * active trips the stamp is honored only when it points INTO the active set:
  * a stamp for a trip that is no longer active — or that this account has no
  * membership in (user switch) — carries no ranking information about the
  * others, so it falls back to the trip list exactly like "never viewed".
  */
-import type { ISODate, TripListItem } from "@gogo/shared";
+import type { TripListItem } from "@gogo/shared";
 
 import type { LastViewedTrip } from "./last-viewed-trip";
 import { isTripActive } from "./trip-defaults";
@@ -22,9 +25,11 @@ import { isTripActive } from "./trip-defaults";
 export function resolveEntryTarget(
   trips: readonly TripListItem[],
   lastViewed: LastViewedTrip | null,
-  today: ISODate,
+  now: Date,
 ): string {
-  const active = trips.filter((trip) => isTripActive(trip, today));
+  // B-30: each trip is judged at ITS OWN destination-zone today — the same
+  // instant yields different calendar days for different trips.
+  const active = trips.filter((trip) => isTripActive(trip, now));
 
   if (active.length === 1) return `/${active[0].id}/today`;
 

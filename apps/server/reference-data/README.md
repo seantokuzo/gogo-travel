@@ -163,10 +163,34 @@ is-a-sovereign-country-capital` — 6,927 rows, measured live against this
   contributors (ODbL), via timezone-boundary-builder". Escalate before
   building any feature that _redistributes_ the tz column standalone.
 
-  Why not the CC0-licensed `@photostructure/tz-lookup`: measured against exact
-  polygons over these 4,133 airports it mislabels 743 (70 with _wrong UTC
-  offsets_ — BAH, PPG, OOL, DIL…). Offset-wrong zones are the exact B-8 bug
-  class this table exists to kill.
+  Why not the CC0-licensed `@photostructure/tz-lookup` for THIS table:
+  measured against exact polygons over these 4,133 airports it mislabels 743
+  (70 with _wrong UTC offsets_ — BAH, PPG, OOL, DIL…). Offset-wrong zones are
+  the exact B-8 bug class this table exists to kill.
+
+  ⚠️ **B-30 (2026-10): `@photostructure/tz-lookup` 11.7.0 IS now a PRODUCTION
+  dependency of `apps/server`** — a different job with a different tolerance:
+  it derives a TRIP's `destination_tz` from the destination's coordinates
+  (`src/trips/destination-tz.ts`), where the only consequence of a wrong
+  zone is the boundary day of that one trip, and the user can override it with
+  an explicit `destination_tz`. It runs in-process (88 KB, no network, no
+  account — Law #5 untouched); `geo-tz` (70 MB, MIT code / ODbL data) stays
+  **dev-only**, used by this table's generator and by the accuracy gate
+  (`src/trips/destination-tz.accuracy.test.ts`). 2026-10-06 measurement, UTC
+  offset compared at 2026-07-01 and 2026-01-01 12:00Z: 70 of 4,133 airports
+  and 51 of 6,927 destination-tier rows offset-disagree with `geo-tz/all`
+  (31 of the 51 destination rows are Xinjiang `Asia/Urumqi` vs
+  `Asia/Shanghai`; the other 20 are border cells — Dili, Oecusse, Kashmir…). The gate pins a sample strictly
+  (allow-list by name, with reason) and ratchets the full-corpus count.
+
+  **ODbL scope of B-30:** the zone derived per trip is stored in
+  `trips.destination_tz` and returned on that trip's own wire shape. That is a
+  per-trip _produced work_ (one IANA id answering "what zone is this trip
+  in"), not a standalone redistribution of the tz column or of the boundary
+  database — tz-lookup's own bundled data is its upstream's concern (CC0 by
+  the maintainer). The "escalate before redistributing the tz column
+  standalone" line above still stands unchanged: a bulk export/API of
+  coordinate → zone, or of `airports.tz`, would still be an escalation.
 
 ### `airlines.json`
 

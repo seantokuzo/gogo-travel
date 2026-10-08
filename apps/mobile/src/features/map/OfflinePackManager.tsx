@@ -38,8 +38,10 @@
  * naming the fix (trip settings), never merely `disabled` (mobile.md
  * vacuous-pin rule — the handler stays gated too, belt-and-braces).
  *
- * Mounting this surface mounts the pack controller — the second R-map-18
- * activation-trigger mount point (controller doc).
+ * This surface is a READER (Q2-186): it renders `useOfflinePackState` and
+ * mounts NO controller — the R-map-18 activation trigger lives once at the
+ * trip root (`<OfflinePackController />` in the `[tripId]` layout); the
+ * manual actions below go through the same `startPackDownload` latch.
  */
 import { createStyles, useTheme } from "@gogo/tokens/react";
 import * as Network from "expo-network";
@@ -62,7 +64,7 @@ import {
 import {
   deleteTripPack,
   startPackDownload,
-  useOfflinePackController,
+  useOfflinePackState,
   type PackDownloadTarget,
 } from "./offline-pack-controller";
 
@@ -113,7 +115,7 @@ export function OfflinePackManager() {
   const s = useStyles();
   const { scheme } = useTheme();
   const trip = useTripContext();
-  const state = useOfflinePackController(trip);
+  const state = useOfflinePackState(trip);
   const offline = useTripOffline(trip.id);
 
   const [cellularDialog, setCellularDialog] = useState<CellularDialog>(null);

@@ -48,6 +48,15 @@
  *    write-up, including why natively presented modals must re-open it,
  *    is `components/top-inset.tsx`).
  *
+ * 6. OFFLINE-PACK CONTROLLER (R-map-18, Q2-186): `<OfflinePackController />`
+ *    is mounted HERE, once per trip scope, so the wifi-gated auto-download
+ *    fires on activation wherever the user is inside the trip (Today,
+ *    itinerary, …) — not only once they open the map tab or trip settings.
+ *    It sits inside the membership guard (a shell only exists for a verified
+ *    member, or a cached one whose re-verification attempt has settled —
+ *    item 1). The map pill / settings row only READ its state
+ *    (`useOfflinePackState`); nothing else may mount the controller.
+ *
  * expo-router 57 note: the root `Tabs` export is deprecated —
  * `expo-router/js-tabs` is the sanctioned JS-tabs entry.
  */
@@ -62,10 +71,11 @@ import { StyleSheet, View } from "react-native";
 import { ApiRequestError } from "@/auth";
 import { TabNav, TopInsetBoundary } from "@/components";
 import { invalidateTripLists, queryClient, queryKeys, useTrip } from "@/data";
+import { OfflinePackController } from "@/features/map";
 import { stampLastViewedTrip } from "@/navigation/last-viewed-trip";
 import { recallTab, rememberTab } from "@/navigation/tab-memory";
 import { TripProvider, useTripId } from "@/navigation/trip-context";
-import { initialTabFor, localTodayISO } from "@/navigation/trip-defaults";
+import { initialTabFor } from "@/navigation/trip-defaults";
 import { TRIP_TAB_ITEMS } from "@/navigation/trip-tabs";
 import { NoAccessState, TripErrorState, TripLoadingState } from "@/navigation/TripGuardStates";
 import { TripSwitcherBar } from "@/navigation/TripSwitcher";
@@ -101,10 +111,13 @@ function TripShell({ trip }: { trip: TripWithRole }) {
   // Mount-time resolution (§2.5): session memory (R-nav-9) beats the status
   // default (R-nav-7/8). Tabs reads initialRouteName once at mount, which is
   // exactly the spec's cold-open semantics — later status flips don't yank.
-  const initialRouteName = recallTab(trip.id) ?? initialTabFor(trip, localTodayISO());
+  const initialRouteName = recallTab(trip.id) ?? initialTabFor(trip, new Date());
 
   return (
     <TripProvider trip={trip}>
+      {/* R-map-18 / Q2-186: the ONE offline-pack controller for this trip
+          scope (layout doc, item 6). Renders nothing. */}
+      <OfflinePackController trip={trip} />
       <View style={s.shell}>
         {/* Flush with the top of the window — it claims `insets.top` itself
             and is therefore rendered OUTSIDE the boundary below. */}

@@ -19,6 +19,15 @@
  * lands on 08:00, and `initialScrollIndex` lands on today's column when
  * today is a column, else the first day.
  *
+ * Density (T-7.13, R-itin-33/34): the optional `density` prop varies ONLY the
+ * simultaneous day-column count/width — Day (default: one column + peek),
+ * 3-day (three columns, no peek), Trip-span (every day, down to a floor
+ * width, then continuous scroll). Everything else here is density-blind; the
+ * geometry lives in `grid/model.ts` `gridColumnLayout`. The two day FlatLists
+ * are keyed by density so a switch re-lands on the R-itin-17 rule instead of
+ * carrying a stale scroll offset across a different column width. Month is a
+ * separate surface (R-itin-35), not a density of this component.
+ *
  * Viewer gating (R-ib-24): gap-tap is a write affordance — viewers get an
  * inert gap layer (no Pressables, no slot testIDs). Blocks/chips/lanes stay
  * pressable for every role (they route to detail — reads).
@@ -32,7 +41,6 @@ import type { NativeScrollEvent, NativeSyntheticEvent } from "react-native";
 import { localTodayISO } from "@/navigation/trip-defaults";
 
 import {
-  COLUMN_FRACTION,
   DEFAULT_HOUR_HEIGHT,
   FIRST_VISIBLE_HOUR,
   GUTTER_WIDTH,
@@ -42,11 +50,23 @@ import {
 } from "./grid/constants";
 import { GridDayColumn } from "./grid/GridDayColumn";
 import { GridHeaderCell, headerStripHeight } from "./grid/GridHeaderCell";
+import type { GridSurfaceDensity } from "./grid/grid-density";
 import { HourGutter } from "./grid/HourGutter";
-import { buildGridDays, initialDayIndex, type GridDay } from "./grid/model";
+import {
+  buildGridDays,
+  clampLandingIndex,
+  gridColumnLayout,
+  initialDayIndex,
+  type GridDay,
+} from "./grid/model";
 
 export interface GridSurfaceProps {
   trip: TripWithRole;
+  /**
+   * R-itin-34 day-column density. Optional, default `"day"` — callers that
+   * predate T-7.13 render byte-identically to before.
+   */
+  density?: GridSurfaceDensity;
   /** Scheduled items from the R-ib-13 composite read (ideas never render here). */
   items: ItineraryItem[];
   /** Booking enrichment by id — the same map the day list's rows are built from. */
@@ -81,6 +101,7 @@ function clampHourHeight(viewportHeight: number): number {
 
 export function GridSurface({
   trip,
+  density = "day",
   items,
   bookingsById,
   onAddAt,
@@ -98,17 +119,18 @@ export function GridSurface({
   const showChipRow = maxAllDayCount > 0;
   const canAdd = trip.role !== "viewer";
 
-  const columnWidth = Math.max(1, Math.round((windowWidth - GUTTER_WIDTH) * COLUMN_FRACTION));
+  const { columnWidth, visibleColumns, snap } = gridColumnLayout(density, windowWidth, days.length);
   const initialIndex = useMemo(() => {
     if (days.length === 0) return 0;
-    return Math.min(
+    const landing = Math.min(
       initialDayIndex(
         days.map((day) => day.date),
         localTodayISO(),
       ),
       days.length - 1,
     );
-  }, [days]);
+    return clampLandingIndex(density, landing, days.length, visibleColumns);
+  }, [days, density, visibleColumns]);
 
   const [viewportHeight, setViewportHeight] = useState(0);
   const hourHeight = clampHourHeight(viewportHeight);
@@ -143,6 +165,7 @@ export function GridSurface({
       <View style={[s.headerRow, { height: headerStripHeight(laneCount, showChipRow) }]}>
         <View style={s.gutterSpacer} />
         <FlatList
+          key={density}
           ref={headerRef}
           testID="itinerary-grid-allday-lane"
           data={days}
@@ -174,6 +197,7 @@ export function GridSurface({
         <View style={s.bodyRow}>
           <HourGutter hourHeight={hourHeight} />
           <FlatList
+            key={density}
             testID="itinerary-grid-pager"
             data={days}
             horizontal
@@ -181,16 +205,21 @@ export function GridSurface({
             keyExtractor={(day) => day.date}
             getItemLayout={getItemLayout}
             initialScrollIndex={initialIndex}
-            snapToInterval={columnWidth}
-            decelerationRate="fast"
-            disableIntervalMomentum
+            // R-itin-34: Day / 3-day page-snap column to column; Trip-span is
+            // continuous (no snap) once the trip outgrows the floor width.
+            snapToInterval={snap ? columnWidth : undefined}
+            decelerationRate={snap ? "fast" : "normal"}
+            disableIntervalMomentum={snap}
             nestedScrollEnabled
             // Round-1 perf: a day column is heavy (24 slot Pressables +
             // blocks) — shrink first-paint and retention windows; snap
-            // paging is unaffected.
+            // paging is unaffected. The first paint must still cover every
+            // column on screen at once (3-day / Trip-span), or the first
+            // frame shows blank columns until the next batch; Day's
+            // `visibleColumns` of 1 keeps the pre-density 3 / 3.
             windowSize={5}
-            initialNumToRender={3}
-            maxToRenderPerBatch={3}
+            initialNumToRender={Math.max(3, visibleColumns + 1)}
+            maxToRenderPerBatch={Math.max(3, visibleColumns)}
             onScroll={syncHeader}
             scrollEventThrottle={16}
             renderItem={({ item: day }) => (
