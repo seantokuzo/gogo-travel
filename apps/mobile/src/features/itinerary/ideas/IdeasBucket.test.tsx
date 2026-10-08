@@ -28,11 +28,13 @@ import {
   type BookingStatus,
   type BookingWithItems,
   type ItineraryItem,
+  type Paginated,
   type ScheduleBookingInput,
 } from "@gogo/shared";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
 
 import { ApiRequestError } from "@/auth";
+import { queryKeys } from "@/data/query-client";
 import { IdeasBucket } from "@/features/itinerary";
 import { TEST_TRIP_ID } from "@/test-utils/ids";
 import {
@@ -134,15 +136,16 @@ async function renderBucket(opts?: {
     trips: [trip],
     overrides: { ...itineraryApiOverrides(opts?.api), ...opts?.overrides },
   });
+  const queryClient = makeTestQueryClient();
   const view = await renderWithProviders(
     <IdeasBucket trip={trip} onOpenBooking={mockOpenBooking} />,
-    { queryClient: makeTestQueryClient() },
+    { queryClient },
   );
   // Settle the three mounted queries' notify batches inside act (B-2 class).
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  return { request, view };
+  return { request, view, queryClient };
 }
 
 /** Requests of one descriptor, from the mocked transport. */
@@ -704,7 +707,7 @@ async function holdRequest(
       brokenRefetches += 1;
       return Promise.reject(new Error("NETWORK"));
     };
-  await renderBucket({
+  const { queryClient } = await renderBucket({
     api: { bookings },
     overrides: {
       [route === "schedule" ? SCHEDULE_ROUTE : STATUS_ROUTE]: hold,
@@ -732,6 +735,11 @@ async function holdRequest(
     },
     brokenRefetches: () => brokenRefetches,
     bookingId: idea.id,
+    /** The booking's CACHED status right now (the optimistic write lands here). */
+    cachedStatus: () =>
+      queryClient
+        .getQueryData<Paginated<Booking>>(queryKeys.tripBookings(TEST_TRIP_ID))
+        ?.items.find((row) => row.id === idea.id)?.status,
   };
 }
 
@@ -856,8 +864,14 @@ it.each([
 ] as const)(
   "the %s route's sheet keeps the TAP-TIME copy ('Mark … as Booked') mid-flight, after the optimistic write flipped the live row to booked",
   async (route, title) => {
-    const { reject } = await holdRequest(route, { target: "booked" });
+    const { reject, cachedStatus } = await holdRequest(route, { target: "booked" });
     try {
+      // Self-contained premise: the helper waited on the itinerary placeholder
+      // (the card leaving the bucket), which does not prove the LIST cache's
+      // status flipped — and that flip is what would turn a live-row copy into
+      // "Add to day". Assert it directly, or deleting the flip silently stops
+      // this pin from detecting O2/O4.
+      expect(cachedStatus()).toBe("booked");
       // Mid-flight, post-flip: the card has left the bucket; the sheet reads the
       // snapshot copy, not the live (now booked) row's same-status copy.
       expect(screen.getByText(`Mark "${title}" as Booked`)).toBeOnTheScreen();

@@ -243,9 +243,11 @@ export function isStatusActionOffered(status: BookingStatus, target: StatusActio
  * The invariant is "never a wrong write", NOT "label ⇔ `status` key": the
  * label and the wire status legitimately diverge with no wrong write — idea +
  * Planned reads "Mark as Planned" yet omits `status` (the server's omitted
- * path is `idea → planned`), and a sheet opened on an idea + Booked tap
- * against a live row that has since become booked omits `status` and says so
- * with a banner.
+ * path is `idea → planned`), and a sheet opened on an idea + Booked tap whose
+ * live row has since become booked still reads "Mark as Booked" while its
+ * schedule call omits `status` (the server keeps it booked). The banner case
+ * is the other one: idea + Planned against a now-booked row is no longer
+ * offered, so nothing is sent and the sheet says so.
  */
 export function isSameStatusAction(booking: Booking, target: StatusActionTarget): boolean {
   return target === booking.status;
