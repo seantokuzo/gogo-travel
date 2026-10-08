@@ -16,8 +16,9 @@
  * Mutation policy (trips §2.6 pattern): create/update are NOT optimistic —
  * the row is server-generated identity (+ server-derived instants/auto-items
  * and §3.2 transition side effects), the invite-create precedent; callers
- * show a spinner. `useScheduleBooking` IS optimistic — R-itin-11 says the
- * bucket card moves "optimistically" — with full snapshot rollback. Side
+ * show a spinner. `useScheduleBooking` and `useSetBookingStatus` (the Ideas
+ * bucket's two routes — T-7.15) ARE optimistic — R-itin-11 says the bucket
+ * card moves "optimistically" — with full snapshot rollback. Side
  * effects ride the hook-level `onMutationError`/`onMutationSuccess` seam
  * ONLY (T-6.8/T-6.9 landmine: TanStack v5 drops per-call callbacks for
  * superseded calls on a shared mutation instance — never hang per-call
@@ -33,13 +34,18 @@ import {
 } from "@tanstack/react-query";
 import {
   bookingEndpoints,
+  deriveAutoItems,
   type Booking,
   type BookingCreate,
+  type BookingStatus,
   type BookingUpdate,
   type BookingWithItems,
+  type DerivedItemPlacement,
+  type ISODate,
   type ItineraryItem,
   type ItineraryRead,
   type Paginated,
+  type SchedulableBookingStatus,
   type ScheduleBookingInput,
 } from "@gogo/shared";
 
@@ -353,26 +359,91 @@ export function optimisticScheduleItemId(bookingId: string): string {
   return `optimistic-schedule-${bookingId}`;
 }
 
-interface ScheduleContext {
+/** Both Ideas-bucket routes snapshot the same two caches for rollback. */
+interface BookingOptimisticContext {
   previousItinerary: ItineraryRead | undefined;
   previousBookings: Paginated<Booking> | undefined;
 }
 
 /**
+ * The status a booking lands in when `POST …/schedule` runs (R-ib-8): an
+ * EXPLICIT `status` is the target; OMITTED advances `idea → planned` and
+ * leaves `planned`/`booked` unchanged. The optimistic badge mirrors the
+ * server's rule exactly — never a blanket write — so a same-status/omitted
+ * schedule can't visibly downgrade a card mid-flight.
+ */
+function scheduleTargetStatus(
+  current: BookingStatus,
+  explicit: SchedulableBookingStatus | undefined,
+): BookingStatus {
+  return explicit ?? (current === "idea" ? "planned" : current);
+}
+
+/** Highest `sort_order` on `day` (0 when empty) — R-ib-15's append base. */
+function dayTailSort(items: readonly ItineraryItem[], day: ISODate): number {
+  return items
+    .filter((item) => item.day === day)
+    .reduce((max, item) => Math.max(max, item.sort_order), 0);
+}
+
+/** A `booking`-kind placeholder row, replaced by the server post-state on success. */
+function placeholderItem(args: {
+  id: string;
+  tripId: string;
+  bookingId: string;
+  booking: Booking | undefined;
+  placement: DerivedItemPlacement;
+  sortOrder: number;
+}): ItineraryItem {
+  const { id, tripId, bookingId, booking, placement, sortOrder } = args;
+  return {
+    id,
+    trip_id: tripId,
+    kind: "booking",
+    booking_id: bookingId,
+    place_id: booking?.place_id ?? null,
+    title: null,
+    notes: null,
+    day: placement.day,
+    end_day: placement.end_day,
+    start_time: placement.start_time,
+    end_time: placement.end_time,
+    sort_order: sortOrder,
+    created_by: booking?.created_by ?? "",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/** Swap the placeholders for the server post-state (R-ib-18) in an itinerary read. */
+function swapInPostState(
+  old: ItineraryRead,
+  isPlaceholder: (item: ItineraryItem) => boolean,
+  result: BookingWithItems,
+): ItineraryRead {
+  const withoutPlaceholders = { ...old, items: old.items.filter((item) => !isPlaceholder(item)) };
+  return result.items.reduce(upsertItineraryItem, withoutPlaceholders);
+}
+
+/**
  * `POST /trips/:tripId/bookings/:bookingId/schedule` (R-ib-8) — the Ideas
- * bucket's "Add to day". OPTIMISTIC per R-itin-11 ("optimistically moving
- * the card into its day section with the status badge advancing
- * idea → planned"): a placeholder `booking`-kind item is appended to the
- * target day and the cached booking row advances `idea → planned`; success
- * swaps in the server post-state (R-ib-18 — real item id/sort_order,
+ * bucket's schedule route for TIMELESS bookings (known-times bookings route
+ * through `useSetBookingStatus` — the endpoint rejects them). OPTIMISTIC per
+ * R-itin-11 ("optimistically moving the card into its day section with the
+ * status badge advancing to the tapped status"): a placeholder `booking`-kind
+ * item is appended to the target day and the cached booking row takes the
+ * target status (`input.status` when sent — T-7.10/T-7.15; omitted keeps the
+ * pre-change `idea → planned` rule, `scheduleTargetStatus`); success swaps
+ * in the server post-state (R-ib-18 — real item id/sort_order,
  * authoritative status), failure restores both snapshots AND invalidates
  * (a 400/409 means the optimistic premise was stale — booking gained times
- * or was scheduled elsewhere).
+ * or was scheduled elsewhere). `status` is forwarded verbatim: omitting it on
+ * a same-status action is the CALLER's decision (`buildStatusActionRequest`).
  */
 export function useScheduleBooking(
   tripId: string,
   options?: BookingMutationOptions<BookingWithItems>,
-): UseMutationResult<BookingWithItems, Error, ScheduleBookingVars, ScheduleContext> {
+): UseMutationResult<BookingWithItems, Error, ScheduleBookingVars, BookingOptimisticContext> {
   const qc = useQueryClient();
   const itineraryKey = queryKeys.tripItinerary(tripId);
   const listKey = queryKeys.tripBookings(tripId);
@@ -388,14 +459,16 @@ export function useScheduleBooking(
       const previousItinerary = qc.getQueryData<ItineraryRead>(itineraryKey);
       const previousBookings = qc.getQueryData<Paginated<Booking>>(listKey);
 
-      // Badge advance (R-ib-8: `idea → planned` when it was `idea`).
+      // Badge advance to the server's target status (R-ib-8).
       qc.setQueryData<Paginated<Booking>>(listKey, (old) =>
         old === undefined
           ? old
           : {
               ...old,
               items: old.items.map((row) =>
-                row.id === bookingId && row.status === "idea" ? { ...row, status: "planned" } : row,
+                row.id === bookingId
+                  ? { ...row, status: scheduleTargetStatus(row.status, input.status) }
+                  : row,
               ),
             },
       );
@@ -404,27 +477,19 @@ export function useScheduleBooking(
       // append — R-ib-15's +1024 gap over the day's current tail).
       qc.setQueryData<ItineraryRead>(itineraryKey, (old) => {
         if (old === undefined) return old;
-        const dayTail = old.items
-          .filter((item) => item.day === input.day)
-          .reduce((max, item) => Math.max(max, item.sort_order), 0);
-        const booking = previousBookings?.items.find((row) => row.id === bookingId);
-        const placeholder: ItineraryItem = {
+        const placeholder = placeholderItem({
           id: optimisticScheduleItemId(bookingId),
-          trip_id: tripId,
-          kind: "booking",
-          booking_id: bookingId,
-          place_id: booking?.place_id ?? null,
-          title: null,
-          notes: null,
-          day: input.day,
-          end_day: null,
-          start_time: input.start_time ?? null,
-          end_time: input.end_time ?? null,
-          sort_order: dayTail + 1024,
-          created_by: booking?.created_by ?? "",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
+          tripId,
+          bookingId,
+          booking: previousBookings?.items.find((row) => row.id === bookingId),
+          placement: {
+            day: input.day,
+            end_day: null,
+            start_time: input.start_time ?? null,
+            end_time: input.end_time ?? null,
+          },
+          sortOrder: dayTailSort(old.items, input.day) + 1024,
+        });
         return { ...old, items: [...old.items, placeholder].sort(byCalendarOrder) };
       });
 
@@ -435,16 +500,129 @@ export function useScheduleBooking(
       // Swap the placeholder for the server post-state (R-ib-18): drop the
       // optimistic row, upsert every returned item, reconcile the booking
       // row + detail cache.
-      qc.setQueryData<ItineraryRead>(itineraryKey, (old) => {
-        if (old === undefined) return old;
-        const withoutPlaceholder = {
-          ...old,
-          items: old.items.filter((item) => item.id !== optimisticScheduleItemId(bookingId)),
-        };
-        return result.items.reduce(upsertItineraryItem, withoutPlaceholder);
-      });
+      qc.setQueryData<ItineraryRead>(itineraryKey, (old) =>
+        old === undefined
+          ? old
+          : swapInPostState(old, (item) => item.id === optimisticScheduleItemId(bookingId), result),
+      );
       reconcileBookingRow(qc, tripId, toBookingRow(result));
       qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
+    },
+    onError: (err, _vars, ctx) => {
+      if (ctx?.previousItinerary !== undefined) {
+        qc.setQueryData(itineraryKey, ctx.previousItinerary);
+      }
+      if (ctx?.previousBookings !== undefined) {
+        qc.setQueryData(listKey, ctx.previousBookings);
+      }
+      void qc.invalidateQueries({ queryKey: itineraryKey });
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+      options?.onMutationError?.(err);
+    },
+  });
+}
+
+export interface BookingStatusVars {
+  bookingId: string;
+  /** The Ideas bucket's two targets — `idea`/`cancelled` are not bucket actions. */
+  status: SchedulableBookingStatus;
+}
+
+/** Optimistic-status placeholder id — one per derived auto-item (§3.3). */
+export function optimisticStatusItemId(bookingId: string, index: number): string {
+  return `optimistic-status-${bookingId}-${index}`;
+}
+
+function isOptimisticStatusItem(item: ItineraryItem, bookingId: string): boolean {
+  return item.id.startsWith(`optimistic-status-${bookingId}-`);
+}
+
+/**
+ * `PATCH /trips/:tripId/bookings/:bookingId` with `{ status }` ONLY — the
+ * Ideas bucket's route for a booking that already carries known times (T-7.15
+ * / R-itin-41; the B-16 dead end: the schedule endpoint rejects it, R-ib-8).
+ * The booking service's I-2 auto-item supplies the calendar row, so there is
+ * nothing to schedule and no day/times ride the call.
+ *
+ * OPTIMISTIC, unlike `useUpdateBooking` (whose general PATCH is spinner-only):
+ * R-itin-11 wants the card to move into its day immediately. The placeholder
+ * rows are `deriveAutoItems(details)` — the shared derivation that is, by its
+ * own doc, "the contract between the booking service and client optimistic
+ * updates" — so they land exactly where I-2 will put the real ones (a lodging
+ * spans, a rental gets pickup + drop-off). Only when entering the calendar
+ * from `idea` with no item yet (I-2: items are created on the way in); a
+ * `planned → booked` change has items already and the server leaves them be
+ * (§3.2 matrix note) — badge only. Success swaps in the server post-state and
+ * invalidates the booking root + composite itinerary read (the same fan-out
+ * as `useUpdateBooking`: filtered lists and server-derived item side
+ * effects); failure restores both snapshots and invalidates (stale premise).
+ */
+export function useSetBookingStatus(
+  tripId: string,
+  options?: BookingMutationOptions<BookingWithItems>,
+): UseMutationResult<BookingWithItems, Error, BookingStatusVars, BookingOptimisticContext> {
+  const qc = useQueryClient();
+  const itineraryKey = queryKeys.tripItinerary(tripId);
+  const listKey = queryKeys.tripBookings(tripId);
+  return useMutation({
+    mutationFn: ({ bookingId, status }: BookingStatusVars) =>
+      apiClient.request(bookingEndpoints.updateBooking, {
+        params: { tripId, bookingId },
+        body: { status },
+      }),
+    onMutate: async ({ bookingId, status }) => {
+      await qc.cancelQueries({ queryKey: itineraryKey });
+      await qc.cancelQueries({ queryKey: listKey });
+      const previousItinerary = qc.getQueryData<ItineraryRead>(itineraryKey);
+      const previousBookings = qc.getQueryData<Paginated<Booking>>(listKey);
+      const booking = previousBookings?.items.find((row) => row.id === bookingId);
+
+      qc.setQueryData<Paginated<Booking>>(listKey, (old) =>
+        old === undefined
+          ? old
+          : {
+              ...old,
+              items: old.items.map((row) => (row.id === bookingId ? { ...row, status } : row)),
+            },
+      );
+
+      qc.setQueryData<ItineraryRead>(itineraryKey, (old) => {
+        if (old === undefined || booking === undefined) return old;
+        // I-2 creates items only on the way onto the calendar, and only when
+        // the booking has none yet.
+        const entersCalendar =
+          booking.status === "idea" && !old.items.some((item) => item.booking_id === bookingId);
+        if (!entersCalendar) return old;
+        const items = old.items.slice();
+        deriveAutoItems(booking.details).forEach((placement, index) => {
+          items.push(
+            placeholderItem({
+              id: optimisticStatusItemId(bookingId, index),
+              tripId,
+              bookingId,
+              booking,
+              placement,
+              sortOrder: dayTailSort(items, placement.day) + 1024,
+            }),
+          );
+        });
+        return { ...old, items: items.sort(byCalendarOrder) };
+      });
+
+      return { previousItinerary, previousBookings };
+    },
+    onSuccess: (result, { bookingId }) => {
+      // Seam first (fires for EVERY settled call — superseded-call law).
+      options?.onMutationSuccess?.(result);
+      qc.setQueryData<ItineraryRead>(itineraryKey, (old) =>
+        old === undefined
+          ? old
+          : swapInPostState(old, (item) => isOptimisticStatusItem(item, bookingId), result),
+      );
+      reconcileBookingRow(qc, tripId, toBookingRow(result));
+      qc.setQueryData<BookingWithItems>(queryKeys.tripBooking(tripId, result.id), result);
+      void qc.invalidateQueries({ queryKey: queryKeys.tripBookingsRoot(tripId) });
+      void qc.invalidateQueries({ queryKey: itineraryKey });
     },
     onError: (err, _vars, ctx) => {
       if (ctx?.previousItinerary !== undefined) {

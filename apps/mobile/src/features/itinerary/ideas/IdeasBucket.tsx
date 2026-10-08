@@ -24,12 +24,17 @@
  * unsettled (no flash-in); each bin then renders iff it has contents. A
  * failed cancelled read degrades to "no Cancelled bin".
  *
- * Scheduling (R-itin-11): "Add to day" → ScheduleSheet → optimistic
- * schedule (hook-owned). Write affordances are hidden for viewers
- * (R-ib-24 — no guaranteed-403 buttons); cancelled cards never offer
- * scheduling (transitions out of cancelled are ✖, §3.2).
+ * Status actions (T-7.15 / R-itin-11, R-itin-40): each card offers
+ * "Planned" / "Booked" (replacing the single "Add to day") → ScheduleSheet →
+ * optimistic transition + calendar presence (hook-owned; the sheet routes
+ * known-times cards through a status-only PATCH, timeless ones through the
+ * schedule endpoint). WHICH actions a card offers is `offeredStatusActions`
+ * — conservative pending Sean's ruling [NEEDS CLARIFICATION: T-7.15
+ * bucket-card demotion]: the bucket never demotes. Write affordances are
+ * hidden for viewers (R-ib-24 — no guaranteed-403 buttons); cancelled cards
+ * offer nothing (transitions out of cancelled are ✖, §3.2).
  */
-import type { Booking, TripWithRole } from "@gogo/shared";
+import type { TripWithRole } from "@gogo/shared";
 import { createStyles } from "@gogo/tokens/react";
 import { useMemo, useState, type ReactElement } from "react";
 import { FlatList, Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
@@ -43,8 +48,11 @@ import {
   buildIdeasGroups,
   buildIdeasRows,
   formatIdeaPrice,
+  offeredStatusActions,
+  STATUS_ACTION_LABELS,
   unscheduledBookings,
   type IdeasRow,
+  type StatusAction,
 } from "./ideas-model";
 import { ScheduleSheet } from "./ScheduleSheet";
 
@@ -79,6 +87,12 @@ const useStyles = createStyles((t) =>
     cardRow: { flexDirection: "row", alignItems: "center", gap: t.space[3] },
     cardBody: { flex: 1, gap: t.space[1] },
     badgeRow: { flexDirection: "row", alignItems: "center", gap: t.space[2] },
+    actionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: t.space[2],
+      paddingTop: t.space[1],
+    },
   }),
 );
 
@@ -151,28 +165,38 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
   const bookingsQuery = useItineraryBookings(trip.id);
   const cancelledQuery = useCancelledBookings(trip.id);
 
-  const [scheduleTarget, setScheduleTarget] = useState<Booking | null>(null);
+  const [statusAction, setStatusAction] = useState<StatusAction | null>(null);
 
   const unscheduled = useMemo(
     () => unscheduledBookings(bookingsQuery.data?.items ?? [], itineraryQuery.data?.items ?? []),
     [bookingsQuery.data, itineraryQuery.data],
   );
   const cancelled = useMemo(() => cancelledQuery.data?.items ?? [], [cancelledQuery.data]);
+  // The presented card's row in the LIVE cache. The sheet routes off this,
+  // not the tap-time snapshot: a collaborator adding times while it is open
+  // must flip it to the status PATCH, not leave it re-POSTing into the same
+  // `known times` 400. Absent from the list (deleted/cancelled) ⇒ the sheet
+  // falls back to the snapshot.
+  const liveActionBooking =
+    statusAction === null
+      ? undefined
+      : bookingsQuery.data?.items.find((row) => row.id === statusAction.booking.id);
   const ideasRows = useMemo(() => buildIdeasRows(buildIdeasGroups(unscheduled)), [unscheduled]);
   const cancelledRows = useMemo(() => buildCancelledRows(cancelled), [cancelled]);
 
   // Hidden until the reads that decide "empty" have settled (no flash-in).
   // A failed cancelled read degrades to "no Cancelled bin" (its only cost).
   //
-  // `scheduleTarget === null` is load-bearing (round-1 blocker): scheduling
-  // the LAST idea empties `unscheduled` at OPTIMISTIC-write time, which
+  // `statusAction !== null` is load-bearing (round-1 blocker): acting on the
+  // LAST idea empties `unscheduled` at OPTIMISTIC-write time, which
   // unmounted the bucket AND the in-flight ScheduleSheet with it — a
-  // subsequent failure then rolled the card back while its `setError` landed
-  // on an unmounted form, so the sheet vanished as-if-success and the card
-  // silently reappeared. Staying mounted for the duration of a presented
-  // schedule keeps the sheet's documented rollback-visible posture true.
+  // subsequent failure then rolled the card back while its failure state
+  // landed on an unmounted form, so the sheet vanished as-if-success and the
+  // card silently reappeared. Staying mounted for the duration of a
+  // presented action keeps the sheet's documented rollback-visible posture
+  // true — for BOTH routes (schedule and status PATCH).
   const settled = itineraryQuery.data !== undefined && bookingsQuery.data !== undefined;
-  const showIdeas = unscheduled.length > 0 || scheduleTarget !== null;
+  const showIdeas = unscheduled.length > 0 || statusAction !== null;
   const showCancelledBin = cancelled.length > 0;
   if (!settled || (!showIdeas && !showCancelledBin)) return null;
 
@@ -220,16 +244,22 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
                 </AppText>
               ) : null}
             </View>
+            {editor && !item.cancelled ? (
+              <View style={s.actionRow}>
+                {offeredStatusActions(booking.status).map((target) => (
+                  <Button
+                    key={target}
+                    title={STATUS_ACTION_LABELS[target]}
+                    accessibilityLabel={`Mark ${booking.title} as ${STATUS_ACTION_LABELS[target]}`}
+                    variant="secondary"
+                    size="sm"
+                    onPress={() => setStatusAction({ booking, target })}
+                    testID={`itinerary-ideas-${target}-${booking.id}`}
+                  />
+                ))}
+              </View>
+            ) : null}
           </View>
-          {editor && !item.cancelled ? (
-            <Button
-              title="Add to day"
-              variant="secondary"
-              size="sm"
-              onPress={() => setScheduleTarget(booking)}
-              testID={`itinerary-ideas-schedule-${booking.id}`}
-            />
-          ) : null}
         </View>
       </Card>
     );
@@ -249,9 +279,10 @@ export function IdeasBucket({ trip, onOpenBooking }: IdeasBucketProps) {
         >
           <ScheduleSheet
             tripId={trip.id}
-            booking={scheduleTarget}
+            action={statusAction}
+            liveBooking={liveActionBooking}
             contextDay={trip.start_date}
-            onClose={() => setScheduleTarget(null)}
+            onClose={() => setStatusAction(null)}
           />
         </Bin>
       ) : null}
