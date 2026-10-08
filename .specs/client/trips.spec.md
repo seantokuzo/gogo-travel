@@ -213,18 +213,23 @@ place_id` link (part-2 review finding, parked); see the P-8 follow-up
   `.specs/api/trips.spec.md` §3.4 (B-30) and its §3.3 PATCH /trips/:tripId rules (`null`
   clears both stored columns and re-derives, no source beside it) — this requirement is the
   client surface only. The create form SHALL prefill the field with the device zone
-  (`deviceZoneHint()`, `features/trips/destination-zone.ts` — B-30's silent hint made visible;
-  the field is empty when it returns `undefined`, NC-7): WHILE the field is untouched the
-  create ships it as `destination_tz` + `destination_tz_source: 'device'` (a hint the server
-  ranks below booking zones, as B-30 ships today), and once the user explicitly picks a zone
-  the create ships it as `destination_tz` with source `'user'` (durable, rank 1). Settings
+  (`deviceZoneHint()?.destination_tz` — `deviceZoneHint()` in `features/trips/destination-zone.ts`
+  returns an OBJECT `{ destination_tz, destination_tz_source: 'device' }` or `undefined`, not a
+  zone string; B-30's silent hint made visible; the field is empty when it returns `undefined`,
+  NC-7): WHILE the field is untouched the create SPREADS the whole hint object into the body
+  (`...(zoneHint ?? {})`, as `apps/mobile/src/app/(trips)/new.tsx:286`/`:292` does today) — shipping
+  `destination_tz` + `destination_tz_source: 'device'`, a hint the server ranks below booking
+  zones, as B-30 ships today — and once the user explicitly picks a zone the create ships it as
+  `destination_tz` with source `'user'` (durable, rank 1). Settings
   SHALL show the trip's current effective `destination_tz` and list the trip's flight/train
   zones ("On this trip" — R-itin-37's zone set minus the destination) above the full catalog —
   EXCEPT on a pending move from a destination WITH coordinates to a coordinate-less one
   (R-tripui-24's effective destination), where the save clears the old derived zone: the
-  field then prefills with `deviceZoneHint()` instead, which untouched goes out as the
-  `'device'` hint (B-30's existing real→null path, kept) and, once the user explicitly picks
-  a zone, as `'user'` — unless `Trip.destination_tz_source` is `'user'`, which survives the
+  field then prefills with `deviceZoneHint()?.destination_tz` instead; untouched, the save
+  spreads the whole hint object into the PATCH body as the `'device'` hint (B-30's existing
+  real→null path, kept — `apps/mobile/src/app/[tripId]/more/settings.tsx:390`) and, once the
+  user explicitly picks a zone, ships `destination_tz` as `'user'` — unless
+  `Trip.destination_tz_source` is `'user'`, which survives the
   move (§3.3 PATCH) and stays shown. An explicit pick SHALL ride `buildTripPatch` as `destination_tz`
   (source `'user'`, never `'device'`), with or without a destination change; a pick equal to a
   non-`'user'` effective zone still ships `'user'` (the diff compares zone and source, not the

@@ -473,7 +473,13 @@ pnpm test && pnpm build`
   deliberately not edited here; (3) a flight/train row's focus zone is
   the zone of the edge it displays (Departs → `departs_tz`, Arrives →
   `arrives_tz`); (4) Month and booking detail are not converted (they
-  render no itinerary-tab times).
+  render no itinerary-tab times). Not decided here: `.specs/client/navigation.spec.md`
+  §2.5's B-30 note defers "two defaults whose zone semantics are DEFERRED to T-7.17
+  (not yet ruled — the 2026-09-19 ruling covers trip status only): the expense date
+  default and the itinerary scroll-to-today", but T-7.18..T-7.21 cover only the
+  scroll-to-today (R-itin-80 + the grid landing day) — the expense-date default
+  (`ExpenseForm.tsx` `localTodayISO()`) is NOT covered by them and stays device-local
+  pending a ruling or a new QUEUE row.
 - **Ledger follow-up (Law #8 — the ledger is not edited here):** F-120
   steps 1/3 and F-050 steps 1-2 need an ADR-008 `amendments` note
   (ADR-008 is Proposed — Sean's eye), plus ledger entries for
@@ -612,21 +618,32 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     `TimeZoneField.test.tsx` (`suggestions` / `suggestionsLabel` props,
     an "On this trip" section, plus an optional "Automatic" row that
     selects `null`, testID `{testID}-automatic`). c2 owns
-    `apps/mobile/src/app/(trips)/new.tsx` (untouched prefill from PR #99's
-    `deviceZoneHint()` ships `destination_tz_source: 'device'`; an explicit
+    `apps/mobile/src/app/(trips)/new.tsx` (the field prefills PR #99's
+    `deviceZoneHint()?.destination_tz` — the helper returns an object
+    `{ destination_tz, destination_tz_source: 'device' } | undefined`, not a zone
+    string; untouched, the create spreads the whole hint into the body
+    (`new.tsx:286`, spread at `:292`) so it ships `destination_tz_source: 'device'`; an explicit
     pick ships `'user'`),
     `apps/mobile/src/app/[tripId]/more/settings.tsx`,
     `apps/mobile/src/data/trip-settings.ts` + `trip-settings.test.tsx`
     (`buildTripPatch` emits `destination_tz` for an explicit pick — source
     `'user'`, diffing zone AND source so re-picking the zone already shown
     still ships `'user'` — and `destination_tz: null` for "Automatic"; on a
-    pending real→null destination move the field prefills `deviceZoneHint()`
-    rather than the old derived zone — unless `Trip.destination_tz_source` is
+    pending real→null destination move the field prefills
+    `deviceZoneHint()?.destination_tz` rather than the old derived zone and,
+    untouched, spreads the whole hint into the patch (`settings.tsx:390`) —
+    unless `Trip.destination_tz_source` is
     `'user'`, which survives the move and stays shown). **T-7.21 deliberately reverses PR
     #99's pin in `trip-settings.test.tsx` ("the source is NEVER 'user' from
     the settings form: a zone edit without source 'device' emits nothing")**
     — that test goes red by design; rewrite it in the same commit, it is not
-    a regression,
+    a regression; the same design (a coordless settings save PATCHes exactly
+    `{ destination_tz }`) also falsifies, in the same file, the test titled "a
+    hint with NO coordinate pair emits nothing (the zone is never a standalone
+    settings edit)" — retitle it so it claims the rule only for `'device'` hints
+    — and the `TripSettingsEdits.destination_tz_source?: "device"` type + doc
+    comment in `apps/mobile/src/data/trip-settings.ts` — widen the type to
+    `'user' | 'device'` and rewrite the comment to match,
     `apps/mobile/src/__tests__/trip-new-screen.test.tsx`,
     `apps/mobile/src/__tests__/trip-settings-form.test.tsx`. `depends_on:
 [PR #98, PR #99, T-7.12 c2]` (PR #98/#99 both edit `settings.tsx`;
@@ -785,8 +802,9 @@ ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
     gained coordinates keeps the field visible and "Automatic" resets it
     (NC-7 sub-choice (ii), the recommendation; (i) hides it) · a pending
     settings move from a destination WITH coordinates to a coordinate-less
-    one prefills the field with `deviceZoneHint()` (not the old derived
-    zone): untouched, the PATCH carries `destination_tz` + `'device'`; an
+    one prefills the field with `deviceZoneHint()?.destination_tz` (not the old
+    derived zone): untouched, the PATCH spreads the whole hint, i.e. `destination_tz` +
+    `'device'`; an
     explicit pick carries `'user'`; a null→null move sends no hint; with a
     stored `'user'` zone the same move keeps that zone shown and sends no zone
     keys (the server would ignore a hint over a user zone anyway) · re-picking
