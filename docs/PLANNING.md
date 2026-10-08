@@ -447,25 +447,90 @@ pnpm test && pnpm build`
   between P-7 and P-8.
 - **Status:** signed off 2026-09-19 (Sean) — `queued`. `T-7.10..T-7.16`
   are flipped in QUEUE.
-- **Spec:** `.specs/client/itinerary.spec.md` R-itin-33..41,
+- **T-7.17 amendment (S0, 2026-10-06):** applies Sean's standing
+  instruction (STATE: T-7.17 'SUPERSEDES the "display-only, no math"
+  tz-switcher reading ruled 2026-09-13' — amend the spec at build time).
+  `T-7.17` (QUEUE, Sean's 2026-09-19 UX story: convert
+  all times, focus switches the zone, the calendar follows location days,
+  coordinate-less destinations get a zone) is the **umbrella row, no code
+  of its own**: decomposed into **T-7.12 (amended)** + **T-7.18..T-7.21**.
+  Spec text: `.specs/client/itinerary.spec.md` R-itin-37/38 (amended),
+  R-itin-78..82 (new), §2.6b; `.specs/client/trips.spec.md` R-tripui-29
+  (new). Seven user-visible choices stay open as inline `NC-1..NC-7`
+  markers (NC-1..NC-6 in the itinerary spec, NC-7 in the trips spec) —
+  each carries its recommended pick. **S0 and T-7.12 c1 are
+  answer-free; T-7.12 c2/c3 and T-7.16 assume NC-1 resolves to (a) or (c)
+  — rule NC-1 before c2 starts**; T-7.18..T-7.21 each name the markers
+  that must be ruled before dispatch. `T-7.18..T-7.21` QUEUE rows are
+  synced separately from this doc.
+- **Decisions for Sean (taken at S0 without an NC marker; overrulable):**
+  (1) the timezone-switcher chip moves out of the `PageHeader` into a
+  toolbar row under it — `PageHeaderAction` is icon-only and `trailing`
+  renders at most two, so the signed-off §2.6b placement was unbuildable;
+  (2) density-control placement — the header trailing slot per signed-off
+  §2.5b is unbuildable for the same reason; a toolbar row (shared with
+  the chip in grid mode) is proposed, NOT decided, and §2.5b is
+  deliberately not edited here; (3) a flight/train row's focus zone is
+  the zone of the edge it displays (Departs → `departs_tz`, Arrives →
+  `arrives_tz`); (4) Month and booking detail are not converted (they
+  render no itinerary-tab times). Not decided here: `.specs/client/navigation.spec.md`
+  §2.5's B-30 note defers "two defaults whose zone semantics are DEFERRED to T-7.17
+  (not yet ruled — the 2026-09-19 ruling covers trip status only): the expense date
+  default and the itinerary scroll-to-today", but T-7.18..T-7.21 cover only the
+  scroll-to-today (R-itin-80 + the grid landing day) — the expense-date default
+  (`ExpenseForm.tsx` `localTodayISO()`) is NOT covered by them and stays device-local
+  pending a ruling or a new QUEUE row.
+- **Ledger follow-up (Law #8 — the ledger is not edited here):** F-120
+  steps 1/3 and F-050 steps 1-2 need an ADR-008 `amendments` note
+  (ADR-008 is Proposed — Sean's eye), plus ledger entries for
+  R-itin-78..82 and R-tripui-29 — follow-up row.
+- **Spec:** `.specs/client/itinerary.spec.md` R-itin-33..41 (+ R-itin-78..82,
+  T-7.17), `.specs/client/trips.spec.md` R-tripui-29 (T-7.17),
   `.specs/api/itinerary-bookings.spec.md` R-ib-8 (amended),
   `.specs/shared/contracts.spec.md` §3.4 (booking.ts sync). Both spec
-  markers **Ruled 2026-09-13, Sean** (PR #71 Questions #1/#2): R-itin-35
-  month shape = true month-overview grid; R-itin-38 timezone-switcher
-  effect = display-only, no math. Zero markers remain — T-7.14 and T-7.12
-  are unblocked to their full specced scope, no longer answer-gated.
-- **Conflict analysis (file-ownership sets, so Wave 1 can run as 4
-  parallel worktrees with zero shared-file writes):**
+  markers were **Ruled 2026-09-13, Sean** (PR #71 Questions #1/#2):
+  R-itin-35 month shape = true month-overview grid (stands); R-itin-38
+  timezone-switcher effect = display-only, no math — **superseded by
+  T-7.17**: times now convert in the client (R-itin-79/80) and storage
+  stays wall-clock (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06). T-7.14 is unblocked to its
+  full specced scope; T-7.12 c1 (conversion core) is answer-free (c2/c3
+  assume NC-1 (a) or (c) — rule NC-1 before c2 starts);
+  T-7.18..T-7.21 are answer-gated on the open NC-1..NC-7 markers (see
+  the T-7.17 amendment above).
+- **Conflict analysis (file-ownership sets, so Wave 1 (4 worktrees) and
+  Wave 2 (5 worktrees, after the T-7.17 split) can each run in parallel with
+  zero shared-file writes):**
   - **T-7.10** (server+shared) — owns `apps/server/src/bookings/**`,
     `packages/shared/src/domains/booking.ts`. Touches NOTHING any mobile
     task below touches.
   - **T-7.11** (mobile) — owns `apps/mobile/src/features/itinerary/model.ts`,
     `apps/mobile/src/features/itinerary/ItineraryDayList.tsx` + their
     `.test.ts(x)` files.
-  - **T-7.12** (mobile) — owns a NEW
-    `apps/mobile/src/features/itinerary/timezone/` directory
-    (`timezone-switcher-model.ts`, `TimezoneSwitcher.tsx` + tests). Does
-    NOT touch the itinerary index screen (T-7.16 owns that mount).
+  - **T-7.12** (mobile; amended — T-7.17) — owns a NEW
+    `apps/mobile/src/features/itinerary/timezone/` directory with its OWN
+    `timezone/index.ts` (consumers import `@/features/itinerary/timezone`;
+    it does NOT edit the shared `features/itinerary/index.ts` barrel —
+    T-7.13/T-7.14 add to that): `types.ts`, `convert.ts`, `timeline.ts`,
+    `timezone-switcher-model.ts`, `TimezoneSwitcher.tsx` + tests. Scope =
+    R-itin-37/38 + R-itin-78..82's pure model (conversion, location
+    timeline, zone set) and the `TimezoneSwitcher` chip + Sheet component.
+    NOT mounted (T-7.16 owns the itinerary index screen mount) and NOT
+    wired into list/grid (T-7.18/T-7.19/T-7.20). **Three serial commits,
+    one PR:** c1 conversion core (`types.ts`, `convert.ts`) · c2 location
+    timeline + trip zone set (`timeline.ts`, `timezone-switcher-model.ts`)
+    · c3 `TimezoneSwitcher` chip + Sheet. Writes ONLY inside `timezone/` —
+    no edits to `test-utils/itinerary-fixtures.ts` or `add-edit/*`.
+    `depends_on: [S0, PR #99]` (`isValidTimeZone`, `todayInZone`,
+    `Trip.destination_tz`); otherwise parallel with T-7.13/T-7.14/T-7.15
+    (T-7.21 starts after c2). Rulings: c1 none; c2/c3 assume NC-1 (a) or
+    (c) — rule NC-1 before c2 starts. The Sheet's destination caption reads
+    "Trip destination (from your bookings)" when `Trip.destination_tz_source`
+    is `booking` (R-itin-37; a connecting-leg limit of B-30's chain), so
+    `deriveTripZones` takes the destination's source alongside `destinationTz`
+    (extends the brief's `DeriveTripZonesInput`). Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
+    (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06).
   - **T-7.13** (mobile) — owns
     `apps/mobile/src/features/itinerary/grid/constants.ts`,
     `grid/model.ts`, `GridSurface.tsx` (density prop plumbing) + a NEW
@@ -484,19 +549,138 @@ pnpm test && pnpm build`
     `apps/mobile/src/data/` hook file wraps the schedule/status mutations
     - tests. `depends_on: [T-7.10]` (needs the server's optional `status`
       field to exist for real integration, not a mock).
-  - **T-7.16** (mobile, Wave 3, SOLE owner of the screen file — no other
-    task in this batch touches it) — owns
+  - **T-7.16** (mobile, Wave 3, sole owner of the screen file in Wave 3 —
+    T-7.20 (Wave 4, strictly after) also edits it) — owns
     `apps/mobile/src/app/[tripId]/itinerary/index.tsx` (mounts
     `TimezoneSwitcher` + `DensitySegment`, routes Month density to
     `MonthSurface`) + its screen test. `depends_on: [T-7.12, T-7.13,
-T-7.14]`.
-- **Wave plan:** **Wave 1** (4× parallel worktrees) — T-7.10 ∥ T-7.11 ∥
-  T-7.12 ∥ T-7.13. **Wave 2** (2× parallel worktrees) — T-7.14 ∥ T-7.15.
-  **Wave 3** (serial) — T-7.16.
+T-7.14]`. Signed-off scope unchanged; **two notes for its brief**
+    (T-7.17):
+    1. **Placement.** Mount `TimezoneSwitcher` (from
+       `@/features/itinerary/timezone`) in a TOOLBAR ROW directly under
+       the `PageHeader`, not in `trailing`: `PageHeaderAction` is
+       icon-only and `trailing` renders at most two
+       (`components/PageHeader.tsx:24-31,119-121`), so a labelled chip
+       cannot live there. The §2.5b density control cannot be a
+       `PageHeaderAction` either (same cap); its placement is an open
+       decision (see "Decisions for Sean" above) — the signed-off §2.5b
+       (PageHeader trailing slot) is unbuildable as written. T-7.16 holds
+       the layout call.
+    2. **Interim state.** Hold `activeTz` in local state via
+       `resolveActiveZone(...)` with `trip.destination_tz` (PR #99). Until
+       T-7.20 lands, a pick only re-labels the chip — **no device QA of the
+       switcher on that interim build.** If Sean rules NC-1/4/5/6 before
+       T-7.16 dispatches and T-7.18/T-7.19 have merged, fold T-7.20 into
+       T-7.16 instead (single owner of `index.tsx`, no interim).
+  - **T-7.17** (umbrella — no code of its own) — QUEUE row for Sean's
+    2026-09-19 UX story; decomposed into T-7.12 (amended) + T-7.18..T-7.21
+    below. Its spec amendment is S0 (docs only, this change).
+  - **T-7.18** (mobile; list renders converted times + focusable rows;
+    rulings needed: **NC-1, NC-2, NC-3**) — owns
+    `apps/mobile/src/features/itinerary/model.ts`, `model.test.ts`,
+    `ItineraryDayList.tsx`, `ItineraryDayList.test.tsx` (T-7.11's file set,
+    so strictly AFTER T-7.11 / PR #101). Adds an optional `zoned?:
+ListZonedProps` prop and `placement?` on `projectItem` — absent ⇒
+    today's behaviour. `depends_on: [T-7.11, T-7.12 c1+c2]`. Parallel with
+    T-7.19 (file-disjoint), T-7.16, T-7.21. Branch
+    `P-7/T-7-18-list-zoned`. Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
+  - **T-7.19** (mobile; grid lays out converted times + focusable blocks +
+    follow callback; rulings needed: **NC-3**, NC-1 only if its option
+    (c)) — owns `apps/mobile/src/features/itinerary/GridSurface.tsx`,
+    `GridSurface.test.tsx`, `grid/model.ts`, `grid/model.test.ts`,
+    `grid/GridDayColumn.tsx`, `grid/GridHeaderCell.tsx` (T-7.13's set, so
+    strictly AFTER T-7.13). Adds an optional `zoned?: GridZonedProps`
+    prop; `GridSurface` uses `zoned.landingToday` when present, else
+    `localTodayISO()` (single-zone trips keep today's landing).
+    `depends_on: [T-7.13, T-7.12 c1+c2]`. Parallel with T-7.18 and T-7.14
+    (`month/` only). Branch `P-7/T-7-19-grid-zoned`. Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
+  - **T-7.20** (mobile; active-zone state + screen wiring; rulings needed:
+    **NC-1, NC-4, NC-5, NC-6**) — owns NEW `timezone/zone-selection.ts` +
+    `zone-selection.test.ts`, `timezone/index.ts`,
+    `apps/mobile/src/app/[tripId]/itinerary/index.tsx`,
+    `apps/mobile/src/auth/session-store.ts` (sign-out →
+    `resetTripZoneSelections`, the `resetLastZones` precedent) and NEW
+    `apps/mobile/src/__tests__/itinerary-timezone-flow.test.tsx`.
+    **Serial** — `depends_on: [T-7.16, T-7.18, T-7.19, T-7.12 c3, PR #99]`;
+    nothing else touches `index.tsx`. Branch `P-7/T-7-20-zone-wiring`.
+    Prep: brief `.tmp/t712-t717-spec.md` (§2 Conversion utilities,
+    Interfaces; main checkout, absent in worktrees — pass the absolute path in the
+    brief).
+  - **T-7.21** (mobile; coordinate-less destination time zone, create +
+    settings; rulings needed: **NC-7**) — two commits. Zone chain and
+    provenance are PR #99's contract (`.specs/api/trips.spec.md` §3.4:
+    user > derived > booking > device hint > UTC). c1 owns
+    `apps/mobile/src/features/itinerary/add-edit/TimeZoneField.tsx` +
+    `TimeZoneField.test.tsx` (`suggestions` / `suggestionsLabel` props,
+    an "On this trip" section, plus an optional "Automatic" row that
+    selects `null`, testID `{testID}-automatic`). c2 owns
+    `apps/mobile/src/app/(trips)/new.tsx` (the field prefills PR #99's
+    `deviceZoneHint()?.destination_tz` — the helper returns an object
+    `{ destination_tz, destination_tz_source: 'device' } | undefined`, not a zone
+    string; untouched, the create spreads the whole hint into the body
+    (`new.tsx:286`, spread at `:292`) so it ships `destination_tz_source: 'device'`; an explicit
+    pick ships `'user'`),
+    `apps/mobile/src/app/[tripId]/more/settings.tsx`,
+    `apps/mobile/src/data/trip-settings.ts` + `trip-settings.test.tsx`
+    (`buildTripPatch` emits `destination_tz` for an explicit pick — source
+    `'user'`, diffing zone AND source so re-picking the zone already shown
+    still ships `'user'` — and `destination_tz: null` for "Automatic"; on a
+    pending real→null destination move the field prefills
+    `deviceZoneHint()?.destination_tz` rather than the old derived zone and,
+    untouched, spreads the whole hint into the patch (`settings.tsx:390`) —
+    unless `Trip.destination_tz_source` is
+    `'user'`, which survives the move and stays shown). **T-7.21 deliberately reverses PR
+    #99's pin in `trip-settings.test.tsx` ("the source is NEVER 'user' from
+    the settings form: a zone edit without source 'device' emits nothing")**
+    — that test goes red by design; rewrite it in the same commit, it is not
+    a regression; the same design (a coordless settings save PATCHes exactly
+    `{ destination_tz }`) also falsifies, in the same file, the test titled "a
+    hint with NO coordinate pair emits nothing (the zone is never a standalone
+    settings edit)" — retitle it so it claims the rule only for `'device'` hints
+    — and the `TripSettingsEdits.destination_tz_source?: "device"` type + doc
+    comment in `apps/mobile/src/data/trip-settings.ts` — widen the type to
+    `'user' | 'device'` and rewrite the comment to match,
+    `apps/mobile/src/__tests__/trip-new-screen.test.tsx`,
+    `apps/mobile/src/__tests__/trip-settings-form.test.tsx`. `depends_on:
+[PR #98, PR #99, T-7.12 c2]` (PR #98/#99 both edit `settings.tsx`;
+    #99 also `new.tsx` + `trip-settings.ts`). Strictly after T-7.12 c2;
+    then parallel with the rest of the batch (file-disjoint). Branch
+    `P-7/T-7-21-destination-zone-field`.
+- **Wave plan** (amended — T-7.17; T-7.12 is now gated on S0 + PR #99 and
+  the T-7.17 split adds T-7.18..T-7.21): **Now** — S0 (docs) ∥ the open
+  PR reviews (#99; #98 and T-7.10/T-7.11/T-7.13 = #100/#101/#103 have merged);
+  Sean rules NC-1..NC-7 in one batch.
+  **Wave 1** (parallel worktrees) — T-7.10 ∥ T-7.11 ∥ T-7.13 ∥ T-7.12
+  (c1→c2→c3, ONE agent, after S0 + PR #99 merged; NC-1 ruled before c2).
+  **Wave 2** (parallel worktrees, all file-disjoint) — T-7.14 ∥ T-7.15 ∥
+  T-7.18 (after T-7.11 and T-7.12 c1/c2; NC-1/2/3) ∥ T-7.19 (after
+  T-7.13 and T-7.12 c1/c2; NC-3) ∥ T-7.21 (after T-7.12 c2 merged, NC-7
+  ruled, PR #98/#99 merged). **Wave 3** (serial) — T-7.16 (after T-7.12 c3, T-7.13, T-7.14).
+  **Wave 4** (serial) — T-7.20 (after T-7.16, T-7.18, T-7.19; NC-1/4/5/6).
+  Dependency order:
+
+  ```
+  PR #99 ─┬────────────────────────────────┐
+  S0 ─────┴─► T-7.12 c1 ─► c2 ─┬─► c3 ─► T-7.16 (+T-7.13,T-7.14) ─┐
+                               ├─► T-7.18 (after T-7.11; NC-1,2,3) ┼─► T-7.20
+                               ├─► T-7.19 (after T-7.13; NC-3) ────┘
+  PR #98 + PR #99 ─────────────┴─► T-7.21 (NC-7)
+  ```
+
+  T-7.13 and T-7.14 both likely add exports to the shared
+  `features/itinerary/index.ts` barrel — they are already serial (T-7.14
+  `depends_on` T-7.13); do not parallelise them. This wave plan is (superseded by T-7.17, Sean 2026-09-19; amended 2026-10-06) relative to the 2026-09-19 sign-off (Wave 1 = T-7.10 ∥ T-7.11 ∥ T-7.12 ∥ T-7.13; Wave 2 = T-7.14 ∥ T-7.15; Wave 3 = T-7.16).
+
 - **Size:** T-7.10 S · T-7.11 S · T-7.12 M · T-7.13 M · T-7.14 L (final —
   a genuinely new component class, week-grid + dot/overflow rendering +
   spanning bars; no longer provisional now R-itin-35 is ruled) · T-7.15 M
-  · T-7.16 S.
+  · T-7.16 S. T-7.12 stays M in total — three commits, each inside
+  ADR-001's line budget. T-7.18..T-7.21 are unsized until their NC
+  rulings land (no estimate was given at S0).
 - **Test matrix owed (`.claude/rules/testing.md`), per task:**
   - T-7.10: happy (schedule with `status: 'booked'`) · error (illegal
     transition still 400s) · boundary (omitted `status` = byte-identical
@@ -507,10 +691,41 @@ T-7.14]`.
     (date-line-crossing fixture, B-9/B-8 precedent data) · a11y (both rows
     reach VoiceOver distinctly, R-itin-30) · mutation-verify (revert the
     category gate to lodging-only, confirm red).
-  - T-7.12: happy (2+ zone trip populates + labels correctly) · empty
-    (0-1 zone trips hide the control) · boundary (exactly 2 distinct
-    zones) · adversarial (a zone ICU can't resolve, B-9's `isKnownTimeZone`
-    filter precedent) · mutation-verify.
+  - T-7.12 (amended — T-7.17; tests ship in the SAME commit as each
+    module): happy (2+ zone trip populates + labels correctly —
+    `MULTI_ZONE_TRIP` + Tokyo destination → Tokyo, Los Angeles, Seoul) ·
+    empty (0-1 zone trips hide the control — the count now includes
+    `destination_tz`, so a destination-only trip hides it) · boundary
+    (exactly 2 distinct zones; a destination equal to a flight zone
+    de-dups to 2, not 3) · adversarial (a zone ICU can't resolve, B-9's
+    `isKnownTimeZone` filter precedent; `""`, `"Not/AZone"`, `"+05:00"`,
+    200-char ids; idea/cancelled legs excluded). **Conversion matrix:**
+    `convert.test.ts` (V8) — `wallClockAt` / `instantOfWall` /
+    `convertWall` over the `@gogo/shared/testing` fixtures
+    (`DATE_LINE_WESTBOUND`, `DATE_LINE_EASTBOUND(_EXTREME)`, `DST_*`);
+    DST fall-back replay + spring-forward gap; fractional offsets
+    (Kolkata, Kathmandu, Lord_Howe, Chatham); day shifts incl. a two-day
+    spread; process-zone independence (`process.env.TZ` flipped);
+    `convert.hermes.test.ts` — Hermes-shaped `Intl` stub, four arms
+    (faithful / h12-override / mistyped `hour` part / pre-#1611 id
+    whitelist): the ICU answer or `null`, never plausible-wrong, never a
+    throw; `timeline.test.ts` — `zoneAtWall` on `MULTI_ZONE_TRIP`,
+    eastbound replay window (earliest segment wins), westbound skipped
+    window, `projectItemToZone` atomicity (one edge fails → whole item
+    native) and per-edge DST (`DST_FALL_BACK_STAY`);
+    `TimezoneSwitcher.test.tsx` (RNTL v14, every `render`/`fireEvent`/`act`
+    awaited, ACT gate prints `0`) — hide < 2, chip label/role/touch
+    target, Sheet order, selected state, `onSelect` once, active-row
+    no-op, unknown `activeTz` falls back, destination caption (plain "Trip
+    destination" for source `user`/`derived`/`device`/`default`; "Trip
+    destination (from your bookings)" for `booking` — a Eurostar-only trip
+    has no flight) · mutation-verify every pin
+    (identity short-circuit, plausible-offset passthrough,
+    containing-segment pick, no-re-attribution fallback, acceptability
+    filter, de-dup, destination inclusion, status filter, order, hide
+    rule, `onSelect`, `selected`, ignore the destination source → caption
+    RED); run `git add -N .` before probing (new
+    files are invisible to `git diff`).
   - T-7.13: happy (each density renders its column count) · boundary
     (1-day trip in Trip-span; very long trip, no crash) · offline (n/a —
     pure client state) · mutation-verify (revert `COLUMN_FRACTION`
@@ -524,9 +739,86 @@ T-7.14]`.
     · adversarial (the exact B-16 known-times fixture that dead-ended
     before) · mutation-verify (revert the routing branch, confirm the
     known-times path reds with the pre-existing VALIDATION_FAILED banner).
-  - T-7.16: happy (both controls mounted, correct header order) ·
+  - T-7.16: happy (both controls mounted, correct control order) ·
     integration (pressing each control opens the right sheet/surface) ·
     mutation-verify.
+  - T-7.18: identity regression (`defaultItineraryItems()` + identity
+    placements → `DayEntry[]` deep-equal to no placements) · happy
+    (`DATE_LINE_WESTBOUND` into Tokyo: Departs "03:35 (+1)" in the
+    `2027-04-20` section, Arrives "15:25" in `04-21`; into LA: Arrives
+    "23:25 (-1)") · boundary (an unconverted overnight train keeps its
+    "+1" chip; the same train converted has none) · a11y (label contains
+    "next day"; the `accessibilityActions` "Open details" action opens) ·
+    tap routing (`focusEnabled`: first press focuses, a press on the
+    focused key opens, `focusEnabled: false` opens as today) · the
+    existing reorder and drag suites pass unmodified · mutation-verify
+    (swap the Arrives edge to start; drop the chip suppression; route
+    the first tap to open).
+  - T-7.19: identity regression (`buildGridDays` with identity
+    placements deep-equals the call without them) · happy
+    (`DATE_LINE_WESTBOUND` into Tokyo: block in the `2027-04-21` column at
+    03:35) · boundary (`DATE_LINE_EASTBOUND` into Tokyo: clipped block on
+    `04-24` + "+1" tail on `04-25`; a lodging lane re-spans; landing from
+    `landingToday` = `todayInZone(2027-04-21T03:00Z,
+"America/Los_Angeles")` = `2027-04-20`; with `zoned` absent the landing still uses `localTodayISO()`
+    and the existing single-zone landing test passes unchanged) · B-18 rental subtext survives
+    conversion (probe: feed the converted item to `projectItem` → RED) ·
+    `onVisibleDaysSettled` fires once per momentum end with the first
+    visible date, never from `onScroll` · focus/tap routing for block,
+    chip, span (all segments highlight) and checkpoint · the existing
+    `GridSurface.test.tsx` press-to-open tests pass unchanged (`zoned`
+    absent ⇒ today's behaviour) · mutation-verify.
+  - T-7.20: integration (`itinerary-timezone-flow.test.tsx`, fixture from
+    `MULTI_ZONE_TRIP` legs + a Tokyo lodging + a Seoul custom item): chip
+    reads "Tokyo — GMT+9" and the Sheet order is Tokyo, Los Angeles,
+    Seoul · pick LA → the Tokyo check-in label converts with a suffix and
+    the chip updates · tap the Seoul custom item → chip reads Seoul, the
+    item is `selected`, the announcement mock gets "Times now shown in
+    Seoul time", a second tap pushes item detail · grid: settling on
+    Tokyo then Seoul days switches, a second Seoul settle does not, a
+    manual LA pick survives a same-zone settle · gap-tap at 14:00 on a
+    Tokyo day in LA view routes to `item/new` with the next day and
+    `06:00` · a single-zone trip has no chip and the first tap opens ·
+    sign-out resets the selection · offline (`useTripOffline`) still
+    converts · full mobile jest + ACT gate over the full suite.
+    **End-to-end, after T-7.20 + T-7.21 merge:** repo CI gate + the flow
+    test · bundle check (`itinerary-timezone-switcher-label` appears in the
+    built `apps/mobile/dist`) · **device check on Hermes (simulator or
+    Sean's phone) before any ledger `passes` flip** — jest's Hermes stub
+    is a model, not the engine (ADR-006 prod-shaped).
+  - T-7.21: c1 — no `suggestions` → every existing `TimeZoneField` test
+    unchanged · suggestions render first and are pickable · an
+    unacceptable suggestion is dropped · the "Automatic" row (when
+    offered) reports `null`. c2 — a coordless create shows the field
+    prefilled with the device zone and, UNTOUCHED, sends `destination_tz` =
+    that zone + `destination_tz_source: 'device'` · an explicit pick of
+    `Asia/Seoul` sends `destination_tz: "Asia/Seoul"` +
+    `destination_tz_source: 'user'` · a create WITH coordinates shows no
+    field and no `destination_tz` / `destination_tz_source` keys · a
+    coordless settings save that changes only the zone PATCHes exactly
+    `{ destination_tz }` (source `'user'` or absent — never `'device'`) plus
+    `expect_updated_at` · "Automatic" PATCHes `destination_tz: null` with no
+    source key · a stored user zone on a trip whose destination has since
+    gained coordinates keeps the field visible and "Automatic" resets it
+    (NC-7 sub-choice (ii), the recommendation; (i) hides it) · a pending
+    settings move from a destination WITH coordinates to a coordinate-less
+    one prefills the field with `deviceZoneHint()?.destination_tz` (not the old
+    derived zone): untouched, the PATCH spreads the whole hint, i.e. `destination_tz` +
+    `'device'`; an
+    explicit pick carries `'user'`; a null→null move sends no hint; with a
+    stored `'user'` zone the same move keeps that zone shown and sends no zone
+    keys (the server would ignore a hint over a user zone anyway) · re-picking
+    the zone already shown while `destination_tz_source` is `'device'`,
+    `'booking'` or `'default'` (re-picking UTC) still PATCHes `{ destination_tz }`
+    as `'user'`, and while it is already `'user'` sends nothing · `deviceZoneHint()` → `undefined`
+    renders an empty field with Save enabled and no zone keys sent (NC-7
+    (a) rec) · the settings suggestions are `deriveTripZones(...)` minus
+    the destination · ACT gate prints `0` · mutation-verify (ship `'user'`
+    for the untouched prefill → RED; drop the `null` branch → RED; hide the
+    field once coordinates exist → RED under (ii); prefill the old derived
+    zone on a real→null move → RED; prefill the device hint over a stored user
+    zone on a coords→coordless move → RED; diff on zone only so a re-pick of the
+    shown zone sends nothing → RED).
 
 ### P-8 — Maps, saved places & offline tile packs
 

@@ -9,6 +9,11 @@
 > `[NEEDS CLARIFICATION]` marker remains (R-tripui-27, status-override client
 > surface; Sean pick pending).
 >
+> **T-7.17 amendment (2026-10-06):** R-tripui-29 added (coordinate-less
+> destination time zone — B-30 follow-up). It opens **NC-7** (a second
+> `[NEEDS CLARIFICATION]` marker, Sean pick pending), so **two** markers now
+> remain: Q2-288 (R-tripui-27) and NC-7 (R-tripui-29).
+>
 > **Sources:** `.specs/api/trips.spec.md` (CANONICAL for authz — §3.2
 > matrix — and endpoint shapes), `.specs/client/navigation.spec.md`
 > (CANONICAL for routes, deep links, modal conventions §2.6, testID grammar
@@ -200,6 +205,58 @@
   gains coordinates via a map-drop — there is no `trips.destination_
 place_id` link (part-2 review finding, parked); see the P-8 follow-up
   QUEUE-row draft in this task's PR body.
+- **R-tripui-29 (destination time zone — B-30 follow-up, T-7.17)** (NEW 2026-10-06): WHEN the
+  trip-create form's selected destination (R-tripui-23) or the trip-settings effective
+  destination (R-tripui-24) has no coordinates THE SYSTEM SHALL render a "Time zone" field
+  (B-9 `TimeZoneField`; `trip-new-input-timezone` / `trip-settings-input-timezone`) beneath
+  the destination. The effective-zone chain, zone provenance and reset semantics are owned by
+  `.specs/api/trips.spec.md` §3.4 (B-30) and its §3.3 PATCH /trips/:tripId rules (`null`
+  clears both stored columns and re-derives, no source beside it) — this requirement is the
+  client surface only. The create form SHALL prefill the field with the device zone
+  (`deviceZoneHint()?.destination_tz` — `deviceZoneHint()` in `features/trips/destination-zone.ts`
+  returns an OBJECT `{ destination_tz, destination_tz_source: 'device' }` or `undefined`, not a
+  zone string; B-30's silent hint made visible; the field is empty when it returns `undefined`,
+  NC-7): WHILE the field is untouched the create SPREADS the whole hint object into the body
+  (`...(zoneHint ?? {})`, as `apps/mobile/src/app/(trips)/new.tsx:286`/`:292` does today) — shipping
+  `destination_tz` + `destination_tz_source: 'device'`, a hint the server ranks below booking
+  zones, as B-30 ships today — and once the user explicitly picks a zone the create ships it as
+  `destination_tz` with source `'user'` (durable, rank 1). Settings
+  SHALL show the trip's current effective `destination_tz` and list the trip's flight/train
+  zones ("On this trip" — R-itin-37's zone set minus the destination) above the full catalog —
+  EXCEPT on a pending move from a destination WITH coordinates to a coordinate-less one
+  (R-tripui-24's effective destination), where the save clears the old derived zone: the
+  field then prefills with `deviceZoneHint()?.destination_tz` instead; untouched, the save
+  spreads the whole hint object into the PATCH body as the `'device'` hint (B-30's existing
+  real→null path, kept — `apps/mobile/src/app/[tripId]/more/settings.tsx:390`) and, once the
+  user explicitly picks a zone, ships `destination_tz` as `'user'` — unless
+  `Trip.destination_tz_source` is `'user'`, which survives the
+  move (§3.3 PATCH) and stays shown. An explicit pick SHALL ride `buildTripPatch` as `destination_tz`
+  (source `'user'`, never `'device'`), with or without a destination change; a pick equal to a
+  non-`'user'` effective zone still ships `'user'` (the diff compares zone and source, not the
+  zone alone). WHILE `Trip.destination_tz_source` is `'user'` or `'device'` (the wire carries
+  the EFFECTIVE source — a stored `'device'` hint under a booking reads `'booking'`) the
+  settings field SHALL offer an "Automatic" row that sends `destination_tz: null` (clears the
+  stored zone, re-derives, no source key — §3.3 PATCH). A destination WITH coordinates SHALL
+  show no field — the server derives its zone (B-30). [NEEDS CLARIFICATION: NC-7 — (a) the
+  field appears only for coordinate-less destinations, with the device-zone prefill sent as
+  the `'device'` hint while untouched and as `'user'` once picked (the above); WHEN
+  `deviceZoneHint()` returns `undefined` (a non-IANA-shaped device zone) the field is empty
+  and, under (a), Save stays enabled with nothing sent, so the server falls through booking →
+  UTC (rec); (b) an always-visible "Time zone" row for every destination (effective zone
+  shown, overridable, "Automatic" resets); (c) as (a) but no prefill — nothing ships
+  `'device'`, and the user must pick before Save enables (also the empty-hint case).
+  Sub-choice under (a)/(c): WHEN a destination later GAINS coordinates while a user zone is
+  stored, (i) the field hides and the user zone persists unseen (B-30's rank 1 is durable; no
+  reset path in the UI) or (ii) the field stays visible as an exception to the line above
+  WHILE `destination_tz_source === 'user'`, so "Automatic" can still clear it. Consequence of
+  "Automatic": on a coordinate-less trip with no non-cancelled flight/train booking with a usable zone, clearing a `'device'`
+  hint resolves to `UTC` (`'default'`, B-30) — (iii) offer "Automatic" only while the source
+  is `'user'`, since a device hint is already the lowest-ranked guess. Rec (a) with (ii) —
+  device hint when untouched, user when picked, field shown whenever the source is `'user'`,
+  "Automatic" for `'user'` and `'device'` as drafted. Privacy note (Law 3-adjacent): the
+  device-zone prefill — already sent silently by B-30 as a `'device'` hint (PR #99
+  `features/trips/destination-zone.ts` `deviceZoneHint()`) — shares the creator's home zone
+  with every trip member; (a) makes it visible and editable, (c) avoids it.]
 - **R-tripui-27 (status-override client surface — Q2-288 — as shipped; Sean
   pick pending: (a) surface an owner-only archive/status-override control on
   the client / (b) leave it API-only):** AS SHIPPED, THE SYSTEM renders NO
@@ -308,7 +365,9 @@ Single-screen form (nav §2.4: "name, destination, dates"):
    spine imported into `places`** (option a — free, no new dependency; the
    import-task scope grows to include the city/locality subset). Mapbox
    Geocoding rejected (new metered product); free-text rejected (kills
-   guaranteed weather/AI grounding). (Resolved 2026-07-09, Gate 2)
+   guaranteed weather/AI grounding). (Resolved 2026-07-09, Gate 2) WHEN
+   the selected destination has no coordinates (R-tripui-23) a "Time zone"
+   field renders beneath it (R-tripui-29, T-7.17; NC-7 pending).
 3. **Dates** — **required** range picker (§2.2, resolved Gate 2); the
    "No dates yet" states across this spec drop out.
 
@@ -361,7 +420,7 @@ here (it lives on trip settings — R-tripui-26, Q2-286).
 
 | Row                                     | Roles shown    | Behavior                                                                                                                          |
 | --------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Trip details (name, destination, dates) | owner, editor  | Inline card, no push (R-tripui-28); save sends `expect_updated_at` (R-tripui-19)                                                  |
+| Trip details (name, destination, dates) | owner, editor  | Inline card, no push (R-tripui-28); save sends `expect_updated_at` (R-tripui-19); coordinate-less → Time zone field (R-tripui-29) |
 | Theme                                   | owner, editor  | Sheet picker (tokens spec themes; R-tripui-28); optimistic apply                                                                  |
 | Base currency                           | owner          | Sheet (R-tripui-28); locked (read-only row with explainer) once the first expense exists (API §3.6 / R-trips-22, resolved Gate 2) |
 | Trip visibility                         | —              | NOT RENDERED — dropped from v1 (no trip-level visibility; API §3.6, resolved Gate 2)                                              |
@@ -413,6 +472,7 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 |               | `trip-new-input-destination`             | destination search input                                                        |
 |               | `trip-new-list-item-{placeId}`           | destination result row                                                          |
 |               | `trip-new-input-dates`                   | date-range control                                                              |
+|               | `trip-new-input-timezone`                | destination time-zone field (R-tripui-29; coordinate-less destination only)     |
 |               | `trip-new-button-create`                 | submit                                                                          |
 |               | `trip-new-button-cancel`                 | dismiss (dirty → `trip-new-button-cancel-confirm` via ConfirmDialog derivation) |
 | invite-join   | `invite-join-button-accept`              | accept                                                                          |
@@ -436,6 +496,7 @@ Screen roots: `trip-list-screen`, `trip-new-screen`, `invite-join-screen`,
 |               | `trip-settings-button-leave`             | leave trip                                                                      |
 |               | `trip-settings-button-delete`            | delete trip                                                                     |
 |               | `trip-settings-button-save`              | details form save                                                               |
+|               | `trip-settings-input-timezone`           | time-zone field (R-tripui-29); `-suggested-{slug}`, `-automatic`                |
 |               | `trip-settings-list-item-custom`         | R-tripui-24: empty-results custom-destination row (R-tripui-23 parity)          |
 |               | `trip-settings-notice-no-location`       | R-tripui-24: standing coordinate-less-destination explanation                   |
 |               | `trip-settings-error-create-destination` | R-tripui-24: custom-create failure banner                                       |
@@ -504,5 +565,8 @@ city/locality subset), 6 inherited (§2.2 — dates required; structured
 destination; ownership transfer; multi-use invites; universal-link domain;
 profile = trip-list header avatar); the API spec's 3 markers (viewer
 participation, base-currency lock, trip visibility dropped) resolved
-there. One marker remains (round-2 write-back): Q2-288 — status-override
-client surface, Sean pick pending (R-tripui-27)._
+there. One marker remained after the round-2 write-back: Q2-288 —
+status-override client surface, Sean pick pending (R-tripui-27). The
+2026-10-06 T-7.17 amendment adds NC-7 (R-tripui-29, destination time zone
+entry for coordinate-less destinations, Sean pick pending), so two markers
+remain._
